@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  langfuse-server:
+    image: langfuse/langfuse:2
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse_user:${LANGFUSE_DB_PASSWORD}@langfuse-postgres:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_SECRET_KEY}
+      SALT: ${LANGFUSE_SALT}
+      NEXTAUTH_URL: http://localhost:3001
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+    networks:
+      - noa_network
+
+  langfuse-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse_user
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD}
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse_user -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - noa_network
+
+networks:
+  noa_network:
+    external: true
+
+volumes:
+  langfuse_postgres_data:

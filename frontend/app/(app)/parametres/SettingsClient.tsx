@@ -1,0 +1,765 @@
+"use client"
+import { useState, useEffect } from "react"
+import { ROLE_LABELS, ROLE_COLORS } from "@/lib/permissions"
+
+type SubTab = "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services"
+type Role = "super_admin" | "direction" | "commercial" | "bureau_etudes" | "conducteur" | "administratif" | "terrain"
+type Agent = "agent1" | "agent2" | "agent3"
+
+interface AgentPermissions { agent1: boolean; agent2: boolean; agent3: boolean }
+interface User {
+  id: string; email: string; name: string | null; role: Role
+  actif: boolean; created_at: string; agent_permissions: AgentPermissions
+}
+interface Props {
+  initialUsers: User[]; backendToken: string; currentRole: string; apiUrl: string
+}
+
+const METIER_ROLES: Role[] = ["commercial", "bureau_etudes", "conducteur", "administratif", "terrain"]
+const CREATABLE: Record<string, Role[]> = {
+  super_admin: ["direction", ...METIER_ROLES],
+  direction: METIER_ROLES,
+}
+
+function canTogglePerm(mgr: string, _agent: Agent, target: Role): boolean {
+  if (mgr === "super_admin") return true
+  if (mgr === "direction") return target !== "super_admin"
+  return false
+}
+
+const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
+  { key: "utilisateurs", label: "Utilisateurs" },
+  { key: "plages", label: "Plages horaires" },
+  { key: "rbac", label: "Permissions RBAC" },
+  { key: "agents", label: "États des agents" },
+  { key: "quotas", label: "Quotas", roles: ["super_admin"] },
+  { key: "services", label: "Services connectés", roles: ["super_admin"] },
+]
+
+/* ---------- USERS TAB ---------- */
+function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
+  const [users, setUsers] = useState<User[]>(initialUsers)
+  const [form, setForm] = useState({ email: "", name: "", role: "terrain" as Role })
+  const [adding, setAdding] = useState(false)
+  const [formError, setFormError] = useState("")
+  const [showForm, setShowForm] = useState(false)
+  const [permLoading, setPermLoading] = useState<string | null>(null)
+
+  const creatableRoles = CREATABLE[currentRole] ?? []
+  const visibleAgents: Agent[] = ["agent1", "agent2", "agent3"].filter(
+    (a) => a !== "agent3" || currentRole === "super_admin" || currentRole === "direction"
+  ) as Agent[]
+
+  async function addUser(e: React.FormEvent) {
+    e.preventDefault(); setAdding(true); setFormError("")
+    try {
+      const res = await fetch(`${apiUrl}/api/users/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify(form),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        setFormError(err.detail ?? "Erreur")
+        return
+      }
+      const newUser = await res.json()
+      setUsers((p) => [newUser, ...p])
+      setForm({ email: "", name: "", role: "terrain" }); setShowForm(false)
+    } catch { setFormError("Erreur réseau") } finally { setAdding(false) }
+  }
+
+  async function togglePerm(userId: string, agent: Agent, cur: boolean, targetRole: Role) {
+    if (!canTogglePerm(currentRole, agent, targetRole)) return
+    const key = `${userId}:${agent}`; setPermLoading(key)
+    try {
+      const res = await fetch(`${apiUrl}/api/users/${userId}/permissions/${agent}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ has_access: !cur }),
+      })
+      if (res.ok) setUsers((p) => p.map((u) => u.id === userId
+        ? { ...u, agent_permissions: { ...u.agent_permissions, [agent]: !cur } } : u))
+    } finally { setPermLoading(null) }
+  }
+
+  async function toggleActive(userId: string, actif: boolean, targetRole: Role) {
+    if (currentRole !== "super_admin" && currentRole !== "direction" && !METIER_ROLES.includes(targetRole)) return
+    const ep = actif ? "deactivate" : "reactivate"
+    const res = await fetch(`${apiUrl}/api/users/${userId}/${ep}`, {
+      method: "PUT", headers: { Authorization: `Bearer ${backendToken}` },
+    })
+    if (res.ok) setUsers((p) => p.map((u) => u.id === userId ? { ...u, actif: !actif } : u))
+  }
+
+  const inp: React.CSSProperties = {
+    padding: "10px 14px", border: "1.5px solid var(--color-border)",
+    borderRadius: 10, fontSize: 14, outline: "none", width: "100%",
+    color: "var(--color-text-primary)", background: "white",
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Total
+          </div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)" }}>
+            {users.length} <span style={{ fontSize: 14, fontWeight: 500, color: "var(--color-text-muted)" }}>utilisateurs</span>
+          </div>
+        </div>
+        <button onClick={() => setShowForm(!showForm)} style={{
+          background: "var(--color-primary)", color: "white", border: "none",
+          borderRadius: 9999, padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer",
+        }}>
+          + Ajouter un utilisateur
+        </button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={addUser} style={{
+          background: "var(--color-primary-subtle)", borderRadius: 16, padding: 20,
+          marginBottom: 20, border: "1px solid var(--color-primary-light)",
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-primary)", marginBottom: 14 }}>
+            Nouvel utilisateur
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <input type="email" placeholder="Email *" required value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} style={inp} />
+            <input type="text" placeholder="Nom complet" value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={inp} />
+            <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as Role }))} style={inp}>
+              {creatableRoles.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+            </select>
+          </div>
+          {formError && <p style={{ color: "var(--color-error-text)", fontSize: 13, margin: "0 0 10px" }}>{formError}</p>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="submit" disabled={adding} style={{
+              background: "var(--color-primary)", color: "white", border: "none",
+              borderRadius: 9999, padding: "9px 20px", fontSize: 13, fontWeight: 600,
+              cursor: adding ? "not-allowed" : "pointer", opacity: adding ? 0.7 : 1,
+            }}>
+              {adding ? "Ajout..." : "Ajouter"}
+            </button>
+            <button type="button" onClick={() => setShowForm(false)} style={{
+              background: "white", color: "var(--color-text-body)", border: "1px solid var(--color-border)",
+              borderRadius: 9999, padding: "9px 20px", fontSize: 13, cursor: "pointer",
+            }}>
+              Annuler
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div style={{ background: "white", borderRadius: 16, boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--color-border)", background: "var(--color-canvas)" }}>
+              {["Utilisateur", "Rôle", ...visibleAgents.map((a) => a.replace("agent", "Agent ")), "Statut", ""].map((h, i) => (
+                <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((user) => {
+              const color = ROLE_COLORS[user.role] || "#666"
+              return (
+                <tr key={user.id} style={{ borderBottom: "1px solid var(--color-border)", opacity: user.actif ? 1 : 0.45 }}>
+                  <td style={{ padding: "14px 16px" }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--color-text-primary)" }}>{user.name || "—"}</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 1 }}>{user.email}</div>
+                  </td>
+                  <td style={{ padding: "14px 16px" }}>
+                    <span style={{ background: color + "18", color, padding: "3px 10px", borderRadius: 9999, fontSize: 12, fontWeight: 600 }}>
+                      {ROLE_LABELS[user.role]}
+                    </span>
+                  </td>
+                  {visibleAgents.map((agent) => {
+                    const has = user.agent_permissions[agent]
+                    const canToggle = canTogglePerm(currentRole, agent, user.role)
+                    const loading = permLoading === `${user.id}:${agent}`
+                    return (
+                      <td key={agent} style={{ padding: "14px 16px", textAlign: "center" }}>
+                        <button
+                          onClick={() => canToggle && togglePerm(user.id, agent, has, user.role)}
+                          disabled={!canToggle || loading}
+                          title={!canToggle ? "Permission insuffisante" : has ? "Révoquer" : "Accorder"}
+                          style={{
+                            width: 40, height: 22, borderRadius: 11, border: "none",
+                            background: has ? "var(--color-primary-mid)" : "var(--color-border)",
+                            cursor: canToggle ? "pointer" : "default",
+                            position: "relative", transition: "background 0.2s",
+                            opacity: loading ? 0.5 : 1,
+                          }}
+                        >
+                          <span style={{
+                            position: "absolute", top: 3,
+                            left: has ? 21 : 3, width: 16, height: 16,
+                            borderRadius: "50%", background: "white",
+                            transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                          }} />
+                        </button>
+                      </td>
+                    )
+                  })}
+                  <td style={{ padding: "14px 16px" }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: user.actif ? "var(--color-paid-text)" : "var(--color-text-muted)" }}>
+                      {user.actif ? "● Actif" : "○ Inactif"}
+                    </span>
+                  </td>
+                  <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                    {(currentRole === "super_admin" || currentRole === "direction" || METIER_ROLES.includes(user.role)) && (
+                      <button onClick={() => toggleActive(user.id, user.actif, user.role)} style={{
+                        background: "none", border: "1px solid var(--color-border)",
+                        borderRadius: 9999, padding: "5px 14px", fontSize: 12, cursor: "pointer",
+                        color: "var(--color-text-body)", fontWeight: 500,
+                      }}>
+                        {user.actif ? "Désactiver" : "Réactiver"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+            {users.length === 0 && (
+              <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "var(--color-text-muted)", fontSize: 14 }}>
+                Aucun utilisateur — vérifiez la connexion au backend
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/* ---------- PLAGES HORAIRES TAB (éditable) ---------- */
+function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: string; backendToken: string; users: any[]; currentRole: string }) {
+  const HOURS = Array.from({ length: 24 }, (_, i) => i)
+  const [glob, setGlob] = useState<{ start_hour: number; end_hour: number } | null>(null)
+  const [savingG, setSavingG] = useState(false)
+  const [msgG, setMsgG] = useState("")
+  const [rows, setRows] = useState<any[]>(() => users.map((u) => ({ ...u })))
+  const [savingU, setSavingU] = useState<string | null>(null)
+  const [msgU, setMsgU] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings/schedule`, { headers: { Authorization: `Bearer ${backendToken}` } })
+      .then((r) => (r.ok ? r.json() : null)).then((g) => g && setGlob(g)).catch(() => {})
+  }, [apiUrl, backendToken])
+
+  async function saveGlobal() {
+    if (!glob) return
+    setSavingG(true); setMsgG("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/schedule`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify(glob),
+      })
+      if (!res.ok) { const e = await res.json().catch(() => ({})); setMsgG(e.detail || "Erreur"); return }
+      setMsgG("✓ Enregistré"); setTimeout(() => setMsgG(""), 2000)
+    } catch { setMsgG("Erreur réseau") } finally { setSavingG(false) }
+  }
+
+  function canEditUser(targetRole: string) {
+    if (currentRole === "super_admin") return true
+    if (currentRole === "direction") return !["super_admin", "direction"].includes(targetRole)
+    return false
+  }
+  function patch(id: string, p: any) { setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r))) }
+
+  async function saveUser(u: any) {
+    setSavingU(u.id); setMsgU((m) => ({ ...m, [u.id]: "" }))
+    const num = (v: any) => (v === "" || v == null ? null : Number(v))
+    try {
+      const res = await fetch(`${apiUrl}/api/users/${u.id}/schedule`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ schedule_start_hour: num(u.schedule_start_hour), schedule_end_hour: num(u.schedule_end_hour), bypass_schedule: !!u.bypass_schedule }),
+      })
+      if (!res.ok) { const e = await res.json().catch(() => ({})); setMsgU((m) => ({ ...m, [u.id]: e.detail || "Erreur" })); return }
+      setMsgU((m) => ({ ...m, [u.id]: "✓" })); setTimeout(() => setMsgU((m) => ({ ...m, [u.id]: "" })), 2000)
+    } catch { setMsgU((m) => ({ ...m, [u.id]: "Erreur" })) } finally { setSavingU(null) }
+  }
+
+  const inp: React.CSSProperties = { width: 56, padding: "6px 8px", border: "1.5px solid var(--color-border)", borderRadius: 8, fontSize: 13, outline: "none", background: "white", color: "var(--color-text-primary)" }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Plage globale */}
+      <div style={{ background: "white", borderRadius: 16, padding: 20, boxShadow: "var(--shadow-card)" }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)", marginBottom: 4 }}>Plage horaire globale</div>
+        <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 14 }}>
+          Appliquée à tout utilisateur sans réglage individuel. super_admin et direction sont exemptés.
+        </div>
+        {glob ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <label style={{ fontSize: 13, color: "var(--color-text-body)", display: "flex", alignItems: "center", gap: 8 }}>
+              Début <input type="number" min={0} max={23} value={glob.start_hour} onChange={(e) => setGlob({ ...glob, start_hour: parseInt(e.target.value) || 0 })} style={inp} /> h
+            </label>
+            <label style={{ fontSize: 13, color: "var(--color-text-body)", display: "flex", alignItems: "center", gap: 8 }}>
+              Fin <input type="number" min={1} max={24} value={glob.end_hour} onChange={(e) => setGlob({ ...glob, end_hour: parseInt(e.target.value) || 1 })} style={inp} /> h
+            </label>
+            <button onClick={saveGlobal} disabled={savingG} style={{ background: "var(--color-primary)", color: "white", border: "none", borderRadius: 9999, padding: "8px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              {savingG ? "..." : "Enregistrer"}
+            </button>
+            {msgG && <span style={{ fontSize: 13, color: msgG.startsWith("✓") ? "var(--color-paid-text)" : "var(--color-error-text)" }}>{msgG}</span>}
+          </div>
+        ) : <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>Chargement…</div>}
+
+        {glob && (
+          <div style={{ marginTop: 16, display: "flex", gap: 3, alignItems: "flex-end", flexWrap: "wrap" }}>
+            {HOURS.map((h) => {
+              const active = h >= glob.start_hour && h < glob.end_hour
+              return (
+                <div key={h} style={{ textAlign: "center" }}>
+                  <div style={{ width: 20, height: 26, borderRadius: 4, background: active ? "var(--color-primary-mid)" : "var(--color-border)", opacity: active ? 0.9 : 0.4 }} />
+                  <div style={{ fontSize: 9, color: "var(--color-text-muted)", marginTop: 2 }}>{h}</div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Réglages par utilisateur */}
+      <div style={{ background: "white", borderRadius: 16, boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--color-border)", fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>
+          Réglages individuels <span style={{ fontWeight: 400, fontSize: 12, color: "var(--color-text-muted)" }}>— vide = plage globale</span>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "var(--color-canvas)" }}>
+                {["Utilisateur", "Rôle", "Début", "Fin", "24/7", ""].map((h, i) => (
+                  <th key={i} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((u) => {
+                const editable = canEditUser(u.role)
+                return (
+                  <tr key={u.id} style={{ borderTop: "1px solid var(--color-border)", opacity: editable ? 1 : 0.55 }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--color-text-primary)" }}>{u.name || "—"}</div>
+                      <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{u.email}</div>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ background: (ROLE_COLORS[u.role] || "#666") + "18", color: ROLE_COLORS[u.role] || "#666", padding: "3px 10px", borderRadius: 9999, fontSize: 12, fontWeight: 600 }}>{ROLE_LABELS[u.role]}</span>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <input type="number" min={0} max={23} placeholder="—" value={u.schedule_start_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_start_hour: e.target.value })} style={inp} />
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <input type="number" min={1} max={24} placeholder="—" value={u.schedule_end_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_end_hour: e.target.value })} style={inp} />
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <button onClick={() => editable && patch(u.id, { bypass_schedule: !u.bypass_schedule })} disabled={!editable} style={{ width: 40, height: 22, borderRadius: 11, border: "none", background: u.bypass_schedule ? "var(--color-primary-mid)" : "var(--color-border)", cursor: editable ? "pointer" : "default", position: "relative" }}>
+                        <span style={{ position: "absolute", top: 3, left: u.bypass_schedule ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "white", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+                      </button>
+                    </td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      {editable && (
+                        <button onClick={() => saveUser(u)} disabled={savingU === u.id} style={{ background: "none", border: "1px solid var(--color-border)", borderRadius: 9999, padding: "5px 14px", fontSize: 12, cursor: "pointer", color: "var(--color-text-body)", fontWeight: 500 }}>
+                          {savingU === u.id ? "..." : "Enregistrer"}
+                        </button>
+                      )}
+                      {msgU[u.id] && <span style={{ marginLeft: 8, fontSize: 12, color: msgU[u.id] === "✓" ? "var(--color-paid-text)" : "var(--color-error-text)" }}>{msgU[u.id]}</span>}
+                    </td>
+                  </tr>
+                )
+              })}
+              {rows.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "var(--color-text-muted)", fontSize: 13 }}>Aucun utilisateur</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ---------- RBAC TAB (matrice éditable) ---------- */
+function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [data, setData] = useState<any>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [err, setErr] = useState("")
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings/permissions`, { headers: { Authorization: `Bearer ${backendToken}` } })
+      .then((r) => (r.ok ? r.json() : null)).then((d) => (d ? setData(d) : setErr("Chargement impossible"))).catch(() => setErr("Erreur de chargement"))
+  }, [apiUrl, backendToken])
+
+  async function toggle(role: string, feature: string, current: boolean) {
+    if (!data?.can_edit || role === data.protected_role) return
+    const key = `${role}:${feature}`; setBusy(key)
+    const set = (val: boolean) => setData((d: any) => ({ ...d, matrix: { ...d.matrix, [role]: { ...d.matrix[role], [feature]: val } } }))
+    set(!current)  // optimiste
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/permissions`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ role, feature, allowed: !current }),
+      })
+      if (!res.ok) set(current)  // rollback
+    } catch { set(current) } finally { setBusy(null) }
+  }
+
+  if (err) return <div style={{ color: "var(--color-error-text)", fontSize: 14, padding: 20 }}>{err}</div>
+  if (!data) return <div style={{ color: "var(--color-text-muted)", fontSize: 14, padding: 20 }}>Chargement…</div>
+  const canEdit = !!data.can_edit
+
+  return (
+    <div>
+      <div style={{ background: "white", borderRadius: 16, boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--color-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>Matrice de permissions par rôle</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
+              {canEdit ? "Cliquez sur une case pour activer/désactiver. Le super admin n'est pas modifiable." : "Lecture seule — édition réservée au super admin."}
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: 9999, color: canEdit ? "var(--color-paid-text)" : "var(--color-pending-text)", background: canEdit ? "var(--color-paid-bg)" : "var(--color-pending-bg)" }}>
+            {canEdit ? "Éditable" : "Lecture seule"}
+          </span>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", minWidth: 900 }}>
+            <thead>
+              <tr style={{ background: "var(--color-canvas)" }}>
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", position: "sticky", left: 0, background: "var(--color-canvas)" }}>Rôle</th>
+                {data.features.map((f: string) => (
+                  <th key={f} style={{ padding: "10px 10px", textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>{data.labels[f] || f}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.roles.map((role: string) => {
+                const color = ROLE_COLORS[role] || "#666"
+                const locked = role === data.protected_role
+                return (
+                  <tr key={role} style={{ borderTop: "1px solid var(--color-border)" }}>
+                    <td style={{ padding: "10px 16px", position: "sticky", left: 0, background: "white" }}>
+                      <span style={{ background: color + "18", color, padding: "4px 12px", borderRadius: 9999, fontSize: 12, fontWeight: 700 }}>{ROLE_LABELS[role]}</span>
+                    </td>
+                    {data.features.map((f: string) => {
+                      const has = !!data.matrix[role]?.[f]
+                      const key = `${role}:${f}`
+                      const editable = canEdit && !locked
+                      return (
+                        <td key={f} style={{ padding: "8px 10px", textAlign: "center" }}>
+                          <button
+                            onClick={() => editable && toggle(role, f, has)}
+                            disabled={!editable || busy === key}
+                            title={locked ? "Super admin : non modifiable" : editable ? (has ? "Désactiver" : "Activer") : "Lecture seule"}
+                            style={{
+                              width: 26, height: 26, borderRadius: 7, border: "none", fontSize: 14,
+                              cursor: editable ? "pointer" : "default",
+                              background: has ? "var(--color-paid-bg)" : "var(--color-canvas)",
+                              color: has ? "var(--color-paid-text)" : "var(--color-text-muted)",
+                              opacity: busy === key ? 0.5 : 1,
+                            }}
+                          >
+                            {has ? "✓" : "·"}
+                          </button>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ---------- AGENTS TAB (métriques réelles) ---------- */
+function AgentsTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const AGENTS = [
+    { key: "agent1", name: "Agent 1 — Commercial / Admin", desc: "RAG, anonymisation NER, LLM. Requêtes commerciales et administratives.", tier: "Palier LIGHT / STANDARD" },
+    { key: "agent2", name: "Agent 2 — Conception / Visuels", desc: "Vision multimodale, extraction de plans, pré-chiffrage.", tier: "Palier COMPLEX (vision)" },
+    { key: "agent3", name: "Agent 3 — Auto-Évolution", desc: "Génération de skills, sandbox Daytona, auto-apprentissage.", tier: "Palier COMPLEX" },
+  ]
+  const [stats, setStats] = useState<Record<string, any>>({})
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/dashboard/agents-activity`, { headers: { Authorization: `Bearer ${backendToken}` } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: any[]) => {
+        const m: Record<string, any> = {}
+        for (const row of rows || []) m[row.agent_id] = row
+        setStats(m)
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true))
+  }, [apiUrl, backendToken])
+
+  const metric = (label: string, value: any) => (
+    <div>
+      <div style={{ fontSize: 11, color: "var(--color-text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-text-primary)" }}>{value}</div>
+    </div>
+  )
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+        Métriques réelles du jour — source <code style={{ fontFamily: "monospace", background: "var(--color-canvas)", padding: "1px 5px", borderRadius: 4 }}>audit_log</code>.
+      </div>
+      {AGENTS.map((agent) => {
+        const s = stats[agent.key] || {}
+        const dur = s.avg_duration_ms != null ? `${s.avg_duration_ms} ms` : "—"
+        return (
+          <div key={agent.key} style={{ background: "white", borderRadius: 16, padding: 24, boxShadow: "var(--shadow-card)", border: "1.5px solid var(--color-border)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--color-primary)" }} />
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>{agent.name}</div>
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 1 }}>{agent.tier} · cascade multi-fournisseurs</div>
+              </div>
+            </div>
+            <p style={{ margin: "0 0 14px 52px", fontSize: 13, color: "var(--color-text-body)", lineHeight: 1.5 }}>{agent.desc}</p>
+            <div style={{ display: "flex", gap: 28, marginLeft: 52 }}>
+              {metric("Req. aujourd'hui", loaded ? (s.request_count ?? 0) : "…")}
+              {metric("Succès", loaded ? (s.success_count ?? 0) : "…")}
+              {metric("Échecs", loaded ? (s.failure_count ?? 0) : "…")}
+              {metric("Durée moy.", loaded ? dur : "…")}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ---------- QUOTAS TAB (super_admin uniquement) ---------- */
+function QuotasTab({ backendToken, apiUrl }: { backendToken: string; apiUrl: string }) {
+  const [quotas, setQuotas] = useState<Record<string, number | null>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState(false)
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings/quotas`, {
+      headers: { Authorization: `Bearer ${backendToken}` },
+    })
+      .then((r) => r.json())
+      .then(setQuotas)
+      .catch(() => setError("Erreur de chargement"))
+      .finally(() => setLoading(false))
+  }, [apiUrl, backendToken])
+
+  async function save() {
+    setSaving(true); setError(""); setSuccess(false)
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/quotas`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ quotas }),
+      })
+      if (!res.ok) { setError("Erreur de sauvegarde"); return }
+      const updated = await res.json()
+      setQuotas(updated)
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 2500)
+    } catch { setError("Erreur réseau") } finally { setSaving(false) }
+  }
+
+  const ROLE_ORDER = ["super_admin", "direction", "commercial", "bureau_etudes", "conducteur", "administratif", "terrain"]
+
+  return (
+    <div>
+      <div style={{ background: "white", borderRadius: 16, boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--color-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>Quotas mensuels par rôle</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
+              Nombre max de requêtes / mois. Illimité = aucune restriction.
+            </div>
+          </div>
+          <button onClick={save} disabled={saving || loading} style={{
+            background: success ? "#166534" : "var(--color-primary)",
+            color: "white", border: "none",
+            borderRadius: 9999, padding: "9px 22px", fontSize: 13, fontWeight: 600,
+            cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1,
+            transition: "background 0.3s",
+          }}>
+            {saving ? "Sauvegarde..." : success ? "✓ Sauvegardé" : "Sauvegarder"}
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-muted)" }}>Chargement...</div>
+        ) : (
+          <div style={{ padding: 24 }}>
+            {error && <p style={{ color: "var(--color-error-text)", fontSize: 13, marginBottom: 16 }}>{error}</p>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {ROLE_ORDER.filter((r) => r in quotas).map((role) => {
+                const limit = quotas[role]
+                const isUnlimited = limit === null
+                const color = ROLE_COLORS[role] || "#666"
+                return (
+                  <div key={role} style={{
+                    display: "flex", alignItems: "center", gap: 16,
+                    padding: "14px 18px", borderRadius: 12,
+                    border: "1px solid var(--color-border)", background: "var(--color-canvas)",
+                  }}>
+                    <span style={{
+                      background: color + "18", color, padding: "4px 12px",
+                      borderRadius: 9999, fontSize: 12, fontWeight: 700,
+                      minWidth: 130, textAlign: "center", display: "inline-block",
+                    }}>
+                      {ROLE_LABELS[role]}
+                    </span>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--color-text-body)", cursor: "pointer", userSelect: "none" }}>
+                      <input
+                        type="checkbox"
+                        checked={isUnlimited}
+                        onChange={(e) => setQuotas((q) => ({ ...q, [role]: e.target.checked ? null : 100 }))}
+                        style={{ width: 16, height: 16, accentColor: "var(--color-primary)" }}
+                      />
+                      Illimité
+                    </label>
+                    {!isUnlimited ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <input
+                          type="number" min={1} max={10000}
+                          value={limit ?? ""}
+                          onChange={(e) => setQuotas((q) => ({ ...q, [role]: parseInt(e.target.value) || 1 }))}
+                          style={{
+                            padding: "8px 12px", border: "1.5px solid var(--color-border)",
+                            borderRadius: 10, fontSize: 14, width: 110,
+                            color: "var(--color-text-primary)", background: "white", outline: "none",
+                          }}
+                        />
+                        <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>req / mois</span>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 13, color: "var(--color-text-muted)", fontStyle: "italic" }}>
+                        ∞ — aucune restriction
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ---------- SERVICES TAB (état réel via /system) ---------- */
+function ServicesTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [sys, setSys] = useState<any>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/dashboard/system`, { headers: { Authorization: `Bearer ${backendToken}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setSys)
+      .catch(() => {})
+      .finally(() => setLoaded(true))
+  }, [apiUrl, backendToken])
+
+  const p = sys?.providers || {}
+  const db = sys?.db || {}
+  const services = [
+    { name: "PostgreSQL + pgvector", desc: "Base de données + checkpointer LangGraph", up: sys?.checkpointer === "AsyncPostgresSaver", detail: sys ? `${sys.checkpointer} · ${db.threads ?? 0} threads · ${db.users_actifs ?? 0} users` : "—" },
+    { name: "Langfuse", desc: "Observabilité LLM (traces)", up: !!sys?.observability?.langfuse_enabled, detail: sys?.observability?.host || "—" },
+    { name: "Groq", desc: "LLM gratuit — paliers LIGHT/STANDARD", up: !!p.groq, detail: p.groq ? "clé configurée" : "clé absente" },
+    { name: "OpenRouter", desc: "LongCat / DeepSeek / modèles free", up: !!p.openrouter, detail: p.openrouter ? "clé configurée" : "clé absente" },
+    { name: "DeepSeek (API directe)", desc: "deepseek-v4-pro — fallback qualité", up: !!p.deepseek, detail: p.deepseek ? "clé configurée" : "clé absente" },
+    { name: "LongCat (API directe)", desc: "modèle principal", up: !!p.longcat, detail: p.longcat ? "clé configurée" : "clé absente" },
+    { name: "Anthropic", desc: "vision agent 2 (palier COMPLEX)", up: !!p.anthropic, detail: p.anthropic ? "clé configurée" : "placeholder / absente" },
+    { name: "Ollama (local)", desc: "LLM local — dernier recours", up: !!p.ollama, detail: "local" },
+  ]
+
+  return (
+    <div>
+      {loaded && !sys && (
+        <div style={{ color: "var(--color-error-text)", fontSize: 13, marginBottom: 12 }}>
+          État système indisponible (réservé au super admin).
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+        {services.map((s, i) => (
+          <div key={i} style={{
+            background: "white", borderRadius: 14, padding: 18, boxShadow: "var(--shadow-card)",
+            borderLeft: `3px solid ${s.up ? "var(--color-primary-mid)" : "var(--color-pending-text)"}`,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>{s.name}</div>
+              <span style={{
+                fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 9999,
+                color: s.up ? "var(--color-paid-text)" : "var(--color-pending-text)",
+                background: s.up ? "var(--color-paid-bg)" : "var(--color-pending-bg)",
+              }}>
+                {!loaded ? "…" : s.up ? "✓ Actif" : "! Inactif"}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>{s.desc}</div>
+            <div style={{ fontSize: 11, color: "var(--color-text-body)", fontFamily: "monospace", background: "var(--color-canvas)", padding: "4px 8px", borderRadius: 6, display: "inline-block" }}>
+              {s.detail}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ---------- MAIN COMPONENT ---------- */
+export default function SettingsClient({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
+  const [activeTab, setActiveTab] = useState<SubTab>("utilisateurs")
+
+  const subTabs = ALL_SUB_TABS.filter((t) => !t.roles || t.roles.includes(currentRole))
+
+  return (
+    <div style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
+      <h1 style={{ margin: "0 0 6px", fontSize: 26, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
+        Paramètres
+      </h1>
+      <p style={{ margin: "0 0 28px", fontSize: 14, color: "var(--color-text-muted)" }}>
+        Configuration du système Duret & Sols — accès {ROLE_LABELS[currentRole] || currentRole}
+      </p>
+
+      <div style={{ display: "flex", gap: 2, marginBottom: 28, background: "white", padding: 6, borderRadius: 14, width: "fit-content", boxShadow: "var(--shadow-card)" }}>
+        {subTabs.map((t) => {
+          const active = activeTab === t.key
+          return (
+            <button key={t.key} onClick={() => setActiveTab(t.key)} style={{
+              padding: "8px 18px", border: "none", cursor: "pointer",
+              borderRadius: 10, fontSize: 14, fontWeight: active ? 700 : 500,
+              color: active ? "var(--color-primary)" : "var(--color-text-muted)",
+              background: active ? "var(--color-primary-subtle)" : "transparent",
+              transition: "all 0.15s", display: "flex", alignItems: "center", gap: 6,
+            }}>
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {activeTab === "utilisateurs" && (
+        <UsersTab initialUsers={initialUsers} backendToken={backendToken} currentRole={currentRole} apiUrl={apiUrl} />
+      )}
+      {activeTab === "plages" && <PlagesTab apiUrl={apiUrl} backendToken={backendToken} users={initialUsers} currentRole={currentRole} />}
+      {activeTab === "rbac" && <RBACTab apiUrl={apiUrl} backendToken={backendToken} />}
+      {activeTab === "agents" && <AgentsTab apiUrl={apiUrl} backendToken={backendToken} />}
+      {activeTab === "quotas" && currentRole === "super_admin" && (
+        <QuotasTab backendToken={backendToken} apiUrl={apiUrl} />
+      )}
+      {activeTab === "services" && <ServicesTab apiUrl={apiUrl} backendToken={backendToken} />}
+    </div>
+  )
+}

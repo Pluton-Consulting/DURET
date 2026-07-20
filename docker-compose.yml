@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/migrations:/migrations:ro
+      - ./backend/database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - noa_network
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Bind mount Windows : inotify ne remonte pas → uvicorn --reload doit sonder les fichiers.
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "0.0.0.0:8000:8000"
+    volumes:
+      - ./backend:/app
+    # Rend Ollama (LLM local, palier LIGHT) accessible sur l'hôte Windows/WSL
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - noa_network
+
+  browser-worker:
+    build: ./browser-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Overrides propres au worker (chemins internes au conteneur)
+      SITE_CREDENTIALS_FILE: /secrets/site_credentials.json
+      # /tmp est inscriptible par l'utilisateur non-root du conteneur (le volume /sessions est root).
+      BROWSER_SESSIONS_DIR: /tmp/sessions
+      BACKEND_URL: http://backend:8000
+      # Démarrage de Chromium étranglé sous forte pression mémoire (WSL) → on élargit
+      # largement les timeouts d'événements browser-use (défauts 30 s trop courts au cold start).
+      TIMEOUT_BrowserStartEvent: "180"
+      TIMEOUT_BrowserLaunchEvent: "180"
+      TIMEOUT_NavigateToUrlEvent: "60"
+      TIMEOUT_BrowserStateRequestEvent: "60"
+    volumes:
+      - ./backend/secrets:/secrets:ro      # identifiants par site (lecture seule)
+      - browser_sessions:/sessions         # sessions connectées persistées (rw)
+    shm_size: '2gb'                        # obligatoire pour la stabilité de Chromium
+    # AUCUN port publié : service interne, joignable seulement sur noa_network.
+    networks:
+      - noa_network
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    environment:
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      BACKEND_URL: http://backend:8000
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+    # Mode PRODUCTION : image standalone Next (node server.js), AUCUNE compilation à la volée
+    # → navigation instantanée entre onglets + faible empreinte RAM (bonus sur PC 7 Go).
+    # Pour développer le front avec hot-reload : ajouter le fichier dev en surcouche —
+    #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d frontend
+    ports:
+      - "0.0.0.0:3000:3000"
+    networks:
+      - noa_network
+
+  # langfuse-server : DÉSACTIVÉ — on utilise Langfuse Cloud (cf. .env LANGFUSE_BASE_URL).
+  # Le conteneur auto-hébergé consommait ~0,6 Go de RAM (économie sur petit VPS).
+  # Pour le réactiver, restaurer ce bloc depuis git (image langfuse/langfuse:2 +
+  # DATABASE_URL postgres/langfuse + clés d'init) et repasser langfuse_base_url en local.
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${HEADSCALE_IP}:80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - noa_network
+
+networks:
+  noa_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  browser_sessions:

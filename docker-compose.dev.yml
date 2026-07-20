@@ -1,0 +1,22 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    # Turbopack : compilation à la volée 5-10× plus rapide que Webpack (dev). Sur PC contraint,
+    # fait chuter le « Compiled /accueil in 5.7s » à <1 s → navigation entre onglets bien plus fluide.
+    command: npm run dev -- --turbo
+    environment:
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      BACKEND_URL: http://backend:8000
+      # Bind mount Windows : inotify ne remonte pas → next dev doit sonder les fichiers.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "0.0.0.0:3000:3000"

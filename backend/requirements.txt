@@ -1,0 +1,33 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.0
+pydantic-settings==2.5.0
+asyncpg==0.30.0
+langchain>=1.0,<2.0          # umbrella requis par l'intégration langfuse.langchain (v4)
+langgraph>=1.2.0
+langgraph-checkpoint-postgres>=2.0.0
+psycopg[binary,pool]>=3.2.0
+langchain-anthropic>=0.3.0
+langchain-ollama>=0.2.0
+langchain-groq>=0.2.0
+langchain-openai>=0.2.0    # OpenRouter (OpenAI-compatible) : LongCat, DeepSeek, modèles free
+langfuse>=3.0.0          # SDK v3 (Langfuse Cloud) — intégration langchain moderne
+python-jose[cryptography]==3.3.0
+httpx>=0.28.0
+pgvector>=0.3.0
+numpy>=1.26.0
+openai>=1.50.0            # embeddings RAG (optionnel — clé OPENAI_API_KEY)
+pillow>=10.0.0            # suppression EXIF/GPS photos (Agent 2)
+pymupdf>=1.24.0          # rendu PDF→image pour la vision (Agent 2, import optionnel)
+spacy==3.7.6
+# fr_core_news_lg installé via : python -m spacy download fr_core_news_lg
+daytona-sdk==0.169.0
+
+# ── Ingestion Phase 2 — connecteurs (importés paresseusement : requis seulement
+#    quand on active le connecteur correspondant). Voir SETUP_CONNECTEURS.md ──────
+google-api-python-client>=2.140.0   # Google Drive API v3
+google-auth-oauthlib>=1.2.0         # flux OAuth (consentement) Google Drive
+msal>=1.31.0                        # Outlook / Microsoft 365 (Graph, app-only)
+pandas>=2.2.0                       # import exports CSV/Excel (Extrabat, Deytime)
+openpyxl>=3.1.0                     # lecture des .xlsx
+pdfplumber>=0.11.0                  # extraction de texte des PDF (Drive, webhook)

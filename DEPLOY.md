@@ -40,10 +40,11 @@ Docker Compose) sur un VPS Ubuntu. Accès **privé via VPN auto-hébergé (Heads
             │
    frontend · backend · browser-worker · postgres(pgvector)
 
-   ── en parallèle ──  vpn.<DOMAINE> → IP PUBLIQUE du VPS → serveur Headscale
+   ── en parallèle ──  vpn-<APP>.<DOMAINE> → IP PUBLIQUE du VPS → serveur Headscale
 ```
 
-Deux enregistrements DNS : **`vpn`** → IP **publique** (serveur Headscale) ; **`<APP>`** → IP
+Deux enregistrements DNS (sous-domaine VPN **unique par projet** si tu réutilises un même
+domaine) : **`vpn-<APP>`** → IP **publique** (serveur Headscale) ; **`<APP>`** → IP
 **VPN** (l'appli, joignable seulement sur le VPN). Deux IP à garder : **`IP_PUBLIQUE`** (OVH) et
 **`VPN_IP`** (`tailscale ip -4`, ex. `100.64.0.1`).
 
@@ -96,7 +97,7 @@ sudo usermod -aG docker $USER
 
 ## Étape 5 — VPN Headscale
 
-**5.1 — DNS :** crée `vpn.<DOMAINE>` → **IP_PUBLIQUE**.
+**5.1 — DNS :** crée `vpn-<APP>.<DOMAINE>` → **IP_PUBLIQUE**.
 
 **5.2 — Installer :**
 ```bash
@@ -111,9 +112,9 @@ sudo wget -O /etc/headscale/config.yaml https://raw.githubusercontent.com/juanfo
 sudo nano /etc/headscale/config.yaml
 ```
 ```yaml
-server_url: https://vpn.<DOMAINE>
+server_url: https://vpn-<APP>.<DOMAINE>
 listen_addr: IP_PUBLIQUE:443
-tls_letsencrypt_hostname: vpn.<DOMAINE>
+tls_letsencrypt_hostname: vpn-<APP>.<DOMAINE>
 tls_letsencrypt_listen: IP_PUBLIQUE:80
 ```
 > ⚠ **Garde les `:443` et `:80` après l'IP** (sans port → Headscale crashe en boucle).
@@ -133,7 +134,7 @@ sudo headscale preauthkeys create --user <ID> --reusable --expiration 8760h
 **5.5 — Connecter le VPS au VPN :**
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --login-server https://vpn.<DOMAINE> --authkey hskey-auth-...
+sudo tailscale up --login-server https://vpn-<APP>.<DOMAINE> --authkey hskey-auth-...
 tailscale ip -4        # → VPN_IP (ex. 100.64.0.1)
 ```
 
@@ -192,7 +193,7 @@ les IP, évite les 502). `docker compose ps` doit montrer tout en `running`/`hea
 
 ## Étape 9 — Accès
 Sur chaque **poste** : installer le client tailscale, puis
-`tailscale up --login-server https://vpn.<DOMAINE> --authkey hskey-auth-...` → ouvrir
+`tailscale up --login-server https://vpn-<APP>.<DOMAINE> --authkey hskey-auth-...` → ouvrir
 **`http://<APP>.<DOMAINE>`** → écran de connexion → email → lien magique → connecté.
 > Si le poste utilise déjà **Tailscale officiel** ailleurs, il bascule entre les deux réseaux avec
 > `tailscale up --login-server … --force-reauth` (un client = un réseau à la fois).

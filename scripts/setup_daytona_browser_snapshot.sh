@@ -30,7 +30,7 @@ daytona sandbox exec "$SANDBOX_ID" \
 echo "Création du snapshot..."
 daytona sandbox snapshot create "$SANDBOX_ID" \
     --name "$SNAPSHOT_NAME" \
-    --description "Python 3.12 + Playwright + Chromium pour NOA browser agent"
+    --description "Python 3.12 + Playwright + Chromium pour Pluton browser agent"
 
 # Supprimer le sandbox temporaire
 daytona sandbox delete "$SANDBOX_ID"

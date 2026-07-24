@@ -31,7 +31,7 @@ docker compose exec postgres psql -U noa_user -d symbiose_noa -f /migrations/002
 
 echo ""
 echo "=============================="
-echo " NOA LOCAL — OPERATIONNEL"
+echo " Pluton LOCAL — OPERATIONNEL"
 echo "=============================="
 echo " Frontend : http://localhost:3000"
 echo " Backend  : http://localhost:8000"

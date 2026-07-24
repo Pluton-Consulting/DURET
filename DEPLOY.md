@@ -104,7 +104,11 @@ sudo usermod -aG docker $USER
 VER=0.29.2   # dernière version : github.com/juanfont/headscale/releases
 wget -O headscale.deb "https://github.com/juanfont/headscale/releases/download/v${VER}/headscale_${VER}_linux_amd64.deb"
 sudo apt install -y ./headscale.deb
+headscale version   # DOIT afficher 0.29.2 (surtout PAS 0.23.x)
 ```
+> ⚠ **N'installe PAS via `apt install headscale`** (le dépôt Ubuntu fournit une **0.23** trop vieille
+> → le client tailscale récent ne se connecte pas et `tailscale up` **tourne en boucle**). Toujours le
+> `.deb` de la release ci-dessus. Déjà coincé sur une vieille version ? Voir **« Mettre à jour Headscale »** plus bas.
 
 **5.3 — Configurer** — pars du config-example officiel de ta version, puis modifie 4 lignes :
 ```bash
@@ -208,8 +212,41 @@ cd ~/<REPO_DOSSIER>/<DOSSIER> && git pull && ./deploy.sh
 
 ---
 
+## Mettre à jour Headscale (si bloqué sur une vieille version)
+
+Symptôme : `tailscale up` **tourne en rond** et `headscale version` affiche une **0.23.x**. Le format
+de config **et** le schéma de base ont changé depuis → on réinstalle proprement (base neuve).
+
+```bash
+sudo systemctl stop headscale
+VER=0.29.2
+wget -O /tmp/headscale.deb "https://github.com/juanfont/headscale/releases/download/v${VER}/headscale_${VER}_linux_amd64.deb"
+sudo apt install -y /tmp/headscale.deb
+headscale version                              # doit afficher 0.29.2
+
+# config : repartir de l'exemple 0.29 (format changé), recopier tes 4 lignes depuis la sauvegarde
+sudo cp /etc/headscale/config.yaml /etc/headscale/config.yaml.bak
+sudo wget -O /etc/headscale/config.yaml "https://raw.githubusercontent.com/juanfont/headscale/v${VER}/config-example.yaml"
+sudo nano /etc/headscale/config.yaml           # server_url · listen_addr:443 · tls_letsencrypt_hostname · tls_letsencrypt_listen:80
+
+# base neuve (schéma incompatible avec la 0.23) — l'ancienne est sauvegardée
+sudo mv /var/lib/headscale/db.sqlite /var/lib/headscale/db.sqlite.bak 2>/dev/null || true
+
+sudo systemctl restart headscale
+sudo systemctl status headscale --no-pager     # "active (running)"
+
+# base neuve → recréer user + clé (⚠ en 0.29, --user = l'ID numérique de « users list »)
+sudo headscale users create <PROJET>
+sudo headscale users list
+sudo headscale preauthkeys create --user <ID> --reusable --expiration 8760h
+```
+> Base neuve ⇒ **chaque machine doit se reconnecter** :
+> `tailscale up --login-server https://vpn-<APP>.<DOMAINE> --authkey hskey-auth-…`.
+
+---
+
 ## Pièges rencontrés (retours d'expérience)
-- **Headscale 0.23 trop vieux** pour les clients tailscale récents (`up` bloqué en silence) → installer une version récente (0.29+).
+- **Headscale 0.23 trop vieux** pour les clients tailscale récents → `tailscale up` **tourne en boucle**. Vérifie `headscale version` ; installe/mets à jour en **0.29+** (voir « Mettre à jour Headscale »). ⚠ `apt install headscale` fournit une 0.23 — à éviter.
 - **`--user`** attend l'**ID numérique** en 0.29 (pas le nom).
 - **`server_url` doit être en `https://`** (Headscale) même si l'app est en HTTP.
 - **`.env` collé en double** → `deploy.sh` gère (1re occurrence), mais évite.

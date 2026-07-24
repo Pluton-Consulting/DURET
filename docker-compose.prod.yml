@@ -1,0 +1,28 @@
+# ============================================================
+# Overlay PRODUCTION (VPS) — mode HTTP derrière le VPN (Headscale).
+# Usage :  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# ============================================================
+# L'application est servie en HTTP par nginx, lié à l'IP VPN du VPS
+# (HEADSCALE_IP = l'IP `tailscale ip -4`, ex. 100.64.0.1). Le tunnel WireGuard du VPN
+# chiffre déjà tout le trafic → HTTP y est sûr.
+#
+# HTTPS (Caddy + Let's Encrypt) : DÉSACTIVÉ. Les fichiers caddy/ restent dans le dépôt ;
+# pour réactiver le HTTPS un jour, restaurer le service `caddy` depuis git + repasser
+# les URLs du .env en https:// et HEADSCALE_IP en 127.0.0.1.
+services:
+  postgres:
+    restart: unless-stopped
+  backend:
+    restart: unless-stopped
+    # Prod : pas de --reload (économise le CPU).
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+  browser-worker:
+    restart: unless-stopped
+  nginx:
+    restart: unless-stopped
+  frontend:
+    restart: unless-stopped
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}

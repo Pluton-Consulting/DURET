@@ -28,6 +28,10 @@ function newId(): string {
 // est simplement lent (machine chargée) plutôt que réellement bloqué.
 const WS_STALL_MS = 14000
 
+// Mémorise le thread courant (localStorage) pour restaurer la conversation quand on
+// quitte l'onglet puis qu'on y revient (le composant se démonte/remonte → état perdu).
+const STORAGE_KEY = "duret_thread_id"
+
 // Traduction des nœuds techniques en étapes lisibles (« ce que fait Duret & Sols »).
 const NODE_LABELS: Record<string, string> = {
   classify: "Analyse de votre demande",
@@ -68,9 +72,20 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const [pendingValidation, setPendingValidation] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
+  // Enregistre le thread courant (state + localStorage) dès qu'il est connu.
+  const rememberThread = (tid: string) => {
+    setThreadId(tid)
+    try { if (typeof window !== "undefined") window.localStorage.setItem(STORAGE_KEY, tid) } catch { /* no-op */ }
+  }
+
+  // Restaure la conversation au montage : thread passé en prop, sinon dernier thread
+  // mémorisé en localStorage → recharge son historique depuis le backend.
   useEffect(() => {
-    if (!initialThreadId || !token) return
-    apiRequest<any[]>(`/api/chat/threads/${initialThreadId}/messages`, { token })
+    if (!token) return
+    const tid = initialThreadId || (typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null)
+    if (!tid) return
+    setThreadId(tid)
+    apiRequest<any[]>(`/api/chat/threads/${tid}/messages`, { token })
       .then((rows) =>
         setMessages(
           (rows || []).map((m) => ({
@@ -93,7 +108,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     setPendingValidation(false)
 
     const tid = threadId ?? newId()
-    if (!threadId) setThreadId(tid)
+    if (!threadId) rememberThread(tid)
 
     const pushAssistant = (content: string) =>
       setMessages((prev) => [...prev, { id: newId(), role: "assistant", content }])
@@ -131,7 +146,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           "/api/chat/",
           { method: "POST", token, body: JSON.stringify({ query: text, thread_id: tid }) }
         )
-        if (res.thread_id) setThreadId(res.thread_id)
+        if (res.thread_id) rememberThread(res.thread_id)
         const needsValidation =
           res.status === "pending_validation" || res.status === "validation_required" || Boolean(res.validation_id)
         if (needsValidation) setPendingValidation(true)

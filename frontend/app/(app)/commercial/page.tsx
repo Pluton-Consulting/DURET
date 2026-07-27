@@ -6,7 +6,7 @@ export default async function CommercialPage() {
   return (
     <div style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
+      <div className="sym-in" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
             Commercial / Admin
@@ -15,9 +15,9 @@ export default async function CommercialPage() {
             Agent 1 — RAG, NER, LLM · Requêtes commerciales et administratives
           </p>
         </div>
-        <a href="/chat" style={{
-          background: "var(--color-primary)", color: "white",
-          padding: "12px 24px", borderRadius: 9999, fontSize: 14, fontWeight: 700,
+        <a href="/chat" className="sym-tap" style={{
+          background: "linear-gradient(180deg, var(--color-primary-hover), var(--color-primary))", color: "var(--color-text-on-dark)",
+          padding: "12px 24px", borderRadius: "var(--radius-pill)", fontSize: 14, fontWeight: 700, boxShadow: "var(--shadow-card)",
         }}>
           Nouvelle requête
         </a>
@@ -31,7 +31,7 @@ export default async function CommercialPage() {
           { label: "Taux de succès", value: "—" },
           { label: "Temps moyen", value: "—" },
         ].map((kpi, i) => (
-          <div key={i} style={{ background: "white", borderRadius: "var(--radius-card-sm, 14px)", padding: 20, boxShadow: "var(--shadow-card)" }}>
+          <div key={i} className={`sym-in sym-in-${i + 1} sym-card`} style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card-sm, 14px)", padding: 20, boxShadow: "var(--shadow-card)" }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
               {kpi.label}
             </div>
@@ -44,11 +44,11 @@ export default async function CommercialPage() {
         {/* Left */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           {/* Conversations — non implémenté */}
-          <div style={{ background: "white", borderRadius: "var(--radius-card)", padding: 24, boxShadow: "var(--shadow-card)" }}>
+          <div className="sym-in sym-in-1 sym-card" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", padding: 24, boxShadow: "var(--shadow-card)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: "var(--color-text-primary)" }}>
               Requêtes récentes
             </h3>
-            <div style={{
+            <div className="sym-fade" style={{
               padding: "48px 24px", textAlign: "center",
               color: "var(--color-text-muted)", fontSize: 13,
               border: "1.5px dashed var(--color-border)", borderRadius: 12,
@@ -58,8 +58,8 @@ export default async function CommercialPage() {
           </div>
 
           {/* Pipeline status — réel */}
-          <div style={{ background: "var(--color-primary)", borderRadius: "var(--radius-card)", padding: 24, boxShadow: "var(--shadow-card)" }}>
-            <h3 style={{ margin: "0 0 18px", fontSize: 16, fontWeight: 700, color: "white" }}>Pipeline Agent 1</h3>
+          <div className="sym-in sym-in-2 sym-card" style={{ background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))", borderRadius: "var(--radius-card)", padding: 24, boxShadow: "var(--shadow-card)" }}>
+            <h3 style={{ margin: "0 0 18px", fontSize: 16, fontWeight: 700, color: "var(--color-text-on-dark)" }}>Pipeline Agent 1</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {[
                 { step: "1. Anonymisation NER", status: "stub", desc: "spaCy fr_core_news_lg — nœud TODO" },
@@ -68,11 +68,11 @@ export default async function CommercialPage() {
                 { step: "4. Réhydratation PII", status: "stub", desc: "Remplacement entity_map — TODO" },
                 { step: "5. Vérification devis", status: "stub", desc: "Human-in-the-loop — TODO" },
               ].map((item, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: item.status === "partial" ? "#C8E6C0" : "#ffffff44" }} />
+                <div key={i} className={`sym-in sym-in-${i + 1}`} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: item.status === "partial" ? "var(--color-primary-light)" : "#ffffff44" }} />
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "white" }}>{item.step}</div>
-                    <div style={{ fontSize: 11, color: "#A8D4A0" }}>{item.desc}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-on-dark)" }}>{item.step}</div>
+                    <div style={{ fontSize: 11, color: "var(--color-on-dark-accent)" }}>{item.desc}</div>
                   </div>
                 </div>
               ))}
@@ -83,11 +83,11 @@ export default async function CommercialPage() {
         {/* Right */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {/* RAG — non implémenté */}
-          <div style={{ background: "white", borderRadius: "var(--radius-card-sm, 14px)", padding: 20, boxShadow: "var(--shadow-card)" }}>
+          <div className="sym-in sym-in-3 sym-card" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card-sm, 14px)", padding: 20, boxShadow: "var(--shadow-card)" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>
               Index RAG
             </h3>
-            <div style={{
+            <div className="sym-fade" style={{
               padding: "32px 16px", textAlign: "center",
               color: "var(--color-text-muted)", fontSize: 12,
               border: "1.5px dashed var(--color-border)", borderRadius: 10,
@@ -97,11 +97,11 @@ export default async function CommercialPage() {
           </div>
 
           {/* Routage LLM — non implémenté */}
-          <div style={{ background: "white", borderRadius: "var(--radius-card-sm, 14px)", padding: 20, boxShadow: "var(--shadow-card)" }}>
+          <div className="sym-in sym-in-4 sym-card" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card-sm, 14px)", padding: 20, boxShadow: "var(--shadow-card)" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>
               Routage LLM
             </h3>
-            <div style={{
+            <div className="sym-fade" style={{
               padding: "32px 16px", textAlign: "center",
               color: "var(--color-text-muted)", fontSize: 12,
               border: "1.5px dashed var(--color-border)", borderRadius: 10,

@@ -37,41 +37,51 @@ export default function StatsCards({ data }: { data?: StatsCardsData | null }) {
         marginBottom: 24,
       }}
     >
-      {cards.map((card) => (
-        <div
-          key={card.label}
-          style={{
-            background: "var(--color-surface)",
-            borderRadius: "var(--radius-card)",
-            padding: 24,
-            boxShadow: "var(--shadow-card)",
-          }}
-        >
+      {cards.map((card, i) => {
+        const isSignature = i === 0
+        return (
           <div
+            key={card.label}
+            className={`sym-in sym-in-${i + 1} sym-card`}
             style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--color-text-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              marginBottom: 10,
+              background: isSignature
+                ? "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))"
+                : "var(--color-surface)",
+              borderRadius: "var(--radius-card)",
+              padding: 24,
+              boxShadow: "var(--shadow-card)",
             }}
           >
-            {card.label}
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: isSignature
+                  ? "var(--color-on-dark-accent)"
+                  : "var(--color-text-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                marginBottom: 10,
+              }}
+            >
+              {card.label}
+            </div>
+            <div
+              style={{
+                fontSize: 36,
+                fontWeight: 800,
+                color: isSignature
+                  ? "var(--color-text-on-dark)"
+                  : "var(--color-text-primary)",
+                lineHeight: 1,
+                letterSpacing: "-1px",
+              }}
+            >
+              {card.value}
+            </div>
           </div>
-          <div
-            style={{
-              fontSize: 36,
-              fontWeight: 800,
-              color: "var(--color-text-primary)",
-              lineHeight: 1,
-              letterSpacing: "-1px",
-            }}
-          >
-            {card.value}
-          </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

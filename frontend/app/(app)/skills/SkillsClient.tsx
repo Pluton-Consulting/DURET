@@ -122,47 +122,48 @@ export default function SkillsClient({ apiUrl, token }: Props) {
 
   return (
     <div style={{ padding: 32, maxWidth: 1180, margin: "0 auto" }}>
-      <div style={{ fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600, marginBottom: 8 }}>
+      <div className="sym-in sym-in-1" style={{ fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600, marginBottom: 8 }}>
         Gouvernance · Capacités des agents
       </div>
-      <h1 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
+      <h1 className="sym-in sym-in-2" style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
         Configuration des skills
       </h1>
-      <p style={{ margin: "0 0 24px", fontSize: 15, color: "var(--color-text-body)", maxWidth: "72ch", lineHeight: 1.55 }}>
+      <p className="sym-in sym-in-3" style={{ margin: "0 0 24px", fontSize: 15, color: "var(--color-text-body)", maxWidth: "72ch", lineHeight: 1.55 }}>
         Catalogue des capacités métier des agents. Vous validez, activez/désactivez et testez chaque skill.
         Une skill n'est exécutable par les agents qu'une fois <b>validée/stable</b> ET <b>active</b>.
       </p>
 
       {/* KPIs + filtre agent */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
+      <div className="sym-in sym-in-4" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
         <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
           {counts.total} skills · {counts.valides} validées · {counts.actifs} actives
         </span>
         <div style={{ flex: 1 }} />
         {agents.map((a) => (
-          <button key={a} onClick={() => setAgentFilter(a)}
+          <button key={a} onClick={() => setAgentFilter(a)} className="sym-tap"
             style={{
-              fontSize: 13, padding: "6px 12px", borderRadius: 9, cursor: "pointer",
+              fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer",
               border: `1px solid ${agentFilter === a ? "var(--color-primary)" : "var(--color-border)"}`,
-              background: agentFilter === a ? "var(--color-primary-subtle)" : "white",
+              background: agentFilter === a ? "var(--color-primary-subtle)" : "var(--color-surface)",
               color: agentFilter === a ? "var(--color-primary)" : "var(--color-text-body)",
               fontWeight: agentFilter === a ? 700 : 500,
+              boxShadow: agentFilter === a ? "var(--shadow-card)" : "none",
             }}>
             {a === "all" ? "Tous" : a === "agent1" ? "Agent 1" : a === "agent2" ? "Agent 2" : "Agent 3"}
           </button>
         ))}
-        <button onClick={load} style={{ fontSize: 13, padding: "6px 12px", borderRadius: 9, cursor: "pointer", border: "1px solid var(--color-border)", background: "white" }}>↻</button>
+        <button onClick={load} className="sym-tap" style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>↻</button>
       </div>
 
-      {err && <div style={{ color: "var(--color-error-text)", fontSize: 13, marginBottom: 12 }}>⚠ {err}</div>}
-      {loading && <div style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Chargement…</div>}
+      {err && <div className="sym-pop" style={{ color: "var(--color-error-text)", fontSize: 13, marginBottom: 12 }}>⚠ {err}</div>}
+      {loading && <div className="sym-fade" style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Chargement…</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {filtered.map((s) => {
+        {filtered.map((s, i) => {
           const st = STATUS_STYLE[s.status] || { bg: "var(--color-canvas)", fg: "var(--color-text-muted)", label: s.status }
           const detail = open[s.name]
           return (
-            <div key={s.name} style={{ background: "white", borderRadius: 14, boxShadow: "var(--shadow-card)", overflow: "hidden", opacity: s.enabled ? 1 : 0.62 }}>
+            <div key={s.name} className={`sym-card sym-in sym-in-${(i % 6) + 1}`} style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", overflow: "hidden", opacity: s.enabled ? 1 : 0.62 }}>
               <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 220 }}>
                   <div style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>
@@ -175,24 +176,24 @@ export default function SkillsClient({ apiUrl, token }: Props) {
                 </div>
 
                 <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{s.usage_count}× util.</span>
-                <span style={{ background: st.bg, color: st.fg, padding: "5px 12px", borderRadius: 9999, fontSize: 12, fontWeight: 600 }}>{st.label}</span>
+                <span className="sym-pop" style={{ background: st.bg, color: st.fg, padding: "5px 12px", borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 600 }}>{st.label}</span>
 
                 {/* Actions */}
-                <button onClick={() => runTest(s)} disabled={busy === s.name + "/run"}
+                <button onClick={() => runTest(s)} disabled={busy === s.name + "/run"} className="sym-tap"
                   style={btn("var(--color-progress-text)")}>Tester</button>
-                <button onClick={() => validate(s)} disabled={busy === s.name + "/validate"}
+                <button onClick={() => validate(s)} disabled={busy === s.name + "/validate"} className="sym-tap"
                   style={btn("var(--color-paid-text)")}>→ {STATUS_STYLE[NEXT_STATUS[s.status]]?.label || "Valider"}</button>
-                <button onClick={() => toggleEnabled(s)} disabled={busy === s.name + "/enabled"}
+                <button onClick={() => toggleEnabled(s)} disabled={busy === s.name + "/enabled"} className="sym-tap"
                   style={btn(s.enabled ? "var(--color-error-text)" : "var(--color-paid-text)")}>
                   {s.enabled ? "Désactiver" : "Activer"}
                 </button>
-                <button onClick={() => viewDetail(s)} style={btn("var(--color-text-body)")}>
+                <button onClick={() => viewDetail(s)} className="sym-tap" style={btn("var(--color-text-body)")}>
                   {detail?.detail ? "▾ Code" : "▸ Code"}
                 </button>
               </div>
 
               {(detail?.detail || detail?.run) && (
-                <div style={{ borderTop: "1px solid var(--color-border)", padding: "12px 18px", background: "var(--color-canvas)" }}>
+                <div className="sym-fade" style={{ borderTop: "1px solid var(--color-border)", padding: "12px 18px", background: "var(--color-canvas)" }}>
                   {detail?.run && (
                     <pre style={preStyle}>
                       {"▶ Test : " + JSON.stringify(detail.run.output ?? detail.run.error ?? detail.run, null, 2)}
@@ -212,7 +213,7 @@ export default function SkillsClient({ apiUrl, token }: Props) {
           )
         })}
         {!loading && filtered.length === 0 && (
-          <div style={{ color: "var(--color-text-muted)", fontSize: 14, padding: 24 }}>Aucune skill pour ce filtre.</div>
+          <div className="sym-fade" style={{ color: "var(--color-text-muted)", fontSize: 14, padding: 24 }}>Aucune skill pour ce filtre.</div>
         )}
       </div>
     </div>
@@ -221,13 +222,13 @@ export default function SkillsClient({ apiUrl, token }: Props) {
 
 function btn(color: string): React.CSSProperties {
   return {
-    fontSize: 12.5, fontWeight: 600, padding: "6px 11px", borderRadius: 8, cursor: "pointer",
-    border: "1px solid var(--color-border)", background: "white", color, whiteSpace: "nowrap",
+    fontSize: 12.5, fontWeight: 600, padding: "6px 11px", borderRadius: "var(--radius-pill)", cursor: "pointer",
+    border: "1px solid var(--color-border)", background: "var(--color-surface)", color, whiteSpace: "nowrap",
   }
 }
 
 const preStyle: React.CSSProperties = {
   margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--color-text-primary)",
-  background: "white", border: "1px solid var(--color-border)", borderRadius: 8,
+  background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-icon)",
   padding: "8px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 320, overflow: "auto",
 }

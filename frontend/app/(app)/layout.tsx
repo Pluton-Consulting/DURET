@@ -14,7 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div style={{ minHeight: "100vh", background: "var(--color-canvas)" }}>
       <TopNav role={role} email={email} name={name} />
-      <main style={{ paddingTop: 64, minHeight: "calc(100vh - 64px)" }}>
+      <main className="sym-fade" style={{ paddingTop: 64, minHeight: "calc(100vh - 64px)" }}>
         {children}
       </main>
     </div>

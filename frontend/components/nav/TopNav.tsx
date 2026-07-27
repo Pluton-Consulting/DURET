@@ -37,14 +37,16 @@ export default function TopNav({ role, email, name }: Props) {
 
   return (
     <nav
+      className="sym-in"
       style={{
         position: "fixed",
         top: 0,
         left: 0,
         right: 0,
         height: 64,
-        background: "white",
+        background: "var(--color-surface)",
         borderBottom: "1px solid var(--color-border)",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
         display: "flex",
         alignItems: "center",
         padding: "0 28px",
@@ -55,7 +57,8 @@ export default function TopNav({ role, email, name }: Props) {
       {/* Logo */}
       <Link
         href="/accueil"
-        style={{ marginRight: 36, flexShrink: 0, display: "flex", alignItems: "center" }}
+        className="sym-tap"
+        style={{ marginRight: 36, flexShrink: 0, display: "flex", alignItems: "center", transition: "opacity 0.15s ease" }}
       >
         <span style={{ fontSize: 20, fontWeight: 800, color: "var(--color-primary)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
           Duret <span style={{ color: "var(--color-primary-mid)" }}>&amp; Sols</span>
@@ -73,13 +76,14 @@ export default function TopNav({ role, email, name }: Props) {
           scrollbarWidth: "none",
         }}
       >
-        {tabs.map((tab) => {
+        {tabs.map((tab, i) => {
           const isActive =
             pathname === tab.href || pathname.startsWith(tab.href + "/")
           return (
             <Link
               key={tab.key}
               href={tab.href}
+              className={`sym-tap sym-in sym-in-${Math.min(i + 1, 6)}`}
               style={{
                 padding: "7px 14px",
                 fontSize: 14,
@@ -91,7 +95,8 @@ export default function TopNav({ role, email, name }: Props) {
                 background: isActive
                   ? "var(--color-primary-subtle)"
                   : "transparent",
-                transition: "all 0.15s ease",
+                boxShadow: isActive ? "inset 0 0 0 1px var(--color-primary-subtle)" : "none",
+                transition: "background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease",
                 whiteSpace: "nowrap",
                 flexShrink: 0,
               }}
@@ -116,19 +121,23 @@ export default function TopNav({ role, email, name }: Props) {
         <div style={{ position: "relative" }} ref={dropRef}>
           <button
             onClick={() => setShowDropdown((v) => !v)}
+            className="sym-tap"
             style={{
               width: 36,
               height: 36,
               borderRadius: "50%",
-              background: "var(--color-primary)",
-              color: "white",
+              background:
+                "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
+              color: "var(--color-text-on-dark)",
               border: "none",
               cursor: "pointer",
               fontSize: 13,
               fontWeight: 700,
+              boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              transition: "box-shadow 0.18s ease, transform 0.18s ease",
             }}
           >
             {initials}
@@ -136,17 +145,19 @@ export default function TopNav({ role, email, name }: Props) {
 
           {showDropdown && (
             <div
+              className="sym-pop"
               style={{
                 position: "absolute",
                 top: 46,
                 right: 0,
-                background: "white",
-                borderRadius: 16,
-                boxShadow: "0 8px 32px rgba(24,43,22,0.16)",
+                background: "var(--color-surface)",
+                borderRadius: "var(--radius-card)",
+                boxShadow: "var(--shadow-card-hover)",
                 border: "1px solid var(--color-border)",
                 minWidth: 220,
                 zIndex: 200,
                 overflow: "hidden",
+                transformOrigin: "top right",
               }}
             >
               <div
@@ -174,15 +185,17 @@ export default function TopNav({ role, email, name }: Props) {
                   {email}
                 </div>
                 <span
+                  className="sym-pop"
                   style={{
                     display: "inline-block",
                     marginTop: 8,
                     fontSize: 11,
                     fontWeight: 600,
-                    background: "var(--color-primary)",
-                    color: "white",
+                    background:
+                      "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
+                    color: "var(--color-text-on-dark)",
                     padding: "3px 10px",
-                    borderRadius: 9999,
+                    borderRadius: "var(--radius-pill)",
                   }}
                 >
                   {role}
@@ -191,6 +204,7 @@ export default function TopNav({ role, email, name }: Props) {
               <div style={{ padding: 8 }}>
                 <button
                   onClick={() => signOut({ callbackUrl: "/login" })}
+                  className="sym-tap"
                   style={{
                     width: "100%",
                     padding: "10px 12px",
@@ -202,6 +216,7 @@ export default function TopNav({ role, email, name }: Props) {
                     color: "var(--color-error-text)",
                     borderRadius: 8,
                     fontWeight: 500,
+                    transition: "background 0.15s ease",
                   }}
                 >
                   ← Se déconnecter

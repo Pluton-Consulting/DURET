@@ -37,13 +37,13 @@ export default async function AutoEvolutionPage() {
 
   return (
     <div style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ marginBottom: 8, fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600 }}>
+      <div className="sym-in" style={{ marginBottom: 8, fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600 }}>
         Agent 3 · Superviseur auto-apprenant
       </div>
-      <h1 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
+      <h1 className="sym-in sym-in-1" style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
         Auto-Évolution
       </h1>
-      <p style={{ margin: "0 0 28px", fontSize: 15, color: "var(--color-text-body)", maxWidth: "70ch", lineHeight: 1.55 }}>
+      <p className="sym-in sym-in-2" style={{ margin: "0 0 28px", fontSize: 15, color: "var(--color-text-body)", maxWidth: "70ch", lineHeight: 1.55 }}>
         Quand une requête sort du champ des agents existants, Duret & Sols ne reste pas bloqué : il <b>génère un nouveau skill</b>,
         le teste dans un sandbox isolé, puis le soumet à validation humaine. Chaque cas non couvert devient une capacité réutilisable.
       </p>
@@ -51,8 +51,8 @@ export default async function AutoEvolutionPage() {
       {/* Pipeline */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 32 }}>
         {PIPELINE.map((s) => (
-          <div key={s.n} style={{ background: "white", borderRadius: 14, padding: 16, boxShadow: "var(--shadow-card)" }}>
-            <div style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "var(--color-primary-mid)", marginBottom: 8 }}>
+          <div key={s.n} className={`sym-in sym-in-${s.n} sym-card`} style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card-sm)", padding: 16, boxShadow: "var(--shadow-card)", border: "1px solid var(--color-border)" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "var(--radius-pill)", background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))", color: "var(--color-text-on-dark)", fontFamily: "monospace", fontSize: 13, fontWeight: 700, marginBottom: 10, boxShadow: "var(--shadow-card)" }}>
               {s.n}
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-text-primary)", marginBottom: 4 }}>{s.t}</div>
@@ -68,16 +68,16 @@ export default async function AutoEvolutionPage() {
       </div>
 
       {skills.length === 0 ? (
-        <div style={{ background: "white", borderRadius: 16, padding: "48px 24px", textAlign: "center", boxShadow: "var(--shadow-card)", color: "var(--color-text-muted)", fontSize: 14 }}>
+        <div className="sym-fade" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", padding: "48px 24px", textAlign: "center", boxShadow: "var(--shadow-card)", color: "var(--color-text-muted)", fontSize: 14 }}>
           Aucun skill en attente. L'Agent 3 générera un skill dès qu'une requête sortira du champ couvert.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {skills.map((s: any) => {
+          {skills.map((s: any, i: number) => {
             const st = STATUS_STYLE[s.status] || { bg: "var(--color-canvas)", fg: "var(--color-text-muted)", label: s.status }
             const conf = s.confidence_score != null ? Number(s.confidence_score) : null
             return (
-              <div key={s.id} style={{ background: "white", borderRadius: 14, padding: "16px 20px", boxShadow: "var(--shadow-card)", display: "flex", alignItems: "center", gap: 16 }}>
+              <div key={s.id} className={`sym-in sym-in-${Math.min(i + 1, 6)} sym-card`} style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card-sm)", padding: "16px 20px", boxShadow: "var(--shadow-card)", border: "1px solid var(--color-border)", display: "flex", alignItems: "center", gap: 16 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>{s.name}</div>
                   <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 3 }}>
@@ -92,7 +92,7 @@ export default async function AutoEvolutionPage() {
                     </div>
                   </div>
                 )}
-                <span style={{ background: st.bg, color: st.fg, padding: "5px 12px", borderRadius: 9999, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                <span style={{ background: st.bg, color: st.fg, padding: "4px 12px", borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
                   {st.label}
                 </span>
               </div>

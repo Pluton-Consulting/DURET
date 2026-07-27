@@ -28,6 +28,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
 
   return (
     <div
+      className="sym-in sym-card"
       style={{
         background: "var(--color-surface)",
         borderRadius: "var(--radius-card)",
@@ -48,6 +49,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
 
       {list.length === 0 ? (
         <div
+          className="sym-fade"
           style={{
             padding: "32px 0",
             textAlign: "center",
@@ -64,6 +66,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
             return (
               <div
                 key={item.id ?? i}
+                className={`sym-in sym-in-${Math.min(i + 1, 6)}`}
                 style={{
                   display: "flex",
                   alignItems: "flex-start",
@@ -108,6 +111,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
                   </div>
                 </div>
                 <span
+                  className="sym-pop"
                   style={{
                     fontSize: 11,
                     fontWeight: 700,

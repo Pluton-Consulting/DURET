@@ -30,6 +30,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             --color-text-primary:   #16202E;
             --color-text-body:      #33424F;
             --color-text-muted:     #78899B;
+            --color-text-on-dark:   #FFFFFF;
+            --color-on-dark-accent: #AECBE8;
             --color-paid-bg:        #DDEBF7;
             --color-paid-text:      #1F5FA6;
             --color-pending-bg:     #FDF3E3;
@@ -41,10 +43,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             --radius-card:          20px;
             --radius-card-sm:       14px;
             --radius-pill:          9999px;
+            --radius-icon:          10px;
             --shadow-card:          0 2px 12px rgba(16,32,48,0.07);
             --shadow-hover:         0 4px 20px rgba(16,32,48,0.12);
             --shadow-card-hover:    0 4px 20px rgba(16,32,48,0.12);
             --font:                 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-family:          'Inter', sans-serif;
           }
           *, *::before, *::after { box-sizing: border-box; }
           body {
@@ -64,6 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           @keyframes symFadeUp { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:translateY(0) } }
           @keyframes symFadeIn { from { opacity:0 } to { opacity:1 } }
           @keyframes symShimmer { 0%{background-position:-450px 0} 100%{background-position:450px 0} }
+          @keyframes symFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
           @keyframes symPop { 0%{transform:scale(.94)} 60%{transform:scale(1.03)} 100%{transform:scale(1)} }
           .sym-in   { animation: symFadeUp .5s cubic-bezier(.22,.61,.36,1) both; }
           .sym-in-1 { animation-delay:.05s } .sym-in-2 { animation-delay:.11s }

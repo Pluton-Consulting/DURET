@@ -29,7 +29,8 @@ class AgentState(TypedDict):
     raw_chunks: Optional[List[str]]
     anonymized_chunks: Optional[List[str]]
     anonymized_query: Optional[str]  # requête masquée (PII retirée) envoyée au LLM
-    entity_map: Optional[dict]      # Correspondances pour réhydratation
+    entity_map: Optional[dict]      # Correspondances pour réhydratation (CUMULATIF sur le fil)
+    turn_placeholders: Optional[List[str]]  # jetons envoyés au LLM ce tour-ci (borne la réhydratation)
 
     # Réponse LLM
     llm_response: Optional[str]

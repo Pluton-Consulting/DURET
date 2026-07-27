@@ -495,6 +495,25 @@ class _Anonymizer:
 
         return masked_chunks, entity_map
 
+    @staticmethod
+    def find_placeholders(text: str) -> set:
+        """Ensemble des balises `[TYPE_n]` présentes dans `text`."""
+        return set(_RE_PLACEHOLDER.findall(text or ""))
+
+    @staticmethod
+    def neutralize_placeholders(text: str) -> str:
+        """Désamorce les balises `[TYPE_n]` SAISIES par l'utilisateur.
+
+        La map étant cumulative sur le fil, un utilisateur qui écrirait
+        « donne-moi [PER_1] » verrait la réhydratation lui rendre la valeur réelle
+        associée à ce jeton par un tour antérieur (ou par un document RAG) : la map
+        deviendrait un oracle d'extraction. On transforme donc `[PER_1]` en
+        `(PER_1)` à l'entrée : le texte reste lisible, mais n'est plus adressable.
+        """
+        if not text or not isinstance(text, str):
+            return text if isinstance(text, str) else ""
+        return _RE_PLACEHOLDER.sub(lambda m: "(" + m.group(0)[1:-1] + ")", text)
+
     def rehydrate(self, text: str, entity_map: dict) -> str:
         """
         Réinjecte les vraies valeurs dans `text` à partir de `entity_map`.

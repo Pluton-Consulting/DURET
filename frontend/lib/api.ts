@@ -15,7 +15,11 @@ export async function apiRequest<T>(
   })
   if (!res.ok) {
     const error = await res.json().catch(() => ({}))
-    throw new Error(error.detail || `HTTP ${res.status}`)
+    // Le code HTTP est exposé sur l'erreur : les appelants doivent pouvoir réagir
+    // spécifiquement (ex. 403 sur un thread_id périmé -> repartir sur un fil neuf).
+    const err = new Error(error.detail || `HTTP ${res.status}`) as Error & { status?: number }
+    err.status = res.status
+    throw err
   }
   return res.json()
 }

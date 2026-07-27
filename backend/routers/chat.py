@@ -123,8 +123,15 @@ async def _claim_thread(current_user: User, thread_id: str, query: str,
             thread_id, current_user.id, title, agent_used,
         )
         if pk is None:
+            # Filtre explicite sur user_id : la policy RLS de `threads` accorde la
+            # visibilité de TOUS les fils aux rôles super_admin/direction. Sans ce
+            # AND, un tel compte passerait le contrôle sur le fil de n'importe qui,
+            # reprendrait sa conversation et lirait sa mémoire. La visibilité
+            # administrative (lecture via /threads) reste inchangée : ici, on décide
+            # qui a le droit de POURSUIVRE un fil, et ce n'est que son propriétaire.
             pk = await conn.fetchval(
-                "SELECT id FROM threads WHERE langgraph_thread_id = $1", thread_id
+                "SELECT id FROM threads WHERE langgraph_thread_id = $1 AND user_id = $2",
+                thread_id, current_user.id,
             )
             if pk is None:
                 raise HTTPException(

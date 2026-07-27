@@ -97,6 +97,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # PRÉCÉDENT dans l'état, et elle est renvoyée comme réponse à la question courante.
         "llm_response": None,
         "final_response": None,
+        "turn_placeholders": None,
         "out_of_scope": False,
         "browser_needed": False,
         "browser_used": False,

@@ -30,7 +30,12 @@ const WS_STALL_MS = 14000
 
 // Mémorise le thread courant (localStorage) pour restaurer la conversation quand on
 // quitte l'onglet puis qu'on y revient (le composant se démonte/remonte → état perdu).
-const STORAGE_KEY = "duret_thread_id"
+// Clé préfixée par l'utilisateur : sur un poste partagé, sans ça, l'utilisateur B
+// hérite du thread_id de A (rien ne purge le localStorage à la déconnexion) et se
+// voit refuser chaque message depuis que l'appartenance du fil est contrôlée.
+const STORAGE_PREFIX = "duret_thread_id"
+const storageKey = (userKey?: string | null) =>
+  userKey ? `${STORAGE_PREFIX}:${userKey}` : STORAGE_PREFIX
 
 // Traduction des nœuds techniques en étapes lisibles (« ce que fait Duret & Sols »).
 const NODE_LABELS: Record<string, string> = {
@@ -73,16 +78,29 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const wsRef = useRef<WebSocket | null>(null)
 
   // Enregistre le thread courant (state + localStorage) dès qu'il est connu.
+  const userKey = (session as any)?.user?.email || null
+
   const rememberThread = (tid: string) => {
     setThreadId(tid)
-    try { if (typeof window !== "undefined") window.localStorage.setItem(STORAGE_KEY, tid) } catch { /* no-op */ }
+    try { if (typeof window !== "undefined") window.localStorage.setItem(storageKey(userKey), tid) } catch { /* no-op */ }
+  }
+
+  // Fil périmé (403 : il appartient à quelqu'un d'autre) -> on repart proprement.
+  const forgetThread = () => {
+    setThreadId(null)
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(storageKey(userKey))
+        window.localStorage.removeItem(STORAGE_PREFIX)   // ancienne clé non préfixée
+      }
+    } catch { /* no-op */ }
   }
 
   // Restaure la conversation au montage : thread passé en prop, sinon dernier thread
   // mémorisé en localStorage → recharge son historique depuis le backend.
   useEffect(() => {
     if (!token) return
-    const tid = initialThreadId || (typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null)
+    const tid = initialThreadId || (typeof window !== "undefined" ? window.localStorage.getItem(storageKey(userKey)) : null)
     if (!tid) return
     setThreadId(tid)
     apiRequest<any[]>(`/api/chat/threads/${tid}/messages`, { token })
@@ -96,7 +114,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         )
       )
       .catch(() => {})
-  }, [initialThreadId, token])
+  }, [initialThreadId, token, userKey])
 
   useEffect(() => () => { try { wsRef.current?.close() } catch { /* no-op */ } }, [])
 
@@ -141,11 +159,23 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       settled = true
       clearStall()
       closeWs()
-      try {
-        const res = await apiRequest<{ response: string; thread_id: string; status?: string; validation_id?: string | null }>(
+      const post = (threadForCall: string) =>
+        apiRequest<{ response: string; thread_id: string; status?: string; validation_id?: string | null }>(
           "/api/chat/",
-          { method: "POST", token, body: JSON.stringify({ query: text, thread_id: tid }) }
+          { method: "POST", token, body: JSON.stringify({ query: text, thread_id: threadForCall }) }
         )
+      try {
+        let res
+        try {
+          res = await post(tid)
+        } catch (e: any) {
+          // 403 = ce fil ne nous appartient pas (thread_id hérité d'une autre session
+          // sur le même poste). On l'oublie et on rejoue sur un fil neuf, sinon le
+          // chat resterait définitivement bloqué.
+          if (e?.status !== 403) throw e
+          forgetThread()
+          res = await post(newId())
+        }
         if (res.thread_id) rememberThread(res.thread_id)
         const needsValidation =
           res.status === "pending_validation" || res.status === "validation_required" || Boolean(res.validation_id)

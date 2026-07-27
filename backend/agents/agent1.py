@@ -46,6 +46,10 @@ async def anonymize_node(state: AgentState) -> dict:
     # numérotation redémarrant à 1 à chaque tour, [PER_1] désignerait une personne
     # différente dans l'historique et dans la question courante — le modèle fusionnerait
     # les deux et la réhydratation réinjecterait la mauvaise valeur.
+    # Désamorce les balises que l'utilisateur aurait saisies lui-même : la map étant
+    # cumulative, « donne-moi [PER_1] » lui ferait sinon restituer la valeur réelle
+    # attachée à ce jeton par un tour antérieur ou par un document.
+    query = anonymizer.neutralize_placeholders(query)
     previous_map = state.get("entity_map") or {}
     # NER spaCy = CPU-bound synchrone : on le sort de la boucle événementielle (sinon il
     # fige le streaming WS et bloque les autres requêtes pendant toute l'étape).
@@ -189,6 +193,17 @@ Voici le devis correspondant :
         # `query` (masqué) et non `human_content` : inutile de conserver le contexte
         # RAG du tour précédent, il est re-récupéré à chaque tour.
         "messages": [HumanMessage(content=query), AIMessage(content=response.content)],
+        # Jetons réellement PRÉSENTS dans ce qui a été envoyé au modèle ce tour-ci.
+        # La réhydratation sera restreinte à cet ensemble : la map étant cumulative,
+        # réhydrater aveuglément permettrait au modèle de ressortir un [PER_n] d'un
+        # tour sans rapport et d'y réinjecter une vraie valeur (donnée fausse dans un
+        # contexte faux — exactement la classe de bug qu'on répare ici).
+        "turn_placeholders": sorted(
+            anonymizer.find_placeholders(human_content).union(
+                *[anonymizer.find_placeholders(str(getattr(m, "content", "") or ""))
+                  for m in history] or [set()]
+            )
+        ),
     }
 
 
@@ -198,6 +213,11 @@ async def rehydrate_node(state: AgentState) -> dict:
 
     text = state.get("llm_response", "") or ""
     entity_map = state.get("entity_map") or {}
+    # Restreint aux jetons envoyés ce tour-ci (cf. turn_placeholders dans llm_node).
+    allowed = state.get("turn_placeholders")
+    if allowed is not None:
+        allowed = set(allowed)
+        entity_map = {k: v for k, v in entity_map.items() if k in allowed}
     return {"final_response": anonymizer.rehydrate(text, entity_map)}
 
 

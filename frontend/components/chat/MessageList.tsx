@@ -16,7 +16,7 @@ export default function MessageList({ messages }: { messages: Message[] }) {
     }}>
       {messages.length === 0 && (
         <div className="sym-in" style={{ textAlign: "center", marginTop: 80 }}>
-          <p style={{ margin: 0, fontSize: 17, fontWeight: 500, color: "var(--color-text-body)" }}>Bonjour, comment puis-je vous aider ?</p>
+          <p style={{ margin: 0, fontSize: 17, fontWeight: 500, color: "var(--color-text-body)" }}>Posez votre question pour démarrer.</p>
         </div>
       )}
       {messages.map((msg) => (

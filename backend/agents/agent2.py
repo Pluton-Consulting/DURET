@@ -30,7 +30,8 @@ VISION_PROMPT = (
     "résine, béton, sol souple, parquet…), surfaces et cotes LISIBLES, linéaires (plinthes, joints, "
     "seuils), niveaux, contraintes techniques (accès, réservations, existant à déposer, chape). "
     "Repère les informations utiles au métré (surfaces en m², longueurs de plinthes en ml, quantités). "
-    "Ne devine JAMAIS une mesure non lisible : dis « non lisible ». Réponds en français, structuré."
+    "Ne devine JAMAIS une mesure non lisible : dis « non lisible ». Réponds en français, structuré. "
+    "Typographie : n'utilise JAMAIS de tiret cadratin (—) ni de tiret demi-cadratin (–) ; emploie une virgule, un deux-points, une parenthèse ou un tiret simple « - »."
 )
 
 # Taille max d'image envoyée au modèle vision (coût / limites API).

@@ -38,9 +38,12 @@ async def anonymize_node(state: AgentState) -> dict:
     """Masque la requête ET les chunks avant tout envoi LLM (entity_map partagé)."""
     from security.anonymizer import anonymizer
 
+    import asyncio
     query = state.get("query", "")
     chunks = list(state.get("raw_chunks") or [])
-    masked, entity_map = anonymizer.anonymize_chunks([query] + chunks)
+    # NER spaCy = CPU-bound synchrone : on le sort de la boucle événementielle (sinon il
+    # fige le streaming WS et bloque les autres requêtes pendant toute l'étape).
+    masked, entity_map = await asyncio.to_thread(anonymizer.anonymize_chunks, [query] + chunks)
 
     return {
         "anonymized_query": masked[0] if masked else query,

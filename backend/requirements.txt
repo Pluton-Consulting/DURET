@@ -20,7 +20,7 @@ openai>=1.50.0            # embeddings RAG (optionnel — clé OPENAI_API_KEY)
 pillow>=10.0.0            # suppression EXIF/GPS photos (Agent 2)
 pymupdf>=1.24.0          # rendu PDF→image pour la vision (Agent 2, import optionnel)
 spacy==3.7.6
-# fr_core_news_lg installé via : python -m spacy download fr_core_news_lg
+# fr_core_news_md installé via : python -m spacy download fr_core_news_md
 daytona-sdk==0.169.0
 
 # ── Ingestion Phase 2 — connecteurs (importés paresseusement : requis seulement

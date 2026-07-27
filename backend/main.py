@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
             logging.getLogger("duret").critical(
                 "⚠ Anonymiseur NER (spaCy) INDISPONIBLE — mode regex-only. "
                 "Les appels LLM externes seront refusés (block_external_llm_without_ner=%s). "
-                "Installez fr_core_news_lg pour rétablir la protection des noms/adresses/organisations.",
+                "Installez fr_core_news_md pour rétablir la protection des noms/adresses/organisations.",
                 settings.block_external_llm_without_ner,
             )
     except Exception:

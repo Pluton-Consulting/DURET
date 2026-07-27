@@ -7,7 +7,7 @@ tout envoi vers une API LLM externe (OpenAI, Groq, Anthropic...), puis
 réinjecter les vraies valeurs dans la réponse renvoyée à l'utilisateur.
 
 Deux niveaux de détection :
-  1. spaCy `fr_core_news_lg` (optionnel, chargé une seule fois en lazy) pour
+  1. spaCy `fr_core_news_md` (optionnel, chargé une seule fois en lazy) pour
      la reconnaissance d'entités nommées : PER, LOC, ORG, MISC.
   2. Regex métier robustes (toujours actives, indépendantes de spaCy) pour
      les patterns structurés : montants €, SIRET, SIREN, e-mails,
@@ -38,9 +38,10 @@ except Exception:  # noqa: BLE001 - import volontairement défensif
     _SPACY_IMPORTED = False
 
 
-# Modèles spaCy français, du plus précis au plus léger. On charge le premier
-# disponible : `lg` (idéal) → `md` → `sm` (fallback léger mais suffisant pour le NER).
-_SPACY_MODEL_NAMES = ("fr_core_news_lg", "fr_core_news_md", "fr_core_news_sm")
+# Modèles spaCy français. On charge le premier disponible : `md` (bon compromis
+# précision/vitesse pour le NER) → `sm` (le plus léger) → `lg` (précis mais lourd et
+# lent, dernier recours). Le regex métier couvre déjà email/tél/IBAN/SIRET/montants.
+_SPACY_MODEL_NAMES = ("fr_core_news_md", "fr_core_news_sm", "fr_core_news_lg")
 
 # Correspondance label spaCy -> préfixe de placeholder typé.
 # MISC volontairement EXCLU : ce label « divers » (salutations, produits, nationalités,
@@ -140,7 +141,7 @@ class _Anonymizer:
     # ------------------------------------------------------------------
     def _ensure_model(self) -> None:
         """
-        Charge le modèle spaCy `fr_core_news_lg` au premier besoin.
+        Charge le modèle spaCy `fr_core_news_md` au premier besoin.
 
         Idempotent et thread-safe. En cas d'échec (spaCy ou modèle absent),
         bascule silencieusement en mode regex-only : `_spacy_ready` passe à
@@ -181,7 +182,7 @@ class _Anonymizer:
         Indique si le moteur NER spaCy est réellement opérationnel.
 
         Déclenche le chargement lazy si nécessaire. Retourne False dès lors
-        que spaCy ou le modèle `fr_core_news_lg` est indisponible (mode
+        que spaCy ou le modèle `fr_core_news_md` est indisponible (mode
         regex-only).
         """
         self._ensure_model()

@@ -11,11 +11,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Modèle spaCy français (NER pour l'anonymisation RGPD) — OBLIGATOIRE.
-# Essaie lg (idéal) puis md, puis sm. Si AUCUN ne s'installe, le build ÉCHOUE
-# volontairement : sans NER, les noms/adresses/organisations ne seraient pas masqués
-# avant envoi aux LLM externes (fuite PII). Ne jamais accepter un build sans modèle.
-RUN python -m spacy download fr_core_news_lg \
-    || python -m spacy download fr_core_news_md \
+# `md` plutôt que `lg` : ~10× plus léger et nettement plus rapide par requête, pour une
+# précision NER quasi identique (le regex métier couvre déjà email/tél/IBAN/SIRET/montants).
+# Repli `sm`. Si AUCUN ne s'installe, le build ÉCHOUE volontairement : sans NER, les
+# noms/adresses/organisations partiraient en clair aux LLM externes (fuite PII).
+RUN python -m spacy download fr_core_news_md \
     || python -m spacy download fr_core_news_sm
 
 COPY . .

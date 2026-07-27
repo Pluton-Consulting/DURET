@@ -27,9 +27,43 @@ function parse(content: string): Part[] {
   return parts
 }
 
+// Champs requis par type : si l'un manque, le composant n'est PAS rendu (on garde le texte).
+const REQUIRED: Record<string, string[]> = {
+  quote: ["client", "total", "lines"],
+  invoice: ["number", "client", "amount"],
+  email: ["subject", "from"],
+  doc: ["name"],
+  contact: ["name"],
+  project: ["name", "client"],
+  table: ["columns", "rows"],
+  status_table: ["columns", "rows"],
+  keyvalue: ["rows"],
+  bars: ["data"],
+  hbars: ["data"],
+  progress: ["items"],
+  donut: ["segments"],
+  line: ["values"],
+  gauge: ["value"],
+  stat: ["label", "value"],
+  list: ["items"],
+  badge: ["text"],
+  callout: ["text"],
+  quick_replies: ["options"],
+}
+
+// Un champ est « fourni » s'il n'est ni vide, ni une chaîne blanche, ni un tableau vide.
+function present(v: any): boolean {
+  if (v === undefined || v === null) return false
+  if (typeof v === "string") return v.trim().length > 0
+  if (Array.isArray(v)) return v.length > 0
+  return true
+}
+
 function renderBlock(block: any, onAction?: (v: string) => void): ReactNode {
   if (!block || typeof block !== "object") return null
   const { type, ...p } = block
+  const req = REQUIRED[type]
+  if (req && !req.every((k) => present(p[k]))) return null   // champ requis manquant → pas de composant
   switch (type) {
     case "quote":         return <QuoteCard {...p} />
     case "invoice":       return <InvoiceCard {...p} />

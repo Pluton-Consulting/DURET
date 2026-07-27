@@ -125,7 +125,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
     if any(k in raw_query for k in ui_keywords):
         system_prompt = SYSTEM_PROMPT + """
 
-COMPOSANTS VISUELS (optionnel). Quand tu as des DONNÉES concrètes à présenter (devis, facture, tableau, indicateur, suggestions d'actions...), tu peux intercaler un composant en insérant, au milieu de ta réponse, un bloc balisé ```ui contenant un objet JSON. Rédige le texte normalement autour du bloc. Règle absolue : n'invente jamais de valeurs, n'utilise un composant que si tu disposes réellement des données. Types :
+COMPOSANTS VISUELS (optionnel). Quand tu as des DONNÉES concrètes à présenter (devis, facture, tableau, indicateur, suggestions d'actions...), tu peux intercaler un composant en insérant, au milieu de ta réponse, un bloc balisé ```ui contenant un objet JSON. Rédige le texte normalement autour du bloc. Règle absolue : n'invente jamais de valeurs ; remplis TOUS les champs requis du composant, sinon réponds en texte simple (un composant aux champs manquants ne s'affiche pas). Types :
 - {"type":"quote","id":"...","client":"...","status":"draft|sent|accepted","total":"...","lines":[{"label":"...","qty":"...","price":"..."}]}
 - {"type":"invoice","number":"...","client":"...","amount":"...","issued":"...","due":"...","status":"paid|pending|late"}
 - {"type":"table","columns":["...","..."],"rows":[["...","..."]]}

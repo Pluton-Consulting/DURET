@@ -115,7 +115,31 @@ async def llm_node(state: AgentState, config=None) -> dict:
                          "d'entreprise est vide ou ne contient rien sur ce sujet. Réponds honnêtement, "
                          "sans inventer de contenu.)\n\n" + human_content)
 
-    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=human_content)]
+    # Composants visuels : l'instruction (coûteuse en tokens) n'est ajoutée qu'aux tours
+    # « riches » (devis, tableau, indicateur…), détectés par mots-clés sur la requête brute.
+    raw_query = (state.get("query") or "").lower()
+    ui_keywords = ("devis", "facture", "tableau", "récap", "recap", "compar", "montre",
+                   "affiche", "liste", "graph", "planning", "situation", "indicateur",
+                   "kpi", "propose", "bouton", "chantier", "statut", "avanc")
+    system_prompt = SYSTEM_PROMPT
+    if any(k in raw_query for k in ui_keywords):
+        system_prompt = SYSTEM_PROMPT + """
+
+COMPOSANTS VISUELS (optionnel). Quand tu as des DONNÉES concrètes à présenter (devis, facture, tableau, indicateur, suggestions d'actions...), tu peux intercaler un composant en insérant, au milieu de ta réponse, un bloc balisé ```ui contenant un objet JSON. Rédige le texte normalement autour du bloc. Règle absolue : n'invente jamais de valeurs, n'utilise un composant que si tu disposes réellement des données. Types :
+- {"type":"quote","id":"...","client":"...","status":"draft|sent|accepted","total":"...","lines":[{"label":"...","qty":"...","price":"..."}]}
+- {"type":"invoice","number":"...","client":"...","amount":"...","issued":"...","due":"...","status":"paid|pending|late"}
+- {"type":"table","columns":["...","..."],"rows":[["...","..."]]}
+- {"type":"callout","tone":"info|success|warning|error","title":"...","text":"..."}
+- {"type":"bars","data":[{"label":"...","value":10}]}
+- {"type":"stat","label":"...","value":"...","hint":"..."}
+- {"type":"quick_replies","options":["Proposition 1","Proposition 2"]}
+Exemple :
+Voici le devis correspondant :
+```ui
+{"type":"quote","id":"DEV-2024-017","client":"SCI Dupont","status":"draft","total":"10 380 € HT","lines":[{"label":"Ragréage de sol","qty":"120 m²","price":"3 600 €"},{"label":"Carrelage grès cérame","qty":"120 m²","price":"6 780 €"}]}
+```"""
+
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=human_content)]
     response = await llm.ainvoke(messages, config=config)
 
     response_cache.set(tier, query, context_text, response.content)

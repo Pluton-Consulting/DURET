@@ -1,10 +1,12 @@
+import { MessageRenderer } from "./MessageRenderer"
+
 interface Message {
   id: string
   role: "user" | "assistant"
   content: string
 }
 
-export default function MessageList({ messages }: { messages: Message[] }) {
+export default function MessageList({ messages, onAction }: { messages: Message[]; onAction?: (v: string) => void }) {
   return (
     <div style={{
       flex: 1,
@@ -19,28 +21,32 @@ export default function MessageList({ messages }: { messages: Message[] }) {
           <p style={{ margin: 0, fontSize: 17, fontWeight: 500, color: "var(--color-text-body)" }}>Posez votre question pour démarrer.</p>
         </div>
       )}
-      {messages.map((msg) => (
-        <div
-          key={msg.id}
-          className="sym-in sym-card"
-          style={{
-            alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-            maxWidth: "70%",
-            background: msg.role === "user"
-              ? "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))"
-              : "var(--color-surface)",
-            color: msg.role === "user" ? "var(--color-text-on-dark)" : "var(--color-text-primary)",
-            padding: "12px 16px",
-            borderRadius: "var(--radius-card-sm)",
-            boxShadow: "var(--shadow-card)",
-            border: msg.role === "user" ? "none" : "1px solid var(--color-border)",
-            fontSize: 14,
-            lineHeight: 1.5,
-          }}
-        >
-          {msg.content}
-        </div>
-      ))}
+      {messages.map((msg) =>
+        msg.role === "user" ? (
+          <div
+            key={msg.id}
+            className="sym-in sym-card"
+            style={{
+              alignSelf: "flex-end",
+              maxWidth: "70%",
+              background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
+              color: "var(--color-text-on-dark)",
+              padding: "12px 16px",
+              borderRadius: "var(--radius-card-sm)",
+              boxShadow: "var(--shadow-card)",
+              border: "none",
+              fontSize: 14,
+              lineHeight: 1.5,
+            }}
+          >
+            {msg.content}
+          </div>
+        ) : (
+          <div key={msg.id} style={{ alignSelf: "flex-start", maxWidth: "100%" }}>
+            <MessageRenderer content={msg.content} onAction={onAction} />
+          </div>
+        )
+      )}
     </div>
   )
 }

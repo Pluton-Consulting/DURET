@@ -41,9 +41,17 @@ async def anonymize_node(state: AgentState) -> dict:
     import asyncio
     query = state.get("query", "")
     chunks = list(state.get("raw_chunks") or [])
+    # entity_map PERSISTANTE sur le fil : on repart de celle des tours précédents pour
+    # qu'une même valeur garde le MÊME placeholder d'un tour à l'autre. Sans ça, la
+    # numérotation redémarrant à 1 à chaque tour, [PER_1] désignerait une personne
+    # différente dans l'historique et dans la question courante — le modèle fusionnerait
+    # les deux et la réhydratation réinjecterait la mauvaise valeur.
+    previous_map = state.get("entity_map") or {}
     # NER spaCy = CPU-bound synchrone : on le sort de la boucle événementielle (sinon il
     # fige le streaming WS et bloque les autres requêtes pendant toute l'étape).
-    masked, entity_map = await asyncio.to_thread(anonymizer.anonymize_chunks, [query] + chunks)
+    masked, entity_map = await asyncio.to_thread(
+        anonymizer.anonymize_chunks, [query] + chunks, previous_map
+    )
 
     return {
         "anonymized_query": masked[0] if masked else query,
@@ -91,7 +99,9 @@ async def llm_node(state: AgentState, config=None) -> dict:
             "error": "ner_unavailable",
         }
 
-    from optim.tokens import trim_chunks, response_cache
+    import hashlib
+    from langchain_core.messages import AIMessage
+    from optim.tokens import trim_chunks, response_cache, compact_messages
 
     tier = state.get("llm_tier", "standard")
     llm = get_llm(LLMTier(tier))
@@ -104,9 +114,21 @@ async def llm_node(state: AgentState, config=None) -> dict:
 
     query = state.get("anonymized_query") or state.get("query", "")
 
-    # Cache exact (palier|requête|contexte anonymisés) : évite un appel LLM identique récent.
-    # Clé et valeur sans PII (la réhydratation se fait ensuite, par requête).
-    cached = response_cache.get(tier, query, context_text)
+    # Historique de conversation (déjà ANONYMISÉ : on ne stocke que du texte masqué),
+    # borné en nombre de messages ET en caractères, recalé sur une frontière de paire.
+    history = compact_messages(state.get("messages") or [])
+
+    # Cache exact (palier|requête|contexte anonymisés). La clé DOIT inclure le fil et
+    # l'historique : sinon, reposer une question déjà posée renverrait la réponse figée
+    # du 1er tour (la mémoire semblerait perdue par intermittence), et deux utilisateurs
+    # posant la même question partageraient une réponse conditionnée par la conversation
+    # de l'autre. Le thread_id isole par conversation, donc par utilisateur.
+    history_sig = hashlib.sha256(
+        "\n".join(str(getattr(m, "content", "") or "") for m in history).encode("utf-8")
+    ).hexdigest()[:16] if history else ""
+    cache_scope = f"{state.get('thread_id', '')}|{history_sig}"
+
+    cached = response_cache.get(tier, query, context_text, cache_scope)
     if cached is not None:
         return {"llm_response": cached, "model_used": "cache", "tokens_in": 0, "tokens_out": 0}
 
@@ -124,8 +146,13 @@ async def llm_node(state: AgentState, config=None) -> dict:
     ui_keywords = ("devis", "facture", "tableau", "récap", "recap", "compar", "montre",
                    "affiche", "liste", "graph", "planning", "situation", "indicateur",
                    "kpi", "propose", "bouton", "chantier", "statut", "avanc")
+    # Une fois les composants activés dans le fil, on GARDE l'instruction sur les tours
+    # suivants : sinon le modèle voit un bloc ```ui dans l'historique sans en avoir la
+    # spécification, et produit un JSON incomplet (que le front masque silencieusement).
+    # Cela stabilise aussi le préfixe système, indispensable au cache de prompt.
+    ui_already_used = any("```ui" in str(getattr(m, "content", "") or "") for m in history)
     system_prompt = SYSTEM_PROMPT
-    if any(k in raw_query for k in ui_keywords):
+    if ui_already_used or any(k in raw_query for k in ui_keywords):
         system_prompt = SYSTEM_PROMPT + """
 
 COMPOSANTS VISUELS (optionnel). Quand tu as des DONNÉES concrètes à présenter (devis, facture, tableau, indicateur, suggestions d'actions...), tu peux intercaler un composant en insérant, au milieu de ta réponse, un bloc balisé ```ui contenant un objet JSON. Rédige le texte normalement autour du bloc. Règle absolue : n'invente jamais de valeurs ; remplis TOUS les champs requis du composant, sinon réponds en texte simple (un composant aux champs manquants ne s'affiche pas). Types :
@@ -142,10 +169,13 @@ Voici le devis correspondant :
 {"type":"quote","id":"DEV-2024-017","client":"SCI Dupont","status":"draft","total":"10 380 € HT","lines":[{"label":"Ragréage de sol","qty":"120 m²","price":"3 600 €"},{"label":"Carrelage grès cérame","qty":"120 m²","price":"6 780 €"}]}
 ```"""
 
-    messages = [SystemMessage(content=system_prompt), HumanMessage(content=human_content)]
+    # [système] + [historique masqué] + [tour courant] : c'est ce qui donne la mémoire.
+    messages = [SystemMessage(content=system_prompt)] + list(history) + [
+        HumanMessage(content=human_content)
+    ]
     response = await llm.ainvoke(messages, config=config)
 
-    response_cache.set(tier, query, context_text, response.content)
+    response_cache.set(tier, query, context_text, response.content, cache_scope)
 
     usage = getattr(response, "usage_metadata", None) or {}
     return {
@@ -153,6 +183,12 @@ Voici le devis correspondant :
         "tokens_in": usage.get("input_tokens", 0),
         "tokens_out": usage.get("output_tokens", 0),
         "model_used": llm.last_model_used,
+        # Alimente le canal `messages` (reducer add_messages) → persisté par le
+        # checkpointer et relu au tour suivant. On n'y stocke QUE du texte masqué :
+        # aucune PII ne dort dans le checkpoint ni ne repart vers le LLM.
+        # `query` (masqué) et non `human_content` : inutile de conserver le contexte
+        # RAG du tour précédent, il est re-récupéré à chaque tour.
+        "messages": [HumanMessage(content=query), AIMessage(content=response.content)],
     }
 
 

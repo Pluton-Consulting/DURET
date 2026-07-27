@@ -97,17 +97,63 @@ async def _increment_usage(current_user: User, tokens: int = 0, cost: float = 0.
         )
 
 
-async def _upsert_thread(current_user: User, thread_id: str, query: str, agent_used: str) -> None:
-    """Crée ou met à jour le thread (titre = début de la 1re requête)."""
+async def _claim_thread(current_user: User, thread_id: str, query: str,
+                        agent_used: str = "agent1") -> str:
+    """Réserve le thread pour cet utilisateur et retourne sa clé primaire.
+
+    Fait AUSSI office de contrôle d'appartenance, et doit donc être appelé AVANT
+    d'exécuter le tour : le `thread_id` vient du client (localStorage / URL du
+    WebSocket) et les tables de checkpoint LangGraph n'ont ni RLS ni `user_id`.
+    Sans ce contrôle, n'importe quel compte authentifié pourrait faire charger le
+    checkpoint d'autrui — et depuis que l'historique de conversation y est
+    persisté, en lire le contenu.
+
+    Distingue les trois cas sans dépendre de la sémantique d'erreur RLS :
+      * fil inexistant        -> l'INSERT réussit et renvoie l'id ;
+      * fil existant et mien  -> conflit, puis le SELECT sous RLS le retrouve ;
+      * fil d'un autre        -> conflit, et le SELECT sous RLS ne voit rien -> 403.
+    """
     title = (query[:60] + "…") if len(query) > 60 else query
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
-        await conn.execute(
+        pk = await conn.fetchval(
             """INSERT INTO threads (langgraph_thread_id, user_id, title, agent_type)
                VALUES ($1, $2, $3, $4)
-               ON CONFLICT (langgraph_thread_id) DO UPDATE
-                   SET updated_at = NOW()""",
+               ON CONFLICT (langgraph_thread_id) DO NOTHING
+               RETURNING id""",
             thread_id, current_user.id, title, agent_used,
         )
+        if pk is None:
+            pk = await conn.fetchval(
+                "SELECT id FROM threads WHERE langgraph_thread_id = $1", thread_id
+            )
+            if pk is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Ce fil de conversation ne vous appartient pas.",
+                )
+            await conn.execute("UPDATE threads SET updated_at = NOW() WHERE id = $1", pk)
+    return str(pk)
+
+
+async def _persist_messages(current_user: User, thread_pk: str,
+                            user_content: str, assistant_content: str) -> None:
+    """Enregistre l'échange dans `messages` (historique rechargeable côté frontend).
+
+    `messages.thread_id` est une FK vers `threads.id` (UUID), pas vers
+    `langgraph_thread_id` : on passe donc la clé primaire renvoyée par
+    `_claim_thread`. RLS forcée sur la table -> connexion RLS obligatoire.
+    Best-effort : une écriture d'historique ne doit jamais faire échouer la réponse.
+    """
+    try:
+        async with get_rls_db(str(current_user.id), current_user.role) as conn:
+            await conn.executemany(
+                "INSERT INTO messages (thread_id, role, content) VALUES ($1, $2, $3)",
+                [(uuid.UUID(thread_pk), "user", user_content or ""),
+                 (uuid.UUID(thread_pk), "assistant", assistant_content or "")],
+            )
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("duret.chat").warning("Persistance des messages échouée : %s", e)
 
 
 @router.post("/")
@@ -120,6 +166,9 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
 
     start = time.monotonic()
     thread_id = body.thread_id or str(uuid.uuid4())
+    # Réservation + contrôle d'appartenance AVANT le tour : run_turn charge le
+    # checkpoint LangGraph (qui contient désormais l'historique de conversation).
+    thread_pk = await _claim_thread(current_user, thread_id, body.query)
     success = True
     error_msg: Optional[str] = None
 
@@ -151,7 +200,7 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
     agent_used = result.get("agent_used", "agent1")
     duration_ms = int((time.monotonic() - start) * 1000)
 
-    await _upsert_thread(current_user, thread_id, body.query, agent_used)
+    await _persist_messages(current_user, thread_pk, body.query, result.get("response") or "")
     await _increment_usage(current_user, tokens=tokens_in + tokens_out, cost=cost_eur)
     await log_action(
         action="chat_request",
@@ -273,6 +322,15 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
             start = time.monotonic()
             tokens = 0
             agent_used = "agent1"
+            # Réservation + contrôle d'appartenance AVANT le tour : le thread_id vient
+            # de l'URL du WebSocket, et stream_turn charge le checkpoint (historique).
+            try:
+                thread_pk = await _claim_thread(user, thread_id, query)
+            except HTTPException as e:
+                await websocket.send_json({"type": "error", "detail": e.detail})
+                continue
+
+            final_response = ""
             try:
                 async for event in runtime.stream_turn(
                     query=query,
@@ -285,13 +343,15 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
                 ):
                     if event.get("node") == "classify":
                         agent_used = (event.get("data") or {}).get("target_agent", agent_used)
+                    if event.get("type") == "final":
+                        final_response = event.get("response") or ""
                     await websocket.send_json(event)
             except Exception as e:
                 await websocket.send_json({"type": "error", "detail": str(e)})
                 continue
 
             duration_ms = int((time.monotonic() - start) * 1000)
-            await _upsert_thread(user, thread_id, query, agent_used)
+            await _persist_messages(user, thread_pk, query, final_response)
             await _increment_usage(user, tokens=tokens, cost=0.0)
             await log_action(
                 action="chat_request", user_id=str(user.id), agent_id=agent_used,

@@ -40,15 +40,38 @@ def trim_chunks(chunks, max_chunks: int | None = None, max_total_chars: int | No
     return out
 
 
-def compact_messages(messages, keep_recent: int | None = None):
-    """Garde les messages système + les N plus récents (limite la croissance de l'historique)."""
+def compact_messages(messages, keep_recent: int | None = None, max_chars: int | None = None):
+    """Fenêtre glissante sur l'historique de conversation (hors messages système).
+
+    Double bornage : au plus `keep_recent` messages ET `max_chars` caractères, en
+    repartant des plus récents. La fenêtre est recalée sur une frontière de PAIRE
+    (elle commence toujours par un message utilisateur) : une liste débutant par
+    une réponse assistant est rejetée par certaines API LLM, et prive de toute
+    façon le modèle de la question à laquelle cette réponse correspondait.
+    """
     keep_recent = settings.optim_history_keep if keep_recent is None else keep_recent
-    if not messages or len(messages) <= keep_recent:
-        return messages
-    systems = [m for m in messages if getattr(m, "type", None) == "system"][:2]
-    tail = list(messages[-keep_recent:])
-    seen = set(id(m) for m in systems)
-    return systems + [m for m in tail if id(m) not in seen]
+    max_chars = settings.optim_max_history_chars if max_chars is None else max_chars
+
+    msgs = [m for m in (messages or []) if getattr(m, "type", None) != "system"]
+    if not msgs:
+        return []
+
+    tail = msgs[-keep_recent:] if keep_recent > 0 else []
+
+    # Budget caractères, en partant de la fin (les tours récents priment).
+    out, used = [], 0
+    for m in reversed(tail):
+        size = len(str(getattr(m, "content", "") or ""))
+        if out and used + size > max_chars:
+            break
+        out.append(m)
+        used += size
+    out.reverse()
+
+    # Recale sur une frontière de paire.
+    while out and getattr(out[0], "type", None) != "human":
+        out.pop(0)
+    return out
 
 
 def tier_max_tokens(tier: str) -> int:
@@ -69,13 +92,15 @@ class ResponseCache:
         self._misses = 0
 
     @staticmethod
-    def _key(tier: str, query: str, context: str) -> str:
-        return hashlib.sha256(f"{tier}\x00{query}\x00{context}".encode("utf-8")).hexdigest()
+    def _key(tier: str, query: str, context: str, scope: str = "") -> str:
+        return hashlib.sha256(
+            f"{tier}\x00{query}\x00{context}\x00{scope}".encode("utf-8")
+        ).hexdigest()
 
-    def get(self, tier: str, query: str, context: str):
+    def get(self, tier: str, query: str, context: str, scope: str = ""):
         if not settings.optim_cache_enabled:
             return None
-        key = self._key(tier, query, context)
+        key = self._key(tier, query, context, scope)
         item = self._store.get(key)
         if not item:
             self._misses += 1
@@ -89,10 +114,10 @@ class ResponseCache:
         self._hits += 1
         return value
 
-    def set(self, tier: str, query: str, context: str, value) -> None:
+    def set(self, tier: str, query: str, context: str, value, scope: str = "") -> None:
         if not settings.optim_cache_enabled or value is None:
             return
-        key = self._key(tier, query, context)
+        key = self._key(tier, query, context, scope)
         self._store[key] = (value, time.monotonic() + settings.optim_cache_ttl_s)
         self._store.move_to_end(key)
         while len(self._store) > settings.optim_cache_max:

@@ -69,7 +69,8 @@ class Settings(BaseSettings):
     # ── Optimisation des tokens (réduction coût + latence) ──
     optim_max_rag_chunks: int = 5           # nb max de chunks RAG envoyés au LLM
     optim_max_context_chars: int = 6000     # budget total de contexte (caractères)
-    optim_history_keep: int = 8             # messages d'historique conservés (fenêtre)
+    optim_history_keep: int = 8             # messages d'historique conservés (fenêtre) = 4 échanges
+    optim_max_history_chars: int = 4000     # budget caractères de l'historique injecté (~1000 tokens)
     optim_cache_enabled: bool = True        # cache exact des réponses (query+contexte identiques)
     optim_cache_ttl_s: int = 900            # durée de vie d'une entrée de cache (s)
     optim_cache_max: int = 500              # nb max d'entrées en cache (LRU)

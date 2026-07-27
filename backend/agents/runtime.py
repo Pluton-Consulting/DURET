@@ -88,7 +88,15 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "session_id": thread_id,
         "raw_chunks": [],
         "anonymized_chunks": [],
-        "entity_map": {},
+        # `entity_map` n'est VOLONTAIREMENT pas réinitialisé : la map est cumulative sur
+        # le fil (checkpointer), pour qu'une même valeur garde le même placeholder d'un
+        # tour à l'autre. La remettre à {} ferait redémarrer la numérotation à 1 et
+        # rendrait l'historique masqué incohérent (cf. anonymize_node).
+        # Ces deux-là, en revanche, DOIVENT repartir à zéro : sans ça, un tour qui
+        # échoue avant le LLM (RGPD fail-closed, erreur RAG) laisse la réponse du tour
+        # PRÉCÉDENT dans l'état, et elle est renvoyée comme réponse à la question courante.
+        "llm_response": None,
+        "final_response": None,
         "out_of_scope": False,
         "browser_needed": False,
         "browser_used": False,

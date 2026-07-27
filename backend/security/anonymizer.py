@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 import threading
+import unicodedata
 from typing import Optional
 
 # ---------------------------------------------------------------------------
@@ -56,6 +57,104 @@ _SPACY_LABEL_TO_TYPE = {
 
 
 # ---------------------------------------------------------------------------
+# GARDE-FOU ANTI FAUX-POSITIFS NER.
+#
+# Mesuré sur fr_core_news_md/sm 3.7.0 : les modèles étiquettent massivement en
+# PER/LOC/ORG le vocabulaire calendaire et métier CAPITALISÉ —
+#   « Mars » -> LOC, « kEUR » -> PER, « CA » -> ORG,
+#   « Jan 42 kEUR » -> PER (le nombre est avalé dans le span !).
+# Masquer ces spans détruit l'association libellé <-> valeur : le LLM reçoit
+# « [LOC_1] 35 » au lieu de « Mars 35 », ne peut plus lire la série, et la
+# réhydratation produit des phrases absurdes (« la valeur pour Mars n'est pas
+# précisée »). Ce vocabulaire n'est PAS une donnée personnelle : on le laisse
+# en clair. Règle de sûreté : un SEUL mot inconnu dans le span suffit à
+# conserver le masquage (« Avril » passe, « Avril Dupont » reste masqué).
+_NON_PII_WORDS = frozenset({
+    # Mois — formes longues et abrégées.
+    "janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet",
+    "aout", "septembre", "octobre", "novembre", "decembre",
+    "jan", "janv", "fev", "fevr", "avr", "jui", "juil",
+    "sep", "sept", "oct", "nov", "dec",
+    # Jours.
+    "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+    # Périodes.
+    "jour", "jours", "semaine", "semaines", "mois", "trimestre", "semestre",
+    "annee", "annees", "exercice", "t1", "t2", "t3", "t4", "s1", "s2",
+    # Unités et devises.
+    "eur", "euro", "euros", "keur", "keuros", "meur", "usd",
+    "ht", "ttc", "tva", "kg", "tonne", "tonnes", "ml", "km", "cm", "mm", "m2", "m3",
+    "unite", "unites", "heure", "heures", "qte",
+    # Vocabulaire métier NON nominatif. Règle d'or : ne JAMAIS y mettre un mot
+    # qui peut être un patronyme (« Boulanger », « Charpentier », « Mercier »,
+    # « Meunier », « Fournier »... sont des noms de famille courants).
+    "ca", "chiffre", "affaires", "total", "sous", "montant", "montants",
+    "quantite", "quantites", "prix", "tarif", "devis", "facture", "factures",
+    "situation", "situations", "commande", "commandes", "chantier",
+    "chantiers", "lot", "lots", "acompte", "solde", "reserve", "reserves",
+    "planning", "graphique", "tableau", "budget", "marge", "poste", "postes",
+    # Connecteurs happés dans les spans multi-mots (« chantier de Mars »).
+    "de", "du", "des", "le", "la", "les", "l", "et", "en", "au", "aux", "a",
+})
+
+# Séquences purement alphabétiques (accents inclus, chiffres et « _ » exclus).
+_RE_WORDS = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+# Placeholder déjà posé par une passe précédente : ne jamais le re-masquer.
+_RE_PLACEHOLDER = re.compile(r"\[[A-Z]+_\d+\]")
+
+
+def _normalize_word(word: str) -> str:
+    """Minuscule + suppression des accents (« Février » -> « fevrier »)."""
+    decomposed = unicodedata.normalize("NFD", word.lower())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+def _shrink_to_letters(value: str, start: int, end: int) -> tuple[str, int, int]:
+    """
+    Rétrécit un span spaCy aux bornes de sa partie alphabétique.
+
+    spaCy agrège très souvent le nombre voisin d'un nom propre (« Dupont 42 »
+    étiqueté PER d'un seul tenant, mesuré). Masquer le span entier effacerait
+    la VALEUR en plus du nom : le LLM perdrait la donnée chiffrée. On ne masque
+    donc que la portion porteuse de lettres.
+
+    Ne réduit JAMAIS la couverture d'un patronyme : on ne rogne que sur un
+    séparateur (espace/ponctuation). Couper au milieu d'un token collé
+    ré-exposerait une portion sensible — « FR76 » (préfixe IBAN) reste entier.
+    """
+    left, right = 0, len(value)
+    while left < right and not value[left].isalpha():
+        left += 1
+    while right > left and not value[right - 1].isalpha():
+        right -= 1
+    if left >= right:  # span sans aucune lettre -> laissé aux regex métier
+        return value, start, end
+    if left > 0 and value[left - 1].isalnum():
+        left = 0
+    if right < len(value) and value[right].isalnum():
+        right = len(value)
+    if left == 0 and right == len(value):
+        return value, start, end
+    return value[left:right], start + left, start + right
+
+
+def _is_non_pii_span(value: str) -> bool:
+    """
+    True si le span ne peut pas porter de donnée personnelle.
+
+    Deux cas :
+      * aucun caractère alphabétique (chiffres seuls) — la détection est alors
+        assurée par les regex métier (IBAN/SIRET/SIREN/TEL/MONTANT) exécutées
+        juste après, donc aucune fuite ;
+      * TOUS les mots du span appartiennent au vocabulaire non-PII.
+    """
+    words = _RE_WORDS.findall(value)
+    if not words:
+        return True
+    return all(_normalize_word(w) in _NON_PII_WORDS for w in words)
+
+
+# ---------------------------------------------------------------------------
 # Regex métier (compilées une fois au chargement du module).
 # L'ordre d'application compte : on masque d'abord les patterns les plus
 # spécifiques (IBAN, SIRET, SIREN) pour éviter qu'un pattern plus large
@@ -69,14 +168,20 @@ _RE_IBAN = re.compile(
     re.IGNORECASE,
 )
 
-# SIRET : 14 chiffres, espaces tolérés (souvent groupés 3 3 3 5).
+# SIRET : 14 chiffres collés, ou groupés 3-3-3-5 (forme imprimée classique).
 _RE_SIRET = re.compile(
-    r"\b\d{3}[ ]?\d{3}[ ]?\d{3}[ ]?\d{5}\b",
+    r"(?<!\d)(?:\d{14}|\d{3} \d{3} \d{3} \d{5})(?!\d)",
 )
 
-# SIREN : 9 chiffres, espaces tolérés (souvent groupés 3 3 3).
+# SIREN : 9 chiffres COLLÉS, ou groupés 3-3-3 UNIQUEMENT s'ils sont annoncés par
+# le mot-clé. L'ancienne forme « \b\d{3}[ ]?\d{3}[ ]?\d{3}\b » masquait n'importe
+# quelle suite de trois nombres à 3 chiffres : « Lot 250 300 450 » -> « Lot
+# [SIREN_1] », ce qui détruisait les tableaux de quantités des DPGF/métrés
+# (mesuré). Un SIREN reste masqué sous sa forme compacte ou explicitement nommée.
 _RE_SIREN = re.compile(
-    r"\b\d{3}[ ]?\d{3}[ ]?\d{3}\b",
+    r"(?<!\d)\d{9}(?!\d)"
+    r"|(?:(?<=SIREN )|(?<=SIREN: )|(?<=SIREN : ))\d{3} ?\d{3} ?\d{3}(?!\d)",
+    re.IGNORECASE,
 )
 
 # E-mail.
@@ -86,8 +191,11 @@ _RE_EMAIL = re.compile(
 
 # Téléphone FR : format national (0X suivi de 9 chiffres, séparateurs
 # espace/point/tiret tolérés) ou international (+33 / 0033).
+# Le lookahead d'unité évite de masquer une série de mesures (« 05 12 30 45 60 mm »
+# relevés d'un chantier) comme s'il s'agissait d'un numéro de téléphone.
 _RE_TEL = re.compile(
-    r"(?<![\w])(?:(?:\+33|0033)[ .\-]?[1-9]|0[1-9])(?:[ .\-]?\d{2}){4}(?![\w])",
+    r"(?<![\w])(?:(?:\+33|0033)[ .\-]?[1-9]|0[1-9])(?:[ .\-]?\d{2}){4}"
+    r"(?![\w])(?!\s*(?:mm|cm|m2|m3|ml|kg|km|t|u)\b)",
 )
 
 # Montant en euros : partie entière avec séparateurs de milliers (espace
@@ -104,10 +212,18 @@ _RE_MONTANT = re.compile(
     re.IGNORECASE,
 )
 
-# Ordre d'application des regex : (type, pattern). Le plus spécifique d'abord.
-_REGEX_PIPELINE: list[tuple[str, re.Pattern]] = [
+# Regex appliquées AVANT spaCy. IBAN et EMAIL sont strictement délimités (aucun
+# faux positif possible) et doivent passer en premier : spaCy consommait
+# « IBAN FR76 » comme une entité PER, ce qui empêchait ensuite _RE_IBAN de
+# matcher — le reste du numéro partait EN CLAIR vers le LLM (fuite mesurée).
+_REGEX_PRE: list[tuple[str, re.Pattern]] = [
     ("IBAN", _RE_IBAN),
     ("EMAIL", _RE_EMAIL),
+]
+
+# Regex appliquées APRÈS spaCy (patterns numériques : le NER doit voir le texte
+# encore lisible pour délimiter correctement les noms propres).
+_REGEX_POST: list[tuple[str, re.Pattern]] = [
     ("MONTANT", _RE_MONTANT),
     ("SIRET", _RE_SIRET),
     ("SIREN", _RE_SIREN),
@@ -192,12 +308,13 @@ class _Anonymizer:
     # Attribution des placeholders.
     # ------------------------------------------------------------------
     @staticmethod
-    def _reverse_lookup(entity_map: dict, value: str) -> Optional[str]:
-        """Retourne le placeholder déjà associé à `value`, sinon None."""
-        for placeholder, original in entity_map.items():
-            if original == value:
-                return placeholder
-        return None
+    def _build_index(entity_map: dict) -> dict:
+        """Index inverse valeur -> placeholder (évite un balayage par entité).
+
+        Sans lui, la recherche est linéaire sur la map ; avec une map PERSISTÉE
+        sur tout un fil de conversation, le coût deviendrait quadratique.
+        """
+        return {original: placeholder for placeholder, original in entity_map.items()}
 
     def _placeholder_for(
         self,
@@ -205,21 +322,26 @@ class _Anonymizer:
         type_prefix: str,
         entity_map: dict,
         counters: dict,
+        index: Optional[dict] = None,
     ) -> str:
         """
         Retourne le placeholder à utiliser pour `value`.
 
         Réutilise le placeholder existant si la valeur a déjà été rencontrée
-        (cohérence intra-`entity_map`), sinon en crée un nouveau numéroté et
-        met à jour `entity_map` et les compteurs par type.
+        (cohérence intra-`entity_map`, y compris entre plusieurs tours de
+        conversation quand la map est partagée), sinon en crée un nouveau
+        numéroté et met à jour `entity_map`, l'index inverse et les compteurs.
         """
-        existing = self._reverse_lookup(entity_map, value)
+        if index is None:
+            index = self._build_index(entity_map)
+        existing = index.get(value)
         if existing is not None:
             return existing
 
         counters[type_prefix] = counters.get(type_prefix, 0) + 1
         placeholder = f"[{type_prefix}_{counters[type_prefix]}]"
         entity_map[placeholder] = value
+        index[value] = placeholder
         return placeholder
 
     def _sync_counters(self, entity_map: dict) -> dict:
@@ -243,31 +365,40 @@ class _Anonymizer:
     # ------------------------------------------------------------------
     # Étapes de masquage.
     # ------------------------------------------------------------------
-    def _apply_regex(self, text: str, entity_map: dict, counters: dict) -> str:
+    def _apply_regex(self, text: str, entity_map: dict, counters: dict,
+                     pipeline: list, index: Optional[dict] = None) -> str:
         """
-        Applique successivement les regex métier sur `text`.
+        Applique successivement les regex métier de `pipeline` sur `text`.
 
         Les entités déjà masquées (placeholders) sont ignorées par les regex
         car elles ne correspondent à aucun des patterns (chiffres, @, €...).
         Retourne le texte partiellement masqué.
         """
-        for type_prefix, pattern in _REGEX_PIPELINE:
+        for type_prefix, pattern in pipeline:
 
             def _replace(match: re.Match) -> str:
                 value = match.group(0)
-                return self._placeholder_for(value, type_prefix, entity_map, counters)
+                return self._placeholder_for(value, type_prefix, entity_map, counters, index)
 
             text = pattern.sub(_replace, text)
         return text
 
-    def _apply_spacy(self, text: str, entity_map: dict, counters: dict) -> str:
+    def _apply_spacy(self, text: str, entity_map: dict, counters: dict,
+                     index: Optional[dict] = None) -> str:
         """
         Applique la reconnaissance d'entités nommées spaCy sur `text`.
 
-        Ne traite que les labels PER, LOC, ORG, MISC. Les remplacements se
-        font de droite à gauche (par offsets décroissants) afin de préserver
-        la validité des positions pendant la substitution. No-op si spaCy est
-        indisponible.
+        Ne traite que les labels PER, LOC, ORG. Trois garde-fous :
+          * les spans chevauchant un placeholder déjà posé sont ignorés ;
+          * chaque span est recadré sur sa partie alphabétique (spaCy avale le
+            nombre voisin : « Dupont 42 » -> PER masquerait aussi la valeur) ;
+          * le vocabulaire non-PII (mois, unités, métier) est laissé en clair.
+
+        Les placeholders sont ATTRIBUÉS dans l'ordre de LECTURE puis appliqués
+        de droite à gauche. L'ancienne version numérotait dans l'ordre inverse
+        du texte : le premier nom cité recevait le plus grand numéro, si bien
+        qu'un LLM supposant « [PER_1] = première personne citée » inversait
+        systématiquement les données (comportement mesuré). No-op sans spaCy.
         """
         if not self.spacy_available or self._nlp is None:
             return text
@@ -277,20 +408,31 @@ class _Anonymizer:
         except Exception:  # noqa: BLE001 - jamais planter sur une analyse
             return text
 
-        # On collecte les entités pertinentes, triées par position décroissante.
+        # Zones déjà masquées : un span spaCy qui les recouvre ne doit pas être
+        # re-remplacé (sinon double masquage et réhydratation cassée).
+        masked_zones = [(m.start(), m.end()) for m in _RE_PLACEHOLDER.finditer(text)]
+
         spans = [
             (ent.start_char, ent.end_char, ent.text, ent.label_)
             for ent in doc.ents
             if ent.label_ in _SPACY_LABEL_TO_TYPE
         ]
-        spans.sort(key=lambda s: s[0], reverse=True)
+        spans.sort(key=lambda s: s[0])  # ordre de lecture
 
+        prepared: list[tuple[int, int, str]] = []
         for start, end, value, label in spans:
-            # On ne remasque pas un fragment déjà transformé en placeholder.
-            if value.startswith("[") and value.endswith("]"):
+            if any(start < z_end and end > z_start for z_start, z_end in masked_zones):
                 continue
-            type_prefix = _SPACY_LABEL_TO_TYPE[label]
-            placeholder = self._placeholder_for(value, type_prefix, entity_map, counters)
+            value, start, end = _shrink_to_letters(value, start, end)
+            if _is_non_pii_span(value):
+                continue
+            placeholder = self._placeholder_for(
+                value, _SPACY_LABEL_TO_TYPE[label], entity_map, counters, index
+            )
+            prepared.append((start, end, placeholder))
+
+        # Remplacement de droite à gauche : préserve la validité des offsets.
+        for start, end, placeholder in reversed(prepared):
             text = text[:start] + placeholder + text[end:]
 
         return text
@@ -298,51 +440,58 @@ class _Anonymizer:
     # ------------------------------------------------------------------
     # API publique.
     # ------------------------------------------------------------------
-    def anonymize(self, text: str) -> tuple[str, dict]:
+    def _mask_one(self, text: str, entity_map: dict, counters: dict, index: dict) -> str:
+        """Pipeline complet sur un texte : regex strictes -> spaCy -> regex numériques."""
+        masked = self._apply_regex(text, entity_map, counters, _REGEX_PRE, index)
+        masked = self._apply_spacy(masked, entity_map, counters, index)
+        return self._apply_regex(masked, entity_map, counters, _REGEX_POST, index)
+
+    def anonymize(self, text: str, entity_map: Optional[dict] = None) -> tuple[str, dict]:
         """
         Anonymise `text` et retourne `(texte_masqué, entity_map)`.
 
-        Pipeline : entités spaCy (si disponibles) PUIS regex métier. Le
-        `entity_map` retourné mappe chaque placeholder vers sa valeur
-        originale et permet la réhydratation ultérieure via `rehydrate`.
+        Pipeline : IBAN/e-mail (délimités, avant que spaCy ne les morde) PUIS
+        entités spaCy PUIS regex numériques. Le `entity_map` retourné mappe
+        chaque placeholder vers sa valeur originale et permet la réhydratation
+        via `rehydrate`.
+
+        `entity_map` en entrée (optionnel) permet de POURSUIVRE une numérotation
+        existante : une même valeur conserve alors le même placeholder d'un
+        appel à l'autre (indispensable pour un fil de conversation).
 
         Ne lève jamais d'exception : en cas d'entrée invalide (None, non-str)
-        ou d'indisponibilité de spaCy, retourne au minimum le texte tel quel
-        avec un `entity_map` vide.
+        ou d'indisponibilité de spaCy, retourne au minimum le texte tel quel.
         """
+        entity_map = dict(entity_map) if entity_map else {}
         if not text or not isinstance(text, str):
-            return (text if isinstance(text, str) else "", {})
+            return (text if isinstance(text, str) else "", entity_map)
 
-        entity_map: dict = {}
-        counters: dict = {}
+        counters = self._sync_counters(entity_map)
+        index = self._build_index(entity_map)
+        return self._mask_one(text, entity_map, counters, index), entity_map
 
-        # spaCy D'ABORD (noms/lieux/organisations) PUIS regex (email/SIRET/IBAN/tel/
-        # montant). Cet ordre est volontaire : il évite que spaCy ne re-tague le
-        # contenu interne des placeholders regex (ex. « MONTANT_1 » vu comme un nom),
-        # ce qui casserait la réhydratation par double-masquage.
-        masked = self._apply_spacy(text, entity_map, counters)
-        masked = self._apply_regex(masked, entity_map, counters)
-        return masked, entity_map
-
-    def anonymize_chunks(self, chunks: list[str]) -> tuple[list[str], dict]:
+    def anonymize_chunks(self, chunks: list[str],
+                         entity_map: Optional[dict] = None) -> tuple[list[str], dict]:
         """
         Anonymise une liste de textes en PARTAGEANT un même `entity_map`.
 
         Garantit qu'une même valeur reçoit le même placeholder à travers tous
-        les chunks (numérotation continue, sans collision). Retourne la liste
-        des textes masqués et l'`entity_map` global.
+        les chunks (numérotation continue, sans collision). Si `entity_map` est
+        fourni, la numérotation REPREND à partir de lui : `[PER_1]` désigne
+        alors la même personne sur toute la conversation, et la réhydratation
+        reste exacte sur les tours antérieurs. Retourne la liste des textes
+        masqués et l'`entity_map` global (entrée + nouvelles entités).
         """
-        entity_map: dict = {}
-        counters: dict = {}
+        entity_map = dict(entity_map) if entity_map else {}
+        counters = self._sync_counters(entity_map)
+        index = self._build_index(entity_map)
         masked_chunks: list[str] = []
 
         for chunk in chunks:
             if not chunk or not isinstance(chunk, str):
                 masked_chunks.append(chunk if isinstance(chunk, str) else "")
                 continue
-            masked = self._apply_spacy(chunk, entity_map, counters)
-            masked = self._apply_regex(masked, entity_map, counters)
-            masked_chunks.append(masked)
+            masked_chunks.append(self._mask_one(chunk, entity_map, counters, index))
 
         return masked_chunks, entity_map
 

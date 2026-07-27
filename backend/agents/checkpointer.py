@@ -49,7 +49,16 @@ async def get_checkpointer():
             logger.info("Checkpointer : AsyncPostgresSaver actif")
             return _checkpointer
         except Exception as e:
-            logger.warning("AsyncPostgresSaver indisponible (%s) — fallback MemorySaver", e)
+            # CRITICAL et non warning : l'historique de conversation vit dans le
+            # checkpoint. Sur MemorySaver, il est perdu à chaque redémarrage du
+            # conteneur ET n'est pas partagé entre workers uvicorn — l'assistant
+            # « oublie tout » sans autre symptôme visible. Ce message est le seul
+            # moyen de diagnostiquer ce mode dégradé.
+            logger.critical(
+                "AsyncPostgresSaver INDISPONIBLE (%s) — repli sur MemorySaver : la mémoire "
+                "de conversation ne survivra PAS à un redémarrage. Vérifiez DATABASE_URL "
+                "et la dépendance langgraph-checkpoint-postgres.", e,
+            )
             if _pool is not None:
                 try:
                     await _pool.close()
@@ -59,7 +68,7 @@ async def get_checkpointer():
 
     from langgraph.checkpoint.memory import MemorySaver
     _checkpointer = MemorySaver()
-    logger.info("Checkpointer : MemorySaver (non persistant)")
+    logger.critical("Checkpointer : MemorySaver — mémoire de conversation NON persistante")
     return _checkpointer
 
 

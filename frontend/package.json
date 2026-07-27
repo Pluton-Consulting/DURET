@@ -5,21 +5,18 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start": "next start"
   },
   "dependencies": {
-    "next": "14.2.0",
+    "next": "^14.2.35",
+    "next-auth": "^5.0.0-beta.25",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "next-auth": "^5.0.0-beta.25"
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "typescript": "^5",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.0"
+    "typescript": "^5"
   }
 }

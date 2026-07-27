@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     ollama_model_light: str = "mistral:7b"
 
     # ── Optimisation des tokens (réduction coût + latence) ──
+    # Masquage des MONTANTS avant envoi au LLM. Désactivé par défaut : un montant seul
+    # n'identifie personne (les vraies PII — noms, e-mails, téléphones, IBAN, SIRET —
+    # restent masquées dans tous les cas), alors que le masquer empêche le modèle de
+    # calculer un total, de comparer une série ou de produire un graphique juste : il
+    # ne voit que des jetons opaques et les replace au hasard. Mettre à true pour la
+    # confidentialité maximale, au prix de l'exploitation des chiffres.
+    anonymize_amounts: bool = False
+
+    # ── Optimisation des tokens (réduction coût + latence) ──
     optim_max_rag_chunks: int = 5           # nb max de chunks RAG envoyés au LLM
     optim_max_context_chars: int = 6000     # budget total de contexte (caractères)
     optim_history_keep: int = 8             # messages d'historique conservés (fenêtre) = 4 échanges

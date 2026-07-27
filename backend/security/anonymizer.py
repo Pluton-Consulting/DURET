@@ -96,8 +96,11 @@ _NON_PII_WORDS = frozenset({
     "de", "du", "des", "le", "la", "les", "l", "et", "en", "au", "aux", "a",
 })
 
-# Séquences purement alphabétiques (accents inclus, chiffres et « _ » exclus).
-_RE_WORDS = re.compile(r"[^\W\d_]+", re.UNICODE)
+# Jetons alphanumériques (lettres ET chiffres) : « T2 », « m2 », « 340 », « Mars ».
+# Il faut inclure les chiffres, sinon un libellé mixte comme « T2 » se réduirait à
+# « T », introuvable dans le vocabulaire, et le span « T2 340 » — que spaCy étiquette
+# LOC en avalant la valeur — serait masqué avec le nombre (cas mesuré).
+_RE_WORDS = re.compile(r"[^\W_]+", re.UNICODE)
 
 # Placeholder déjà posé par une passe précédente : ne jamais le re-masquer.
 _RE_PLACEHOLDER = re.compile(r"\[[A-Z]+_\d+\]")
@@ -151,7 +154,12 @@ def _is_non_pii_span(value: str) -> bool:
     words = _RE_WORDS.findall(value)
     if not words:
         return True
-    return all(_normalize_word(w) in _NON_PII_WORDS for w in words)
+    for w in words:
+        if w.isdigit():
+            continue        # un nombre nu n'identifie personne (cf. regex métier)
+        if _normalize_word(w) not in _NON_PII_WORDS:
+            return False    # un seul mot inconnu suffit à conserver le masquage
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -223,12 +231,25 @@ _REGEX_PRE: list[tuple[str, re.Pattern]] = [
 
 # Regex appliquées APRÈS spaCy (patterns numériques : le NER doit voir le texte
 # encore lisible pour délimiter correctement les noms propres).
-_REGEX_POST: list[tuple[str, re.Pattern]] = [
-    ("MONTANT", _RE_MONTANT),
+_REGEX_POST_BASE: list[tuple[str, re.Pattern]] = [
     ("SIRET", _RE_SIRET),
     ("SIREN", _RE_SIREN),
     ("TEL", _RE_TEL),
 ]
+_REGEX_POST_WITH_AMOUNTS: list[tuple[str, re.Pattern]] = [("MONTANT", _RE_MONTANT)] + _REGEX_POST_BASE
+
+
+def _mask_amounts() -> bool:
+    """Faut-il masquer les montants ? (réglage `anonymize_amounts`, défaut False).
+
+    Import paresseux et tolérant : ce module reste utilisable hors application
+    (tests, scripts) sans dépendre de la configuration.
+    """
+    try:
+        from config import settings
+        return bool(getattr(settings, "anonymize_amounts", False))
+    except Exception:  # noqa: BLE001 - hors application : on n'entrave pas les chiffres
+        return False
 
 
 class _Anonymizer:
@@ -442,9 +463,10 @@ class _Anonymizer:
     # ------------------------------------------------------------------
     def _mask_one(self, text: str, entity_map: dict, counters: dict, index: dict) -> str:
         """Pipeline complet sur un texte : regex strictes -> spaCy -> regex numériques."""
+        post = _REGEX_POST_WITH_AMOUNTS if _mask_amounts() else _REGEX_POST_BASE
         masked = self._apply_regex(text, entity_map, counters, _REGEX_PRE, index)
         masked = self._apply_spacy(masked, entity_map, counters, index)
-        return self._apply_regex(masked, entity_map, counters, _REGEX_POST, index)
+        return self._apply_regex(masked, entity_map, counters, post, index)
 
     def anonymize(self, text: str, entity_map: Optional[dict] = None) -> tuple[str, dict]:
         """

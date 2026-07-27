@@ -1,0 +1,49 @@
+// ── Barrel : import unique de toute la bibliothèque ──
+// ex.  import { QuoteCard, QuickReplies, BarChart } from "@/components/blocks"
+
+export * from "./text/Heading"
+export * from "./text/RichText"
+export * from "./text/Callout"
+export * from "./text/BulletList"
+
+export * from "./buttons/PrimaryButton"
+export * from "./buttons/GhostButton"
+export * from "./buttons/QuickReplies"
+export * from "./buttons/ChipToggles"
+
+export * from "./inputs/TextInput"
+export * from "./inputs/Checkbox"
+export * from "./inputs/Toggle"
+export * from "./inputs/RadioGroup"
+
+export * from "./business/QuoteCard"
+export * from "./business/InvoiceCard"
+export * from "./business/EmailCard"
+export * from "./business/DocCard"
+export * from "./business/ContactCard"
+export * from "./business/ProjectCard"
+
+export * from "./tables/SimpleTable"
+export * from "./tables/StatusTable"
+export * from "./tables/KeyValueTable"
+
+export * from "./charts/BarChart"
+export * from "./charts/LineChart"
+export * from "./charts/DonutChart"
+export * from "./charts/ProgressBars"
+export * from "./charts/HBarChart"
+export * from "./charts/Gauge"
+export * from "./charts/Sparkline"
+
+export * from "./feedback/Spinner"
+export * from "./feedback/Skeleton"
+export * from "./feedback/ProgressCircle"
+export * from "./feedback/EmptyState"
+
+export * from "./layout/StatTile"
+export * from "./layout/ScrollableCard"
+export * from "./layout/Accordion"
+export * from "./layout/Tabs"
+export * from "./layout/Timeline"
+export * from "./layout/Avatar"
+export * from "./layout/Badge"

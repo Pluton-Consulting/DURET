@@ -1,5 +1,5 @@
 """
-Connecteur Deytime (gestion du temps / pointage / plannings BTP-paysage).
+Connecteur Deytime (gestion du temps / pointage / plannings BTP).
 
 Deytime N'EXPOSE AUCUNE API, aucun webhook, aucun connecteur Make/Zapier.
 Deux voies réalistes :

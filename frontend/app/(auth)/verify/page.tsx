@@ -46,7 +46,7 @@ function VerifyContent() {
         textAlign: "center",
         maxWidth: 380,
       }}>
-        <div className="sym-pop" style={{ fontSize: 32, marginBottom: 16 }}>🌿</div>
+        <div className="sym-pop" style={{ width: 46, height: 46, margin: "0 auto 16px", borderRadius: "50%", background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-on-dark)", fontSize: 20, fontWeight: 800 }}>D</div>
         {status === "loading" ? (
           <>
             <p className="sym-in sym-in-1" style={{ fontWeight: 500, margin: "0 0 8px", color: "var(--color-text-primary)" }}>Connexion en cours...</p>

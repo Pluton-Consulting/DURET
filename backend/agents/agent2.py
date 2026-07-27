@@ -99,7 +99,7 @@ async def vision_node(state: AgentState, config=None) -> dict:
         }
 
     mime = state.get("attachment_mime") or "image/jpeg"
-    demande = state.get("query") or "Décris ce document pour préparer un aménagement paysager."
+    demande = state.get("query") or "Décris ce document pour préparer un chiffrage de travaux de sols."
     message = HumanMessage(content=[
         {"type": "text", "text": f"{VISION_PROMPT}\n\nDemande de l'utilisateur : {demande}"},
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},

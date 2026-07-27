@@ -38,22 +38,22 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
     html = f"""<!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#F4F6F3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6F3;padding:40px 0">
+<body style="margin:0;padding:0;background:#F1F5FA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F1F5FA;padding:40px 0">
     <tr><td align="center">
       <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.08)">
 
         <!-- En-tête -->
         <tr>
-          <td style="background:#0F1F0E;padding:32px 40px">
+          <td style="background:#16283F;padding:32px 40px">
             <table cellpadding="0" cellspacing="0">
               <tr>
-                <td style="background:#1D9E75;width:36px;height:36px;border-radius:9px;text-align:center;vertical-align:middle">
-                  <span style="color:white;font-size:15px;font-weight:800;letter-spacing:-0.5px">P</span>
+                <td style="background:#2E6BB0;width:36px;height:36px;border-radius:9px;text-align:center;vertical-align:middle">
+                  <span style="color:white;font-size:15px;font-weight:800;letter-spacing:-0.5px">D</span>
                 </td>
                 <td style="padding-left:12px;vertical-align:middle">
                   <div style="color:#ffffff;font-size:18px;font-weight:800;letter-spacing:-0.3px;line-height:1">Duret & Sols</div>
-                  <div style="color:#6B8F62;font-size:11px;font-weight:500;margin-top:3px">Duret & Sols Paysage</div>
+                  <div style="color:#AECBE8;font-size:11px;font-weight:500;margin-top:3px">Assistant IA interne</div>
                 </td>
               </tr>
             </table>
@@ -63,10 +63,10 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
         <!-- Corps -->
         <tr>
           <td style="padding:40px 40px 24px">
-            <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#0F1F0E;letter-spacing:-0.4px">
+            <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#16283F;letter-spacing:-0.4px">
               Votre lien de connexion
             </h1>
-            <p style="margin:0 0 32px;font-size:15px;color:#5A6B56;line-height:1.6">
+            <p style="margin:0 0 32px;font-size:15px;color:#33424F;line-height:1.6">
               Bonjour,<br><br>
               Vous avez demandé à vous connecter à <strong>Duret & Sols</strong>.<br>
               Cliquez sur le bouton ci-dessous — ce lien est à usage unique et expire dans <strong>{MAGIC_LINK_EXPIRE_MINUTES}&nbsp;minutes</strong>.
@@ -75,7 +75,7 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
             <!-- CTA -->
             <table cellpadding="0" cellspacing="0">
               <tr>
-                <td style="border-radius:10px;background:#1D9E75">
+                <td style="border-radius:10px;background:#2E6BB0">
                   <a href="{magic_link}"
                      style="display:inline-block;padding:14px 32px;color:#ffffff;font-size:15px;
                             font-weight:600;text-decoration:none;letter-spacing:-0.2px">
@@ -90,25 +90,25 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
         <!-- Lien de secours -->
         <tr>
           <td style="padding:0 40px 32px">
-            <p style="margin:24px 0 0;font-size:12px;color:#9EAD9A;line-height:1.6">
+            <p style="margin:24px 0 0;font-size:12px;color:#78899B;line-height:1.6">
               Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br>
-              <a href="{magic_link}" style="color:#1D9E75;word-break:break-all;font-size:11px">{magic_link}</a>
+              <a href="{magic_link}" style="color:#2E6BB0;word-break:break-all;font-size:11px">{magic_link}</a>
             </p>
           </td>
         </tr>
 
         <!-- Séparateur -->
-        <tr><td style="border-top:1px solid #EEF0EC"></td></tr>
+        <tr><td style="border-top:1px solid #DCE4EE"></td></tr>
 
         <!-- Pied de page -->
         <tr>
-          <td style="padding:20px 40px;background:#F9FAF8">
-            <p style="margin:0;font-size:12px;color:#B0BDA9;line-height:1.6">
+          <td style="padding:20px 40px;background:#F1F5FA">
+            <p style="margin:0;font-size:12px;color:#78899B;line-height:1.6">
               Si vous n'avez pas demandé ce lien, ignorez simplement cet email.<br>
               Ce message est envoyé automatiquement — ne pas y répondre.
             </p>
-            <p style="margin:12px 0 0;font-size:11px;color:#C8D4C4">
-              Duret & Sols · Duret & Sols Paysage
+            <p style="margin:12px 0 0;font-size:11px;color:#8AA0BA">
+              Duret & Sols · Assistant IA interne
             </p>
           </td>
         </tr>

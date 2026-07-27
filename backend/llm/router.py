@@ -59,7 +59,7 @@ def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096):
             base_url=getattr(settings, f"{provider}_base_url"),
             temperature=0.1,
             max_tokens=max_tokens,
-            default_headers={"HTTP-Referer": "https://pluton.local", "X-Title": "Duret & Sols Paysage"},
+            default_headers={"HTTP-Referer": "https://pluton.local", "X-Title": "Duret & Sols"},
         )
     if provider == "groq":
         from langchain_groq import ChatGroq

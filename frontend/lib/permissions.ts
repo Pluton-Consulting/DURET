@@ -22,8 +22,8 @@ export const ROLE_LABELS: Record<string, string> = {
 }
 
 export const ROLE_COLORS: Record<string, string> = {
-  super_admin:   "#0F1F0E",
-  direction:     "#304D32",
+  super_admin:   "#16283F",
+  direction:     "#1E3A5F",
   commercial:    "#2563eb",
   bureau_etudes: "#0891b2",
   conducteur:    "#d97706",

@@ -1,5 +1,5 @@
 """
-Connecteur Extrabat (ERP/CRM paysagiste).
+Connecteur Extrabat (ERP/CRM).
 
 Deux voies :
   1. IMMÉDIATE, sans éditeur — import des exports CSV/Excel (bulle « Exports » d'Extrabat :

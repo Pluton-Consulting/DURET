@@ -117,7 +117,7 @@ async def fetch_cadastral_info(commune: str, user_id: str, parcelle: Optional[st
 async def search_material_price(product: str, user_id: str) -> dict:
     """Recherche prix matériau — Agent 2, pré-chiffrage uniquement."""
     return await web_search(
-        query=f"prix {product} professionnel paysagiste HT",
+        query=f"prix {product} professionnel BTP HT",
         user_id=user_id,
         agent_id="agent2",
         max_results=3,

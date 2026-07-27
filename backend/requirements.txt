@@ -12,7 +12,7 @@ langchain-ollama>=0.2.0
 langchain-groq>=0.2.0
 langchain-openai>=0.2.0    # OpenRouter (OpenAI-compatible) : LongCat, DeepSeek, modèles free
 langfuse>=3.0.0          # SDK v3 (Langfuse Cloud) — intégration langchain moderne
-python-jose[cryptography]==3.3.0
+pyjwt[crypto]>=2.10.0
 httpx>=0.28.0
 pgvector>=0.3.0
 numpy>=1.26.0

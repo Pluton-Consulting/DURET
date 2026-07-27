@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
-from jose import jwt
+import jwt
 from config import settings
 
 

@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError
+from jwt import PyJWTError
 from uuid import UUID
 from auth.jwt_handler import decode_access_token
 from database.connection import get_db
@@ -18,7 +18,7 @@ async def get_current_user(
         jti: str | None = payload.get("jti")
         if user_id is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide")
-    except JWTError:
+    except PyJWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide")
 
     async with get_db() as conn:

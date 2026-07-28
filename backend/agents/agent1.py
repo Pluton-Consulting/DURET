@@ -163,33 +163,37 @@ async def llm_node(state: AgentState, config=None) -> dict:
                          "d'entreprise est vide ou ne contient rien sur ce sujet. Réponds honnêtement, "
                          "sans inventer de contenu.)\n\n" + human_content)
 
-    # Composants visuels : l'instruction (coûteuse en tokens) n'est ajoutée qu'aux tours
-    # « riches » (devis, tableau, indicateur…), détectés par mots-clés sur la requête brute.
-    raw_query = (state.get("query") or "").lower()
-    ui_keywords = ("devis", "facture", "tableau", "récap", "recap", "compar", "montre",
-                   "affiche", "liste", "graph", "planning", "situation", "indicateur",
-                   "kpi", "propose", "bouton", "chantier", "statut", "avanc")
-    # Une fois les composants activés dans le fil, on GARDE l'instruction sur les tours
-    # suivants : sinon le modèle voit un bloc ```ui dans l'historique sans en avoir la
-    # spécification, et produit un JSON incomplet (que le front masque silencieusement).
-    # Cela stabilise aussi le préfixe système, indispensable au cache de prompt.
-    ui_already_used = any("```ui" in str(getattr(m, "content", "") or "") for m in history)
-    system_prompt = SYSTEM_PROMPT
-    if ui_already_used or any(k in raw_query for k in ui_keywords):
-        system_prompt = SYSTEM_PROMPT + """
+    # Composants visuels : l'instruction est TOUJOURS présente.
+    # Elle était auparavant conditionnée à des mots-clés (« devis », « tableau »…) pour
+    # économiser ~340 tokens. Mauvais calcul, à deux titres :
+    #   1. l'heuristique ratait l'essentiel des demandes — « lis les derniers mails »
+    #      ne contient aucun mot-clé, donc le modèle ignorait jusqu'à l'existence des
+    #      composants, et répondait en texte brut ;
+    #   2. un préfixe système qui change d'un tour à l'autre DÉTRUIT le cache de prompt,
+    #      dont l'entrée est facturée jusqu'à ~100× moins cher qu'un appel non caché.
+    #      Un préfixe stable coûte donc moins que l'alternance qu'il évitait.
+    system_prompt = SYSTEM_PROMPT + """
 
-COMPOSANTS VISUELS (optionnel). Quand tu as des DONNÉES concrètes à présenter (devis, facture, tableau, indicateur, suggestions d'actions...), tu peux intercaler un composant en insérant, au milieu de ta réponse, un bloc balisé ```ui contenant un objet JSON. Rédige le texte normalement autour du bloc. Règle absolue : n'invente jamais de valeurs ; remplis TOUS les champs requis du composant, sinon réponds en texte simple (un composant aux champs manquants ne s'affiche pas). Types :
+COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis, facture, document, liste, tableau, indicateur, avancement, suggestions d'actions...), intercale un composant : insère au milieu de ta réponse un bloc balisé ```ui contenant un objet JSON, et rédige le texte normalement autour. Un composant vaut mieux qu'un paragraphe pour tout ce qui est structuré. Règle absolue : n'invente jamais de valeurs ; remplis TOUS les champs requis, sinon reste en texte simple (un composant incomplet ne s'affiche pas). Types :
+- {"type":"email","subject":"...","from":"...","date":"...","preview":"..."}
 - {"type":"quote","id":"...","client":"...","status":"draft|sent|accepted","total":"...","lines":[{"label":"...","qty":"...","price":"..."}]}
 - {"type":"invoice","number":"...","client":"...","amount":"...","issued":"...","due":"...","status":"paid|pending|late"}
+- {"type":"doc","name":"...","kind":"PDF|XLSX|DOCX","meta":"..."}
+- {"type":"contact","name":"...","role":"...","phone":"...","email":"..."}
+- {"type":"project","name":"...","client":"...","progress":62,"status":"..."}
 - {"type":"table","columns":["...","..."],"rows":[["...","..."]]}
+- {"type":"keyvalue","rows":[["Clé","Valeur"]]}
+- {"type":"list","items":["...","..."]}
 - {"type":"callout","tone":"info|success|warning|error","title":"...","text":"..."}
 - {"type":"bars","data":[{"label":"...","value":10}]}
+- {"type":"progress","items":[{"label":"...","pct":72}]}
 - {"type":"stat","label":"...","value":"...","hint":"..."}
+- {"type":"badge","tone":"primary|success|warning|error|neutral","text":"..."}
 - {"type":"quick_replies","options":["Proposition 1","Proposition 2"]}
-Exemple :
-Voici le devis correspondant :
+Exemple, pour présenter des mails : une carte PAR message.
+Voici les messages trouvés :
 ```ui
-{"type":"quote","id":"DEV-2024-017","client":"SCI Dupont","status":"draft","total":"10 380 € HT","lines":[{"label":"Ragréage de sol","qty":"120 m²","price":"3 600 €"},{"label":"Carrelage grès cérame","qty":"120 m²","price":"6 780 €"}]}
+{"type":"email","subject":"CONTACT architecte","from":"lb@lbbl-architectes.fr","date":"23/07/2026","preview":"Demande d'intervention sur un projet a Sainte-Eulalie..."}
 ```"""
 
     # [système] + [historique masqué] + [tour courant] : c'est ce qui donne la mémoire.

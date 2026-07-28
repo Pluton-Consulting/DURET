@@ -26,12 +26,21 @@ logger = logging.getLogger("duret.ingestion.parsers")
 # Bornes anti-fichier piégé / anti-saturation mémoire.
 MAX_LIGNES = 20000
 MAX_PAGES_PDF = 300
+MAX_PAGES_OCR = 60        # l'OCR coûte ~1 s/page : borne plus basse que la lecture texte
 MAX_COLONNES = 200
+
+# En dessous de ce nombre de caractères par page, on considère que le PDF n'a pas
+# de couche texte (document scanné) et on bascule sur l'OCR.
+SEUIL_TEXTE_PAR_PAGE = 40
+
+OCR_DPI = 200             # compromis lisibilité / mémoire pour le rendu des pages
+OCR_LANGUES = "fra+eng"   # documents FR, mais les CCTP contiennent souvent de l'anglais
 
 ENCODAGES = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
 
 EXT_TABULAIRE = (".csv", ".xlsx", ".xls", ".xlsm")
 EXT_DOCUMENT = (".pdf", ".docx", ".txt", ".md")
+EXT_IMAGE = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 
 class FichierNonSupporte(Exception):
@@ -43,9 +52,69 @@ def famille(nom: str) -> Optional[str]:
     n = (nom or "").lower()
     if n.endswith(EXT_TABULAIRE):
         return "tabulaire"
-    if n.endswith(EXT_DOCUMENT):
+    if n.endswith(EXT_DOCUMENT) or n.endswith(EXT_IMAGE):
         return "document"
     return None
+
+
+# ── OCR (documents scannés, photos de documents) ────────────────────────────
+# Volontairement LOCAL (tesseract) : une facture ou un CCTP scanné ne doit pas
+# être envoyé à un service de reconnaissance externe. Absence de tesseract =
+# dégradation propre, jamais de plantage.
+
+def ocr_disponible() -> bool:
+    try:
+        import pytesseract
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+
+def ocr_image(brut: bytes) -> str:
+    """Texte d'une image (photo ou scan d'un document)."""
+    try:
+        import io as _io
+        import pytesseract
+        from PIL import Image
+    except ImportError as e:
+        raise FichierNonSupporte("OCR indisponible (pytesseract/Pillow absent)") from e
+    try:
+        with Image.open(_io.BytesIO(brut)) as img:
+            if img.mode not in ("L", "RGB"):        # CMJN / palette / alpha -> RGB
+                img = img.convert("RGB")
+            return (pytesseract.image_to_string(img, lang=OCR_LANGUES) or "").strip()
+    except Exception as e:
+        raise FichierNonSupporte(f"OCR de l'image impossible : {e}") from e
+
+
+def ocr_pdf(brut: bytes) -> str:
+    """Rend chaque page en image puis l'OCRise. Utilisé quand le PDF n'a pas de
+    couche texte (document scanné)."""
+    try:
+        import pypdfium2 as pdfium
+        import pytesseract
+    except ImportError as e:
+        raise FichierNonSupporte(
+            "OCR PDF indisponible (pypdfium2/pytesseract absent)"
+        ) from e
+
+    morceaux = []
+    doc = pdfium.PdfDocument(brut)
+    try:
+        total = min(len(doc), MAX_PAGES_OCR)
+        if len(doc) > MAX_PAGES_OCR:
+            logger.warning("OCR limité aux %d premières pages (sur %d)", MAX_PAGES_OCR, len(doc))
+        for i in range(total):
+            page = doc[i]
+            image = page.render(scale=OCR_DPI / 72).to_pil()
+            try:
+                morceaux.append(pytesseract.image_to_string(image, lang=OCR_LANGUES) or "")
+            finally:
+                image.close()
+    finally:
+        doc.close()
+    return "\n\n".join(morceaux).strip()
 
 
 def _decoder(brut: bytes) -> str:
@@ -112,18 +181,46 @@ def lire_excel(brut: bytes) -> tuple[list[str], list[dict]]:
 
 
 def lire_pdf(brut: bytes) -> str:
+    """Texte d'un PDF. Bascule automatiquement sur l'OCR si le fichier n'a pas de
+    couche texte exploitable (PDF scanné : chaque page n'est qu'une image)."""
     try:
         import pdfplumber
     except ImportError as e:
         raise FichierNonSupporte("Lecture PDF indisponible (pdfplumber absent)") from e
+
     morceaux = []
     with pdfplumber.open(io.BytesIO(brut)) as pdf:
-        for i, page in enumerate(pdf.pages):
-            if i >= MAX_PAGES_PDF:
-                logger.warning("PDF tronqué à %d pages", MAX_PAGES_PDF)
-                break
+        pages_lues = min(len(pdf.pages), MAX_PAGES_PDF)
+        if len(pdf.pages) > MAX_PAGES_PDF:
+            logger.warning("PDF tronqué à %d pages", MAX_PAGES_PDF)
+        for page in pdf.pages[:pages_lues]:
             morceaux.append(page.extract_text() or "")
-    return "\n\n".join(morceaux).strip()
+
+    texte = "\n\n".join(morceaux).strip()
+    if pages_lues and len(texte) >= SEUIL_TEXTE_PAR_PAGE * pages_lues:
+        return texte
+
+    # Trop peu de texte pour le nombre de pages -> probablement scanné.
+    # Règle de sûreté : l'OCR ne doit JAMAIS faire perdre du texte déjà extrait.
+    # Un PDF court mais authentiquement textuel (note d'une ligne, courrier bref)
+    # tombe sous le seuil : on le renvoie tel quel plutôt que d'échouer.
+    if not ocr_disponible():
+        if texte:
+            logger.info("PDF peu fourni (%d caractères) et OCR indisponible — texte brut conservé", len(texte))
+            return texte
+        raise FichierNonSupporte(
+            "Ce PDF ne contient aucun texte (document scanné) et la reconnaissance "
+            "de caractères n'est pas disponible sur le serveur."
+        )
+
+    logger.info("PDF sans couche texte (%d caractères / %d pages) — OCR", len(texte), pages_lues)
+    try:
+        ocr = ocr_pdf(brut)
+    except FichierNonSupporte:
+        if texte:
+            return texte        # l'OCR a échoué : on garde ce qu'on avait
+        raise
+    return ocr if len(ocr) > len(texte) else texte
 
 
 def lire_docx(brut: bytes) -> str:
@@ -156,11 +253,26 @@ def analyser(nom: str, brut: bytes) -> dict:
     fam = famille(nom)
     if fam is None:
         raise FichierNonSupporte(
-            f"Format non géré : {nom}. Formats acceptés : "
-            "CSV, Excel (.xlsx/.xls), Word (.docx), PDF, texte (.txt/.md)."
+            f"Format non géré : {nom}. Formats acceptés : CSV, Excel (.xlsx/.xls), "
+            "Word (.docx), PDF (y compris scanné), images (.png/.jpg/.tif), texte (.txt/.md)."
         )
 
     n = nom.lower()
+    if n.endswith(EXT_IMAGE):
+        if not ocr_disponible():
+            raise FichierNonSupporte(
+                "Import d'image impossible : la reconnaissance de caractères "
+                "n'est pas disponible sur le serveur."
+            )
+        texte = ocr_image(brut)
+        if not texte:
+            raise FichierNonSupporte(
+                "Aucun texte reconnu dans cette image. Vérifiez qu'elle est nette, "
+                "droite et bien éclairée."
+            )
+        return {"kind": "document", "columns": [], "rows": [],
+                "text": texte, "documents_estimes": 1}
+
     if fam == "tabulaire":
         entetes, lignes = lire_csv(brut) if n.endswith(".csv") else lire_excel(brut)
         if not lignes:
@@ -176,9 +288,6 @@ def analyser(nom: str, brut: bytes) -> dict:
         texte = _decoder(brut).strip()
 
     if not texte:
-        raise FichierNonSupporte(
-            "Aucun texte extractible. S'il s'agit d'un PDF scanné (image), "
-            "il faut d'abord le passer par une reconnaissance de caractères."
-        )
+        raise FichierNonSupporte("Aucun texte extractible de ce fichier.")
     return {"kind": "document", "columns": [], "rows": [],
             "text": texte, "documents_estimes": 1}

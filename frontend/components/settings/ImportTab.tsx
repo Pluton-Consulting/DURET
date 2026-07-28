@@ -21,7 +21,7 @@ type Analyse = {
   types_possibles: { cle: string; libelle: string }[]
 }
 
-const ACCEPTE = ".csv,.xlsx,.xls,.xlsm,.docx,.pdf,.txt,.md"
+const ACCEPTE = ".csv,.xlsx,.xls,.xlsm,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"
 
 const COULEUR_CONFIANCE: Record<string, string> = {
   haute: "var(--color-primary)",
@@ -126,7 +126,8 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
             {enCours === "analyse" ? "Analyse du fichier…" : "Déposez un fichier ou cliquez pour le choisir"}
           </div>
           <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-            Excel, CSV, Word, PDF, texte — l'IA reconnaît le contenu et vous propose un découpage avant tout enregistrement.
+            Excel, CSV, Word, PDF, photo ou scan — l'IA reconnaît le contenu et vous propose un découpage avant tout enregistrement.
+            <br />Les documents scannés passent par une reconnaissance de caractères (comptez quelques secondes par page).
           </div>
         </div>
       )}

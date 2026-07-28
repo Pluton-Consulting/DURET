@@ -2,9 +2,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# tesseract-ocr : reconnaissance de caractères pour les PDF scannés et les photos
+# de documents (import de données). Le pack `fra` est indispensable — sans lui,
+# tesseract lit le français avec le modèle anglais et produit du charabia.
+# OCR LOCAL et volontaire : aucune image de document ne part vers un service externe.
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
+    tesseract-ocr \
+    tesseract-ocr-fra \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

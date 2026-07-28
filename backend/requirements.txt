@@ -31,5 +31,7 @@ msal>=1.31.0                        # Outlook / Microsoft 365 (Graph, app-only)
 pandas>=2.2.0                       # import exports CSV/Excel (Extrabat, Deytime)
 openpyxl>=3.1.0                     # lecture des .xlsx
 pdfplumber>=0.11.0                  # extraction de texte des PDF (Drive, webhook)
+pytesseract>=0.3.13                 # OCR des PDF scannés / photos de documents
+pypdfium2>=4.30.0                   # rendu des pages PDF en image pour l'OCR
 python-docx>=1.1.0                   # lecture des .docx (import de documents)
 python-multipart>=0.0.9             # upload de fichiers (FastAPI UploadFile)

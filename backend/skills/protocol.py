@@ -46,6 +46,13 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
     "apprendre_style_email": (
         "Apprend le style d'écriture d'une boîte à partir de ses messages envoyés",
         [], ["mailbox"]),
+    "creer_tache_agent": (
+        "Enregistre une tâche que l'assistant exécutera plus tard, éventuellement de "
+        "façon répétée. recurrence : interval (avec interval_minutes, minimum 5), "
+        "daily ou weekly (avec heure « 07:30 », et jours [1..7] pour weekly). "
+        "Sans recurrence, la tâche ne part que sur demande.",
+        ["titre", "consigne"],
+        ["recurrence", "interval_minutes", "heure", "jours"]),
 }
 
 

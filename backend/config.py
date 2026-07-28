@@ -210,6 +210,9 @@ class Settings(BaseSettings):
     synology_max_depth: int = 6                      # profondeur de récursion des sous-dossiers
     synology_verify_tls: bool = False                # les NAS ont souvent un certificat auto-signé
 
+    # Tâches d'agent (planification, webhook)
+    agent_tasks_enabled: bool = True
+
     # Schedule — défaut global (surchargeable par user en DB)
     access_start_hour: int = 8
     access_end_hour: int = 18

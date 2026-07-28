@@ -75,7 +75,8 @@ async def get_graph():
 
 def _initial_state(query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
                    attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
-                   attachment_name: Optional[str] = None, attachment_text: Optional[str] = None) -> dict:
+                   attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
+                   trigger_kind: str = "chat") -> dict:
     _mime = attachment_mime or ""
     return {
         "query": query,
@@ -87,6 +88,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "attachment_mime": attachment_mime,
         "attachment_name": attachment_name,
         "attachment_text": attachment_text,
+        "trigger_kind": trigger_kind,
         "thread_id": thread_id,
         "session_id": thread_id,
         "raw_chunks": [],
@@ -143,32 +145,41 @@ def _response_from_state(state: dict) -> str:
 async def _persist_validation(thread_id: str, user_id: str, state: dict, intr: Optional[dict]) -> str:
     """Crée une ligne validations (status=pending) et retourne son id."""
     intr = intr or {}
+    payload = intr.get("payload") or state.get("validation_payload") or {}
+    # L'empreinte du payload est enregistrée AVEC la décision : c'est elle qui
+    # permettra à `execute_action` de vérifier que l'action exécutée est bien
+    # celle qui a été montrée à l'humain, et pas une autre.
+    empreinte = payload.get("payload_hash") if isinstance(payload, dict) else None
+
     async with get_db() as conn:
         vid = await conn.fetchval(
             """INSERT INTO validations
-                   (thread_id, user_id, agent, reason, payload, draft, status)
-               VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+                   (thread_id, user_id, agent, reason, payload, draft, status, payload_hash)
+               VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
                RETURNING id""",
             thread_id,
             user_id,
             intr.get("agent") or state.get("target_agent"),
             intr.get("reason") or state.get("validation_reason"),
-            json.dumps(intr.get("payload") or state.get("validation_payload") or {}),
+            json.dumps(payload),
             intr.get("draft") or _response_from_state(state),
+            empreinte,
         )
     return str(vid)
 
 
 async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
                    attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
-                   attachment_name: Optional[str] = None, attachment_text: Optional[str] = None) -> dict:
+                   attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
+                   trigger_kind: str = "chat") -> dict:
     """Exécute un tour de conversation. Peut suspendre (pending_validation)."""
     graph = await get_graph()
     config = _graph_config(thread_id, user_id)
 
     result = await graph.ainvoke(
         _initial_state(query, user_id, user_role, has_attachment, thread_id,
-                       attachment_b64, attachment_mime, attachment_name, attachment_text), config
+                       attachment_b64, attachment_mime, attachment_name, attachment_text,
+                       trigger_kind), config
     )
 
     snapshot = await graph.aget_state(config)

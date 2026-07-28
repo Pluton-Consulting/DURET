@@ -296,6 +296,19 @@ SKILLS_NATIFS = {
     "apprendre_style_email": apprendre_style,
 }
 
+def _skill_creer_tache():
+    """Import différé : tasks/ dépend de la base, mail/skills.py est importé tôt."""
+    from tasks.skills import creer_tache_agent
+    return creer_tache_agent
+
+
+async def creer_tache_agent(data: dict, user) -> dict:
+    return await _skill_creer_tache()(data, user)
+
+
+SKILLS_NATIFS["creer_tache_agent"] = creer_tache_agent
+
+
 # EFFET de chaque skill — classification qui décide si une validation humaine est
 # exigée. Déclarée DANS LE CODE, jamais déduite du nom ni fournie par le modèle :
 #   lecture          : ne modifie rien ;
@@ -310,5 +323,8 @@ EFFETS_NATIFS = {
     "redaction_email": "ecriture_interne",      # brouillon : n'envoie jamais
     "profil_style_email": "ecriture_interne",
     "apprendre_style_email": "ecriture_interne",
+    # Créer une tâche n'a aucun effet hors du système : quand elle s'exécutera,
+    # elle repassera par tous les contrôles, validation humaine comprise.
+    "creer_tache_agent": "ecriture_interne",
 }
 

@@ -8,6 +8,7 @@ résoudre (approuver ou refuser). La résolution relance le graph LangGraph
 suspendu via `agents.runtime.resume_turn`.
 """
 import json
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -167,10 +168,32 @@ async def resolve_validation(
         validation_id=str(validation_id),
     )
 
+    # Une validation peut appartenir à une TÂCHE autonome, suspendue en attendant
+    # cette décision (thread_id = « task:<run_id> »). On referme alors l'exécution,
+    # sans quoi elle resterait indéfiniment en « awaiting_approval ».
+    fil = str(validation["thread_id"] or "")
+    if fil.startswith("task:"):
+        run_id = fil.split(":", 1)[1]
+        try:
+            import json as _json
+            async with get_db() as conn:
+                await conn.execute(
+                    """UPDATE agent_task_runs
+                       SET status = $1, result = $2, updated_at = NOW()
+                       WHERE id = $3::uuid""",
+                    "completed" if body.approved else "cancelled",
+                    _json.dumps({"reponse": result.get("response"),
+                                 "validee_par": str(current_user.id)}),
+                    run_id)
+        except Exception as e:  # noqa: BLE001 - ne jamais faire échouer la validation
+            logging.getLogger("duret.validation").warning(
+                "Exécution %s non mise à jour : %s", run_id, e)
+
     await log_action(
         action="validation_resolved",
         user_id=str(current_user.id),
-        metadata={"validation_id": str(validation_id), "approved": body.approved},
+        metadata={"validation_id": str(validation_id), "approved": body.approved,
+                  "fil": fil},
     )
 
     return result

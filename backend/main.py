@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from database.connection import init_db
-from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router
+from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router, tasks as tasks_router, hooks as hooks_router
 from agents.runtime import init_runtime, shutdown_runtime
 from config import settings
 
@@ -31,6 +31,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logging.getLogger("duret").error("start_embedding_worker a échoué : %s", e)
     try:
+        from tasks.worker import start_task_worker
+        await start_task_worker()
+    except Exception as e:
+        logging.getLogger("duret").error("start_task_worker a échoué : %s", e)
+    try:
         from security.cleanup import start_validation_cleanup
         await start_validation_cleanup()
     except Exception as e:
@@ -50,6 +55,11 @@ async def lifespan(app: FastAPI):
     try:
         from vectorstore.worker import stop_embedding_worker
         await stop_embedding_worker()
+    except Exception:
+        pass
+    try:
+        from tasks.worker import stop_task_worker
+        await stop_task_worker()
     except Exception:
         pass
     try:
@@ -101,6 +111,9 @@ app.include_router(ingestion.router, prefix="/api/ingestion", tags=["ingestion"]
 app.include_router(browser.router, prefix="/api/browser", tags=["browser"])
 app.include_router(skills_router.router, prefix="/api/skills", tags=["skills"])
 app.include_router(mail_router.router, prefix="/api/mail", tags=["mail"])
+app.include_router(tasks_router.router, prefix="/api/tasks", tags=["tasks"])
+# /api/hooks : PAS de JWT — authentification par signature HMAC (voir routers/hooks.py).
+app.include_router(hooks_router.router, prefix="/api/hooks", tags=["hooks"])
 
 
 @app.get("/api/health")

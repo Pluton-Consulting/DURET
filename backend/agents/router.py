@@ -49,6 +49,13 @@ async def check_schedule_node(state: AgentState) -> dict:
     super_admin / direction exemptés ; bypass_schedule individuel ; plage par user.
     """
     user_role = state.get("user_role", "")
+    # Une tâche autonome n'est pas un usage interactif : la plage horaire protège
+    # les utilisateurs devant leur écran, pas un traitement de fond. La tâche a été
+    # créée par un humain authentifié, et toute action à effet externe reste soumise
+    # à validation. La tuer à 7h30 par un 403 n'apporterait aucune sécurité.
+    if state.get("trigger_kind") in ("schedule", "webhook"):
+        return {}
+
     if user_role in SCHEDULE_EXEMPT_ROLES:
         return {}
 
@@ -130,6 +137,76 @@ async def human_gate_node(state: AgentState) -> dict:
     }
 
 
+async def execute_action_node(state: AgentState, config=None) -> dict:
+    """Exécute une action à effet EXTERNE, après approbation humaine.
+
+    C'est le seul endroit du système où une telle action s'exécute. Trois
+    vérifications, toutes indispensables :
+
+      1. la décision doit être « approuvé » ;
+      2. l'identité du DEMANDEUR est rechargée fraîche — le valideur approuve une
+         action, il ne prête pas ses droits, et un compte désactivé entre-temps ne
+         ressuscite pas ;
+      3. le hash du payload doit correspondre à celui qui a été présenté à
+         l'humain : approuver « envoyer à Dupont » ne peut pas servir à envoyer
+         ailleurs, même si l'état a été altéré entre-temps.
+    """
+    action = state.get("pending_action") or {}
+    if state.get("validation_status") != "approved" or not action.get("skill"):
+        return {"pending_action": None,
+                "final_response": ((state.get("final_response") or "").rstrip()
+                                   + "\n\n(Action refusée : rien n'a été exécuté.)").strip()}
+
+    from tasks.identity import charger_executant
+    from skills.executor import execute_skill, hash_payload, SkillError
+
+    utilisateur = await charger_executant(state.get("user_id"))
+    if utilisateur is None:
+        return {"pending_action": None,
+                "final_response": "Action annulée : le compte du demandeur n'est plus actif."}
+
+    async with get_db() as conn:
+        approuve = await conn.fetchval(
+            """SELECT payload_hash FROM validations
+               WHERE thread_id = $1 AND status = 'approved'
+               ORDER BY resolved_at DESC NULLS LAST LIMIT 1""",
+            state.get("thread_id"))
+
+    attendu = hash_payload(action["skill"], action.get("args") or {})
+    if not approuve or approuve != attendu:
+        logger.warning("Action %s abandonnée : le contenu approuvé ne correspond pas",
+                       action.get("skill"))
+        return {"pending_action": None,
+                "final_response": "Action annulée : le contenu approuvé ne correspond pas "
+                                  "à l'action demandée."}
+
+    try:
+        await execute_skill(
+            action["skill"], action.get("args") or {}, user=utilisateur,
+            approbation={"payload_hash": approuve,
+                         "validated_by": state.get("validated_by")},
+            trigger={"type": "resume", "id": state.get("thread_id")},
+        )
+        message = f"Action « {action['skill']} » exécutée après validation."
+    except SkillError as e:
+        message = f"Action non exécutée : {e}"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Échec de l'action %s : %s", action.get("skill"), e)
+        message = f"Action non exécutée : {getattr(e, 'detail', None) or e}"
+
+    return {"pending_action": None,
+            "final_response": ((state.get("final_response") or "").rstrip()
+                               + f"\n\n{message}").strip()}
+
+
+def route_apres_gate(state: AgentState) -> str:
+    """Après la décision humaine : exécuter l'action approuvée, ou terminer."""
+    if (state.get("validation_status") == "approved"
+            and (state.get("pending_action") or {}).get("skill")):
+        return "execute_action"
+    return "fin"
+
+
 def route_to_agent(state: AgentState) -> str:
     """Edge conditionnel principal — out_of_scope force l'Agent 3."""
     if state.get("out_of_scope", False):
@@ -148,6 +225,7 @@ async def build_main_graph(checkpointer):
     graph.add_node("agent2", dispatch_agent2)
     graph.add_node("agent3", dispatch_agent3)
     graph.add_node("human_gate", human_gate_node)
+    graph.add_node("execute_action", execute_action_node)
 
     graph.set_entry_point("classify")
     graph.add_edge("classify", "check_schedule")
@@ -159,6 +237,9 @@ async def build_main_graph(checkpointer):
     graph.add_edge("agent1", "human_gate")
     graph.add_edge("agent2", "human_gate")
     graph.add_edge("agent3", "human_gate")
-    graph.add_edge("human_gate", END)
+    # Après la décision humaine : exécuter l'action approuvée, sinon terminer.
+    graph.add_conditional_edges("human_gate", route_apres_gate,
+                                {"execute_action": "execute_action", "fin": END})
+    graph.add_edge("execute_action", END)
 
     return graph.compile(checkpointer=checkpointer)

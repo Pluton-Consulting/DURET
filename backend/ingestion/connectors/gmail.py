@@ -181,8 +181,14 @@ async def _ingerer_dossier(service, boite: str, dossier: str, maximum: int) -> i
     return ingeres
 
 
-async def sync(boites: Optional[list[str]] = None) -> dict:
-    """Synchronise les boîtes Gmail, puis met à jour les profils de style."""
+async def sync(boites: Optional[list[str]] = None,
+               dossiers: tuple[str, ...] = ("INBOX", "SENT"),
+               maximum: Optional[int] = None) -> dict:
+    """Synchronise les boîtes Gmail, puis met à jour les profils de style.
+
+    `dossiers` permet de ne collecter QUE les envois (apprentissage du style
+    déclenché par un utilisateur pour sa propre boîte, cf. mail/collecte.py).
+    """
     cibles = boites or await boites_a_synchroniser()
     if not cibles:
         raise NotImplementedError(
@@ -190,7 +196,7 @@ async def sync(boites: Optional[list[str]] = None) -> dict:
             "ou renseignez GMAIL_EXTRA_MAILBOXES."
         )
 
-    maximum = settings.gmail_max_messages
+    maximum = maximum or settings.gmail_max_messages
     bilan = {"boites": 0, "recus": 0, "envoyes": 0, "profils": 0, "echecs": []}
 
     for boite in cibles:
@@ -205,8 +211,10 @@ async def sync(boites: Optional[list[str]] = None) -> dict:
             continue
 
         bilan["boites"] += 1
-        bilan["recus"] += await _ingerer_dossier(service, boite, "INBOX", maximum)
-        bilan["envoyes"] += await _ingerer_dossier(service, boite, "SENT", maximum)
+        if "INBOX" in dossiers:
+            bilan["recus"] += await _ingerer_dossier(service, boite, "INBOX", maximum)
+        if "SENT" in dossiers:
+            bilan["envoyes"] += await _ingerer_dossier(service, boite, "SENT", maximum)
 
         # Le style se recalcule ici : c'est le seul moment où l'on sait que de
         # nouveaux messages envoyés viennent d'arriver.

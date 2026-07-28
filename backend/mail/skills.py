@@ -238,10 +238,53 @@ async def resumer_fil(data: dict, user) -> dict:
 
 
 async def profil_style(data: dict, user) -> dict:
-    """(Re)calcule le profil de style d'une boîte à laquelle on a accès."""
-    boite = await verifier_acces(user, data.get("mailbox"))
+    """(Re)calcule le profil de style à partir des messages DÉJÀ ingérés."""
+    boite = await verifier_acces(user, data.get("mailbox") or getattr(user, "email", None))
     from mail.style import construire_profil
     return await construire_profil(boite, force=bool(data.get("force")))
+
+
+async def apprendre_style(data: dict, user) -> dict:
+    """Va CHERCHER les derniers messages envoyés de la boîte, puis apprend le style.
+
+    Parcours libre-service : chacun se connecte avec son compte et lance
+    l'apprentissage pour SA boîte. Sans `mailbox`, on prend celle de la personne
+    connectée — le cas courant. Une boîte déléguée est acceptée si l'accès est
+    reconnu ; aucune permission d'administration n'est requise, c'est
+    `verifier_acces` qui borne le périmètre.
+    """
+    boite = await verifier_acces(user, data.get("mailbox") or getattr(user, "email", None))
+
+    from mail.collecte import collecter_envoyes
+    from mail.style import construire_profil
+
+    try:
+        collecte = await collecter_envoyes(boite, maximum=data.get("nombre"))
+    except NotImplementedError as e:
+        raise MailSkillError(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Collecte des envois de %s échouée : %s", boite, e)
+        raise MailSkillError(
+            f"Impossible de lire les messages envoyés de {boite}. "
+            "Vérifiez que la messagerie est bien connectée.")
+
+    # force=True : on vient d'ajouter des messages, le profil doit être refait.
+    profil = await construire_profil(boite, force=True)
+
+    if not profil.get("profil"):
+        raise MailSkillError(
+            f"Pas encore assez de messages envoyés depuis {boite} pour apprendre un style "
+            f"({profil.get('echantillons', 0)} trouvé(s)). "
+            f"Motif : {profil.get('raison', 'inconnu')}.")
+
+    return {
+        "mailbox": boite,
+        "messages_collectes": collecte.get("envoyes", 0),
+        "messages_analyses": profil.get("echantillons", 0),
+        "profil": profil.get("profil"),
+        "message": f"Style appris pour {boite}. Les prochains brouillons rédigés "
+                   f"au nom de cette boîte reprendront cette façon d'écrire.",
+    }
 
 
 # Registre consommé par l'exécuteur de skills.
@@ -250,4 +293,5 @@ SKILLS_NATIFS = {
     "redaction_email": rediger_email,
     "resume_fil_email": resumer_fil,
     "profil_style_email": profil_style,
+    "apprendre_style_email": apprendre_style,
 }

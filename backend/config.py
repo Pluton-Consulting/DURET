@@ -176,6 +176,8 @@ class Settings(BaseSettings):
     gmail_access_level: str = "all"             # visibilité des mails ingérés
 
 
+    mail_provider: str = "auto"        # auto | outlook | gmail
+
     # Apprentissage du style rédactionnel (mail/style.py)
     mail_style_samples: int = 50        # nb de messages envoyés analysés par boîte
     mail_style_min_samples: int = 3     # en dessous, le profil serait une caricature

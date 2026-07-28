@@ -92,6 +92,28 @@ async def retirer(user_id: str, mailbox: str, current_user: User = Depends(get_c
     return {"ok": True}
 
 
+class ApprentissageStyle(BaseModel):
+    mailbox: Optional[str] = None   # défaut : la boîte de la personne connectée
+    nombre: Optional[int] = None    # défaut : MAIL_STYLE_SAMPLES
+
+
+@router.post("/apprendre-style")
+async def apprendre_style(body: ApprentissageStyle,
+                          current_user: User = Depends(get_current_user)):
+    """Apprend le style d'écriture d'une boîte à laquelle on a accès.
+
+    Libre-service : AUCUNE permission d'administration. Chacun lance
+    l'apprentissage pour sa propre boîte (ou une boîte qui lui a été déléguée),
+    le périmètre étant borné par `mail.authorization`.
+    """
+    from mail.skills import apprendre_style as executer
+    resultat = await executer({"mailbox": body.mailbox, "nombre": body.nombre}, current_user)
+    await log_action(action="mail_style_learned", user_id=str(current_user.id),
+                     metadata={"mailbox": resultat["mailbox"],
+                               "messages": resultat["messages_analyses"]})
+    return resultat
+
+
 @router.get("/style/{mailbox}")
 async def style_de_boite(mailbox: str, current_user: User = Depends(get_current_user)):
     """Profil de style appris pour une boîte (nécessite d'y avoir accès)."""

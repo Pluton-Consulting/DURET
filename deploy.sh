@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  Déploiement / mise à jour de Symbiose sur le VPS.
-#  À lancer depuis le dossier symbiose-noa/ APRÈS avoir rempli .env :
+#  Déploiement / mise à jour de Duret & Sols sur le VPS.
+#  À lancer depuis le dossier duret-sols/ APRÈS avoir rempli .env :
 #      chmod +x deploy.sh
 #      ./deploy.sh
 #  Idempotent : relançable pour appliquer une mise à jour (git pull puis ./deploy.sh).

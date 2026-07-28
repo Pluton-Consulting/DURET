@@ -4,7 +4,7 @@
 
 set -e
 
-PROJECT_DIR="/mnt/c/Users/noa8b/Desktop/AI SYMBIOSE/symbiose-noa"
+PROJECT_DIR="/mnt/c/Users/noa8b/Desktop/DURET-SOLS"
 cd "$PROJECT_DIR"
 
 echo "==> Démarrage du daemon Docker..."
@@ -20,14 +20,14 @@ echo "==> Lancement des services principaux..."
 docker compose up -d --build
 
 echo "==> Attente PostgreSQL..."
-until docker compose exec postgres pg_isready -U noa_user -d symbiose_noa > /dev/null 2>&1; do
+until docker compose exec postgres pg_isready -U duret_user -d duret_sols > /dev/null 2>&1; do
   sleep 2
 done
 echo "PostgreSQL prêt."
 
 echo "==> Application des migrations..."
-docker compose exec postgres psql -U noa_user -d symbiose_noa -f /migrations/001_initial_schema.sql 2>/dev/null || echo "Migration 001 déjà appliquée"
-docker compose exec postgres psql -U noa_user -d symbiose_noa -f /migrations/002_magic_link_tokens.sql 2>/dev/null || echo "Migration 002 déjà appliquée"
+docker compose exec postgres psql -U duret_user -d duret_sols -f /migrations/001_initial_schema.sql 2>/dev/null || echo "Migration 001 déjà appliquée"
+docker compose exec postgres psql -U duret_user -d duret_sols -f /migrations/002_magic_link_tokens.sql 2>/dev/null || echo "Migration 002 déjà appliquée"
 
 echo ""
 echo "=============================="

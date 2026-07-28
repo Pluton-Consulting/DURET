@@ -1,4 +1,4 @@
-// Helper WebSocket pour le chat temps réel (streaming nœud-par-nœud de Symbiose/PLUTON).
+// Helper WebSocket pour le chat temps réel (streaming nœud-par-nœud de Duret & Sols).
 // Le backend expose /api/chat/ws/{thread_id}?ticket=<ticket éphémère> et pousse des événements JSON.
 // Le ticket (usage unique, ~30 s) s'obtient par POST /api/chat/ws-ticket (JWT en en-tête).
 

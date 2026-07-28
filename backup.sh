@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  Sauvegarde de Symbiose : base de données (données client) + .env.
-#  À lancer depuis le dossier symbiose-noa/. Idéal en CRON quotidien.
+#  Sauvegarde de Duret & Sols : base de données (données client) + .env.
+#  À lancer depuis le dossier duret-sols/. Idéal en CRON quotidien.
 #      chmod +x backup.sh && ./backup.sh
 #  Réglages (optionnels, via variables d'env) :
-#      BACKUP_DIR (défaut ~/symbiose-backups)  RETENTION_DAYS (défaut 14)
+#      BACKUP_DIR (défaut ~/duret-backups)  RETENTION_DAYS (défaut 14)
 #  RESTAURATION : voir la fin de ce fichier.
 # =====================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
 
-BACKUP_DIR="${BACKUP_DIR:-$HOME/symbiose-backups}"
+BACKUP_DIR="${BACKUP_DIR:-$HOME/duret-backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 STAMP="$(date +%Y-%m-%d_%H%M)"
 mkdir -p "$BACKUP_DIR"
@@ -36,7 +36,7 @@ echo "OK $(date '+%F %T') -> $BACKUP_DIR/db_${STAMP}.sql.gz ($(du -h "$BACKUP_DI
 
 # =====================================================================
 #  RESTAURER une sauvegarde (manuel) :
-#    gunzip -c ~/symbiose-backups/db_AAAA-MM-JJ_HHMM.sql.gz \
+#    gunzip -c ~/duret-backups/db_AAAA-MM-JJ_HHMM.sql.gz \
 #      | docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-#          exec -T postgres psql -U noa_user -d symbiose_noa
+#          exec -T postgres psql -U duret_user -d duret_sols
 # =====================================================================

@@ -21,7 +21,7 @@ from security.rbac import SCHEDULE_EXEMPT_ROLES
 from config import settings
 from fastapi import HTTPException
 
-logger = logging.getLogger("symbiose.router")
+logger = logging.getLogger("duret.router")
 
 
 async def classify_node(state: AgentState) -> dict:

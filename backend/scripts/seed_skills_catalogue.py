@@ -42,6 +42,21 @@ def scaffold(name: str, requis: list[str], resultat: list[str]) -> str:
 
 
 # ── Catalogue ─────────────────────────────────────────────────────────────
+# Skills NATIFS (exécutés dans le backend — voir mail/skills.py).
+NATIFS = [
+    ("triage_email_entrant",
+     "Classe et priorise un message reçu (catégorie, urgence, action suggérée). N'exécute aucune action."),
+    ("redaction_email",
+     "Rédige un BROUILLON de message dans le style de l'expéditeur, pour 11 types "
+     "(réponse, relance devis, relance impayé, envoi de devis, réclamation, information "
+     "chantier, confirmation de rendez-vous, demande d'informations, remerciement, refus, "
+     "interne). N'envoie jamais."),
+    ("resume_fil_email",
+     "Résume un échange de mails et en extrait les demandes, engagements et points en attente."),
+    ("profil_style_email",
+     "(Re)calcule le profil de style rédactionnel d'une boîte à partir de ses messages envoyés."),
+]
+
 # (name, agent, category, description, requis[], resultat[], prompt_template)
 CATALOGUE = [
     # ===================== AGENT 1 — Administratif / Suivi de chantiers =====================
@@ -210,6 +225,22 @@ async def main() -> None:
                    VALUES ($1, $2, $3, $4, 'draft', 'system', $5, $6)
                    ON CONFLICT (name) DO NOTHING""",
                 name, description, code, prompt, agent, category,
+            )
+            if status.endswith(" 1"):
+                inserted += 1
+
+        # Skills NATIFS : implémentés dans le backend (mail/skills.py), pas en bac
+        # à sable. Ils sont donc directement 'stable' — leur code est livré avec
+        # l'application, il n'y a rien à générer ni à valider. Les référencer ici
+        # les rend visibles et surtout DÉSACTIVABLES depuis l'interface.
+        for name, description in NATIFS:
+            status = await conn.execute(
+                """INSERT INTO skills
+                       (name, description, code, prompt_template, status, created_by, agent, category)
+                   VALUES ($1, $2, '', '', 'stable', 'system', 'agent1', 'mail')
+                   ON CONFLICT (name) DO UPDATE
+                       SET description = EXCLUDED.description, status = 'stable'""",
+                name, description,
             )
             if status.endswith(" 1"):
                 inserted += 1

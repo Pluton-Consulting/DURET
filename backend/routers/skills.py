@@ -61,7 +61,8 @@ async def run_skill(name: str, body: RunBody, current_user: User = Depends(get_c
     _require(current_user)
     try:
         return await executor.execute_skill(
-            name, body.data, user_id=str(current_user.id), allow_draft=body.allow_draft
+            name, body.data, user_id=str(current_user.id),
+            allow_draft=body.allow_draft, user=current_user,
         )
     except executor.SkillError as e:
         raise HTTPException(status_code=http.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))

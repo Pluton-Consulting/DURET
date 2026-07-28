@@ -129,6 +129,8 @@ async def trigger_sync(source: str, current_user: User = Depends(get_current_use
             from ingestion.connectors.deytime import sync as run
         elif source == "synology":
             from ingestion.connectors.synology import sync as run
+        elif source == "gmail":
+            from ingestion.connectors.gmail import sync as run
         else:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Connecteur inconnu : {source}")
     except HTTPException:

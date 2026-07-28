@@ -11,6 +11,7 @@ Garde-fou : seules les skills 'validated' / 'stable' sont exécutables par défa
 Aucune donnée client ne sort de l'infra : le code s'exécute en local, isolé.
 """
 import logging
+import time
 
 from database.connection import get_db
 from sandbox.daytona_client import sandbox_client
@@ -49,6 +50,35 @@ async def list_skills(agent: str | None = None, statuses: tuple | None = None,
 
 
 async def get_skill(name: str) -> dict | None:
+    from mail.skills import SKILLS_NATIFS
+
+    if name in SKILLS_NATIFS:
+        if user is None:
+            # Sans identité, impossible de vérifier les droits sur une boîte :
+            # on refuse plutôt que d'exécuter avec des droits indéterminés.
+            raise SkillError(f"skill '{name}' : identité de l'appelant requise")
+
+        # Un skill natif reste pilotable depuis l'interface : s'il est référencé
+        # en base et désactivé, on le refuse. Sans ligne en base, on l'autorise
+        # (le code est livré avec l'application, contrairement au code généré).
+        async with get_db() as conn:
+            ref = await conn.fetchrow("SELECT enabled FROM skills WHERE name = $1", name)
+        if ref is not None and not ref["enabled"]:
+            raise SkillError(f"skill '{name}' désactivé")
+
+        start = time.monotonic()
+        sortie = await SKILLS_NATIFS[name](data or {}, user)
+        duree = int((time.monotonic() - start) * 1000)
+        try:
+            async with get_db() as conn:
+                await conn.execute(
+                    "UPDATE skills SET usage_count = usage_count + 1, updated_at = NOW() "
+                    "WHERE name = $1", name)
+        except Exception:
+            pass
+        return {"skill": name, "status": "native", "ok": True, "output": sortie,
+                "error": None, "execution_time_ms": duree, "sandbox_type": "natif"}
+
     async with get_db() as conn:
         row = await conn.fetchrow(
             "SELECT name, description, status, agent, category, code, prompt_template, "
@@ -65,7 +95,7 @@ async def available_for_agent(agent: str) -> list[dict]:
 
 
 async def execute_skill(name: str, data: dict, user_id: str | None = None,
-                        allow_draft: bool = False) -> dict:
+                        allow_draft: bool = False, user=None) -> dict:
     """Exécute un skill par nom avec `data`. Journalise, incrémente usage_count.
 
     Renvoie : {skill, status, ok, output, error, execution_time_ms, sandbox_type}.

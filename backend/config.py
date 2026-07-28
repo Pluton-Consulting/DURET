@@ -166,6 +166,16 @@ class Settings(BaseSettings):
     google_token_file: str = "secrets/google_token.json"              # refresh token (1er consentement)
     google_drive_folder_id: Optional[str] = None                      # dossier à ingérer (None = tout)
 
+    # ── Gmail / Google Workspace (mails de Duret & Sols) ──
+    # Compte de service + délégation à l'échelle du domaine : le backend emprunte
+    # l'identité de chaque boîte, sans consentement individuel. Scope demandé :
+    # gmail.readonly uniquement.
+    google_sa_file: str = "secrets/google_service_account.json"
+    gmail_domain: Optional[str] = None          # ex. duret-sols.fr — refuse toute boîte hors domaine
+    gmail_extra_mailboxes: Optional[str] = None  # boîtes partagées, séparées par des virgules
+    gmail_max_messages: int = 100               # messages par dossier et par boîte, à chaque synchro
+    gmail_access_level: str = "all"             # visibilité des mails ingérés
+
     # Outlook / Microsoft 365 (voie API directe — Microsoft Graph, alternative à Make).
     ms_tenant_id: Optional[str] = None
     ms_client_id: Optional[str] = None

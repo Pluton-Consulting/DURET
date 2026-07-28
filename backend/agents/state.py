@@ -34,6 +34,17 @@ class AgentState(TypedDict):
     entity_map: Optional[dict]      # Correspondances pour réhydratation (CUMULATIF sur le fil)
     turn_placeholders: Optional[List[str]]  # jetons envoyés au LLM ce tour-ci (borne la réhydratation)
 
+    # Boucle d'appel d'outils. AUCUN reducer d'accumulation ici : `dispatch_agentN`
+    # renvoie l'ÉTAT COMPLET du sous-graphe comme update du nœud parent, si bien
+    # qu'un reducer additif dupliquerait toute la liste à chaque tour. On accumule
+    # donc à la main dans le nœud, et le canal reste en « dernière valeur ».
+    tool_results: Optional[List[dict]]   # résultats MASQUÉS des actions du tour
+    tool_iterations: int                 # garde anti-boucle
+    tool_repair_used: bool               # une seule tentative de réparation d'un bloc invalide
+    tools_finished: bool                 # force la sortie de boucle
+    pending_action: Optional[dict]       # action externe en attente de validation humaine
+    trigger_kind: Optional[str]          # 'chat' | 'schedule' | 'webhook'
+
     # Réponse LLM
     llm_response: Optional[str]
     final_response: Optional[str]   # Après réhydratation

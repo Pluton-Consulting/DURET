@@ -47,6 +47,7 @@ const NODE_LABELS: Record<string, string> = {
   anonymize: "Protection des données personnelles",
   browser: "Recherche sur le web",
   llm: "Rédaction de la réponse",
+  tools: "Exécution d'une action",
   vision: "Analyse du plan / de la photo",
   preprocess: "Préparation du document",
   extraction: "Extraction des informations",

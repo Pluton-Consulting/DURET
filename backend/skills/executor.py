@@ -10,6 +10,9 @@ Garde-fou : seules les skills 'validated' / 'stable' sont exécutables par défa
 'draft' ne tournent qu'en mode test explicite (`allow_draft=True`), réservé aux admins.
 Aucune donnée client ne sort de l'infra : le code s'exécute en local, isolé.
 """
+import hashlib
+import hmac
+import json as _json
 import logging
 import time
 
@@ -50,6 +53,82 @@ async def list_skills(agent: str | None = None, statuses: tuple | None = None,
 
 
 async def get_skill(name: str) -> dict | None:
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "SELECT name, description, status, agent, category, code, prompt_template, "
+            "confidence_score, usage_count, version, updated_at "
+            "FROM skills WHERE name = $1",
+            name,
+        )
+    return dict(row) if row else None
+
+
+async def available_for_agent(agent: str) -> list[dict]:
+    """Skills invocables (validated/stable) pour un agent — utilisé par la boucle agent."""
+    return await list_skills(agent=agent, statuses=RUNNABLE_STATUSES, include_code=False)
+
+
+def hash_payload(name: str, data: dict) -> str:
+    """Empreinte du couple (skill, arguments), sous forme canonique.
+
+    Elle lie une approbation humaine au payload EXACT qui lui a été présenté :
+    approuver « envoyer à Dupont » ne peut pas servir à exécuter « envoyer à
+    quelqu'un d'autre ».
+    """
+    canon = _json.dumps({"skill": name, "args": data or {}},
+                        sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+                        default=str)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def effet_du_skill(name: str, ligne=None) -> str:
+    """Effet d'un skill. FAIL-CLOSED : non déclaré = `externe`, donc verrouillé."""
+    from mail.skills import EFFETS_NATIFS
+    if name in EFFETS_NATIFS:
+        return EFFETS_NATIFS[name]
+    try:
+        valeur = ligne["effect"] if ligne is not None else None
+    except (KeyError, TypeError):
+        valeur = None
+    return valeur or "externe"
+
+
+def _verifier_effet(name: str, data: dict, ligne, approbation: dict | None) -> str:
+    """Verrou structurel des actions à effet externe.
+
+    Placé dans l'exécuteur, c'est-à-dire dans le goulot que TOUS les chemins
+    empruntent (chat, API, tâche planifiée, webhook). Un modèle de langage ne
+    contourne pas un `if` : aucune formulation, aucune injection de prompt cachée
+    dans un document ingéré ne peut faire exécuter une action externe sans une
+    approbation humaine liée au payload exact.
+    """
+    effet = effet_du_skill(name, ligne)
+    if effet != "externe":
+        return effet
+    attendu = hash_payload(name, data or {})
+    fourni = (approbation or {}).get("payload_hash") or ""
+    if not hmac.compare_digest(fourni, attendu):
+        raise SkillError(
+            f"skill '{name}' : action à effet externe, une validation humaine est "
+            "requise avant exécution.")
+    return effet
+
+
+async def execute_skill(name: str, data: dict, user_id: str | None = None,
+                        allow_draft: bool = False, user=None,
+                        approbation: dict | None = None,
+                        trigger: dict | None = None) -> dict:
+    """Exécute un skill par nom avec `data`. Journalise, incrémente usage_count.
+
+    Deux familles de skills :
+      * NATIFS (mail…) : fonctions Python du backend. Elles ont besoin du LLM, de
+        la base documentaire et surtout de l'IDENTITÉ de l'appelant pour vérifier
+        ses droits sur une boîte mail — inaccessibles depuis un bac à sable isolé.
+      * GÉNÉRÉS : code exécuté en bac à sable, sans accès au reste du système.
+
+    Renvoie : {skill, status, ok, output, error, execution_time_ms, sandbox_type}.
+    Lève SkillError si le skill est introuvable ou non exécutable.
+    """
     from mail.skills import SKILLS_NATIFS
 
     if name in SKILLS_NATIFS:
@@ -66,6 +145,8 @@ async def get_skill(name: str) -> dict | None:
         if ref is not None and not ref["enabled"]:
             raise SkillError(f"skill '{name}' désactivé")
 
+        _verifier_effet(name, data, ref, approbation)
+
         start = time.monotonic()
         sortie = await SKILLS_NATIFS[name](data or {}, user)
         duree = int((time.monotonic() - start) * 1000)
@@ -76,31 +157,25 @@ async def get_skill(name: str) -> dict | None:
                     "WHERE name = $1", name)
         except Exception:
             pass
+
+        # Les skills natifs échappaient à l'audit (seuls ceux du bac à sable y
+        # passaient). Indispensable pour répondre à « qui a déclenché quoi, au nom
+        # de qui » dès que des tâches autonomes exécuteront ces mêmes skills.
+        try:
+            await log_action(
+                action="skill_executed", user_id=str(user.id),
+                on_behalf_of=str(user.id), duration_ms=duree,
+                trigger_type=(trigger or {}).get("type", "chat"),
+                trigger_id=(trigger or {}).get("id"),
+                metadata={"skill": name, "effet": effet_du_skill(name, ref),
+                          "mailbox": (sortie or {}).get("mailbox")},
+            )
+        except Exception:
+            pass
+
         return {"skill": name, "status": "native", "ok": True, "output": sortie,
                 "error": None, "execution_time_ms": duree, "sandbox_type": "natif"}
 
-    async with get_db() as conn:
-        row = await conn.fetchrow(
-            "SELECT name, description, status, agent, category, code, prompt_template, "
-            "confidence_score, usage_count, version, updated_at "
-            "FROM skills WHERE name = $1",
-            name,
-        )
-    return dict(row) if row else None
-
-
-async def available_for_agent(agent: str) -> list[dict]:
-    """Skills invocables (validated/stable) pour un agent — utilisé par la boucle agent."""
-    return await list_skills(agent=agent, statuses=RUNNABLE_STATUSES, include_code=False)
-
-
-async def execute_skill(name: str, data: dict, user_id: str | None = None,
-                        allow_draft: bool = False, user=None) -> dict:
-    """Exécute un skill par nom avec `data`. Journalise, incrémente usage_count.
-
-    Renvoie : {skill, status, ok, output, error, execution_time_ms, sandbox_type}.
-    Lève SkillError si le skill est introuvable ou non exécutable.
-    """
     async with get_db() as conn:
         row = await conn.fetchrow("SELECT code, status, enabled FROM skills WHERE name = $1", name)
     if not row:

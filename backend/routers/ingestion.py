@@ -12,6 +12,7 @@ dans la base documentaire (RAG).
 """
 import asyncio
 import base64
+import hmac
 import logging
 import secrets
 import time
@@ -91,7 +92,10 @@ async def ingestion_webhook(
     if not settings.ingestion_webhook_secret:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="Ingestion webhook non configuré (INGESTION_WEBHOOK_SECRET manquant)")
-    if x_ingestion_secret != settings.ingestion_webhook_secret:
+    # compare_digest : la comparaison naïve `!=` s'arrête au premier octet différent,
+    # ce qui laisse mesurer le secret caractère par caractère. Sans conséquence pour
+    # l'ingestion seule, mais ce webhook servira à DÉCLENCHER des agents.
+    if not hmac.compare_digest(x_ingestion_secret or "", settings.ingestion_webhook_secret):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Secret d'ingestion invalide")
 
     text = await asyncio.to_thread(_extract_text, doc)  # extraction hors boucle d'événements

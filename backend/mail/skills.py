@@ -295,3 +295,20 @@ SKILLS_NATIFS = {
     "profil_style_email": profil_style,
     "apprendre_style_email": apprendre_style,
 }
+
+# EFFET de chaque skill — classification qui décide si une validation humaine est
+# exigée. Déclarée DANS LE CODE, jamais déduite du nom ni fournie par le modèle :
+#   lecture          : ne modifie rien ;
+#   ecriture_interne : écrit dans nos propres données (brouillon, profil de style) ;
+#   externe          : produit un effet hors du système (envoi de mail, écriture sur
+#                      un NAS, action chez un tiers) -> validation humaine OBLIGATOIRE.
+# Tout skill non listé est traité comme `externe` par l'exécuteur : un oubli de
+# déclaration verrouille, il n'ouvre pas.
+EFFETS_NATIFS = {
+    "triage_email_entrant": "lecture",
+    "resume_fil_email": "lecture",
+    "redaction_email": "ecriture_interne",      # brouillon : n'envoie jamais
+    "profil_style_email": "ecriture_interne",
+    "apprendre_style_email": "ecriture_interne",
+}
+

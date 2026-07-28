@@ -101,6 +101,13 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "llm_response": None,
         "final_response": None,
         "turn_placeholders": None,
+        # Boucle d'outils : remise à zéro obligatoire à chaque tour, sinon le garde
+        # anti-boucle et les résultats du tour précédent survivraient.
+        "tool_results": [],
+        "tool_iterations": 0,
+        "tool_repair_used": False,
+        "tools_finished": False,
+        "pending_action": None,
         "out_of_scope": False,
         "browser_needed": False,
         "browser_used": False,
@@ -217,16 +224,24 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
     snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else result
 
-    # Met à jour la ligne validations
+    # Met à jour la ligne validations. On cible par ID quand on l'a : un même fil
+    # peut porter plusieurs validations en attente (une action par tour), et le
+    # filtre par thread_id seul en résoudrait plusieurs d'un coup avec UNE décision.
     async with get_db() as conn:
-        await conn.execute(
-            """UPDATE validations
-               SET status = $1, validated_by = $2, resolved_at = NOW()
-               WHERE thread_id = $3 AND status = 'pending'""",
-            "approved" if approved else "rejected",
-            validated_by,
-            thread_id,
-        )
+        if validation_id:
+            await conn.execute(
+                """UPDATE validations
+                   SET status = $1, validated_by = $2, resolved_at = NOW()
+                   WHERE id = $3::uuid AND status = 'pending'""",
+                "approved" if approved else "rejected", validated_by, str(validation_id),
+            )
+        else:   # compatibilité : anciens appels sans identifiant
+            await conn.execute(
+                """UPDATE validations
+                   SET status = $1, validated_by = $2, resolved_at = NOW()
+                   WHERE thread_id = $3 AND status = 'pending'""",
+                "approved" if approved else "rejected", validated_by, thread_id,
+            )
 
     return {
         "status": "completed",
@@ -251,23 +266,33 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
 
     # subgraphs=True : remonte AUSSI les sous-étapes internes des agents (recherche mémoire,
     # anonymisation, rédaction, vision…) et pas seulement les gros nœuds (agent1/agent2).
-    async for ns, chunk in graph.astream(
+    _flux = graph.astream(
         _initial_state(query, user_id, user_role, has_attachment, thread_id,
                        attachment_b64, attachment_mime, attachment_name, attachment_text),
         config,
         stream_mode="updates",
         subgraphs=True,
-    ):
+    )
+    interruption = None
+    async for ns, chunk in _flux:
         for node_name, update in chunk.items():
             if node_name == "__interrupt__":
-                yield {"type": "validation_required", "node": "human_gate", "data": _extract_interrupt({"__interrupt__": update})}
+                # Avec subgraphs=True, l'interruption remonte DEUX fois (espace de noms
+                # du sous-graphe puis du parent). On ne la signale qu'une seule fois,
+                # sinon le front afficherait deux demandes pour une seule décision.
+                if interruption is None:
+                    interruption = _extract_interrupt({"__interrupt__": update})
+                    yield {"type": "validation_required", "node": "human_gate", "data": interruption}
             else:
                 yield {"type": "node", "node": node_name, "data": _safe(update)}
 
     snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else {}
     if snapshot.next:
-        yield {"type": "pending_validation", "thread_id": thread_id}
+        # run_turn persiste la validation, pas stream_turn : une demande levée par le
+        # WebSocket n'atteignait donc JAMAIS la file de validation. On comble ici.
+        validation_id = await _persist_validation(thread_id, user_id, state, interruption)
+        yield {"type": "pending_validation", "thread_id": thread_id, "validation_id": validation_id}
     else:
         yield {"type": "final", "thread_id": thread_id, "response": _response_from_state(state)}
 
@@ -278,7 +303,7 @@ def _safe(update: Any) -> dict:
         return {}
     out = {}
     for k in ("target_agent", "llm_tier", "requires_validation", "out_of_scope",
-              "final_response", "llm_response", "model_used"):
+              "final_response", "llm_response", "model_used", "tool_iterations"):
         if k in update and update[k] is not None:
             out[k] = update[k]
     return out

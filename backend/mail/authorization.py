@@ -100,8 +100,10 @@ async def boites_par_id(user_id: Optional[str]) -> list[str]:
     if not user_id:
         return []
     async with get_db() as conn:
+        # `actif = true` : un compte désactivé ne doit plus rien voir, y compris via
+        # une tâche différée créée quand il était encore actif.
         ligne = await conn.fetchrow(
-            "SELECT email, role FROM users WHERE id = $1::uuid", str(user_id))
+            "SELECT email, role FROM users WHERE id = $1::uuid AND actif = true", str(user_id))
     if ligne and acces_total(ligne["role"]):
         return [TOUTES_LES_BOITES]      # l'administrateur voit tous les mails
 

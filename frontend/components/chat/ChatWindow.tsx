@@ -98,9 +98,29 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
 
   // Restaure la conversation au montage : thread passé en prop, sinon dernier thread
   // mémorisé en localStorage → recharge son historique depuis le backend.
+  // Relit le fil mémorisé. Replie sur la clé NON préfixée : au tout premier
+  // message, la session peut ne pas être encore chargée (userKey null), le fil
+  // est alors enregistré sans préfixe. Sans ce repli, on le relirait sous la clé
+  // préfixée une fois la session prête et la conversation semblerait perdue à
+  // chaque changement d'onglet.
+  const lireThreadMemorise = (): string | null => {
+    if (typeof window === "undefined") return null
+    const prefixe = window.localStorage.getItem(storageKey(userKey))
+    if (prefixe) return prefixe
+    const ancien = window.localStorage.getItem(STORAGE_PREFIX)
+    if (ancien && userKey) {
+      // Migration : on le range sous la bonne clé pour ne plus dépendre du repli.
+      try {
+        window.localStorage.setItem(storageKey(userKey), ancien)
+        window.localStorage.removeItem(STORAGE_PREFIX)
+      } catch { /* no-op */ }
+    }
+    return ancien
+  }
+
   useEffect(() => {
     if (!token) return
-    const tid = initialThreadId || (typeof window !== "undefined" ? window.localStorage.getItem(storageKey(userKey)) : null)
+    const tid = initialThreadId || lireThreadMemorise()
     if (!tid) return
     setThreadId(tid)
     apiRequest<any[]>(`/api/chat/threads/${tid}/messages`, { token })

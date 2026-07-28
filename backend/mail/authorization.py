@@ -36,9 +36,25 @@ class AccesBoiteRefuse(HTTPException):
         super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
+# Rôle disposant d'un accès TOTAL aux boîtes, sans délégation préalable.
+# Décision explicite du propriétaire du produit : l'administrateur doit pouvoir
+# tout piloter depuis l'assistant. Les autres rôles, y compris `direction`,
+# restent soumis aux délégations — c'est ce qui empêche un employé, ou même un
+# cadre, d'écrire au nom d'un collègue. Chaque usage de ce contournement est
+# journalisé.
+ROLE_ACCES_TOTAL = "super_admin"
+
+# Jeton signifiant « toutes les boîtes », consommé par le filtrage RAG.
+TOUTES_LES_BOITES = "*"
+
+
 def normaliser(adresse: Optional[str]) -> str:
     """Forme canonique d'une adresse : minuscules, sans espaces."""
     return (adresse or "").strip().lower()
+
+
+def acces_total(role: Optional[str]) -> bool:
+    return (role or "").strip().lower() == ROLE_ACCES_TOTAL
 
 
 async def delegations(user_id: str) -> list[dict]:
@@ -59,6 +75,10 @@ async def delegations(user_id: str) -> list[dict]:
 
 async def boites_autorisees(user) -> list[dict]:
     """Toutes les boîtes accessibles : la sienne (envoi permis) + les délégations."""
+    if acces_total(getattr(user, "role", None)):
+        return [{"mailbox": TOUTES_LES_BOITES, "can_send": True, "propre": False,
+                 "libelle": "Toutes les boîtes (administrateur)"}]
+
     propre = normaliser(getattr(user, "email", None))
     boites: list[dict] = []
     if propre:
@@ -80,7 +100,11 @@ async def boites_par_id(user_id: Optional[str]) -> list[str]:
     if not user_id:
         return []
     async with get_db() as conn:
-        ligne = await conn.fetchrow("SELECT email FROM users WHERE id = $1::uuid", str(user_id))
+        ligne = await conn.fetchrow(
+            "SELECT email, role FROM users WHERE id = $1::uuid", str(user_id))
+    if ligne and acces_total(ligne["role"]):
+        return [TOUTES_LES_BOITES]      # l'administrateur voit tous les mails
+
     boites = []
     propre = normaliser(ligne["email"] if ligne else None)
     if propre:
@@ -101,6 +125,13 @@ async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> s
     cible = normaliser(mailbox)
     if not cible:
         raise AccesBoiteRefuse("Aucune boîte mail précisée.")
+
+    if acces_total(getattr(user, "role", None)):
+        # Journalisé : un accès administrateur à la boîte d'autrui doit laisser
+        # une trace, même s'il est légitime.
+        logger.info("Accès administrateur à la boîte %s par %s (envoi=%s)",
+                    cible, user.id, envoi)
+        return cible
 
     propre = normaliser(getattr(user, "email", None))
     if not propre:

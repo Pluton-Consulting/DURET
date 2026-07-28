@@ -70,6 +70,8 @@ def _filtrer_mails(chunks: list[dict], mailboxes: Optional[list[str]]) -> list[d
     rendre invisible jusqu'à resynchronisation que risquer de l'exposer.
     """
     autorisees = {(m or "").strip().lower() for m in (mailboxes or []) if m}
+    if "*" in autorisees:
+        return chunks        # accès administrateur : tous les mails sont visibles
     retenus = []
     for c in chunks:
         if c.get("source_type") in TYPES_MAIL:

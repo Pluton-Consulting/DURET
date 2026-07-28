@@ -13,9 +13,11 @@ dans la base documentaire (RAG).
 import asyncio
 import base64
 import logging
+import secrets
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from auth.dependencies import get_current_user
@@ -140,6 +142,147 @@ async def trigger_sync(source: str, current_user: User = Depends(get_current_use
 
     await log_action(action="ingestion_sync", user_id=str(current_user.id), metadata={"source": source, **(result or {})})
     return {"source": source, **(result or {})}
+
+
+# ── Import manuel de fichiers (paramètres > Import de données) ──────────────
+# Deux temps VOLONTAIRES : /analyze ne fait qu'analyser et proposer, /commit
+# écrit. L'utilisateur voit ce qui sera enregistré, corrige le type et la
+# colonne identifiante, puis valide. L'IA propose, l'humain décide.
+
+_IMPORTS: dict[str, dict] = {}          # token -> {user_id, expire, structure, meta}
+_IMPORT_TTL_S = 1800                    # 30 min pour confirmer
+_IMPORT_MAX = 20                        # analyses simultanées conservées
+
+
+def _purger_imports() -> None:
+    maintenant = time.monotonic()
+    for k in [k for k, v in _IMPORTS.items() if v["expire"] < maintenant]:
+        _IMPORTS.pop(k, None)
+    while len(_IMPORTS) > _IMPORT_MAX:   # garde les plus récents
+        _IMPORTS.pop(min(_IMPORTS, key=lambda k: _IMPORTS[k]["expire"]), None)
+
+
+class ImportConfirm(BaseModel):
+    token: str
+    source_type: str
+    id_col: Optional[str] = None
+    access_level: str = "all"
+    anonymize: bool = False
+
+
+@router.post("/analyze")
+async def analyser_fichier(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Lit un fichier déposé, fait deviner sa nature par l'IA, renvoie un APERÇU.
+
+    N'écrit RIEN : retourne un token à confirmer via /import/commit.
+    """
+    if not has_permission(current_user.role, "import_documents"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+
+    brut = await file.read()
+    if not brut:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Fichier vide")
+    if len(brut) > settings.max_body_mb * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"Fichier trop volumineux (max {settings.max_body_mb} Mo)")
+
+    from ingestion.parsers import analyser, ligne_en_texte, FichierNonSupporte
+    from ingestion.detection import detecter, TYPES
+
+    try:
+        structure = await asyncio.to_thread(analyser, file.filename or "", brut)
+    except FichierNonSupporte as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except Exception as e:
+        logger.warning("Lecture de %s impossible : %s", file.filename, e)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"Lecture impossible : {e}")
+
+    detection = await detecter(file.filename or "", structure)
+
+    if structure["kind"] == "tabulaire":
+        apercu = [ligne_en_texte(l) for l in structure["rows"][:3]]
+    else:
+        apercu = [structure["text"][:800]]
+
+    _purger_imports()
+    token = secrets.token_urlsafe(24)
+    _IMPORTS[token] = {
+        "user_id": str(current_user.id),
+        "expire": time.monotonic() + _IMPORT_TTL_S,
+        "structure": structure,
+        "filename": file.filename or "import",
+    }
+
+    return {
+        "token": token,
+        "filename": file.filename,
+        "kind": structure["kind"],
+        "columns": structure["columns"],
+        "documents": structure["documents_estimes"],
+        "detection": detection,
+        "apercu": apercu,
+        "types_possibles": [{"cle": k, "libelle": v} for k, v in TYPES.items()],
+    }
+
+
+@router.post("/commit")
+async def confirmer_import(body: ImportConfirm, current_user: User = Depends(get_current_user)):
+    """Ingère réellement le fichier analysé, avec les réglages validés par l'humain."""
+    if not has_permission(current_user.role, "import_documents"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+
+    _purger_imports()
+    entree = _IMPORTS.get(body.token)
+    if not entree:
+        raise HTTPException(status_code=status.HTTP_410_GONE,
+                            detail="Analyse expirée ou inconnue — relancez l'import du fichier.")
+    if entree["user_id"] != str(current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cette analyse ne vous appartient pas")
+
+    structure = entree["structure"]
+    nom = entree["filename"]
+    from ingestion.parsers import ligne_en_texte
+
+    documents: list[tuple[str, str]] = []          # (source_id, texte)
+    if structure["kind"] == "tabulaire":
+        id_col = body.id_col if body.id_col in (structure["columns"] or []) else None
+        for i, ligne in enumerate(structure["rows"], 1):
+            texte = ligne_en_texte(ligne)
+            if not texte:
+                continue
+            cle = (ligne.get(id_col) or "").strip() if id_col else ""
+            documents.append((f"{body.source_type}:{cle or f'{nom}#{i}'}", texte))
+    else:
+        documents.append((f"{body.source_type}:{nom}", structure["text"]))
+
+    if not documents:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun document exploitable")
+
+    total_chunks = 0
+    echecs = 0
+    for source_id, texte in documents:
+        try:
+            total_chunks += await ingest_document(
+                text=texte,
+                source_type=body.source_type,
+                source_id=source_id,
+                source_filename=nom,
+                access_level=body.access_level,
+                anonymize=body.anonymize,
+            )
+        except Exception as e:  # noqa: BLE001 - une ligne fautive ne doit pas tout annuler
+            echecs += 1
+            logger.warning("Ingestion de %s échouée : %s", source_id, e)
+
+    _IMPORTS.pop(body.token, None)
+    await log_action(action="import_fichier", user_id=str(current_user.id),
+                     metadata={"fichier": nom, "source_type": body.source_type,
+                               "documents": len(documents), "chunks": total_chunks, "echecs": echecs})
+    return {"ok": True, "documents": len(documents) - echecs, "chunks": total_chunks, "echecs": echecs}
 
 
 @router.get("/status")

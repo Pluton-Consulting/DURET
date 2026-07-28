@@ -1,8 +1,9 @@
 "use client"
 import { useState, useEffect } from "react"
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/permissions"
+import ImportTab from "@/components/settings/ImportTab"
 
-type SubTab = "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services"
+type SubTab = "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import"
 type Role = "super_admin" | "direction" | "commercial" | "bureau_etudes" | "conducteur" | "administratif" | "terrain"
 type Agent = "agent1" | "agent2" | "agent3"
 
@@ -34,6 +35,7 @@ const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
   { key: "agents", label: "États des agents" },
   { key: "quotas", label: "Quotas", roles: ["super_admin"] },
   { key: "services", label: "Services connectés", roles: ["super_admin"] },
+  { key: "import", label: "Import de données", roles: ["super_admin", "direction"] },
 ]
 
 /* ---------- USERS TAB ---------- */
@@ -777,6 +779,7 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
         <QuotasTab backendToken={backendToken} apiUrl={apiUrl} />
       )}
       {activeTab === "services" && <ServicesTab apiUrl={apiUrl} backendToken={backendToken} />}
+      {activeTab === "import" && <ImportTab apiUrl={apiUrl} backendToken={backendToken} />}
     </div>
   )
 }

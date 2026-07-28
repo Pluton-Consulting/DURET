@@ -31,6 +31,14 @@ async def rag_node(state: AgentState) -> dict:
         user_role=state.get("user_role", "terrain"),
         top_k=5,
     )
+    # Le fichier joint est traité comme un document de contexte : il passe donc par
+    # l'anonymisation puis l'injection au même titre que la mémoire d'entreprise.
+    # Placé en TÊTE : trim_chunks borne le volume total, et la pièce jointe que
+    # l'utilisateur vient d'envoyer prime sur les résultats de recherche.
+    texte_joint = state.get("attachment_text")
+    if texte_joint:
+        nom = state.get("attachment_name") or "document"
+        contexts = [f"[FICHIER JOINT PAR L'UTILISATEUR — {nom}]\n{texte_joint}"] + list(contexts)
     return {"raw_chunks": contexts}
 
 

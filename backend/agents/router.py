@@ -21,7 +21,7 @@ from security.rbac import SCHEDULE_EXEMPT_ROLES
 from config import settings
 from fastapi import HTTPException
 
-logger = logging.getLogger("duret.router")
+logger = logging.getLogger("symbiose.router")
 
 
 async def classify_node(state: AgentState) -> dict:
@@ -30,7 +30,11 @@ async def classify_node(state: AgentState) -> dict:
     has_attachment = state.get("has_attachment", False)
     tier = classify_request_tier(query, has_attachment)
 
-    if has_attachment:
+    # La vision (agent2) ne sert qu'aux IMAGES et aux PDF sans texte (plans, photos,
+    # scans). Un Excel, un Word ou un CSV a déjà été converti en texte en amont :
+    # l'envoyer à un modèle de vision n'aurait aucun sens. Il part donc chez agent1,
+    # son contenu étant injecté dans le contexte comme un document de la mémoire.
+    if has_attachment and not state.get("attachment_text"):
         target = "agent2"
         tier = LLMTier.COMPLEX
     else:

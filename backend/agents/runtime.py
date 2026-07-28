@@ -74,7 +74,8 @@ async def get_graph():
 
 
 def _initial_state(query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
-                   attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None) -> dict:
+                   attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
+                   attachment_name: Optional[str] = None, attachment_text: Optional[str] = None) -> dict:
     _mime = attachment_mime or ""
     return {
         "query": query,
@@ -84,6 +85,8 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "attachment_type": ("pdf" if "pdf" in _mime else "image" if _mime.startswith("image") else None),
         "attachment_b64": attachment_b64,
         "attachment_mime": attachment_mime,
+        "attachment_name": attachment_name,
+        "attachment_text": attachment_text,
         "thread_id": thread_id,
         "session_id": thread_id,
         "raw_chunks": [],
@@ -150,14 +153,15 @@ async def _persist_validation(thread_id: str, user_id: str, state: dict, intr: O
 
 
 async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
-                   attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None) -> dict:
+                   attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
+                   attachment_name: Optional[str] = None, attachment_text: Optional[str] = None) -> dict:
     """Exécute un tour de conversation. Peut suspendre (pending_validation)."""
     graph = await get_graph()
     config = _graph_config(thread_id, user_id)
 
     result = await graph.ainvoke(
         _initial_state(query, user_id, user_role, has_attachment, thread_id,
-                       attachment_b64, attachment_mime), config
+                       attachment_b64, attachment_mime, attachment_name, attachment_text), config
     )
 
     snapshot = await graph.aget_state(config)
@@ -239,7 +243,8 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
 
 async def stream_turn(*, query: str, user_id: str, user_role: str,
                       has_attachment: bool, thread_id: str,
-                      attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None) -> AsyncIterator[dict]:
+                      attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
+                      attachment_name: Optional[str] = None, attachment_text: Optional[str] = None) -> AsyncIterator[dict]:
     """Streame l'exécution nœud-par-nœud (pour push WebSocket temps réel)."""
     graph = await get_graph()
     config = _graph_config(thread_id, user_id)
@@ -248,7 +253,7 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
     # anonymisation, rédaction, vision…) et pas seulement les gros nœuds (agent1/agent2).
     async for ns, chunk in graph.astream(
         _initial_state(query, user_id, user_role, has_attachment, thread_id,
-                       attachment_b64, attachment_mime),
+                       attachment_b64, attachment_mime, attachment_name, attachment_text),
         config,
         stream_mode="updates",
         subgraphs=True,

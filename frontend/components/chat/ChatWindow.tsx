@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
 import MessageList from "./MessageList"
-import InputBar from "./InputBar"
+import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, ChatEvent } from "@/lib/ws"
@@ -118,8 +118,14 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
 
   useEffect(() => () => { try { wsRef.current?.close() } catch { /* no-op */ } }, [])
 
-  const sendMessage = (text: string) => {
-    setMessages((prev) => [...prev, { id: newId(), role: "user", content: text }])
+  const sendMessage = (text: string, piece?: PieceJointe) => {
+    const attachment = piece
+      ? { attachment_name: piece.name, attachment_mime: piece.mime, attachment_b64: piece.b64 }
+      : undefined
+    setMessages((prev) => [
+      ...prev,
+      { id: newId(), role: "user", content: piece ? `📎 ${piece.name}\n${text}` : text },
+    ])
     setLoading(true)
     setThinkingNode(null)
     setThinkingSteps([])
@@ -162,7 +168,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       const post = (threadForCall: string) =>
         apiRequest<{ response: string; thread_id: string; status?: string; validation_id?: string | null }>(
           "/api/chat/",
-          { method: "POST", token, body: JSON.stringify({ query: text, thread_id: threadForCall }) }
+          { method: "POST", token, body: JSON.stringify({ query: text, thread_id: threadForCall, ...(attachment || {}) }) }
         )
       try {
         let res
@@ -192,7 +198,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     // Tente le streaming WebSocket ; garde-fou anti-blocage → POST.
     try {
       openChatSocket(tid, token, {
-        onOpen: () => sendQuery(wsRef.current!, text, false),
+        onOpen: () => sendQuery(wsRef.current!, text, false, attachment),
         onEvent: (event: ChatEvent) => {
           clearStall()  // le WS répond → on annule le repli anti-blocage
           const t = event.type

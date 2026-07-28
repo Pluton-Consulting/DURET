@@ -1,3 +1,6 @@
+import asyncio
+import base64
+import logging
 import time
 import secrets
 import uuid
@@ -14,6 +17,7 @@ from security.audit import log_action
 from agents import runtime
 from config import settings
 
+logger = logging.getLogger("duret.chat")
 router = APIRouter()
 
 
@@ -22,8 +26,62 @@ class ChatRequest(BaseModel):
     thread_id: Optional[str] = None
     has_attachment: bool = False
     attachment_type: Optional[str] = None
-    attachment_b64: Optional[str] = None      # image/PDF encodé base64 (Agent 2 vision)
+    attachment_b64: Optional[str] = None      # fichier encodé base64
     attachment_mime: Optional[str] = None      # 'image/jpeg', 'application/pdf', ...
+    attachment_name: Optional[str] = None      # nom d'origine — sert à choisir le lecteur
+
+
+async def _texte_piece_jointe(nom: Optional[str], b64: Optional[str],
+                              mime: Optional[str]) -> Optional[str]:
+    """Extrait le texte d'un fichier joint au chat (Excel, Word, CSV, PDF, texte…).
+
+    Retourne None pour les IMAGES et les PDF sans couche texte : ceux-là partent
+    vers la vision (agent2), qui sait décrire un plan ou une photo. Tout le reste
+    est converti en texte et injecté dans le contexte comme un document.
+
+    Ne lève jamais : un fichier illisible ne doit pas faire échouer le message.
+    """
+    if not b64:
+        return None
+    if (mime or "").lower().startswith("image/"):
+        return None                      # une photo/un plan : c'est le travail de la vision
+
+    try:
+        brut = base64.b64decode(b64)
+    except Exception:
+        return None
+    if len(brut) > settings.max_body_mb * 1024 * 1024:
+        logger.warning("Pièce jointe trop volumineuse (%d octets) — ignorée", len(brut))
+        return None
+
+    from ingestion.parsers import analyser, ligne_en_texte, famille, FichierNonSupporte
+
+    nom = nom or "document"
+    if famille(nom) is None:
+        return None                      # extension inconnue -> tentative vision en repli
+
+    try:
+        structure = await asyncio.to_thread(analyser, nom, brut)
+    except FichierNonSupporte as e:
+        logger.info("Pièce jointe %s non exploitable en texte (%s)", nom, e)
+        return None                      # PDF scanné sans OCR, image illisible -> vision
+    except Exception as e:               # noqa: BLE001
+        logger.warning("Lecture de la pièce jointe %s impossible : %s", nom, e)
+        return None
+
+    if structure["kind"] == "tabulaire":
+        lignes = structure["rows"]
+        # Un classeur de 5 000 lignes ne tient pas dans une fenêtre de contexte :
+        # on en donne un extrait représentatif et on annonce la troncature, plutôt
+        # que de laisser le modèle croire qu'il a tout vu.
+        extrait = [ligne_en_texte(l) for l in lignes[:40]]
+        entete = f"Tableau : {len(lignes)} lignes, colonnes : {', '.join(structure['columns'])}"
+        if len(lignes) > 40:
+            entete += (f"\n(Seules les 40 premières lignes sont reproduites ici. Pour exploiter "
+                       f"les {len(lignes)} lignes, importez le fichier via Paramètres > Import de données.)")
+        return entete + "\n\n" + "\n\n".join(extrait)
+
+    return structure["text"]
 
 
 async def _check_schedule(current_user: User) -> None:
@@ -159,8 +217,7 @@ async def _persist_messages(current_user: User, thread_pk: str,
                  (uuid.UUID(thread_pk), "assistant", assistant_content or "")],
             )
     except Exception as e:  # noqa: BLE001
-        import logging
-        logging.getLogger("duret.chat").warning("Persistance des messages échouée : %s", e)
+        logger.warning("Persistance des messages échouée : %s", e)
 
 
 @router.post("/")
@@ -179,6 +236,8 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
     success = True
     error_msg: Optional[str] = None
 
+    texte_joint = await _texte_piece_jointe(body.attachment_name, body.attachment_b64, body.attachment_mime)
+
     try:
         result = await runtime.run_turn(
             query=body.query,
@@ -188,6 +247,8 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
             thread_id=thread_id,
             attachment_b64=body.attachment_b64,
             attachment_mime=body.attachment_mime,
+            attachment_name=body.attachment_name,
+            attachment_text=texte_joint,
         )
     except HTTPException:
         raise
@@ -337,6 +398,10 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
                 await websocket.send_json({"type": "error", "detail": e.detail})
                 continue
 
+            texte_joint = await _texte_piece_jointe(
+                data.get("attachment_name"), data.get("attachment_b64"), data.get("attachment_mime")
+            )
+
             final_response = ""
             try:
                 async for event in runtime.stream_turn(
@@ -347,6 +412,8 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
                     thread_id=thread_id,
                     attachment_b64=data.get("attachment_b64"),
                     attachment_mime=data.get("attachment_mime"),
+                    attachment_name=data.get("attachment_name"),
+                    attachment_text=texte_joint,
                 ):
                     if event.get("node") == "classify":
                         agent_used = (event.get("data") or {}).get("target_agent", agent_used)

@@ -1,4 +1,4 @@
-// Helper WebSocket pour le chat temps réel (streaming nœud-par-nœud de Duret & Sols).
+// Helper WebSocket pour le chat temps réel (streaming nœud-par-nœud de Symbiose/PLUTON).
 // Le backend expose /api/chat/ws/{thread_id}?ticket=<ticket éphémère> et pousse des événements JSON.
 // Le ticket (usage unique, ~30 s) s'obtient par POST /api/chat/ws-ticket (JWT en en-tête).
 
@@ -70,8 +70,19 @@ export async function openChatSocket(
  * Envoie une requête utilisateur sur le socket ouvert.
  * No-op silencieux si le socket n'est pas (encore) ouvert.
  */
-export function sendQuery(ws: WebSocket, query: string, has_attachment = false): void {
+export interface AttachmentPayload {
+  attachment_name: string
+  attachment_mime: string
+  attachment_b64: string
+}
+
+export function sendQuery(
+  ws: WebSocket,
+  query: string,
+  has_attachment = false,
+  attachment?: AttachmentPayload,
+): void {
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ query, has_attachment }))
+    ws.send(JSON.stringify({ query, has_attachment: has_attachment || Boolean(attachment), ...(attachment || {}) }))
   }
 }

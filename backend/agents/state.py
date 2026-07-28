@@ -17,6 +17,8 @@ class AgentState(TypedDict):
     attachment_type: Optional[str]  # 'pdf', 'image', 'sketchup'
     attachment_b64: Optional[str]   # contenu encodé base64 (image nettoyée / page PDF rendue)
     attachment_mime: Optional[str]  # 'image/jpeg', 'application/pdf', ...
+    attachment_name: Optional[str]     # nom du fichier joint (traçabilité, invite)
+    attachment_text: Optional[str]     # texte extrait d'un fichier non-image (Excel, Word, PDF, CSV…)
     vision_analysis: Optional[str]  # description brute produite par le modèle vision (Agent 2)
     extracted_data: Optional[dict]  # extraction structurée (postes, surfaces, contraintes)
 

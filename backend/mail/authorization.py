@@ -70,6 +70,27 @@ async def boites_autorisees(user) -> list[dict]:
     return boites
 
 
+async def boites_par_id(user_id: Optional[str]) -> list[str]:
+    """Adresses accessibles à un utilisateur, à partir de son seul identifiant.
+
+    Utilisé par le nœud RAG, qui ne dispose que de `user_id` dans l'état du
+    graphe. Retourne une liste VIDE si l'utilisateur est inconnu : aucun mail ne
+    sera alors visible (fail-closed).
+    """
+    if not user_id:
+        return []
+    async with get_db() as conn:
+        ligne = await conn.fetchrow("SELECT email FROM users WHERE id = $1::uuid", str(user_id))
+    boites = []
+    propre = normaliser(ligne["email"] if ligne else None)
+    if propre:
+        boites.append(propre)
+    for d in await delegations(str(user_id)):
+        if d["mailbox"] not in boites:
+            boites.append(d["mailbox"])
+    return boites
+
+
 async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> str:
     """Vérifie l'accès et retourne la boîte normalisée. Lève 403 sinon.
 

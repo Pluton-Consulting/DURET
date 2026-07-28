@@ -26,10 +26,21 @@ async def rag_node(state: AgentState) -> dict:
     """Récupère les chunks pertinents depuis pgvector (filtrés par rôle)."""
     from vectorstore.rag import retrieve_as_context
 
+    # Cloisonnement des mails : la recherche ne peut remonter que les messages
+    # des boîtes auxquelles CETTE personne a droit. Le filtrage par rôle ne
+    # suffirait pas — deux collègues partagent le même rôle sans partager leurs
+    # messages. Sans boîte reconnue, aucun mail n'est visible (fail-closed).
+    try:
+        from mail.authorization import boites_par_id
+        boites = await boites_par_id(state.get("user_id"))
+    except Exception:   # noqa: BLE001 - en cas de souci, on n'expose aucun mail
+        boites = []
+
     contexts = await retrieve_as_context(
         query=state.get("query", ""),
         user_role=state.get("user_role", "terrain"),
         top_k=5,
+        mailboxes=boites,
     )
     # Le fichier joint est traité comme un document de contexte : il passe donc par
     # l'anonymisation puis l'injection au même titre que la mémoire d'entreprise.

@@ -175,7 +175,14 @@ async def _ingerer_dossier(service, boite: str, dossier: str, maximum: int) -> i
             source_id=identifiant,
             source_filename=objet or "(sans objet)",
             access_level=settings.gmail_access_level,
-            anonymize=True,       # les mails sont la source la plus chargée en PII
+            # PAS d'anonymisation à l'ingestion, volontairement. Elle jetterait la
+            # carte de correspondance : les messages seraient stockés avec des
+            # jetons [PER_1] indéchiffrables à jamais, et — plus grave — ces jetons
+            # entreraient en collision avec ceux du tour de conversation, si bien
+            # que la réhydratation réinjecterait le NOM DE QUELQU'UN D'AUTRE dans
+            # une citation de mail. Le masquage a lieu à la requête (anonymize_node),
+            # avec une carte cohérente : aucune PII n'atteint le modèle pour autant.
+            anonymize=False,
         ):
             ingeres += 1
     return ingeres

@@ -49,11 +49,43 @@ async def _corpus_has_documents() -> bool:
     return has
 
 
+# Types de documents issus d'une boîte mail. Leur `source_id` suit la convention
+# « <type>:<boîte>:<id_message> », ce qui permet de savoir à qui ils appartiennent.
+TYPES_MAIL = ("email", "email_sent")
+
+
+def _boite_du_chunk(chunk: dict) -> Optional[str]:
+    """Boîte d'origine d'un chunk de mail, ou None si indéterminable."""
+    parties = (chunk.get("source_id") or "").split(":")
+    return parties[1].strip().lower() if len(parties) >= 3 and parties[1].strip() else None
+
+
+def _filtrer_mails(chunks: list[dict], mailboxes: Optional[list[str]]) -> list[dict]:
+    """Ne conserve que les mails des boîtes autorisées.
+
+    FAIL-CLOSED : sans liste de boîtes, AUCUN mail n'est retourné. Le filtrage
+    par rôle ne suffit pas ici — deux collègues partagent le même rôle mais pas
+    leurs messages. Un document dont la boîte est indéterminable (ingéré par une
+    version antérieure, sans préfixe) est également écarté : mieux vaut le
+    rendre invisible jusqu'à resynchronisation que risquer de l'exposer.
+    """
+    autorisees = {(m or "").strip().lower() for m in (mailboxes or []) if m}
+    retenus = []
+    for c in chunks:
+        if c.get("source_type") in TYPES_MAIL:
+            boite = _boite_du_chunk(c)
+            if not boite or boite not in autorisees:
+                continue
+        retenus.append(c)
+    return retenus
+
+
 async def retrieve(
     query: str,
     user_role: str,
     source_types: Optional[list[str]] = None,
     top_k: int = 5,
+    mailboxes: Optional[list[str]] = None,
 ) -> list[dict]:
     """
     Recherche sémantique filtrée par rôle et renvoie les chunks bruts.
@@ -85,17 +117,24 @@ async def retrieve(
         # Embedding optionnel : None => search_hybrid dégrade sur pg_trgm.
         embedding = await embed_query(query)
 
+        # On sur-échantillonne : les post-filtres (type de source, cloisonnement
+        # des boîtes) retirent des résultats, et sans marge on renverrait moins
+        # que `top_k` alors que des documents pertinents existent.
+        marge = 3 if (source_types or mailboxes is not None) else 1
         chunks = await vectorstore.search_hybrid(
             query,
             embedding,
             user_role,
-            top_k=top_k,
+            top_k=top_k * marge,
         ) or []
 
         # Post-filtre par type de source si demandé (search_hybrid ne le gère pas).
         if source_types:
             allowed = set(source_types)
             chunks = [c for c in chunks if c.get("source_type") in allowed]
+
+        # Cloisonnement des boîtes mail (fail-closed).
+        chunks = _filtrer_mails(chunks, mailboxes)[:top_k]
 
         logger.debug(
             "RAG retrieve : rôle=%s, embedding=%s, résultats=%d",
@@ -116,6 +155,7 @@ async def retrieve_as_context(
     user_role: str,
     source_types: Optional[list[str]] = None,
     top_k: int = 5,
+    mailboxes: Optional[list[str]] = None,
 ) -> list[str]:
     """
     Comme `retrieve`, mais renvoie uniquement les contenus formatés, prêts à
@@ -134,7 +174,8 @@ async def retrieve_as_context(
         Liste de chaînes formatées (une par chunk). Liste vide si aucun
         résultat ou en cas d'échec. Ne lève jamais.
     """
-    chunks = await retrieve(query, user_role, source_types=source_types, top_k=top_k)
+    chunks = await retrieve(query, user_role, source_types=source_types, top_k=top_k,
+                            mailboxes=mailboxes)
 
     contexts: list[str] = []
     for chunk in chunks:

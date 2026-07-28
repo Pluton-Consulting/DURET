@@ -178,6 +178,22 @@ class Settings(BaseSettings):
     extrabat_api_password: Optional[str] = None
     # Deytime : aucune API — ingestion via export Excel ou via Extrabat (pas de config).
 
+    # ── Synology NAS (API DSM FileStation, lecture seule) ──
+    # QuickConnect n'est PAS une API : il ne fait que résoudre une adresse joignable.
+    # Préférer TOUJOURS synology_base_url (IP du NAS sur le VPN, ou DDNS) : le relais
+    # QuickConnect est lent et limité en débit, il coupe sur un gros volume.
+    synology_base_url: Optional[str] = None          # ex. https://100.64.0.3:5001
+    synology_quickconnect_id: Optional[str] = None   # repli si aucune adresse directe
+    synology_user: Optional[str] = None              # compte de service DÉDIÉ, lecture seule
+    synology_password: Optional[str] = None
+    synology_otp_code: Optional[str] = None          # 2FA : à éviter (code valable 30 s, non automatisable)
+    synology_folders: Optional[str] = None           # dossiers à ingérer, séparés par des virgules
+    synology_source_type: str = "nas"                # type de source dans le RAG
+    synology_access_level: str = "all"               # 'all', 'direction_only'...
+    synology_max_file_mb: int = 25                   # au-delà, fichier ignoré
+    synology_max_depth: int = 6                      # profondeur de récursion des sous-dossiers
+    synology_verify_tls: bool = False                # les NAS ont souvent un certificat auto-signé
+
     # Schedule — défaut global (surchargeable par user en DB)
     access_start_hour: int = 8
     access_end_hour: int = 18

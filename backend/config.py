@@ -66,7 +66,6 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model_light: str = "mistral:7b"
 
-    # ── Optimisation des tokens (réduction coût + latence) ──
     # Masquage des MONTANTS avant envoi au LLM. Désactivé par défaut : un montant seul
     # n'identifie personne (les vraies PII — noms, e-mails, téléphones, IBAN, SIRET —
     # restent masquées dans tous les cas), alors que le masquer empêche le modèle de
@@ -175,6 +174,11 @@ class Settings(BaseSettings):
     gmail_extra_mailboxes: Optional[str] = None  # boîtes partagées, séparées par des virgules
     gmail_max_messages: int = 100               # messages par dossier et par boîte, à chaque synchro
     gmail_access_level: str = "all"             # visibilité des mails ingérés
+
+
+    # Apprentissage du style rédactionnel (mail/style.py)
+    mail_style_samples: int = 50        # nb de messages envoyés analysés par boîte
+    mail_style_min_samples: int = 3     # en dessous, le profil serait une caricature
 
     # Outlook / Microsoft 365 (voie API directe — Microsoft Graph, alternative à Make).
     ms_tenant_id: Optional[str] = None

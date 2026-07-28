@@ -29,8 +29,17 @@ logger = logging.getLogger("duret.mail.style")
 # Elle permet de retrouver les messages d'une personne sans colonne dédiée.
 PREFIXE_ENVOYE = "email_sent"
 
-MIN_ECHANTILLONS = 3     # en dessous, le profil serait une caricature
-MAX_ECHANTILLONS = 25    # au delà, le gain est marginal et le prompt s'alourdit
+def _reglages() -> tuple[int, int]:
+    """(minimum, maximum) d'échantillons — réglables sans toucher au code."""
+    try:
+        from config import settings
+        return (int(getattr(settings, "mail_style_min_samples", 3)),
+                int(getattr(settings, "mail_style_samples", 50)))
+    except Exception:
+        return 3, 50
+
+
+MIN_ECHANTILLONS, MAX_ECHANTILLONS = _reglages()
 
 
 def source_id(mailbox: str, message_id: str) -> str:
@@ -79,7 +88,19 @@ async def construire_profil(mailbox: str, force: bool = False) -> dict:
     if existant and not force and existant["echantillons"] >= len(echantillons):
         return {"mailbox": boite, **existant, "raison": "profil déjà à jour"}
 
-    extraits = "\n\n---\n\n".join(m[:1200] for m in echantillons[:12])
+    # Budget de contexte plutôt qu'un nombre fixe de messages : on analyse le plus
+    # de messages possible sans dépasser la fenêtre des petits modèles (le palier
+    # LIGHT tourne parfois sur un 8k). Mieux vaut 30 messages courts que 12 longs.
+    BUDGET = 16000
+    morceaux, utilises, total = [], 0, 0
+    for message in echantillons:
+        extrait = message[:800]
+        if total + len(extrait) > BUDGET and morceaux:
+            break
+        morceaux.append(extrait)
+        total += len(extrait)
+        utilises += 1
+    extraits = "\n\n---\n\n".join(morceaux)
     prompt = (
         "Voici des messages écrits par une même personne (contenus anonymisés).\n"
         "Décris SON STYLE d'écriture en 5 à 8 points courts, en français, pour qu'un "
@@ -100,6 +121,10 @@ async def construire_profil(mailbox: str, force: bool = False) -> dict:
         logger.warning("Profil de style indisponible pour %s : %s", boite, e)
         return {"mailbox": boite, "profil": "", "echantillons": len(echantillons),
                 "raison": "modèle indisponible"}
+
+    # On enregistre le nombre RÉELLEMENT analysé, pas le nombre récupéré : c'est
+    # lui qui dit à quel point le profil est représentatif.
+    echantillons = echantillons[:utilises]
 
     async with get_db() as conn:
         await conn.execute(

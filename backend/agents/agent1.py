@@ -207,7 +207,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
 
     import hashlib
     from optim.tokens import trim_chunks, response_cache, compact_messages
-    from skills.protocol import instruction_actions, BLOC_ACTION_RE
+    from skills.protocol import instruction_actions, BLOC_ACTION_RE, BLOC_NATIF_RE
 
     tier = state.get("llm_tier", "standard")
     llm = get_llm(LLMTier(tier))
@@ -313,7 +313,9 @@ Voici les messages trouvés :
     # Ne JAMAIS mettre en cache une réponse qui demande une action : son contenu
     # utile n'est pas la réponse mais l'action, et la resservir sauterait
     # l'exécution. Idem après une action : le résultat n'est pas rejouable.
-    if not en_boucle_outils and not BLOC_ACTION_RE.search(str(response.content or "")):
+    _sortie = str(response.content or "")
+    if (not en_boucle_outils and not BLOC_ACTION_RE.search(_sortie)
+            and not BLOC_NATIF_RE.search(_sortie)):
         response_cache.set(tier, query, context_text, response.content, cache_scope)
 
     usage = getattr(response, "usage_metadata", None) or {}
@@ -461,12 +463,16 @@ async def rehydrate_node(state: AgentState) -> dict:
     from security.anonymizer import anonymizer
 
     from langchain_core.messages import AIMessage
-    from skills.protocol import BLOC_ACTION_RE
+    from skills.protocol import BLOC_ACTION_RE, BLOC_NATIF_RE, BALISAGE_OUTIL_RE
 
     text = state.get("llm_response", "") or ""
-    # Filet : si un bloc action survit jusqu'ici (sortie de boucle, limite atteinte),
-    # il ne doit pas s'afficher à l'utilisateur — c'est de la mécanique interne.
-    text = BLOC_ACTION_RE.sub("", text).strip()
+    # Filet : si une demande d'action survit jusqu'ici (sortie de boucle, limite
+    # atteinte), elle ne doit pas s'afficher — c'est de la mécanique interne.
+    # Les trois passes couvrent le bloc demandé, la syntaxe native d'un modèle de
+    # la cascade, puis tout balisage résiduel quel qu'en soit l'émetteur.
+    text = BLOC_ACTION_RE.sub("", text)
+    text = BLOC_NATIF_RE.sub("", text)
+    text = BALISAGE_OUTIL_RE.sub("", text).strip()
     if not text:
         # Dernier filet : mieux vaut une phrase honnête qu'une bulle vide.
         text = ("Je n'ai pas réussi à formuler de réponse pour cette demande. "
@@ -528,10 +534,14 @@ def should_validate(state: AgentState) -> str:
 
 def route_apres_llm(state: AgentState) -> str:
     """Le modèle a-t-il demandé une action ?"""
-    from skills.protocol import BLOC_ACTION_RE
+    from skills.protocol import BLOC_ACTION_RE, BLOC_NATIF_RE
     if state.get("tools_finished"):
         return "rehydrate"
-    return "tools" if BLOC_ACTION_RE.search(state.get("llm_response") or "") else "rehydrate"
+    texte = state.get("llm_response") or ""
+    # Deux syntaxes : le bloc demandé, et celle que certains modèles de la
+    # cascade émettent d'eux-mêmes. Ignorer la seconde la laissait s'afficher.
+    demande = BLOC_ACTION_RE.search(texte) or BLOC_NATIF_RE.search(texte)
+    return "tools" if demande else "rehydrate"
 
 
 def route_apres_tools(state: AgentState) -> str:

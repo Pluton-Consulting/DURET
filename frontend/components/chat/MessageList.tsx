@@ -1,3 +1,5 @@
+"use client"
+import { useEffect, useRef } from "react"
 import { MessageRenderer } from "./MessageRenderer"
 
 interface Message {
@@ -7,8 +9,23 @@ interface Message {
 }
 
 export default function MessageList({ messages, onAction }: { messages: Message[]; onAction?: (v: string) => void }) {
+  const finRef = useRef<HTMLDivElement>(null)
+  const conteneurRef = useRef<HTMLDivElement>(null)
+
+  // Descend sur le dernier message à chaque nouveau message.
+  // On ne le fait PAS si l'utilisateur a remonté le fil pour relire : lui ramener
+  // la vue de force pendant qu'il lit serait pire que l'absence de défilement.
+  useEffect(() => {
+    const boite = conteneurRef.current
+    if (!boite) return
+    const enBas = boite.scrollHeight - boite.scrollTop - boite.clientHeight < 150
+    if (enBas || messages.length <= 1) {
+      finRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+    }
+  }, [messages])
+
   return (
-    <div style={{
+    <div ref={conteneurRef} style={{
       flex: 1,
       overflow: "auto",
       padding: "24px 32px",
@@ -37,6 +54,7 @@ export default function MessageList({ messages, onAction }: { messages: Message[
               border: "none",
               fontSize: 14,
               lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
             }}
           >
             {msg.content}
@@ -47,6 +65,8 @@ export default function MessageList({ messages, onAction }: { messages: Message[
           </div>
         )
       )}
+      {/* Ancre de défilement : toujours en dernier. */}
+      <div ref={finRef} />
     </div>
   )
 }

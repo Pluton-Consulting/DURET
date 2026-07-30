@@ -1,5 +1,6 @@
 "use client"
 import type { ReactNode } from "react"
+import { RichText } from "./RichText"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, ContactCard, ProjectCard,
   SimpleTable, StatusTable, KeyValueTable,
@@ -98,7 +99,9 @@ export function MessageRenderer({ content, onAction }: { content: string; onActi
           const t = part.text.trim()
           if (!t) return null
           return (
-            <div key={i} className="sym-in" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", padding: "12px 16px", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", maxWidth: 560 }}>{t}</div>
+            <div key={i} className="sym-in" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", padding: "12px 16px", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", fontSize: 14, lineHeight: 1.55, maxWidth: 620 }}>
+              <RichText texte={t} />
+            </div>
           )
         }
         const node = renderBlock(part.block, onAction)

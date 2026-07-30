@@ -428,7 +428,15 @@ class _Anonymizer:
             doc = self._nlp(text)
         except Exception:  # noqa: BLE001 - jamais planter sur une analyse
             return text
+        return self._appliquer_spans(text, doc, entity_map, counters, index)
 
+    def _appliquer_spans(self, text: str, doc, entity_map: dict, counters: dict,
+                         index: Optional[dict] = None) -> str:
+        """Masque les entités d'un document spaCy DÉJÀ analysé.
+
+        Séparé de `_apply_spacy` pour que l'analyse puisse être faite par lot
+        (`nlp.pipe`) sans dupliquer la logique de masquage.
+        """
         # Zones déjà masquées : un span spaCy qui les recouvre ne doit pas être
         # re-remplacé (sinon double masquage et réhydratation cassée).
         masked_zones = [(m.start(), m.end()) for m in _RE_PLACEHOLDER.finditer(text)]
@@ -507,13 +515,33 @@ class _Anonymizer:
         entity_map = dict(entity_map) if entity_map else {}
         counters = self._sync_counters(entity_map)
         index = self._build_index(entity_map)
-        masked_chunks: list[str] = []
+        post = _REGEX_POST_WITH_AMOUNTS if _mask_amounts() else _REGEX_POST_BASE
 
-        for chunk in chunks:
-            if not chunk or not isinstance(chunk, str):
-                masked_chunks.append(chunk if isinstance(chunk, str) else "")
+        # Traitement par LOT du NER. Un appel spaCy par chunk paie à chaque fois le
+        # coût fixe d'entrée dans le moteur ; `nlp.pipe` l'amortit sur l'ensemble.
+        # Sur cinq chunks de contexte, c'est l'essentiel du temps de l'étape
+        # « Protection des données personnelles ».
+        textes = [c if isinstance(c, str) else "" for c in chunks]
+        pre = [self._apply_regex(t, entity_map, counters, _REGEX_PRE, index) if t else t
+               for t in textes]
+
+        if self.spacy_available and self._nlp is not None and any(pre):
+            try:
+                docs = list(self._nlp.pipe(pre))
+            except Exception:  # noqa: BLE001 - on retombe sur le traitement unitaire
+                docs = [None] * len(pre)
+        else:
+            docs = [None] * len(pre)
+
+        masked_chunks: list[str] = []
+        for texte, doc in zip(pre, docs):
+            if not texte:
+                masked_chunks.append(texte)
                 continue
-            masked_chunks.append(self._mask_one(chunk, entity_map, counters, index))
+            masque = self._appliquer_spans(texte, doc, entity_map, counters, index) \
+                if doc is not None else self._apply_spacy(texte, entity_map, counters, index)
+            masked_chunks.append(
+                self._apply_regex(masque, entity_map, counters, post, index))
 
         return masked_chunks, entity_map
 

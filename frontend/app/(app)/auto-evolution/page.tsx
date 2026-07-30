@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import ValidationQueue from "@/components/validation/ValidationQueue"
+import DebriefApprentissage from "@/components/learning/DebriefApprentissage"
 
 async function safeFetch<T>(apiUrl: string, path: string, token: string, fallback: T): Promise<T> {
   try {
@@ -59,6 +60,11 @@ export default async function AutoEvolutionPage() {
             <div style={{ fontSize: 12, color: "var(--color-text-muted)", lineHeight: 1.45 }}>{s.d}</div>
           </div>
         ))}
+      </div>
+
+      {/* Apprentissage déclenché à la main sur la dernière conversation */}
+      <div style={{ marginBottom: 36 }}>
+        <DebriefApprentissage token={token} />
       </div>
 
       {/* Skills */}

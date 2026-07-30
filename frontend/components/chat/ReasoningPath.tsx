@@ -4,12 +4,13 @@
 // Les étapes s'allument au fur et à mesure que l'agent progresse (événements WS nœud-par-nœud).
 
 const STAGES: { label: string; desc: string; nodes: string[] }[] = [
-  { label: "Routeur", desc: "Analyse & orientation", nodes: ["classify", "check_schedule"] },
-  { label: "Mémoire d'entreprise", desc: "Recherche documentaire", nodes: ["rag", "search_docs", "similar_projects"] },
-  { label: "Protection des données", desc: "Anonymisation", nodes: ["anonymize"] },
+  { label: "Analyse", desc: "Nature de la demande", nodes: ["classify", "check_schedule"] },
+  { label: "Protection des données", desc: "Anonymisation", nodes: ["rag", "anonymize"] },
+  { label: "Orientation", desc: "L'IA décide de la suite", nodes: ["routeur"] },
+  { label: "Mémoire d'entreprise", desc: "Recherche documentaire (si besoin)", nodes: ["recherche", "search_docs", "similar_projects"] },
   { label: "Recherche web", desc: "Sources externes (si besoin)", nodes: ["browser"] },
   { label: "Agent spécialisé", desc: "Traitement métier", nodes: ["agent1", "agent2", "agent3", "vision", "extraction", "preprocess", "prechiffrage", "generate_skill", "test_skill"] },
-  { label: "Rédaction", desc: "Génération de la réponse", nodes: ["llm", "rehydrate"] },
+  { label: "Rédaction", desc: "Génération de la réponse", nodes: ["llm", "tools", "rehydrate"] },
   { label: "Validation", desc: "Contrôle humain", nodes: ["human_gate", "validation_check", "submit_validation"] },
 ]
 

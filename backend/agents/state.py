@@ -43,6 +43,8 @@ class AgentState(TypedDict):
     tool_repair_used: bool               # une seule tentative de réparation d'un bloc invalide
     tools_finished: bool                 # force la sortie de boucle
     pending_action: Optional[dict]       # action externe en attente de validation humaine
+    besoin_memoire: Optional[bool]       # décision du routeur : consulter la mémoire ?
+    requete_memoire: Optional[str]       # termes de recherche choisis par le routeur
     trigger_kind: Optional[str]          # 'chat' | 'schedule' | 'webhook'
 
     # Réponse LLM

@@ -45,6 +45,8 @@ const NODE_LABELS: Record<string, string> = {
   similar_projects: "Recherche de projets similaires",
   search_docs: "Recherche dans les documents",
   anonymize: "Protection des données personnelles",
+  routeur: "Orientation de la demande",
+  recherche: "Consultation de la mémoire d'entreprise",
   browser: "Recherche sur le web",
   llm: "Rédaction de la réponse",
   tools: "Exécution d'une action",

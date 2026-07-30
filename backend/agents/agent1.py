@@ -4,16 +4,19 @@ Pipeline : RAG pgvector → anonymisation NER → [browser?] → LLM → réhydr
 Zéro PII vers l'API LLM : la requête ET les documents sont masqués avant l'appel,
 puis les vraies valeurs sont réinjectées dans la réponse (entity_map).
 """
+import logging
+
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 from agents.state import AgentState
 from llm.router import get_llm, LLMTier
 
+logger = logging.getLogger("duret.agents.agent1")
+
 SYSTEM_PROMPT = """Tu es l'assistant IA interne de Duret & Sols, entreprise de travaux de sols et de revêtements (BTP).
 Tu assistes l'équipe administrative et le suivi de chantiers dans leur travail quotidien : gestion administrative, comptabilité, réponses aux mails, factures et situations, suivi du temps passé sur les chantiers, commandes, planning, fournisseurs, règlements, réserves, contentieux et dossiers juridiques, support commercial sur les dossiers existants.
-Tu disposes d'une mémoire d'entreprise (appels d'offres, CCTP, CCAP, DPGF, plans, devis, DOE, commandes, factures, situations, documents fournisseurs, dossiers juridiques, réserves, dossiers chantier, mails) que tu consultes avec l'action `rechercher_documents`.
-RÈGLE DE RECHERCHE : dès qu'une demande porte sur une donnée interne (un chantier, un client, un devis, une facture, un montant, un mail, un document), tu CHERCHES d'abord, puis tu réponds à partir de ce que tu as trouvé. Ne réponds jamais « je n'ai pas cette information » sans avoir cherché. Si la recherche ne donne rien, tu peux la relancer une fois avec d'autres termes ; si elle ne donne toujours rien, dis simplement que la mémoire ne contient rien là-dessus.
-À l'inverse, pour une salutation, un remerciement, une question générale ou une demande de rédaction qui ne dépend d'aucune donnée interne, réponds directement, SANS rechercher et SANS parler de la mémoire d'entreprise.
+Tu disposes d'une mémoire d'entreprise (appels d'offres, CCTP, CCAP, DPGF, plans, devis, DOE, commandes, factures, situations, documents fournisseurs, dossiers juridiques, réserves, dossiers chantier, mails).
+RÈGLE DE RECHERCHE : la mémoire a DÉJÀ été consultée pour toi quand la demande le justifiait. Si des documents te sont fournis, réponds à partir d'eux. Si aucun ne l'est, c'est que la demande n'en nécessitait pas, ou que la mémoire ne contient rien : ne relance l'action `rechercher_documents` que si la réponse dépend manifestement d'une donnée interne qui te manque, avec des termes DIFFÉRENTS. Pour une salutation, un remerciement, une question générale ou une demande de rédaction, réponds directement, SANS aucune action et SANS parler de la mémoire d'entreprise.
 Ne liste JAMAIS de contenu imaginaire et ne prétends pas avoir des dossiers que la recherche ne t'a pas rendus.
 Réponds toujours en français, de façon précise, professionnelle et concise. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur.
 Certaines valeurs des documents peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. — conserve-les telles quelles. Ne CRÉE jamais toi-même de balise entre crochets.
@@ -77,6 +80,90 @@ async def anonymize_node(state: AgentState) -> dict:
         "anonymized_chunks": masked[1:] if len(masked) > 1 else [],
         "entity_map": entity_map,
     }
+
+
+async def routeur_node(state: AgentState) -> dict:
+    """Décide de la suite : répondre directement, ou consulter la mémoire.
+
+    C'est une IA qui tranche, pas une liste de mots-clés — mais elle tranche en
+    UN appel très court, sur le palier le plus léger, avant toute rédaction.
+
+    Pourquoi pas laisser le modèle rédacteur décider via un bloc d'action : sur
+    les modèles modestes de la cascade, un « salut » déclenchait des recherches
+    en boucle jusqu'au garde-fou, pour un résultat lent et vide. Séparer la
+    DÉCISION de la RÉDACTION rend le chemin court quand il doit l'être.
+    """
+    from llm.router import get_llm, LLMTier as _T
+    from langchain_core.messages import HumanMessage as _H
+    import json as _json
+    import re as _re
+
+    question = state.get("anonymized_query") or state.get("query", "")
+
+    # Une pièce jointe vient d'arriver : le contexte est déjà là, rien à chercher.
+    if state.get("attachment_text"):
+        return {"besoin_memoire": False}
+
+    invite = (
+        "Tu orientes une demande adressée à l'assistant interne d'une entreprise.\n"
+        "Dis UNIQUEMENT s'il faut consulter la mémoire d'entreprise (chantiers, devis, "
+        "factures, commandes, dossiers, mails, documents internes) pour répondre.\n"
+        "- Salutation, remerciement, question générale, demande de rédaction ou de "
+        "reformulation, suite directe de la conversation : AUCUNE recherche.\n"
+        "- Question portant sur un dossier, un client, un montant, un document ou un "
+        "mail de l'entreprise : recherche NÉCESSAIRE.\n"
+        'Réponds par un objet JSON seul : {"memoire": true|false, "requete": '
+        '"<mots-clés de recherche si true, sinon vide>"}\n\n'
+        f"Demande : {question}"
+    )
+
+    try:
+        reponse = await get_llm(_T.LIGHT).ainvoke([_H(content=invite)])
+        trouve = _re.search(r"\{.*\}", str(reponse.content), _re.S)
+        decision = _json.loads(trouve.group(0)) if trouve else {}
+        besoin = bool(decision.get("memoire"))
+        requete = str(decision.get("requete") or "").strip() or question
+    except Exception as e:  # noqa: BLE001
+        # En cas d'échec, on CHERCHE : répondre « je n'ai rien » alors que la
+        # mémoire contient la réponse est bien pire qu'une recherche inutile.
+        logger.info("Routage indisponible (%s) — recherche par défaut", e)
+        besoin, requete = True, question
+
+    logger.debug("Routage : mémoire=%s", besoin)
+    return {"besoin_memoire": besoin, "requete_memoire": requete}
+
+
+async def recherche_node(state: AgentState) -> dict:
+    """Exécute la recherche décidée par le routeur, et masque les résultats."""
+    import asyncio
+    from security.anonymizer import anonymizer
+    from vectorstore.rag import retrieve_as_context
+    from mail.authorization import boites_par_id
+
+    # Cloisonnement : uniquement les boîtes mail auxquelles cette personne a
+    # droit. Sans droits déterminables, aucun mail (fail-closed).
+    try:
+        boites = await boites_par_id(state.get("user_id"))
+    except Exception:  # noqa: BLE001
+        boites = []
+
+    trouves = await retrieve_as_context(
+        query=state.get("requete_memoire") or state.get("query", ""),
+        user_role=state.get("user_role", "terrain"),
+        top_k=5,
+        mailboxes=boites,
+    )
+    # On CONSERVE ce qui est déjà là (une pièce jointe masquée en amont) : ce
+    # canal est en « dernière valeur », un retour brut l'effacerait.
+    deja = list(state.get("anonymized_chunks") or [])
+    if not trouves:
+        return {"anonymized_chunks": deja}
+
+    # Les documents partent vers le modèle : ils doivent être masqués, avec la
+    # carte cumulative du fil pour que les jetons restent cohérents.
+    masques, carte = await asyncio.to_thread(
+        anonymizer.anonymize_chunks, list(trouves), state.get("entity_map") or {})
+    return {"anonymized_chunks": deja + masques, "entity_map": carte}
 
 
 async def browser_node(state: AgentState) -> dict:
@@ -209,6 +296,14 @@ Voici les messages trouvés :
 {"type":"email","subject":"CONTACT architecte","from":"lb@lbbl-architectes.fr","date":"23/07/2026","preview":"Demande d'intervention sur un projet a Sainte-Eulalie..."}
 ```""" + instruction_actions()
 
+    # Dernière passe imposée : la boucle d'actions est close, il ne reste qu'à
+    # rédiger. Sans cette consigne, le modèle peut redemander une action, dont
+    # le bloc serait retiré à l'affichage — donc une réponse vide.
+    if state.get("tools_finished"):
+        system_prompt += ("\n\nLa phase d'actions est TERMINÉE pour ce tour : n'émets plus "
+                          "aucun bloc ```action. Rédige maintenant ta réponse finale à "
+                          "partir des résultats ci-dessus.")
+
     # [système] + [historique masqué] + [tour courant] : c'est ce qui donne la mémoire.
     messages = [SystemMessage(content=system_prompt)] + list(history) + [
         HumanMessage(content=human_content)
@@ -269,8 +364,21 @@ async def tools_node(state: AgentState, config=None) -> dict:
     resultats = list(state.get("tool_results") or [])
 
     def _sortir(note: str | None = None) -> dict:
-        """Termine la boucle : la réponse est le texte, débarrassé du bloc."""
-        return {"llm_response": texte + (f"\n\n{note}" if note else ""),
+        """Termine la boucle : la réponse est le texte, débarrassé du bloc.
+
+        Si le modèle n'a produit AUCUNE prose (il n'a émis qu'un bloc d'action),
+        on ne renvoie surtout pas la note toute seule : l'utilisateur recevrait
+        « (Limite d'actions atteinte pour ce tour.) » en guise de réponse. On
+        sort de la boucle en laissant la réponse vide, et `route_apres_tools`
+        repasse une dernière fois par la rédaction, avec les résultats obtenus.
+        """
+        corps = (texte or "").strip()
+        if not corps:
+            if note:
+                logger.info("Sortie de boucle sans texte : %s — rédaction finale forcée", note)
+            return {"llm_response": "", "tools_finished": True,
+                    "tool_iterations": iteration}
+        return {"llm_response": corps + (f"\n\n{note}" if note else ""),
                 "tools_finished": True, "tool_iterations": iteration}
 
     if erreur:
@@ -359,6 +467,10 @@ async def rehydrate_node(state: AgentState) -> dict:
     # Filet : si un bloc action survit jusqu'ici (sortie de boucle, limite atteinte),
     # il ne doit pas s'afficher à l'utilisateur — c'est de la mécanique interne.
     text = BLOC_ACTION_RE.sub("", text).strip()
+    if not text:
+        # Dernier filet : mieux vaut une phrase honnête qu'une bulle vide.
+        text = ("Je n'ai pas réussi à formuler de réponse pour cette demande. "
+                "Pouvez-vous la reformuler ?")
 
     entity_map = state.get("entity_map") or {}
     # Restreint aux jetons envoyés ce tour-ci (cf. turn_placeholders dans llm_node).
@@ -394,13 +506,18 @@ async def validation_check_node(state: AgentState) -> dict:
 
 # ── Edges conditionnels ───────────────────────────────────────────────
 
+def route_apres_routeur(state: AgentState) -> str:
+    """Décision du routeur : rédaction directe, ou consultation de la mémoire."""
+    return "recherche" if state.get("besoin_memoire") else "llm"
+
+
 def should_use_browser(state: AgentState) -> str:
+    """Après une recherche infructueuse, tenter le web (si activé)."""
     from config import settings
-    if state.get("browser_used"):
+    if state.get("browser_used") or not settings.browser_enabled:
         return "llm"
-    if not settings.browser_enabled:
-        return "llm"
-    return "browser" if not (state.get("raw_chunks") or []) else "llm"
+    trouve = (state.get("anonymized_chunks") or []) or (state.get("raw_chunks") or [])
+    return "llm" if trouve else "browser"
 
 
 def should_validate(state: AgentState) -> str:
@@ -423,8 +540,13 @@ def route_apres_tools(state: AgentState) -> str:
     On termine dès qu'une action externe attend une validation : le graphe parent
     prend le relais avec `human_gate`.
     """
-    if state.get("tools_finished") or state.get("pending_action"):
+    if state.get("pending_action"):
         return "rehydrate"
+    if state.get("tools_finished"):
+        # Boucle terminée mais rien de rédigé : une dernière passe de rédaction,
+        # bornée (`tools_finished` étant posé, `route_apres_llm` ira en
+        # réhydratation quoi que produise le modèle).
+        return "rehydrate" if (state.get("llm_response") or "").strip() else "llm"
     return "llm"
 
 
@@ -433,6 +555,8 @@ def build_agent1_graph():
     graph.add_node("rag", rag_node)
     graph.add_node("anonymize", anonymize_node)
     graph.add_node("browser", browser_node)
+    graph.add_node("routeur", routeur_node)
+    graph.add_node("recherche", recherche_node)
     graph.add_node("llm", llm_node)
     graph.add_node("tools", tools_node)
     graph.add_node("rehydrate", rehydrate_node)
@@ -440,7 +564,13 @@ def build_agent1_graph():
 
     graph.set_entry_point("rag")
     graph.add_edge("rag", "anonymize")
-    graph.add_conditional_edges("anonymize", should_use_browser, {"browser": "browser", "llm": "llm"})
+    # Protection des données -> le routeur (IA) décide -> recherche SI nécessaire.
+    graph.add_edge("anonymize", "routeur")
+    graph.add_conditional_edges("routeur", route_apres_routeur,
+                                {"recherche": "recherche", "llm": "llm"})
+    # Le navigateur n'est tenté qu'APRÈS une recherche interne infructueuse.
+    graph.add_conditional_edges("recherche", should_use_browser,
+                                {"browser": "browser", "llm": "llm"})
     graph.add_edge("browser", "llm")
     # Boucle d'outils : llm -> tools -> llm -> ... jusqu'à ce que le modèle réponde
     # sans demander d'action (ou que le garde-fou l'arrête).

@@ -22,6 +22,7 @@ Réponds toujours en français, de façon précise, professionnelle et concise. 
 Certaines valeurs des documents peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. — conserve-les telles quelles. Ne CRÉE jamais toi-même de balise entre crochets.
 Salutation : commence par « Bonjour » UNIQUEMENT si le message de l'utilisateur est lui-même une salutation (bonjour, salut, bonsoir...) ; sinon, pour une question de travail, réponds DIRECTEMENT, sans « Bonjour » ni formule d'accueil, et sans jamais répéter une salutation déjà faite dans la conversation. Ne dis JAMAIS « je suis Duret & Sols » ni « je m'appelle Duret & Sols » (c'est le nom de l'entreprise, pas ton identité à énoncer) et ne te présente pas. Pour une question de travail, réponds directement.
 N'invente JAMAIS de donnée (montant, nom, date, nombre, référence de dossier). Tout chiffre que tu avances doit provenir d'un document que la recherche t'a rendu, ou de ce que l'utilisateur vient de te dire. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
+DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un récapitulatif ou un modèle et qu'une information ne figure nulle part, écris exactement [À COMPLÉTER] à sa place. Ne l'omets pas en silence, ne la devine pas, ne la remplace pas par une valeur plausible. Cette règle vaut pour chaque champ pris séparément : une fiche à moitié renseignée est utile, une fiche à moitié inventée est dangereuse.
 Typographie : n'utilise JAMAIS de tiret cadratin (—) ni de tiret demi-cadratin (–) ; emploie plutôt une virgule, un deux-points, une parenthèse ou un tiret simple « - »."""
 
 
@@ -303,6 +304,14 @@ Voici les messages trouvés :
         system_prompt += ("\n\nLa phase d'actions est TERMINÉE pour ce tour : n'émets plus "
                           "aucun bloc ```action. Rédige maintenant ta réponse finale à "
                           "partir des résultats ci-dessus.")
+        # La raison d'une sortie sans résultat est expliquée par le modèle, dans
+        # ses mots : l'utilisateur mérite une phrase, pas un code d'erreur.
+        note = state.get("note_sortie")
+        if note:
+            system_prompt += (
+                f"\nContexte : {note} Explique-le simplement à l'utilisateur, en une "
+                "phrase, et propose une suite utile. Ne recopie pas cette note telle "
+                "quelle et n'affiche aucune parenthèse technique.")
 
     # [système] + [historique masqué] + [tour courant] : c'est ce qui donne la mémoire.
     messages = [SystemMessage(content=system_prompt)] + list(history) + [
@@ -366,20 +375,26 @@ async def tools_node(state: AgentState, config=None) -> dict:
     resultats = list(state.get("tool_results") or [])
 
     def _sortir(note: str | None = None) -> dict:
-        """Termine la boucle : la réponse est le texte, débarrassé du bloc.
+        """Termine la boucle, en garantissant qu'une VRAIE réponse sera rédigée.
 
-        Si le modèle n'a produit AUCUNE prose (il n'a émis qu'un bloc d'action),
-        on ne renvoie surtout pas la note toute seule : l'utilisateur recevrait
-        « (Limite d'actions atteinte pour ce tour.) » en guise de réponse. On
-        sort de la boucle en laissant la réponse vide, et `route_apres_tools`
-        repasse une dernière fois par la rédaction, avec les résultats obtenus.
+        Le contrat de la boucle est : le modèle demande une action, puis rédige
+        au vu de son résultat. Si l'on sort sans qu'aucun résultat ne lui soit
+        jamais revenu, son dernier texte est par construction une parole
+        d'AVANT l'action — « Je vais d'abord chercher... » — et non une réponse.
+        Observé en production : des tours entiers réduits à cette annonce, ou à
+        la note du garde-fou toute seule.
+
+        On force donc une dernière passe de rédaction, en lui transmettant la
+        raison de la sortie pour qu'il l'explique lui-même plutôt que de coller
+        une note technique à l'utilisateur. La passe est bornée : `tools_finished`
+        étant posé, `route_apres_llm` ira en réhydratation quoi qu'il produise.
         """
         corps = (texte or "").strip()
-        if not corps:
+        if not resultats or not corps:
             if note:
-                logger.info("Sortie de boucle sans texte : %s — rédaction finale forcée", note)
+                logger.info("Sortie de boucle sans aboutissement (%s) — rédaction forcée", note)
             return {"llm_response": "", "tools_finished": True,
-                    "tool_iterations": iteration}
+                    "tool_iterations": iteration, "note_sortie": note}
         return {"llm_response": corps + (f"\n\n{note}" if note else ""),
                 "tools_finished": True, "tool_iterations": iteration}
 
@@ -397,7 +412,10 @@ async def tools_node(state: AgentState, config=None) -> dict:
         return _sortir()
 
     if iteration > MAX_ACTIONS_PAR_TOUR:
-        return _sortir("(Limite d'actions atteinte pour ce tour.)")
+        # Formulé comme une RAISON, pas comme un texte à afficher : c'est le
+        # modèle qui la met en mots pour l'utilisateur.
+        return _sortir("le nombre de recherches autorisées pour ce tour est atteint "
+                       "sans avoir abouti.")
 
     # Les paramètres arrivent masqués (le modèle ne voit que du texte anonymisé).
     # On les réhydrate avec les MÊMES bornes que la réponse finale : uniquement
@@ -433,7 +451,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # doit plus rien pouvoir faire, même si le tour a commencé avant.
     utilisateur = await charger_executant(state.get("user_id"))
     if utilisateur is None:
-        return _sortir("(Compte inactif : aucune action n'a été exécutée.)")
+        return _sortir("ce compte n'est plus actif, aucune action n'a pu être exécutée.")
 
     try:
         brut = await execute_skill(

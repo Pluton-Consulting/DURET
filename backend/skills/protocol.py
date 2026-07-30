@@ -51,11 +51,76 @@ BALISAGE_OUTIL_RE = re.compile(
     r"function_call|tool_use|invoke|antml:[a-z_]+)[^>]*>", re.I)
 
 
+# Autre forme rencontrée : le modèle rend un objet JSON nu, sans balise, dans la
+# convention OpenAI (`name`/`arguments`) ou dans la nôtre (`skill`/`args`). Sans
+# reconnaissance, l'utilisateur reçoit du JSON en guise de réponse.
+_DEBUT_JSON_NU_RE = re.compile(
+    r"\{\s*\"(?:skill|name|tool|function)\"\s*:\s*\"[a-z_]+\"")
+
+
+def _objet_equilibre(texte: str, debut: int) -> str | None:
+    """Extrait l'objet JSON commençant à `debut`, accolades équilibrées.
+
+    Une expression régulière ne convient pas : `.*?\\}` s'arrête à la première
+    accolade fermante, qui est celle des arguments IMBRIQUÉS, et rend un JSON
+    tronqué. On compte donc les accolades, en ignorant celles des chaînes.
+    """
+    niveau, dans_chaine, echappe = 0, False, False
+    for i in range(debut, len(texte)):
+        c = texte[i]
+        if echappe:
+            echappe = False
+            continue
+        if c == "\\":
+            echappe = True
+        elif c == '"':
+            dans_chaine = not dans_chaine
+        elif not dans_chaine:
+            if c == "{":
+                niveau += 1
+            elif c == "}":
+                niveau -= 1
+                if niveau == 0:
+                    return texte[debut:i + 1]
+    return None
+
+
+def _action_json_nu(texte: str):
+    """Reconnaît un appel d'outil rendu en JSON nu, sans aucune balise."""
+    for amorce in _DEBUT_JSON_NU_RE.finditer(texte or ""):
+        brut = _objet_equilibre(texte, amorce.start())
+        if not brut:
+            continue
+        try:
+            data = json.loads(brut)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        nom = data.get("skill") or data.get("name") or data.get("tool") or data.get("function")
+        if nom not in CATALOGUE_AGENT1:
+            continue
+        args = data.get("args") or data.get("arguments") or data.get("parameters") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(args, dict):
+            continue
+        if [p for p in CATALOGUE_AGENT1[nom][1] if not str(args.get(p) or "").strip()]:
+            continue
+        fin = amorce.start() + len(brut)
+        reste = (texte[:amorce.start()] + texte[fin:]).strip()
+        return {"skill": nom, "args": args}, reste, None
+    return None, texte, None
+
+
 def _action_native(texte: str):
     """Convertit un appel natif en `{skill, args}`, ou None si illisible."""
     trouve = BLOC_NATIF_RE.search(texte or "")
     if not trouve:
-        return None, texte, None
+        return _action_json_nu(texte or "")
 
     reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
     corps = trouve.group(1)
@@ -114,35 +179,6 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         ["recurrence", "interval_minutes", "heure", "jours"]),
 }
 
-
-def _action_native(texte: str):
-    """Convertit un appel natif en `{skill, args}`, ou None si illisible."""
-    trouve = BLOC_NATIF_RE.search(texte or "")
-    if not trouve:
-        return None, texte, None
-
-    reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
-    corps = trouve.group(1)
-    nom = corps.splitlines()[0].strip() if corps.strip() else ""
-    if nom not in CATALOGUE_AGENT1:
-        return None, reste, None
-
-    args = {}
-    for cle, valeur in _ARG_NATIF_RE.findall(corps):
-        valeur = valeur.strip()
-        # Une valeur peut être du JSON (liste de types, objet) ou du texte brut.
-        if valeur[:1] in "[{":
-            try:
-                valeur = json.loads(valeur)
-            except json.JSONDecodeError:
-                pass
-        args[cle.strip()] = valeur
-
-    manquants = [p for p in CATALOGUE_AGENT1[nom][1]
-                 if not str(args.get(p) or "").strip()]
-    if manquants:
-        return None, reste, None
-    return {"skill": nom, "args": args}, reste, None
 
 # Catalogue exposé au modèle : nom -> (description, requis[], optionnels[]).
 # Volontairement PETIT au départ : uniquement des skills natifs, dont les effets

@@ -11,12 +11,14 @@ from llm.router import get_llm, LLMTier
 
 SYSTEM_PROMPT = """Tu es l'assistant IA interne de Duret & Sols, entreprise de travaux de sols et de revêtements (BTP).
 Tu assistes l'équipe administrative et le suivi de chantiers dans leur travail quotidien : gestion administrative, comptabilité, réponses aux mails, factures et situations, suivi du temps passé sur les chantiers, commandes, planning, fournisseurs, règlements, réserves, contentieux et dossiers juridiques, support commercial sur les dossiers existants.
-Tu peux rechercher dans la mémoire d'entreprise (appels d'offres, CCTP, CCAP, règlements de consultation, DPGF, plans, devis, DOE, commandes, factures, situations, documents fournisseurs, dossiers juridiques, réserves, dossiers chantier). Les documents pertinents te sont fournis ci-dessous sous « Documents internes disponibles ».
-IMPORTANT : si on te demande une information qui exigerait un document et qu'aucun ne t'est fourni, dis-le honnêtement (« je n'ai aucun document là-dessus pour l'instant ») et ne liste JAMAIS de contenu imaginaire. En revanche, pour une salutation, un remerciement ou une conversation courante, réponds simplement et naturellement : ne parle NI de la mémoire d'entreprise, NI de l'absence de documents.
+Tu disposes d'une mémoire d'entreprise (appels d'offres, CCTP, CCAP, DPGF, plans, devis, DOE, commandes, factures, situations, documents fournisseurs, dossiers juridiques, réserves, dossiers chantier, mails) que tu consultes avec l'action `rechercher_documents`.
+RÈGLE DE RECHERCHE : dès qu'une demande porte sur une donnée interne (un chantier, un client, un devis, une facture, un montant, un mail, un document), tu CHERCHES d'abord, puis tu réponds à partir de ce que tu as trouvé. Ne réponds jamais « je n'ai pas cette information » sans avoir cherché. Si la recherche ne donne rien, tu peux la relancer une fois avec d'autres termes ; si elle ne donne toujours rien, dis simplement que la mémoire ne contient rien là-dessus.
+À l'inverse, pour une salutation, un remerciement, une question générale ou une demande de rédaction qui ne dépend d'aucune donnée interne, réponds directement, SANS rechercher et SANS parler de la mémoire d'entreprise.
+Ne liste JAMAIS de contenu imaginaire et ne prétends pas avoir des dossiers que la recherche ne t'a pas rendus.
 Réponds toujours en français, de façon précise, professionnelle et concise. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur.
 Certaines valeurs des documents peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. — conserve-les telles quelles. Ne CRÉE jamais toi-même de balise entre crochets.
 Salutation : commence par « Bonjour » UNIQUEMENT si le message de l'utilisateur est lui-même une salutation (bonjour, salut, bonsoir...) ; sinon, pour une question de travail, réponds DIRECTEMENT, sans « Bonjour » ni formule d'accueil, et sans jamais répéter une salutation déjà faite dans la conversation. Ne dis JAMAIS « je suis Duret & Sols » ni « je m'appelle Duret & Sols » (c'est le nom de l'entreprise, pas ton identité à énoncer) et ne te présente pas. Pour une question de travail, réponds directement.
-N'invente JAMAIS de donnée (montant, nom, date, nombre, référence de dossier). Si l'on t'interroge sur un dossier et qu'aucun document ne t'est fourni, dis franchement que tu n'as pas cette information en mémoire. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
+N'invente JAMAIS de donnée (montant, nom, date, nombre, référence de dossier). Tout chiffre que tu avances doit provenir d'un document que la recherche t'a rendu, ou de ce que l'utilisateur vient de te dire. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
 Typographie : n'utilise JAMAIS de tiret cadratin (—) ni de tiret demi-cadratin (–) ; emploie plutôt une virgule, un deux-points, une parenthèse ou un tiret simple « - »."""
 
 
@@ -29,34 +31,22 @@ MAX_ACTIONS_PAR_TOUR = 3
 # ── Nœuds ────────────────────────────────────────────────────────────
 
 async def rag_node(state: AgentState) -> dict:
-    """Récupère les chunks pertinents depuis pgvector (filtrés par rôle)."""
-    from vectorstore.rag import retrieve_as_context
+    """Prépare le contexte immédiat du tour. NE FAIT PLUS de recherche.
 
-    # Cloisonnement des mails : la recherche ne peut remonter que les messages
-    # des boîtes auxquelles CETTE personne a droit. Le filtrage par rôle ne
-    # suffirait pas — deux collègues partagent le même rôle sans partager leurs
-    # messages. Sans boîte reconnue, aucun mail n'est visible (fail-closed).
-    try:
-        from mail.authorization import boites_par_id
-        boites = await boites_par_id(state.get("user_id"))
-    except Exception:   # noqa: BLE001 - en cas de souci, on n'expose aucun mail
-        boites = []
+    La recherche documentaire est devenue un OUTIL (`rechercher_documents`) que
+    le modèle appelle s'il en a besoin. Auparavant elle tournait avant chaque
+    appel, quoi qu'on dise : un « bonjour » déclenchait une recherche
+    vectorielle, une passe d'anonymisation sur les résultats, puis un préambule
+    « aucun document trouvé » qui poussait le modèle à répondre à côté.
 
-    contexts = await retrieve_as_context(
-        query=state.get("query", ""),
-        user_role=state.get("user_role", "terrain"),
-        top_k=5,
-        mailboxes=boites,
-    )
-    # Le fichier joint est traité comme un document de contexte : il passe donc par
-    # l'anonymisation puis l'injection au même titre que la mémoire d'entreprise.
-    # Placé en TÊTE : trim_chunks borne le volume total, et la pièce jointe que
-    # l'utilisateur vient d'envoyer prime sur les résultats de recherche.
+    Reste ici ce qui n'a pas à être décidé : une pièce jointe envoyée à l'instant
+    fait évidemment partie du contexte.
+    """
     texte_joint = state.get("attachment_text")
-    if texte_joint:
-        nom = state.get("attachment_name") or "document"
-        contexts = [f"[FICHIER JOINT PAR L'UTILISATEUR — {nom}]\n{texte_joint}"] + list(contexts)
-    return {"raw_chunks": contexts}
+    if not texte_joint:
+        return {"raw_chunks": []}
+    nom = state.get("attachment_name") or "document"
+    return {"raw_chunks": [f"[FICHIER JOINT PAR L'UTILISATEUR — {nom}]\n{texte_joint}"]}
 
 
 async def anonymize_node(state: AgentState) -> dict:
@@ -178,24 +168,12 @@ async def llm_node(state: AgentState, config=None) -> dict:
             + _json_out.dumps(resultats_outils, ensure_ascii=False, default=str)[:6000]
             + "\n\n")
 
-    # Une salutation ou un message social n'attend aucun document. Lui accoler
-    # « aucun document trouvé, dis-le honnêtement » poussait le modèle à répondre
-    # « la base n'a pas encore été alimentée » à un simple « hey » : il obéissait,
-    # la consigne était fautive.
-    _social = (state.get("query") or "").strip().lower()
-    est_social = len(_social.split()) <= 4 and any(
-        _social.startswith(m) for m in
-        ("bonjour", "salut", "hey", "hello", "coucou", "bonsoir", "merci", "ok",
-         "d'accord", "daccord", "super", "parfait", "ça va", "ca va", "yo", "re"))
-
+    # Aucun préambule sur l'absence de documents : c'est le modèle qui décide
+    # s'il lui en faut, en appelant l'outil de recherche. Lui annoncer d'office
+    # « aucun document » l'amenait à en parler même pour un simple bonjour.
     human_content = f"Question : {query}"
     if context_text:
-        human_content = f"Documents internes disponibles :\n{context_text}\n\n{human_content}"
-    elif not est_social:
-        # Formulation NEUTRE : un constat, pas une consigne d'annonce. C'est le
-        # prompt système qui décide s'il y a lieu d'en parler.
-        human_content = ("(Aucun document interne ne correspond à cette demande.)\n\n"
-                         + human_content)
+        human_content = f"Documents disponibles :\n{context_text}\n\n{human_content}"
     human_content = bloc_resultats + human_content
 
     # Composants visuels : l'instruction est TOUJOURS présente.

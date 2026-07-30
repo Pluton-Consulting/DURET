@@ -31,6 +31,12 @@ BLOC_ACTION_RE = re.compile(r"```action\s*(.*?)```", re.S)
 # Volontairement PETIT au départ : uniquement des skills natifs, dont les effets
 # sont déclarés dans le code. Les skills générés (bac à sable) n'y figurent pas.
 CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
+    "rechercher_documents": (
+        "Cherche dans la mémoire d'entreprise (devis, chantiers, clients, mails, "
+        "documents importés). À appeler dès qu'une question porte sur des données "
+        "internes. Peut être relancé avec d'autres termes si la première recherche "
+        "ne donne rien",
+        ["requete"], ["types"]),
     "triage_email_entrant": (
         "Classe et priorise un message reçu (catégorie, urgence, action suggérée)",
         ["mailbox"], ["objet", "corps"]),

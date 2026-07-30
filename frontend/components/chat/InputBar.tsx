@@ -141,6 +141,7 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
         </button>
 
         <textarea
+          data-testid="saisie-message"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={surTouche}
@@ -157,6 +158,7 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
 
         <button
           className="sym-tap"
+          data-testid="envoyer-message"
           onClick={envoyer}
           disabled={!peutEnvoyer}
           style={{

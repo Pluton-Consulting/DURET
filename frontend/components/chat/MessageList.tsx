@@ -11,21 +11,30 @@ interface Message {
 export default function MessageList({ messages, onAction }: { messages: Message[]; onAction?: (v: string) => void }) {
   const finRef = useRef<HTMLDivElement>(null)
   const conteneurRef = useRef<HTMLDivElement>(null)
+  // L'utilisateur suit-il le fil, ou est-il remonté pour relire ? Cette intention
+  // ne se mesure QUE pendant qu'il fait défiler.
+  const suitLeFil = useRef(true)
 
-  // Descend sur le dernier message à chaque nouveau message.
-  // On ne le fait PAS si l'utilisateur a remonté le fil pour relire : lui ramener
-  // la vue de force pendant qu'il lit serait pire que l'absence de défilement.
-  useEffect(() => {
+  // Mesurer la position APRÈS l'ajout d'un message ne dit rien de son intention :
+  // le message qui vient d'arriver a déjà allongé le conteneur, donc la distance
+  // au bas vaut la hauteur de ce message. La vue paraît « remontée » alors que
+  // personne n'a rien remonté, et le défilement ne repart jamais.
+  // On note donc l'intention au moment du défilement, où la géométrie est encore
+  // celle que l'utilisateur voit.
+  const surDefilement = () => {
     const boite = conteneurRef.current
     if (!boite) return
-    const enBas = boite.scrollHeight - boite.scrollTop - boite.clientHeight < 150
-    if (enBas || messages.length <= 1) {
+    suitLeFil.current = boite.scrollHeight - boite.scrollTop - boite.clientHeight < 150
+  }
+
+  useEffect(() => {
+    if (suitLeFil.current || messages.length <= 1) {
       finRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
     }
   }, [messages])
 
   return (
-    <div ref={conteneurRef} style={{
+    <div ref={conteneurRef} onScroll={surDefilement} data-testid="liste-messages" style={{
       flex: 1,
       overflow: "auto",
       padding: "24px 32px",
@@ -43,6 +52,7 @@ export default function MessageList({ messages, onAction }: { messages: Message[
           <div
             key={msg.id}
             className="sym-in sym-card"
+            data-testid="message-utilisateur"
             style={{
               alignSelf: "flex-end",
               maxWidth: "70%",
@@ -60,7 +70,8 @@ export default function MessageList({ messages, onAction }: { messages: Message[
             {msg.content}
           </div>
         ) : (
-          <div key={msg.id} style={{ alignSelf: "flex-start", maxWidth: "100%" }}>
+          <div key={msg.id} data-testid="message-assistant"
+               style={{ alignSelf: "flex-start", maxWidth: "100%" }}>
             <MessageRenderer content={msg.content} onAction={onAction} />
           </div>
         )

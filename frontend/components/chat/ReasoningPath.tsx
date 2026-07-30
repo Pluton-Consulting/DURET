@@ -65,7 +65,8 @@ export default function ReasoningPath({ steps, loading }: Props) {
       <div className="sym-path-title">Chemin de réflexion</div>
       <div>
         {STAGES.map((s, i) => (
-          <div className={`sym-node ${stateOf(i)} sym-in sym-in-${Math.min(i + 1, 6)}`} key={s.label}>
+          <div className={`sym-node ${stateOf(i)} sym-in sym-in-${Math.min(i + 1, 6)}`} key={s.label}
+               data-testid="etape-reflexion" data-etape={s.label} data-etat={stateOf(i)}>
             {i > 0 && <span className="sym-line" aria-hidden="true" />}
             <span className="sym-dot" aria-hidden="true">{stateOf(i) === "done" ? "✓" : ""}</span>
             <div>

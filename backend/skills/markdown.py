@@ -5,7 +5,13 @@ Un skill vit dans la base, mais s'écrit et se relit bien plus facilement dans u
 fichier : on le versionne, on le passe à un collègue, on l'édite dans son
 éditeur, on le rejoue sur une autre instance.
 
-Le format retenu tient en trois parties :
+AUCUNE STRUCTURE N'EST IMPOSÉE À L'IMPORT. Un fichier écrit à la main, exporté
+d'un autre outil ou tiré de simples notes entre tel quel : ce qui n'est pas
+déclaré est déduit du document (le titre donne le nom, le premier paragraphe la
+description, le tout la consigne). Le format ci-dessous est celui de l'EXPORT,
+et la façon la plus précise de décrire un skill — pas un passage obligé.
+
+Le format d'export tient en trois parties :
 
     ---
     name: analyse_cctp
@@ -35,6 +41,7 @@ d'entrée pour du code arbitraire.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # Champs de l'en-tête que l'on accepte de lire. `status` et `enabled` en sont
 # volontairement absents : ils ne se décrètent pas depuis un fichier.
@@ -80,12 +87,31 @@ def vers_markdown(skill: dict) -> str:
     return "\n".join(parties) + "\n"
 
 
+def _slug(texte: str) -> str:
+    """Transforme un titre libre en nom de skill valide.
+
+    « Analyse d'un CCTP (v2) » -> « analyse_d_un_cctp_v2 »
+    """
+    sans_accent = "".join(
+        c for c in unicodedata.normalize("NFKD", texte or "")
+        if not unicodedata.combining(c))
+    brut = re.sub(r"[^a-z0-9]+", "_", sans_accent.lower()).strip("_")
+    brut = re.sub(r"_+", "_", brut)
+    if brut and not brut[0].isalpha():
+        brut = "skill_" + brut
+    return brut[:64]
+
+
 def _lire_entete(texte: str) -> tuple[dict, str]:
+    """En-tête si présent, sinon dictionnaire vide et texte inchangé.
+
+    L'en-tête n'est PAS obligatoire : un fichier écrit à la main, ou produit
+    ailleurs, doit pouvoir être importé tel quel. Ce qui manque est déduit du
+    document lui-même.
+    """
     trouve = _RE_ENTETE.search(texte)
     if not trouve:
-        raise MarkdownInvalide(
-            "En-tête absent : le fichier doit commencer par un bloc « --- » "
-            "contenant au moins « name: ».")
+        return {}, texte
     entete = {}
     for ligne in trouve.group(1).splitlines():
         ligne = ligne.strip()
@@ -106,32 +132,75 @@ def _lire_section(corps: str, titre: str) -> str:
     return trouve.group(1).strip() if trouve else ""
 
 
-def depuis_markdown(texte: str) -> dict:
-    """Analyse un fichier Markdown et renvoie un skill prêt à insérer.
+def _titre_h1(corps: str) -> str:
+    trouve = re.search(r"^#\s+(.+)$", corps, re.M)
+    return trouve.group(1).strip() if trouve else ""
+
+
+def _premier_paragraphe(corps: str) -> str:
+    """Première vraie phrase du document : titres, listes et code exclus."""
+    for bloc in re.split(r"\n\s*\n", re.sub(r"```.*?```", "", corps, flags=re.S)):
+        ligne = bloc.strip()
+        if not ligne or ligne.startswith(("#", "-", "*", ">", "|", "```")):
+            continue
+        return " ".join(ligne.split())
+    return ""
+
+
+def depuis_markdown(texte: str, nom_fichier: str | None = None) -> dict:
+    """Analyse un Markdown QUELCONQUE et renvoie un skill prêt à insérer.
+
+    Aucune structure n'est imposée : un fichier écrit à la main, exporté d'un
+    autre outil ou pris dans des notes doit pouvoir entrer tel quel. Ce qui
+    n'est pas déclaré est DÉDUIT, dans cet ordre :
+
+      nom          en-tête `name:`, sinon titre de niveau 1, sinon nom du fichier
+      description  en-tête `description:`, sinon premier paragraphe
+      consigne     section « ## Rôle » si elle existe, sinon TOUT le document
+      code         bloc ```python exposant `def run(...)`, sinon aucun
+
+    Un skill sans code reste parfaitement utile : sa consigne documente une
+    manière de faire. Il ne devient exécutable que si quelqu'un lui écrit un
+    `run()` et le valide.
 
     Ne renvoie NI statut NI activation : l'appelant impose « draft » et
-    désactivé. Lève `MarkdownInvalide` si le fichier n'est pas exploitable.
+    désactivé. Ne lève que si RIEN d'exploitable ne peut être tiré du fichier.
     """
     entete, corps = _lire_entete(texte or "")
 
-    nom = (entete.get("name") or "").strip().lower().replace(" ", "_")
-    if not _RE_NOM.match(nom):
+    # ── Nom : déclaré, sinon titre, sinon nom de fichier ──────────────
+    declare = (entete.get("name") or "").strip()
+    nom = _slug(declare) if declare else ""
+    if not nom:
+        nom = _slug(_titre_h1(corps))
+    if not nom and nom_fichier:
+        nom = _slug(re.sub(r"\.mdx?$", "", nom_fichier, flags=re.I))
+    if not _RE_NOM.match(nom or ""):
         raise MarkdownInvalide(
-            f"Nom invalide : « {entete.get('name', '')} ». Attendu : minuscules, "
-            "chiffres et tirets bas, 3 à 64 caractères, commençant par une lettre.")
+            "Impossible de nommer ce skill : ajoutez « name: » dans un en-tête, "
+            "un titre « # Mon skill », ou donnez au fichier un nom explicite.")
 
-    role = _lire_section(corps, "Rôle") or _lire_section(corps, "Role")
+    # ── Consigne : la section dédiée, sinon le document entier ────────
+    role = (_lire_section(corps, "Rôle") or _lire_section(corps, "Role")
+            or corps.strip())
+
+    # ── Code : seulement s'il expose bien un point d'entrée ───────────
     section_code = _lire_section(corps, "Code")
-    trouve = _RE_CODE.search(section_code) or _RE_CODE.search(corps)
-    code = trouve.group(1).strip() if trouve else ""
+    if section_code:
+        # Section « ## Code » explicite : on est exigeant, l'intention est claire.
+        trouve = _RE_CODE.search(section_code)
+        code = trouve.group(1).strip() if trouve else ""
+        if code and "def run(" not in code:
+            raise MarkdownInvalide(
+                "La section « ## Code » doit exposer « def run(data: dict) -> dict ».")
+    else:
+        # Document libre : un bloc python n'est adopté comme code que s'il
+        # ressemble vraiment à un skill. Sinon c'est un exemple dans la prose,
+        # et le rejeter reviendrait à refuser le fichier pour rien.
+        code = next((b.strip() for b in _RE_CODE.findall(corps) if "def run(" in b), "")
 
-    if not code and not role:
-        raise MarkdownInvalide(
-            "Ni consigne ni code : le fichier doit contenir une section « ## Rôle » "
-            "ou une section « ## Code » avec un bloc python.")
-    if code and "def run(" not in code:
-        raise MarkdownInvalide(
-            "Le code doit exposer une fonction « def run(data: dict) -> dict ».")
+    if not role.strip() and not code:
+        raise MarkdownInvalide("Fichier vide : ni texte ni code exploitable.")
 
     agent = entete.get("agent", "").strip() or None
     if agent and agent not in AGENTS_VALIDES:
@@ -146,7 +215,8 @@ def depuis_markdown(texte: str) -> dict:
 
     return {
         "name": nom,
-        "description": (entete.get("description") or "").strip()[:500],
+        "description": ((entete.get("description") or "").strip()
+                        or _premier_paragraphe(corps))[:500],
         "agent": agent,
         "category": (entete.get("category") or "").strip()[:50] or None,
         "effect": effet,

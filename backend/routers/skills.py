@@ -105,7 +105,8 @@ async def importer_skill(file: UploadFile = File(...),
     importes, echecs = [], []
     for morceau in morceaux:
         try:
-            skill = depuis_markdown(morceau)
+            # Le nom du fichier sert de repli quand le document ne se nomme pas.
+            skill = depuis_markdown(morceau, nom_fichier=file.filename)
         except MarkdownInvalide as e:
             echecs.append(str(e))
             continue
@@ -193,6 +194,22 @@ async def validate_skill(name: str, body: ValidateBody, current_user: User = Dep
     _require(current_user)
     if body.status not in _VALID_STATUSES:
         raise HTTPException(status_code=http.HTTP_422_UNPROCESSABLE_ENTITY, detail="statut invalide")
+
+    # Valider un skill le rend invocable ET l'annonce au modèle. Un skill sans
+    # code qui n'est pas natif n'a rien à exécuter : il serait proposé, choisi,
+    # puis échouerait. On refuse la promotion plutôt que de livrer une capacité
+    # creuse. Les natifs, eux, ont leur code dans le backend : colonne vide,
+    # c'est normal.
+    if body.status in ("validated", "stable"):
+        from mail.skills import EFFETS_NATIFS
+        skill = await executor.get_skill(name)
+        if skill and name not in EFFETS_NATIFS and not (skill.get("code") or "").strip():
+            raise HTTPException(
+                status_code=http.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=("Ce skill n'a pas de code : il documente une manière de faire, "
+                        "mais rien ne peut s'exécuter. Ajoutez une fonction "
+                        "« def run(data: dict) -> dict » avant de le valider."))
+
     async with get_db() as conn:
         res = await conn.execute(
             "UPDATE skills SET status=$2, validated_by=$3::uuid, validated_at=NOW(), updated_at=NOW() "

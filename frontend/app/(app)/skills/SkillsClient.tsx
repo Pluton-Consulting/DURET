@@ -62,6 +62,56 @@ export default function SkillsClient({ apiUrl, token }: Props) {
     load()
   }, [load])
 
+  // ── Import / export Markdown ───────────────────────────────────────
+  // Un skill s'édite bien plus confortablement dans un fichier : on le
+  // versionne, on le relit, on le rejoue sur une autre instance.
+
+  const telecharger = async (chemin: string, nomFichier: string) => {
+    setBusy(chemin)
+    try {
+      const res = await fetch(`${apiUrl}/api/skills${chemin}`, {
+        headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || `HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = nomFichier
+      a.click()
+      URL.revokeObjectURL(url)
+      setErr("")
+    } catch (e: any) {
+      setErr(e?.message || "export impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const importer = async (fichier: File) => {
+    setBusy("import")
+    try {
+      const corps = new FormData()
+      corps.append("file", fichier)
+      // Pas de Content-Type ici : le navigateur doit poser lui-même la
+      // frontière multipart, sinon le serveur ne sait pas découper.
+      const res = await fetch(`${apiUrl}/api/skills/import`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}` }, body: corps,
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
+      const n = json.importes?.length ?? 0
+      setErr(n
+        ? `${n} skill(s) importé(s) en brouillon, désactivé(s) : relisez le code avant de valider.`
+        : "Aucun skill importé.")
+      await load()
+    } catch (e: any) {
+      setErr(e?.message || "import impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
   const act = async (name: string, path: string, body: any) => {
     setBusy(name + path)
     try {
@@ -152,6 +202,23 @@ export default function SkillsClient({ apiUrl, token }: Props) {
             {a === "all" ? "Tous" : a === "agent1" ? "Agent 1" : a === "agent2" ? "Agent 2" : "Agent 3"}
           </button>
         ))}
+        <button onClick={() => telecharger("/export", "skills.md")} disabled={busy === "/export"}
+          className="sym-tap" title="Télécharger tout le catalogue en Markdown"
+          style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
+          {busy === "/export" ? "Export…" : "Exporter .md"}
+        </button>
+        <label className="sym-tap" title="Importer un ou plusieurs skills depuis un fichier Markdown"
+          style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
+          {busy === "import" ? "Import…" : "Importer .md"}
+          <input type="file" accept=".md,text/markdown" style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              // On réinitialise la valeur : sans cela, réimporter le MÊME
+              // fichier après correction ne déclencherait aucun événement.
+              e.target.value = ""
+              if (f) importer(f)
+            }} />
+        </label>
         <button onClick={load} className="sym-tap" style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>↻</button>
       </div>
 
@@ -187,6 +254,9 @@ export default function SkillsClient({ apiUrl, token }: Props) {
                   style={btn(s.enabled ? "var(--color-error-text)" : "var(--color-paid-text)")}>
                   {s.enabled ? "Désactiver" : "Activer"}
                 </button>
+                <button onClick={() => telecharger(`/${s.name}/export`, `${s.name}.md`)}
+                  disabled={busy === `/${s.name}/export`} className="sym-tap"
+                  title="Exporter ce skill en Markdown" style={btn("var(--color-text-body)")}>.md</button>
                 <button onClick={() => viewDetail(s)} className="sym-tap" style={btn("var(--color-text-body)")}>
                   {detail?.detail ? "▾ Code" : "▸ Code"}
                 </button>

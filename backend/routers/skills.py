@@ -6,13 +6,18 @@ Router skills — registre, exécution et gouvernance du catalogue de skills.
 - POST /api/skills/{name}/run      : exécute run(data) en sandbox isolé
 - POST /api/skills/{name}/validate : change le statut (validation humaine — gouvernance §15)
 - PATCH /api/skills/{name}         : édite (description, prompt, code, agent, category)
+- GET  /api/skills/export          : tout le catalogue en Markdown
+- GET  /api/skills/{name}/export   : un skill en Markdown
+- POST /api/skills/import          : importe un ou plusieurs skills depuis un .md
 
 Gate RBAC : 'validate_skills' (direction / admin / super_admin).
 """
 import logging
+import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status as http
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status as http
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from auth.dependencies import get_current_user
@@ -40,6 +45,117 @@ async def list_skills(agent: Optional[str] = None, status_filter: Optional[str] 
     _require(current_user)
     statuses = tuple(s.strip() for s in status_filter.split(",")) if status_filter else None
     return await executor.list_skills(agent=agent, statuses=statuses)
+
+
+MAX_IMPORT_OCTETS = 512 * 1024   # un skill n'est pas un dépôt : 512 Ko suffisent
+
+
+# Ces deux routes sont déclarées AVANT `/{name}` : sinon « export » serait
+# capturé comme un nom de skill.
+@router.get("/export", response_class=PlainTextResponse)
+async def exporter_tout(agent: Optional[str] = None,
+                        current_user: User = Depends(get_current_user)):
+    """Tout le catalogue en un seul Markdown, skills séparés par une règle."""
+    _require(current_user)
+    from skills.markdown import vers_markdown
+    lignes = await executor.list_skills(agent=agent, include_code=True)
+    if not lignes:
+        raise HTTPException(status_code=http.HTTP_404_NOT_FOUND, detail="catalogue vide")
+    corps = "\n\n---\n\n".join(vers_markdown(dict(s)) for s in lignes)
+    await log_action(action="skills_exportes", user_id=str(current_user.id),
+                     metadata={"nombre": len(lignes), "agent": agent})
+    return PlainTextResponse(corps, media_type="text/markdown; charset=utf-8",
+                             headers={"Content-Disposition":
+                                      'attachment; filename="skills.md"'})
+
+
+@router.post("/import")
+async def importer_skill(file: UploadFile = File(...),
+                         current_user: User = Depends(get_current_user)):
+    """Importe un ou plusieurs skills depuis un fichier Markdown.
+
+    Le fichier peut en contenir plusieurs, séparés par une règle « --- »
+    isolée, comme le produit l'export global.
+
+    SÉCURITÉ : quoi qu'annonce le fichier, un skill importé arrive en `draft` et
+    DÉSACTIVÉ. Son code sera exécuté un jour : il passe par une relecture
+    humaine. Sans cette règle, déposer un fichier reviendrait à faire exécuter
+    du code arbitraire sur le serveur.
+    """
+    _require(current_user)
+    from skills.markdown import depuis_markdown, MarkdownInvalide
+
+    brut = await file.read()
+    if not brut:
+        raise HTTPException(status_code=http.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Fichier vide")
+    if len(brut) > MAX_IMPORT_OCTETS:
+        raise HTTPException(status_code=http.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"Fichier trop volumineux (max {MAX_IMPORT_OCTETS // 1024} Ko)")
+    try:
+        texte = brut.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=http.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Le fichier doit être encodé en UTF-8")
+
+    # Découpe sur une règle isolée SUIVIE d'un nouvel en-tête : on ne coupe pas
+    # sur n'importe quel « --- », qui délimite aussi l'en-tête lui-même.
+    morceaux = [m for m in re.split(r"\n---\n(?=\s*---\s*\n)", texte) if m.strip()] or [texte]
+
+    importes, echecs = [], []
+    for morceau in morceaux:
+        try:
+            skill = depuis_markdown(morceau)
+        except MarkdownInvalide as e:
+            echecs.append(str(e))
+            continue
+        try:
+            async with get_db() as conn:
+                await conn.execute(
+                    """INSERT INTO skills (name, description, code, prompt_template,
+                                           status, created_by, agent, category, effect, enabled)
+                       VALUES ($1, $2, $3, $4, 'draft', 'import', $5, $6, $7, false)
+                       ON CONFLICT (name) DO UPDATE
+                           SET description = EXCLUDED.description,
+                               code = EXCLUDED.code,
+                               prompt_template = EXCLUDED.prompt_template,
+                               agent = EXCLUDED.agent,
+                               category = EXCLUDED.category,
+                               effect = EXCLUDED.effect,
+                               version = skills.version + 1,
+                               status = 'draft',
+                               enabled = false,
+                               updated_at = NOW()""",
+                    skill["name"], skill["description"], skill["code"],
+                    skill["prompt_template"], skill["agent"], skill["category"],
+                    skill["effect"])
+            importes.append(skill["name"])
+        except Exception as e:  # noqa: BLE001 - un skill fautif n'annule pas les autres
+            logger.warning("Import du skill %s échoué : %s", skill["name"], e)
+            echecs.append(f"{skill['name']} : {e}")
+
+    if not importes and echecs:
+        raise HTTPException(status_code=http.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=" | ".join(echecs[:3]))
+
+    await log_action(action="skills_importes", user_id=str(current_user.id),
+                     metadata={"fichier": file.filename, "importes": importes,
+                               "echecs": len(echecs)})
+    return {"importes": importes, "echecs": echecs,
+            "note": "Importés en brouillon et désactivés : relisez le code, puis validez."}
+
+
+@router.get("/{name}/export", response_class=PlainTextResponse)
+async def exporter_skill(name: str, current_user: User = Depends(get_current_user)):
+    """Un skill, en Markdown éditable puis réimportable."""
+    _require(current_user)
+    from skills.markdown import vers_markdown
+    skill = await executor.get_skill(name)
+    if not skill:
+        raise HTTPException(status_code=http.HTTP_404_NOT_FOUND, detail="skill introuvable")
+    return PlainTextResponse(
+        vers_markdown(dict(skill)), media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}.md"'})
 
 
 @router.get("/{name}")

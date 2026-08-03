@@ -232,10 +232,23 @@ def instruction_actions() -> str:
         "Les balises masquées ([PER_1], [MONTANT_2]...) sont acceptées dans les paramètres. "
         "Quand une boîte mail est demandée et que l'utilisateur n'en précise pas, "
         "omets le paramètre : la sienne sera utilisée.\n"
+        "PARLER D'UNE ACTION N'EST PAS L'EXÉCUTER. Si l'on te demande ce que tu sais "
+        "faire, quelles actions tu as, à quoi sert l'une d'elles ou ce qu'elle "
+        "contient, réponds AVEC DES MOTS et n'émets AUCUN bloc : décrire un outil "
+        "ne consiste pas à s'en servir.\n"
+        "N'invente jamais les paramètres d'une action. S'il te manque une information "
+        "indispensable (le destinataire, la référence d'un devis, le contexte), "
+        "DEMANDE-LA au lieu de lancer l'action avec une valeur plausible.\n"
         "Skills disponibles :\n" + "\n".join(lignes) +
-        '\nExemple :\n```action\n{"skill":"redaction_email","args":'
-        '{"mailbox":"contact@exemple.fr","type_mail":"relance_devis",'
-        '"contexte":"devis DEV-17 envoyé il y a 3 semaines, sans réponse"}}\n```'
+        # L'exemple porte volontairement sur l'action SANS EFFET (une recherche) :
+        # des modèles modestes recopient l'exemple mot pour mot et l'exécutent tel
+        # quel. Observé en production avec l'ancien exemple : un brouillon de mail
+        # a réellement été produit pour « contact@exemple.fr » et un « devis DEV-17 »
+        # qui n'existent pas, puis présenté à l'utilisateur comme un vrai résultat.
+        # Si celui-ci est recopié, il ne fait qu'une recherche : sans conséquence.
+        '\nExemple de FORME (ne reprends jamais ces valeurs, elles sont fictives) :'
+        '\n```action\n{"skill":"rechercher_documents",'
+        '"args":{"requete":"<ce que tu cherches>"}}\n```'
     )
 
 

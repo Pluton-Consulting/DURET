@@ -110,6 +110,13 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "tool_repair_used": False,
         "tools_finished": False,
         "pending_action": None,
+        # Idem pour la décision du routeur et la raison d'une sortie de boucle :
+        # ces canaux sont en « dernière valeur » et survivent au tour. Sans remise
+        # à zéro, un tour hérite du « contexte » de sortie du précédent — et le
+        # modèle explique à l'utilisateur une limite qui n'a pas été atteinte.
+        "note_sortie": None,
+        "besoin_memoire": None,
+        "requete_memoire": None,
         "out_of_scope": False,
         "browser_needed": False,
         "browser_used": False,

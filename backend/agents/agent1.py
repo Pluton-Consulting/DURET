@@ -209,7 +209,14 @@ async def llm_node(state: AgentState, config=None) -> dict:
 
     import hashlib
     from optim.tokens import trim_chunks, response_cache, compact_messages
-    from skills.protocol import instruction_actions, BLOC_ACTION_RE, BLOC_NATIF_RE
+    from skills.protocol import (instruction_actions, rafraichir_catalogue,
+                                 BLOC_ACTION_RE, BLOC_NATIF_RE)
+
+    # Le registre de skills en base est rechargé périodiquement (cache interne).
+    # Sans cela, le modèle ne connaîtrait que les six skills natifs, alors que
+    # l'onglet Skills en montre bien davantage : interrogé sur ce qu'il sait
+    # faire, il en oubliait la plus grande partie.
+    await rafraichir_catalogue()
 
     tier = state.get("llm_tier", "standard")
     llm = get_llm(LLMTier(tier))

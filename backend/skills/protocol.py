@@ -21,8 +21,11 @@ avant d'atteindre l'exécuteur.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Optional
+
+logger = logging.getLogger("duret.skills.protocol")
 
 # Un bloc ```action ... ``` n'importe où dans la réponse.
 BLOC_ACTION_RE = re.compile(r"```action\s*(.*?)```", re.S)
@@ -98,7 +101,7 @@ def _action_json_nu(texte: str):
         if not isinstance(data, dict):
             continue
         nom = data.get("skill") or data.get("name") or data.get("tool") or data.get("function")
-        if nom not in CATALOGUE_AGENT1:
+        if nom not in catalogue():
             continue
         args = data.get("args") or data.get("arguments") or data.get("parameters") or {}
         if isinstance(args, str):
@@ -108,7 +111,7 @@ def _action_json_nu(texte: str):
                 continue
         if not isinstance(args, dict):
             continue
-        if [p for p in CATALOGUE_AGENT1[nom][1] if not str(args.get(p) or "").strip()]:
+        if [p for p in catalogue()[nom][1] if not str(args.get(p) or "").strip()]:
             continue
         fin = amorce.start() + len(brut)
         reste = (texte[:amorce.start()] + texte[fin:]).strip()
@@ -125,7 +128,7 @@ def _action_native(texte: str):
     reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
     corps = trouve.group(1)
     nom = corps.splitlines()[0].strip() if corps.strip() else ""
-    if nom not in CATALOGUE_AGENT1:
+    if nom not in catalogue():
         return None, reste, None
 
     args = {}
@@ -139,7 +142,7 @@ def _action_native(texte: str):
                 pass
         args[cle.strip()] = valeur
 
-    manquants = [p for p in CATALOGUE_AGENT1[nom][1]
+    manquants = [p for p in catalogue()[nom][1]
                  if not str(args.get(p) or "").strip()]
     if manquants:
         return None, reste, None
@@ -215,11 +218,68 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
 }
 
 
+# ── Skills du catalogue en base ──────────────────────────────────────
+#
+# Le catalogue ci-dessus est celui des skills NATIFS. Le registre `skills` en
+# base en contient bien d'autres (analyse de CCTP, suivi de réserves, rapproche-
+# ment de factures...), visibles dans l'onglet Skills. Le chat les ignorait :
+# interrogé sur ce qu'il savait faire, il n'en citait que six, et refusait donc
+# des demandes qu'il aurait pu traiter.
+#
+# On les charge périodiquement dans ce registre. Les natifs restent PRIORITAIRES
+# (leur signature est déclarée dans le code, pas devinée) ; un skill en base ne
+# peut pas en masquer un.
+_EXTERNES: dict[str, tuple[str, list[str], list[str]]] = {}
+_EXTERNES_EXPIRE: float = 0.0
+DUREE_CACHE_CATALOGUE_S = 300
+
+
+def catalogue() -> dict[str, tuple[str, list[str], list[str]]]:
+    """Vue fusionnée : skills natifs d'abord, puis ceux du registre en base."""
+    return {**_EXTERNES, **CATALOGUE_AGENT1}
+
+
+async def rafraichir_catalogue(force: bool = False) -> int:
+    """Recharge les skills exécutables du registre. Ne lève jamais.
+
+    Seuls les skills VALIDÉS et activés sont exposés : un brouillon ne doit pas
+    apparaître au modèle comme une capacité disponible. Leur effet reste
+    déterminé par `effet_du_skill`, qui échoue en « externe » — donc validation
+    humaine — tant qu'il n'est pas explicitement déclaré.
+    """
+    global _EXTERNES, _EXTERNES_EXPIRE
+    import time
+
+    if not force and time.monotonic() < _EXTERNES_EXPIRE:
+        return len(_EXTERNES)
+    _EXTERNES_EXPIRE = time.monotonic() + DUREE_CACHE_CATALOGUE_S
+
+    try:
+        from database.connection import get_db
+        async with get_db() as conn:
+            lignes = await conn.fetch(
+                "SELECT name, description FROM skills "
+                "WHERE status IN ('validated', 'stable') AND COALESCE(enabled, true) "
+                "  AND (agent IS NULL OR agent = 'agent1') "
+                "ORDER BY name")
+    except Exception as e:  # noqa: BLE001 - un registre injoignable n'empêche pas de répondre
+        logger.info("Registre de skills indisponible (%s) — seuls les natifs sont exposés", e)
+        return len(_EXTERNES)
+
+    # La table ne décrit pas les paramètres attendus : on n'en invente aucun.
+    # C'est l'exécuteur qui validera au moment de l'appel.
+    _EXTERNES = {r["name"]: ((r["description"] or "skill interne").strip()[:160], [], [])
+                 for r in lignes if r["name"] not in CATALOGUE_AGENT1}
+    logger.debug("Catalogue de skills : %d natifs + %d en base",
+                 len(CATALOGUE_AGENT1), len(_EXTERNES))
+    return len(_EXTERNES)
+
+
 def instruction_actions() -> str:
     """Bloc à ajouter au prompt système. Constant : le préfixe reste stable, donc
     le cache de prompt du fournisseur continue de s'appliquer."""
     lignes = []
-    for nom, (desc, requis, optionnels) in CATALOGUE_AGENT1.items():
+    for nom, (desc, requis, optionnels) in catalogue().items():
         params = ", ".join([f"{p}*" for p in requis] + list(optionnels)) or "aucun"
         lignes.append(f'- {nom} : {desc}. Paramètres ({params}) — * = obligatoire.')
     return (
@@ -279,9 +339,9 @@ def extraire_action(texte: str) -> tuple[Optional[dict], str, Optional[str]]:
         return None, reste, "le bloc action doit contenir un objet JSON"
 
     skill = data.get("skill")
-    if skill not in CATALOGUE_AGENT1:
+    if skill not in catalogue():
         return None, reste, (f"skill inconnu : {skill}. "
-                             f"Choisis parmi : {', '.join(CATALOGUE_AGENT1)}")
+                             f"Choisis parmi : {', '.join(catalogue())}")
 
     args = data.get("args")
     if args is None:
@@ -289,7 +349,7 @@ def extraire_action(texte: str) -> tuple[Optional[dict], str, Optional[str]]:
     if not isinstance(args, dict):
         return None, reste, "« args » doit être un objet JSON"
 
-    requis = CATALOGUE_AGENT1[skill][1]
+    requis = catalogue()[skill][1]
     manquants = [p for p in requis if not str(args.get(p) or "").strip()]
     if manquants:
         return None, reste, (f"paramètres obligatoires manquants pour {skill} : "

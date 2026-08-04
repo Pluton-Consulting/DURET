@@ -171,7 +171,7 @@ export default function SkillsClient({ apiUrl, token }: Props) {
   }
 
   return (
-    <div style={{ padding: 32, maxWidth: 1180, margin: "0 auto" }}>
+    <div className="sym-page" style={{ padding: 32, maxWidth: 1180, margin: "0 auto" }}>
       <div className="sym-in sym-in-1" style={{ fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600, marginBottom: 8 }}>
         Gouvernance · Capacités des agents
       </div>

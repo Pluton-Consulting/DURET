@@ -107,7 +107,7 @@ export default function GestionPage() {
   ]
 
   return (
-    <div style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
+    <div className="sym-page" style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
       {/* Header */}
       <div className="sym-in" style={{ marginBottom: 28 }}>
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
@@ -119,7 +119,7 @@ export default function GestionPage() {
       </div>
 
       {/* KPI row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 24 }}>
+      <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 24 }}>
         {[
           { label: "Requêtes totales" },
           { label: "Erreurs 24h" },

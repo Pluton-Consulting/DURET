@@ -8,7 +8,7 @@ export function SimpleTable({
   ],
 }: { columns?: string[]; rows?: (string | number)[][] }) {
   return (
-    <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", overflow: "auto", maxWidth: 480 }}>
+    <div className="sym-fluide" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", overflow: "auto", maxWidth: 480 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
           <tr>{columns.map((c, i) => (

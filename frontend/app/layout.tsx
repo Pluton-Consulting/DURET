@@ -86,6 +86,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             .sym-in,.sym-fade,.sym-pop,.sym-card,.sym-tap,.sym-skeleton{ animation:none!important; transition:none!important }
             .sym-card:hover{ transform:none }
           }
+          /* ── Adaptation aux petits écrans ────────────────────────────
+             TOUT est enfermé dans cette media query : au-dessus de 900px,
+             aucune de ces règles n'existe, donc la version bureau est
+             inchangée par construction. Le !important est nécessaire (et
+             sans risque ici) parce que les pages posent leurs styles en
+             ligne, qui l'emportent autrement sur une classe. */
+          @media (max-width: 900px){
+            /* Marges de page : 32px sur un écran de 390px, c'est un sixième
+               de la largeur perdu de chaque côté. */
+            .sym-page{ padding-left:16px!important; padding-right:16px!important;
+                       padding-top:20px!important; padding-bottom:24px!important; }
+            /* Grilles d'indicateurs : elles se REPLIENT au lieu de se
+               comprimer. À 4, 5 ou 6 colonnes fixes, chaque carte tombait
+               sous 70px et devenait illisible. */
+            .sym-grid-auto{ grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important; }
+            /* Grilles à deux colonnes de formulaire : une seule colonne. */
+            .sym-grid-1{ grid-template-columns:1fr!important; }
+            /* Blocs à largeur plancher : ils défilent au lieu de pousser
+               la page entière hors de l'écran. */
+            .sym-scroll-x{ overflow-x:auto!important; }
+            /* Cartes à largeur figée (tableaux, graphiques) : elles suivent
+               la largeur disponible. */
+            .sym-fluide{ max-width:100%!important; }
+            /* Bulles de conversation : 70% d'un petit écran ne laisse pas
+               de place au texte. */
+            .sym-bulle{ max-width:88%!important; }
+          }
         ` }} />
       </head>
       <body>

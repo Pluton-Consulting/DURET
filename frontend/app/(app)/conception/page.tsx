@@ -8,7 +8,7 @@ export default async function ConceptionPage() {
   if (!canAccess(role, "conception")) redirect("/accueil")
 
   return (
-    <div style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
+    <div className="sym-page" style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
       <div className="sym-in" style={{ marginBottom: 28 }}>
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
           Conception / Visuels
@@ -19,7 +19,7 @@ export default async function ConceptionPage() {
       </div>
 
       {/* KPI row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+      <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
         {[
           { label: "Analyses aujourd'hui" },
           { label: "En attente validation" },

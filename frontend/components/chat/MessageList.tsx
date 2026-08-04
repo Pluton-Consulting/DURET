@@ -51,7 +51,7 @@ export default function MessageList({ messages, onAction }: { messages: Message[
         msg.role === "user" ? (
           <div
             key={msg.id}
-            className="sym-in sym-card"
+            className="sym-in sym-card sym-bulle"
             data-testid="message-utilisateur"
             style={{
               alignSelf: "flex-end",

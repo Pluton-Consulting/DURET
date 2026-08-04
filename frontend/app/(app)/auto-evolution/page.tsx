@@ -37,7 +37,7 @@ export default async function AutoEvolutionPage() {
   const skills = await safeFetch<any[]>(apiUrl, "/api/dashboard/pending-skills", token, [])
 
   return (
-    <div style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
+    <div className="sym-page" style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
       <div className="sym-in" style={{ marginBottom: 8, fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600 }}>
         Agent 3 · Superviseur auto-apprenant
       </div>
@@ -50,7 +50,7 @@ export default async function AutoEvolutionPage() {
       </p>
 
       {/* Pipeline */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 32 }}>
+      <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 32 }}>
         {PIPELINE.map((s) => (
           <div key={s.n} className={`sym-in sym-in-${s.n} sym-card`} style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card-sm)", padding: 16, boxShadow: "var(--shadow-card)", border: "1px solid var(--color-border)" }}>
             <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "var(--radius-pill)", background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))", color: "var(--color-text-on-dark)", fontFamily: "monospace", fontSize: 13, fontWeight: 700, marginBottom: 10, boxShadow: "var(--shadow-card)" }}>

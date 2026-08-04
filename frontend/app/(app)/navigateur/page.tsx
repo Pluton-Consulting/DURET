@@ -10,7 +10,7 @@ export default async function NavigateurPage() {
   const token = (session as any)?.backendToken || ""
 
   return (
-    <div style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
+    <div className="sym-page" style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
       <div style={{ marginBottom: 8, fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600 }}>
         Agent Navigateur · navigation autonome supervisée
       </div>

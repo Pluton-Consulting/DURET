@@ -101,7 +101,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
       {err && <div style={{ color: C.red, fontSize: 12, marginBottom: 12 }}>⚠ {err}</div>}
 
       {/* System KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 14 }}>
+      <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 14 }}>
         {kpi("environnement", system?.environment, C.blue)}
         {kpi("debug", String(system?.debug ?? "—"), system?.debug ? C.amber : C.dim)}
         {kpi("checkpointer", system?.checkpointer, C.green)}
@@ -111,7 +111,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
       </div>
 
       {/* DB counters */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 18 }}>
+      <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 18 }}>
         {kpi("users actifs", db.users_actifs)}
         {kpi("threads", db.threads)}
         {kpi("audit events", db.audit_events)}

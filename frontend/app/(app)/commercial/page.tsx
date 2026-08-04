@@ -4,7 +4,7 @@ export default async function CommercialPage() {
   const session = await auth()
 
   return (
-    <div style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
+    <div className="sym-page" style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
       {/* Header */}
       <div className="sym-in" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
         <div>
@@ -24,7 +24,7 @@ export default async function CommercialPage() {
       </div>
 
       {/* KPI row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
+      <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
         {[
           { label: "Requêtes aujourd'hui", value: "—" },
           { label: "Docs indexés", value: "—" },

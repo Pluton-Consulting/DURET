@@ -706,7 +706,7 @@ function ServicesTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: s
           État système indisponible (réservé au super admin).
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+      <div className="sym-grid-1" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
         {services.map((s, i) => (
           <div key={i} className={`sym-card sym-in sym-in-${Math.min(i + 1, 6)}`} style={{
             background: "var(--color-surface)", borderRadius: "var(--radius-card-sm)", padding: 18, boxShadow: "var(--shadow-card)",
@@ -740,7 +740,7 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
   const subTabs = ALL_SUB_TABS.filter((t) => !t.roles || t.roles.includes(currentRole))
 
   return (
-    <div style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
+    <div className="sym-page" style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }} className="sym-in">
         Duret & Sols · Administration
       </div>

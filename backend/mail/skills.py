@@ -22,6 +22,7 @@ from typing import Optional
 
 from fastapi import HTTPException, status
 
+from config import settings
 from mail.authorization import verifier_acces, normaliser
 from mail.style import consigne_style
 
@@ -318,19 +319,95 @@ async def rechercher_documents(data: dict, user) -> dict:
 SKILLS_NATIFS["rechercher_documents"] = rechercher_documents
 
 
+# Une adresse, une vraie. Sert à écarter les GABARITS qu'un modèle glisse à la
+# place d'une valeur : « [mailbox_de_l_entreprise] », « <votre_email> ». Observé
+# en production : un tel gabarit partait jusqu'à Microsoft Graph, qui répondait
+# 404 — message incompréhensible pour l'utilisateur, alors que la vraie cause
+# était un paramètre inventé.
+_ADRESSE_RE = re.compile(r"^[^@\s<>\[\]]+@[^@\s<>\[\]]+\.[a-z]{2,}$", re.I)
+
+
+async def boites_connues() -> list[str]:
+    """Boîtes que le système sait nommer : configurées, ou déjà en mémoire.
+
+    Sert à AIDER, pas à autoriser : la liste est ensuite passée au filtre de
+    droits comme n'importe quelle adresse. Un utilisateur ne verra donc que
+    celles auxquelles il a droit, même si la liste en cite d'autres.
+    """
+    trouvees: list[str] = []
+    for source in (getattr(settings, "ms_mailbox", None),
+                   getattr(settings, "ms_extra_mailboxes", None),
+                   getattr(settings, "gmail_extra_mailboxes", None)):
+        for adresse in (source or "").split(","):
+            adresse = normaliser(adresse)
+            if _ADRESSE_RE.match(adresse) and adresse not in trouvees:
+                trouvees.append(adresse)
+    try:
+        from database.connection import get_db
+        async with get_db() as conn:
+            lignes = await conn.fetch(
+                "SELECT DISTINCT split_part(source_id, ':', 2) AS boite FROM documents "
+                "WHERE source_type IN ('email', 'email_sent')")
+        for l in lignes:
+            adresse = normaliser(l["boite"])
+            if _ADRESSE_RE.match(adresse) and adresse not in trouvees:
+                trouvees.append(adresse)
+    except Exception as e:  # noqa: BLE001 - une base indisponible n'empêche pas de lire
+        logger.info("Inventaire des boîtes indisponible : %s", e)
+    return sorted(trouvees)
+
+
+async def _boite_a_lire(data: dict, user) -> str:
+    """Détermine QUELLE boîte lire, avant tout contrôle de droits."""
+    demandee = normaliser(data.get("mailbox"))
+
+    if demandee and not _ADRESSE_RE.match(demandee):
+        connues = await boites_connues()
+        raise MailSkillError(
+            f"« {demandee} » n'est pas une adresse mail. N'invente jamais ce "
+            "paramètre : soit tu donnes une adresse réelle, soit tu l'omets. "
+            + (f"Boîtes connues : {', '.join(connues)}." if connues else
+               "Aucune boîte n'est configurée sur cette instance."))
+    if demandee:
+        return demandee
+
+    # Rien de demandé : la boîte de la personne connectée, si c'en est une.
+    propre = normaliser(getattr(user, "email", None))
+    domaine = normaliser(getattr(settings, "ms_domain", None)
+                         or getattr(settings, "gmail_domain", None))
+    if propre and (not domaine or propre.endswith("@" + domaine)):
+        return propre
+
+    # Son compte applicatif est hors du domaine de messagerie — cas courant
+    # d'un administrateur qui se connecte avec une adresse personnelle. Il n'a
+    # donc pas de boîte propre à lire : on prend la boîte de l'entreprise si
+    # elle est connue, plutôt que d'échouer sur une adresse qui n'existe pas
+    # dans le tenant.
+    connues = await boites_connues()
+    if connues:
+        return connues[0]
+    raise MailSkillError(
+        "Aucune boîte à lire : votre compte "
+        f"({propre or 'sans adresse'}) n'appartient pas au domaine de messagerie"
+        + (f" {domaine}" if domaine else "")
+        + ", et aucune boîte d'entreprise n'est configurée. Précisez l'adresse "
+          "à consulter.")
+
+
 async def lire_mails(data: dict, user) -> dict:
     """Lit les derniers messages d'une boîte, EN DIRECT.
 
     Le contrôle de droits passe par `verifier_acces`, comme tous les skills mail :
     sa boîte, celles qui lui sont déléguées, toutes si administrateur — et
-    l'accès administrateur est journalisé. Sans boîte précisée, c'est la sienne.
+    l'accès administrateur est journalisé.
 
     `envoi=False` : consulter n'est pas écrire au nom de quelqu'un. Une
     délégation en lecture seule suffit donc à lire, pas à rédiger.
     """
     from mail.lecture import lire_boite
 
-    boite = await verifier_acces(user, data.get("mailbox") or getattr(user, "email", None))
+    cible = await _boite_a_lire(data, user)
+    boite = await verifier_acces(user, cible)      # le contrôle reste ICI
     try:
         limite = int(data.get("limite") or 10)
     except (TypeError, ValueError):
@@ -342,8 +419,17 @@ async def lire_mails(data: dict, user) -> dict:
         raise MailSkillError(str(e))
     except Exception as e:  # noqa: BLE001 - une messagerie injoignable n'est pas une panne du chat
         logger.warning("Lecture de %s impossible : %s", boite, e)
+        detail = str(e)
+        # Un 404 du fournisseur ne veut pas dire « erreur » pour l'utilisateur :
+        # il veut dire « cette boîte n'existe pas là où je cherche ».
+        if "404" in detail:
+            connues = await boites_connues()
+            raise MailSkillError(
+                f"La boîte {boite} n'existe pas dans la messagerie de l'entreprise. "
+                + (f"Boîtes connues : {', '.join(connues)}." if connues else
+                   "Aucune boîte n'est configurée."))
         raise MailSkillError(
-            f"La boîte {boite} n'a pas pu être consultée ({e}). "
+            f"La boîte {boite} n'a pas pu être consultée ({detail}). "
             "Vérifiez la configuration de la messagerie.")
 
 

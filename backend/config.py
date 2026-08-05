@@ -39,7 +39,18 @@ class Settings(BaseSettings):
     # deepseek-v4-pro : 1M contexte · ~ $0.435 / 1M in (cache miss), $0.0036 (cache hit) · $0.87 / 1M out.
     deepseek_api_key: Optional[str] = None
     deepseek_base_url: str = "https://api.deepseek.com"
-    model_deepseek: str = "deepseek-v4-pro"
+    # Deux modèles, deux usages. Flash pour tout ce qui est cadencé et bref
+    # (orientation, classification, résumé court) ; Pro pour ce qui demande de
+    # RAISONNER. Les faire porter par le même palier reviendrait à payer le
+    # tarif du second sur le volume du premier.
+    model_deepseek_flash: str = "deepseek-v4-flash"
+    model_deepseek: str = "deepseek-v4-pro"          # conservé : nom historique
+
+    # Mêmes modèles vus par OpenRouter, quand on préfère une passerelle unique
+    # (une seule clé, une seule facture, bascule automatique si l'API directe
+    # tombe). ⚠ Vérifier les slugs exacts sur https://openrouter.ai/models
+    model_or_deepseek_flash: str = "deepseek/deepseek-v4-flash"
+    model_or_deepseek_pro: str = "deepseek/deepseek-v4-pro"
 
     # OpenRouter — accès alternatif à LongCat + modèles GRATUITS (Nemotron / Qwen)
     # ⚠ Vérifier les slugs exacts sur https://openrouter.ai/models

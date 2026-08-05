@@ -108,7 +108,8 @@ async def routeur_node(state: AgentState) -> dict:
 
     # Une pièce jointe vient d'arriver : le contexte est déjà là, rien à chercher.
     if state.get("attachment_text"):
-        return {"besoin_memoire": False}
+        # Le contexte est déjà là, mais analyser un document EST un travail de fond.
+        return {"besoin_memoire": False, "llm_tier": "complex"}
 
     invite = (
         "Tu orientes une demande adressée à l'assistant interne d'une entreprise.\n"
@@ -121,8 +122,13 @@ async def routeur_node(state: AgentState) -> dict:
         "- Demande de CONSULTER une boîte mail (lire, voir, relever ses messages) : "
         "AUCUNE recherche. Les messages se lisent en direct dans la boîte, pas dans "
         "la mémoire.\n"
+        "Dis AUSSI quel effort la demande réclame :\n"
+        '- "simple" : salutation, question factuelle, rédaction courte, suite de '
+        "conversation. La grande majorité des cas.\n"
+        '- "analyse" : il faut comparer, synthétiser, recouper plusieurs sources, '
+        "expliquer un raisonnement, tirer des conclusions d'un ensemble de données.\n"
         'Réponds par un objet JSON seul : {"memoire": true|false, "requete": '
-        '"<mots-clés de recherche si true, sinon vide>"}\n\n'
+        '"<mots-clés de recherche si true, sinon vide>", "effort": "simple|analyse"}\n\n'
         f"Demande : {question}"
     )
 
@@ -132,14 +138,20 @@ async def routeur_node(state: AgentState) -> dict:
         decision = _json.loads(trouve.group(0)) if trouve else {}
         besoin = bool(decision.get("memoire"))
         requete = str(decision.get("requete") or "").strip() or question
+        # « analyse » fait basculer la rédaction sur le palier COMPLEX, donc sur
+        # le modèle de raisonnement. Le défaut reste « simple » : on ne paie le
+        # modèle cher que lorsqu'une IA a jugé qu'il le fallait.
+        effort = ("complex"
+                  if str(decision.get("effort") or "").strip().lower().startswith("analyse")
+                  else "standard")
     except Exception as e:  # noqa: BLE001
         # En cas d'échec, on CHERCHE : répondre « je n'ai rien » alors que la
         # mémoire contient la réponse est bien pire qu'une recherche inutile.
         logger.info("Routage indisponible (%s) — recherche par défaut", e)
-        besoin, requete = True, question
+        besoin, requete, effort = True, question, "standard"
 
-    logger.debug("Routage : mémoire=%s", besoin)
-    return {"besoin_memoire": besoin, "requete_memoire": requete}
+    logger.debug("Routage : mémoire=%s, effort=%s", besoin, effort)
+    return {"besoin_memoire": besoin, "requete_memoire": requete, "llm_tier": effort}
 
 
 async def recherche_node(state: AgentState) -> dict:

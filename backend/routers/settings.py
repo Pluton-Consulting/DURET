@@ -160,3 +160,44 @@ async def update_quotas(
             "SELECT role, monthly_limit FROM role_quota_config ORDER BY role"
         )
     return {row["role"]: row["monthly_limit"] for row in rows}
+
+
+# ── Clés d'API des fournisseurs de modèles ─────────────────────────────
+# Saisissables depuis les Paramètres pour qu'une clé expirée ne bloque plus
+# l'application jusqu'à la prochaine session SSH. La valeur n'est JAMAIS
+# renvoyée : l'interface n'affiche qu'une empreinte, et l'écriture est
+# journalisée sans son contenu.
+
+class CleBody(BaseModel):
+    cle: str
+    valeur: Optional[str] = None      # vide = revenir à la valeur du .env
+
+
+@router.get("/cles-api")
+async def lire_cles(current_user: User = Depends(get_current_user)):
+    """Ce qui est configuré, et d'où ça vient. Jamais la valeur."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.cles import etat
+    return await etat()
+
+
+@router.put("/cles-api")
+async def ecrire_cle(body: CleBody, current_user: User = Depends(get_current_user)):
+    """Enregistre ou efface une clé. La valeur ne ressort jamais."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.cles import enregistrer, CLES_CONNUES
+    if body.cle not in CLES_CONNUES:
+        raise HTTPException(status_code=422,
+                            detail=f"Clé inconnue. Attendu : {', '.join(CLES_CONNUES)}")
+    try:
+        empreinte = await enregistrer(body.cle, body.valeur, str(current_user.id))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    # Journalisé SANS la valeur : le journal d'audit est lisible par la
+    # direction, il ne doit pas devenir un second endroit où traînent les clés.
+    await log_action(action="cle_api_modifiee", user_id=str(current_user.id),
+                     metadata={"cle": body.cle, "effacee": not (body.valeur or "").strip()})
+    return {"cle": body.cle, "empreinte": empreinte,
+            "note": "Prise en compte immédiate, sans redéploiement."}

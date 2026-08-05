@@ -1,13 +1,22 @@
 """
 Routeur LLM — cascade multi-fournisseurs avec retry, backoff et fallback.
 
-Stratégie (par palier, chaque candidat essayé puis rétrogradation au suivant) :
-  LIGHT    — actions simples / backend : 100 % gratuit
-             Groq free → OpenRouter free (Nemotron) → OpenRouter free (Qwen) → Ollama
-  STANDARD — défaut : qualité d'abord, gratuit en secours
-             LongCat 2.0 → DeepSeek → Groq 70B → OpenRouter free → Groq 8B → Ollama
-  COMPLEX  — dur / vision :
-             LongCat 2.0 → DeepSeek → (Anthropic vision) → Groq 70B → OpenRouter free → Ollama
+Trois paliers, trois compromis assumés entre coût et intelligence :
+  LIGHT    — gros volume, faible enjeu (orientation, classification, résumé court)
+             DeepSeek Flash → Groq 8B → OpenRouter free → Ollama
+  STANDARD — rédaction courante
+             LongCat 2.0 → DeepSeek Flash → passerelle → Groq 70B → free → Ollama
+  COMPLEX  — analyse, synthèse, jugement : le raisonnement fait la qualité
+             DeepSeek V4 Pro → passerelle → Anthropic → LongCat → Groq 70B → free
+
+Le palier n'est pas choisi au hasard : le nœud d'orientation tranche, en un
+appel LIGHT, si la demande relève d'une rédaction courante ou d'un vrai travail
+d'analyse. Le modèle cher ne sert donc qu'aux tours qui le justifient — c'est ce
+qui rend son coût acceptable.
+
+Chaque modèle est joignable EN DIRECT ou via OpenRouter. La passerelle suit
+immédiatement l'API directe dans la cascade : si l'une tombe, l'autre prend le
+relais sans changer de modèle, donc sans changer de qualité.
 
 Fournisseurs : openrouter (OpenAI-compatible : LongCat, DeepSeek, free), groq, anthropic, ollama.
 Un candidat dont la clé fournisseur est absente est ignoré silencieusement, ce qui rend
@@ -37,13 +46,22 @@ class LLMTier(Enum):
 _OPENAI_COMPAT = ("openrouter", "deepseek", "longcat")
 
 
+def _cle(provider: str) -> Optional[str]:
+    """Clé effective d'un fournisseur : Paramètres d'abord, `.env` ensuite.
+
+    Passe par `llm.cles` plutôt que par `settings` directement, pour qu'une clé
+    saisie dans l'interface prenne effet sans redéploiement.
+    """
+    from llm.cles import valeur
+    return valeur(f"{provider}_api_key")
+
+
 def _provider_available(provider: str) -> bool:
-    if provider in _OPENAI_COMPAT:
-        return bool(getattr(settings, f"{provider}_api_key"))
-    if provider == "groq":
-        return bool(settings.groq_api_key)
+    if provider in _OPENAI_COMPAT or provider == "groq":
+        return bool(_cle(provider))
     if provider == "anthropic":
-        return bool(settings.anthropic_api_key) and settings.anthropic_api_key != "placeholder"
+        c = _cle("anthropic")
+        return bool(c) and c != "placeholder"
     if provider == "ollama":
         return True
     return False
@@ -55,7 +73,7 @@ def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096):
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             model=model,
-            api_key=getattr(settings, f"{provider}_api_key"),
+            api_key=_cle(provider),
             base_url=getattr(settings, f"{provider}_base_url"),
             temperature=0.1,
             max_tokens=max_tokens,
@@ -63,10 +81,10 @@ def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096):
         )
     if provider == "groq":
         from langchain_groq import ChatGroq
-        return ChatGroq(model=model, api_key=settings.groq_api_key, temperature=0.1, max_tokens=max_tokens)
+        return ChatGroq(model=model, api_key=_cle("groq"), temperature=0.1, max_tokens=max_tokens)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(model=model, api_key=settings.anthropic_api_key, temperature=0.1, max_tokens=max_tokens)
+        return ChatAnthropic(model=model, api_key=_cle("anthropic"), temperature=0.1, max_tokens=max_tokens)
     if provider == "ollama":
         from langchain_ollama import ChatOllama
         return ChatOllama(base_url=settings.ollama_base_url, model=settings.ollama_model_light, temperature=0.1)
@@ -77,28 +95,40 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     """Cascade de candidats (fournisseur, modèle) pour un palier, filtrée selon les clés dispo."""
     s = settings
     if tier == LLMTier.LIGHT:
+        # Volume élevé, enjeu faible : orientation, classification, résumés
+        # courts. On paie le moins possible, et on privilégie la latence.
         chain = [
-            ("groq", s.model_groq_light),
+            ("deepseek", s.model_deepseek_flash),          # rapide et très bon marché
+            ("openrouter", s.model_or_deepseek_flash),     # même modèle via la passerelle
+            ("groq", s.model_groq_light),                  # gratuit, très rapide
             ("openrouter", s.model_or_free_a),
             ("openrouter", s.model_or_free_b),
             ("ollama", None),
         ]
     elif tier == LLMTier.STANDARD:
+        # Rédaction courante : LongCat reste le modèle principal, DeepSeek Flash
+        # prend le relais avant les modèles gratuits — un repli qui écrit moins
+        # bien coûte plus cher en reprises qu'il n'économise en jetons.
         chain = [
-            ("longcat", s.model_longcat),        # LongCat 2.0 — QUALITÉ/raisonnement (principal)
-            ("groq", s.model_groq_large),        # Groq 70B — repli RAPIDE si LongCat indispo/quota
-            ("openrouter", s.model_primary),
-            ("deepseek", s.model_deepseek),
-            ("groq", s.model_groq_light),
+            ("longcat", s.model_longcat),
+            ("deepseek", s.model_deepseek_flash),
+            ("openrouter", s.model_primary),               # LongCat via la passerelle
+            ("openrouter", s.model_or_deepseek_flash),
+            ("groq", s.model_groq_large),
             ("openrouter", s.model_or_free_a),
             ("ollama", None),
         ]
     else:  # COMPLEX
+        # Analyse, synthèse, jugement : ce sont les tours où le raisonnement
+        # décide de la qualité. DeepSeek Pro EN TÊTE, avant LongCat — c'est le
+        # seul endroit où l'on accepte de payer davantage, et il ne représente
+        # qu'une fraction des tours grâce à l'orientation.
         chain = [
-            ("longcat", s.model_longcat),        # LongCat 2.0 — principal (raisonnement)
-            ("groq", s.model_groq_large),        # repli rapide
-            ("deepseek", s.model_deepseek),
+            ("deepseek", s.model_deepseek),                # V4 Pro — raisonnement
+            ("openrouter", s.model_or_deepseek_pro),
             ("anthropic", s.model_anthropic_vision),
+            ("longcat", s.model_longcat),
+            ("groq", s.model_groq_large),
             ("openrouter", s.model_or_free_b),
             ("ollama", None),
         ]

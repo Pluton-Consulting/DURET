@@ -159,11 +159,12 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "ne donne rien",
         ["requete"], ["types"]),
     "lire_mails": (
-        "LIT les derniers messages d'une boîte mail, en direct. À utiliser dès qu'on "
-        "te parle de consulter, lire, voir ou faire le point sur des mails. Ne "
-        "cherche PAS dans la mémoire pour cela : cette action va chercher les "
-        "messages réels. dossier : recus (défaut) ou envoyes ; limite : 1 à 25. "
-        "Sans mailbox, c'est la boîte de la personne connectée",
+        "LIT les derniers messages d'UNE boîte, en direct. Pour consulter, relever, "
+        "faire le point sur le courrier récent. C'est un ÉCHANTILLON de 25 messages "
+        "au plus : n'en tire jamais de conclusion sur l'entreprise entière, ses "
+        "activités ou ses process. Pour cela, c'est `lancer_enrichissement`. "
+        "dossier : recus (défaut) ou envoyes ; limite : 1 à 25. Sans mailbox, la "
+        "boîte de la personne connectée",
         [], ["mailbox", "dossier", "limite"]),
     "triage_email_entrant": (
         "Classe et priorise un message reçu (catégorie, urgence, action suggérée)",
@@ -181,11 +182,14 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "Apprend le style d'écriture d'une boîte à partir de ses messages envoyés",
         [], ["mailbox"]),
     "lancer_enrichissement": (
-        "ADMINISTRATION UNIQUEMENT. Lance une campagne de fond : l'assistant relit "
-        "toutes les boîtes mail, construit un profil d'écriture par personne, et en "
-        "tire des connaissances, des manières de faire et des brouillons de skills. "
-        "Dure plusieurs heures. Ne la propose jamais de toi-même : uniquement sur "
-        "demande explicite",
+        "ADMINISTRATION UNIQUEMENT. LA seule action capable d'analyser TOUT le "
+        "courrier de l'entreprise : elle relit toutes les boîtes par lots, construit "
+        "un profil d'écriture par personne, et en tire des connaissances, des "
+        "manières de faire et des brouillons de skills. C'est elle qu'il faut "
+        "lancer dès qu'on demande d'analyser les mails de l'entreprise, d'en tirer "
+        "des process, des activités ou des compétences. Elle dure plusieurs heures "
+        "et travaille en tâche de fond : annonce-la, ne prétends pas avoir déjà le "
+        "résultat. Ne la propose jamais de toi-même sans demande explicite",
         [], ["collecter", "max_lots_par_boite", "acces_skills"]),
     "statut_enrichissement": (
         "Avancement de la campagne d'enrichissement en cours (administration)",

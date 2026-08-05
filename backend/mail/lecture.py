@@ -45,6 +45,37 @@ def _apercu(texte: str) -> str:
     return " ".join((_RE_BALISES.sub(" ", texte or "")).split())[:MAX_APERCU]
 
 
+def _domaine_entreprise() -> str:
+    return ((settings.ms_domain or "") or (getattr(settings, "gmail_domain", "") or "")).strip().lower()
+
+
+_RE_ADRESSE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+
+# Expéditeurs qui n'ont pas d'auteur humain. Les confondre avec des collègues
+# fausse toute lecture d'une boîte de réception, largement peuplée de bulletins
+# et de notifications.
+_MARQUEURS_AUTOMATIQUES = ("noreply", "no-reply", "no_reply", "donotreply",
+                           "notification", "notifications", "digest", "mailer",
+                           "postmaster", "newsletter", "info@", "alerte")
+
+
+def _qualifier(adresse_brute: str) -> dict:
+    """Dit ce qu'est un expéditeur : interne à l'entreprise, ou pas.
+
+    Observé en production : faute de cette distinction, le modèle présentait
+    `noreply@silae.fr` et `digest@mailinblack.com` comme « des personnes de
+    l'entreprise ». Une adresse n'est pas un collègue.
+    """
+    trouve = _RE_ADRESSE.search(adresse_brute or "")
+    adresse = (trouve.group(0) if trouve else "").lower()
+    domaine = _domaine_entreprise()
+    return {
+        "adresse": adresse,
+        "interne": bool(adresse and domaine and adresse.endswith("@" + domaine)),
+        "automatique": any(m in adresse for m in _MARQUEURS_AUTOMATIQUES),
+    }
+
+
 async def _lire_outlook(boite: str, dossier: str, limite: int) -> list[dict]:
     import httpx
     from ingestion.connectors.outlook import _jeton
@@ -63,9 +94,12 @@ async def _lire_outlook(boite: str, dossier: str, limite: int) -> list[dict]:
         expediteur = ((m.get("from") or {}).get("emailAddress") or {}).get("address", "")
         destinataires = [((d.get("emailAddress") or {}).get("address") or "")
                          for d in (m.get("toRecipients") or [])]
+        qualite = _qualifier(expediteur)
         resultats.append({
             "objet": m.get("subject") or "(sans objet)",
             "de": expediteur,
+            "expediteur_interne": qualite["interne"],
+            "expediteur_automatique": qualite["automatique"],
             "a": ", ".join(filter(None, destinataires))[:200],
             "date": m.get("receivedDateTime") or "",
             "lu": bool(m.get("isRead")),
@@ -86,9 +120,13 @@ async def _lire_gmail(boite: str, dossier: str, limite: int) -> list[dict]:
         for entree in liste.get("messages", []):
             m = service.users().messages().get(
                 userId="me", id=entree["id"], format="full").execute()
+            expediteur = _entete(m, "From")
+            qualite = _qualifier(expediteur)
             resultats.append({
                 "objet": _entete(m, "Subject") or "(sans objet)",
-                "de": _entete(m, "From"),
+                "de": expediteur,
+                "expediteur_interne": qualite["interne"],
+                "expediteur_automatique": qualite["automatique"],
                 "a": _entete(m, "To")[:200],
                 "date": _entete(m, "Date"),
                 "lu": "UNREAD" not in (m.get("labelIds") or []),
@@ -116,5 +154,19 @@ async def lire_boite(boite: str, dossier: str = "recus",
     else:
         messages = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite)
 
-    return {"boite": boite, "dossier": cle, "nombre": len(messages),
-            "messages": messages}
+    internes = sum(1 for m in messages if m.get("expediteur_interne"))
+    automatiques = sum(1 for m in messages if m.get("expediteur_automatique"))
+    return {
+        "boite": boite, "dossier": cle, "nombre": len(messages),
+        "domaine_entreprise": _domaine_entreprise(),
+        "expediteurs_internes": internes,
+        "expediteurs_automatiques": automatiques,
+        # Dit explicitement ce que cet échantillon N'EST PAS. Sans cela, le
+        # modèle tirait des conclusions sur l'entreprise entière à partir de
+        # dix bulletins d'information reçus le matin même.
+        "portee": (f"Les {len(messages)} derniers messages de {boite} ({cle}) — "
+                   "un échantillon récent, pas un inventaire de l'entreprise. "
+                   "Une adresse dont expediteur_interne vaut false n'appartient "
+                   "PAS à l'entreprise."),
+        "messages": messages,
+    }

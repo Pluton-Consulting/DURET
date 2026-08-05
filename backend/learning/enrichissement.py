@@ -47,6 +47,17 @@ PAUSE_ENTRE_LOTS_S = 3.0
 # Les déductions inter-boîtes ne sont plus rattachables à une personne.
 ACCES_DEDUCTIONS = "direction_only"
 
+# Fournisseur du modèle PRINCIPAL de la cascade (aujourd'hui LongCat). La
+# campagne exige ce modèle et rien d'autre : ce qu'elle produit est écrit
+# DURABLEMENT en mémoire et dans le catalogue de skills. Un repli silencieux sur
+# un modèle gratuit remplirait la mémoire de déductions médiocres, sans que rien
+# n'indique lesquelles — et l'écrit reste, lui.
+#
+# On lit le fournisseur réellement retenu (`last_model_used`, de la forme
+# « fournisseur:modèle ») plutôt qu'un réglage : c'est le seul témoin de ce qui
+# a VRAIMENT répondu, la cascade pouvant basculer d'un lot à l'autre.
+FOURNISSEUR_PRINCIPAL = "longcat"
+
 # État de la campagne en cours. Une seule à la fois : deux campagnes
 # simultanées se disputeraient le quota d'embeddings pour rien.
 _ETAT: dict = {"en_cours": False}
@@ -62,6 +73,7 @@ def _reinitialiser(lance_par: str, boites: list[str]) -> None:
         "en_cours": True, "phase": "démarrage", "lance_par": lance_par,
         "debut": time.time(), "boites": boites, "boite_courante": None,
         "lots_lus": 0, "connaissances": 0, "procedures": 0, "skills": [],
+        "modele": None,
         "echecs": [], "fin": None,
     })
 
@@ -119,8 +131,13 @@ async def _messages(boite: str, decalage: int, limite: int) -> list[str]:
     return [(l["content"] or "")[:MAX_CARACTERES_PAR_MESSAGE] for l in lignes if l["content"]]
 
 
-async def _lire_lot(boite: str, messages: list[str]) -> tuple[dict, dict]:
-    """Fait relire un lot au modèle. Renvoie (propositions, carte d'entités)."""
+class ModeleDegrade(RuntimeError):
+    """La cascade a répondu avec autre chose que le modèle principal."""
+
+
+async def _lire_lot(boite: str, messages: list[str],
+                    exiger_principal: bool = True) -> tuple[dict, dict, str]:
+    """Fait relire un lot au modèle. Renvoie (propositions, carte, modèle utilisé)."""
     from langchain_core.messages import HumanMessage
     from llm.router import get_llm, LLMTier
     from security.anonymizer import anonymizer
@@ -136,14 +153,34 @@ async def _lire_lot(boite: str, messages: list[str]) -> tuple[dict, dict]:
     masques, carte = await asyncio.to_thread(anonymizer.anonymize_chunks, messages, {})
     corpus = "\n\n———\n\n".join(masques)
 
+    # Palier STANDARD : sa cascade commence par le modèle principal. On garde la
+    # même instance pour lire `last_model_used` — en redemander une au routeur
+    # pourrait en rendre une autre.
     llm = get_llm(LLMTier.STANDARD)
     reponse = await llm.ainvoke([HumanMessage(
         content=INVITE_CORPUS.format(boite=boite, corpus=corpus))])
-    return _nettoyer(_extraire_json(str(reponse.content))), carte
+
+    modele = getattr(llm, "last_model_used", "") or "?"
+    if exiger_principal and not modele.startswith(FOURNISSEUR_PRINCIPAL + ":"):
+        # On ARRÊTE plutôt que d'écrire au rabais. Une campagne à moitié lue se
+        # relance ; une mémoire polluée par des déductions de moindre qualité,
+        # mêlées aux bonnes, ne se démêle pas.
+        raise ModeleDegrade(
+            f"le modèle principal n'a pas répondu (repli sur {modele}). "
+            "Campagne interrompue : ce qu'elle écrit reste en mémoire, "
+            "il ne doit pas venir d'un modèle de repli.")
+
+    return _nettoyer(_extraire_json(str(reponse.content))), carte, modele
 
 
-async def _creer_skills(competences: list[dict]) -> list[str]:
-    """Crée les compétences retenues en BROUILLON désactivé."""
+async def _creer_skills(competences: list[dict],
+                        exiger_principal: bool = True) -> list[str]:
+    """Crée les compétences retenues en BROUILLON désactivé.
+
+    Le code est écrit par un modèle : la même exigence qu'à la lecture
+    s'applique, sinon on livrerait du code de moindre qualité dans le
+    catalogue.
+    """
     from database.connection import get_db
     from learning.debrief import generer_code_skill
 
@@ -167,7 +204,8 @@ async def _creer_skills(competences: list[dict]) -> list[str]:
 
 
 async def executer(lance_par: str, collecter: bool = True,
-                   max_lots_par_boite: int = MAX_LOTS_PAR_BOITE) -> dict:
+                   max_lots_par_boite: int = MAX_LOTS_PAR_BOITE,
+                   exiger_modele_principal: bool = True) -> dict:
     """Déroule la campagne. Longue : à lancer en tâche de fond."""
     from learning.debrief import enregistrer
 
@@ -213,14 +251,16 @@ async def executer(lance_par: str, collecter: bool = True,
                 if not messages:
                     break
                 try:
-                    propositions, carte = await _lire_lot(boite, messages)
+                    propositions, carte, modele = await _lire_lot(
+                        boite, messages, exiger_principal=exiger_modele_principal)
                 except RuntimeError:
-                    raise                     # anonymiseur HS : on arrête tout
+                    raise            # anonymiseur HS ou modèle dégradé : on arrête tout
                 except Exception as e:  # noqa: BLE001
                     _ETAT["echecs"].append(f"lecture {boite} lot {lot + 1} : {e}")
                     continue
 
                 _ETAT["lots_lus"] += 1
+                _ETAT["modele"] = modele
 
                 # ── 4. Écriture ───────────────────────────────────────
                 bilan = await enregistrer(propositions, carte,
@@ -230,7 +270,9 @@ async def executer(lance_par: str, collecter: bool = True,
                 _ETAT["procedures"] += len(propositions.get("procedures") or [])
                 _ETAT["echecs"].extend(bilan["echecs"])
 
-                skills = await _creer_skills(propositions.get("competences") or [])
+                skills = await _creer_skills(
+                    propositions.get("competences") or [],
+                    exiger_principal=exiger_modele_principal)
                 _ETAT["skills"].extend(s for s in skills if s not in _ETAT["skills"])
 
                 await asyncio.sleep(PAUSE_ENTRE_LOTS_S)

@@ -47,10 +47,16 @@ async def lancer_enrichissement(data: dict, user) -> dict:
     except (TypeError, ValueError):
         lots = 8
 
+    # Le modèle principal est EXIGÉ par défaut : ce que la campagne écrit
+    # reste en mémoire, il ne doit pas venir d'un modèle de repli.
+    exiger = data.get("exiger_modele_principal")
+    exiger = True if exiger is None else bool(exiger)
+
     asyncio.create_task(enrichissement.executer(
         lance_par=getattr(user, "email", "?"),
         collecter=collecter,
-        max_lots_par_boite=max(1, min(lots, 40))))
+        max_lots_par_boite=max(1, min(lots, 40)),
+        exiger_modele_principal=exiger))
 
     return {
         "lance": True,
@@ -61,6 +67,8 @@ async def lancer_enrichissement(data: dict, user) -> dict:
                      "rattachables à une personne : elles sont rangées en accès "
                      "direction. Les compétences arrivent en brouillon désactivé, "
                      "à relire avant validation."),
+        "modele": "Campagne exécutée sur le modèle principal ; elle s'arrête "
+           "plutôt que de se replier sur un modèle de moindre qualité.",
         "suivi": "Onglet Auto-Évolution, ou demande-moi « où en est l'enrichissement ».",
     }
 

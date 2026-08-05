@@ -218,6 +218,9 @@ async def enregistrer(body: EnregistrerBody, current_user: User = Depends(get_cu
 class EnrichissementBody(BaseModel):
     collecter: bool = True          # relancer d'abord la synchronisation des boîtes
     max_lots_par_boite: int = 8
+    # Par défaut la campagne EXIGE le modèle principal et s'arrête s'il
+    # n'est pas disponible : ce qu'elle écrit reste en mémoire.
+    exiger_modele_principal: bool = True
 
 
 @router.post("/enrichir")
@@ -251,7 +254,8 @@ async def enrichir(body: EnrichissementBody, current_user: User = Depends(get_cu
     asyncio.create_task(enrichissement.executer(
         lance_par=current_user.email,
         collecter=body.collecter,
-        max_lots_par_boite=max(1, min(body.max_lots_par_boite, 40))))
+        max_lots_par_boite=max(1, min(body.max_lots_par_boite, 40)),
+        exiger_modele_principal=body.exiger_modele_principal))
 
     return {"lance": True,
             "note": ("La campagne tourne en tâche de fond. Les connaissances déduites "

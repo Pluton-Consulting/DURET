@@ -38,3 +38,6 @@ yarn-error.log*
 Thumbs.db
 *.log
 sessions/
+
+# Captures du banc d interface (regenerees a chaque run)
+frontend/e2e/captures/

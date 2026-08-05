@@ -317,6 +317,20 @@ async def rechercher_documents(data: dict, user) -> dict:
 
 SKILLS_NATIFS["rechercher_documents"] = rechercher_documents
 
+
+async def lancer_enrichissement(data: dict, user) -> dict:
+    from learning.skills import lancer_enrichissement as _lancer
+    return await _lancer(data, user)
+
+
+async def statut_enrichissement(data: dict, user) -> dict:
+    from learning.skills import statut_enrichissement as _statut
+    return await _statut(data, user)
+
+
+SKILLS_NATIFS["lancer_enrichissement"] = lancer_enrichissement
+SKILLS_NATIFS["statut_enrichissement"] = statut_enrichissement
+
 # EFFET de chaque skill — classification qui décide si une validation humaine est
 # exigée. Déclarée DANS LE CODE, jamais déduite du nom ni fournie par le modèle :
 #   lecture          : ne modifie rien ;
@@ -337,4 +351,11 @@ EFFETS_NATIFS = {
     # Recherche dans la mémoire d'entreprise : ne modifie rien, et reste bornée
     # aux droits de l'appelant (cloisonnement des boîtes mail compris).
     "rechercher_documents": "lecture",
+    # Campagne d'enrichissement : elle n'écrit QUE dans nos propres données
+    # (mémoire, profils de style, brouillons de skills) et ne sort rien du
+    # système. Le vrai garde-fou n'est pas l'effet mais la PERMISSION, vérifiée
+    # dans le skill sur l'identité rechargée : lire toutes les boîtes est
+    # réservé à l'administration système.
+    "lancer_enrichissement": "ecriture_interne",
+    "statut_enrichissement": "lecture",
 }

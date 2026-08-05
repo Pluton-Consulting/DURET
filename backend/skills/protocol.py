@@ -173,41 +173,16 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
     "apprendre_style_email": (
         "Apprend le style d'écriture d'une boîte à partir de ses messages envoyés",
         [], ["mailbox"]),
-    "creer_tache_agent": (
-        "Enregistre une tâche que l'assistant exécutera plus tard, éventuellement de "
-        "façon répétée. recurrence : interval (avec interval_minutes, minimum 5), "
-        "daily ou weekly (avec heure « 07:30 », et jours [1..7] pour weekly). "
-        "Sans recurrence, la tâche ne part que sur demande.",
-        ["titre", "consigne"],
-        ["recurrence", "interval_minutes", "heure", "jours"]),
-}
-
-
-# Catalogue exposé au modèle : nom -> (description, requis[], optionnels[]).
-# Volontairement PETIT au départ : uniquement des skills natifs, dont les effets
-# sont déclarés dans le code. Les skills générés (bac à sable) n'y figurent pas.
-CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
-    "rechercher_documents": (
-        "Cherche dans la mémoire d'entreprise (devis, chantiers, clients, mails, "
-        "documents importés). À appeler dès qu'une question porte sur des données "
-        "internes. Peut être relancé avec d'autres termes si la première recherche "
-        "ne donne rien",
-        ["requete"], ["types"]),
-    "triage_email_entrant": (
-        "Classe et priorise un message reçu (catégorie, urgence, action suggérée)",
-        ["mailbox"], ["objet", "corps"]),
-    "redaction_email": (
-        "Rédige un BROUILLON de message (11 types : reponse, relance_devis, "
-        "relance_impaye, envoi_devis, reclamation, information_chantier, "
-        "confirmation_rdv, demande_information, remerciement, refus, interne). "
-        "N'envoie jamais.",
-        ["mailbox", "type_mail"], ["contexte", "message_recu", "destinataire"]),
-    "resume_fil_email": (
-        "Résume un échange de mails et en extrait les engagements",
-        ["mailbox", "fil"], []),
-    "apprendre_style_email": (
-        "Apprend le style d'écriture d'une boîte à partir de ses messages envoyés",
-        [], ["mailbox"]),
+    "lancer_enrichissement": (
+        "ADMINISTRATION UNIQUEMENT. Lance une campagne de fond : l'assistant relit "
+        "toutes les boîtes mail, construit un profil d'écriture par personne, et en "
+        "tire des connaissances, des manières de faire et des brouillons de skills. "
+        "Dure plusieurs heures. Ne la propose jamais de toi-même : uniquement sur "
+        "demande explicite",
+        [], ["collecter", "max_lots_par_boite"]),
+    "statut_enrichissement": (
+        "Avancement de la campagne d'enrichissement en cours (administration)",
+        [], []),
     "creer_tache_agent": (
         "Enregistre une tâche que l'assistant exécutera plus tard, éventuellement de "
         "façon répétée. recurrence : interval (avec interval_minutes, minimum 5), "

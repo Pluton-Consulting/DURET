@@ -228,6 +228,53 @@ async def analyser(conversation: dict) -> dict:
             "model_used": getattr(llm, "last_model_used", None)}
 
 
+async def enregistrer(propositions: dict, entity_map: dict, prefixe_source: str,
+                      acces_force: str | None = None) -> dict:
+    """Écrit en mémoire les connaissances et procédures retenues.
+
+    Partagé par le débrief d'une conversation et par la campagne d'enrichissement
+    du corpus de mails : c'est le même geste, avec la même règle de
+    réhydratation.
+
+    `acces_force` verrouille le niveau d'accès de tout ce qui est écrit. La
+    campagne s'en sert : une connaissance tirée de plusieurs boîtes mail n'est
+    plus rattachable à l'une d'elles, donc plus cloisonnable — elle est rangée
+    au niveau le plus restrictif plutôt que d'être exposée à tout le monde.
+    """
+    import time as _time
+
+    from ingestion.pipeline import ingest_document
+    from security.anonymizer import anonymizer
+
+    carte = entity_map or {}
+
+    def _vrai(texte: str) -> str:
+        # Les propositions viennent d'un modèle nourri au texte MASQUÉ : on remet
+        # les vraies valeurs, sinon la mémoire ne contiendrait que des balises.
+        return anonymizer.rehydrate(texte or "", carte)
+
+    chunks = memorise = 0
+    echecs: list[str] = []
+    horodatage = int(_time.time())
+
+    for cle, source_type in (("connaissances", "apprentissage"), ("procedures", "procedure")):
+        for i, item in enumerate(propositions.get(cle) or []):
+            titre = _vrai(item.get("titre") or "")
+            texte = f"{titre}\n\n{_vrai(item.get('contenu') or '')}"
+            try:
+                chunks += await ingest_document(
+                    text=texte, source_type=source_type,
+                    source_id=f"{source_type}:{prefixe_source}:{horodatage}:{i}",
+                    source_filename=titre[:200],
+                    access_level=acces_force or item.get("acces", "all"))
+                memorise += 1
+            except Exception as e:  # noqa: BLE001 - un élément fautif n'annule pas le reste
+                logger.warning("Mémorisation de « %s » échouée : %s", titre[:60], e)
+                echecs.append(titre[:80])
+
+    return {"memorise": memorise, "chunks": chunks, "echecs": echecs}
+
+
 async def generer_code_skill(competence: dict) -> str:
     """Écrit le `run(data)` d'une compétence retenue.
 

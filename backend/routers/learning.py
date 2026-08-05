@@ -215,6 +215,58 @@ async def enregistrer(body: EnregistrerBody, current_user: User = Depends(get_cu
             "skills": skills_crees, "echecs": echecs}
 
 
+class EnrichissementBody(BaseModel):
+    collecter: bool = True          # relancer d'abord la synchronisation des boîtes
+    max_lots_par_boite: int = 8
+
+
+@router.post("/enrichir")
+async def enrichir(body: EnrichissementBody, current_user: User = Depends(get_current_user)):
+    """Lance la campagne d'enrichissement sur TOUTES les boîtes. Administration.
+
+    Elle tourne en TÂCHE DE FOND : sur un corpus réel l'opération dure des
+    heures, une requête HTTP expirerait bien avant. On répond immédiatement, et
+    l'avancement se suit sur `/enrichir/statut`.
+    """
+    import asyncio
+
+    from learning import enrichissement
+
+    # Lire TOUTES les boîtes dépasse de loin la gestion d'Agent 3 : c'est un
+    # accès transverse à la correspondance de l'entreprise entière. On exige
+    # donc la permission la plus haute, pas celle de l'apprentissage.
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=http.HTTP_403_FORBIDDEN,
+                            detail="Réservé à l'administration système : cette campagne "
+                                   "lit toutes les boîtes mail.")
+
+    if enrichissement.etat().get("en_cours"):
+        raise HTTPException(status_code=http.HTTP_409_CONFLICT,
+                            detail="Une campagne est déjà en cours.")
+
+    await log_action(action="enrichissement_lance", user_id=str(current_user.id),
+                     metadata={"collecter": body.collecter,
+                               "max_lots_par_boite": body.max_lots_par_boite})
+
+    asyncio.create_task(enrichissement.executer(
+        lance_par=current_user.email,
+        collecter=body.collecter,
+        max_lots_par_boite=max(1, min(body.max_lots_par_boite, 40))))
+
+    return {"lance": True,
+            "note": ("La campagne tourne en tâche de fond. Les connaissances déduites "
+                     "sont rangées en accès direction, les compétences en brouillon "
+                     "désactivé : rien n'est exécutable sans relecture.")}
+
+
+@router.get("/enrichir/statut")
+async def statut_enrichissement(current_user: User = Depends(get_current_user)):
+    """Avancement de la campagne en cours, ou bilan de la dernière."""
+    _exiger(current_user)
+    from learning import enrichissement
+    return enrichissement.etat()
+
+
 @router.get("/historique")
 async def historique(limit: int = 10, current_user: User = Depends(get_current_user)):
     """Débriefs déjà enregistrés (journal d'audit, source de vérité immuable)."""

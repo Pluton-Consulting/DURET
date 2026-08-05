@@ -8,14 +8,17 @@ individuel, ce qui serait ingérable pour une équipe.
 
 ⚠ La délégation domaine est PUISSANTE : le compte de service peut lire
 n'importe quelle boîte du domaine. C'est précisément pourquoi :
-  * on n'accorde que le scope `gmail.readonly` ;
+  * on n'accorde que `gmail.readonly` pour les mails, et — séparément —
+    `admin.directory.user.readonly` pour lister les comptes. Deux scopes
+    distincts : on peut accorder l'un sans l'autre, ou retirer l'un des deux ;
   * la liste des boîtes synchronisées est BORNÉE (voir `boites_a_synchroniser`) ;
   * l'accès applicatif reste arbitré par `mail.authorization` — ce n'est pas
     parce que le serveur PEUT lire une boîte qu'un utilisateur y a droit.
 
 Adresses : rien n'est codé en dur. Les boîtes viennent des comptes de
-l'application (`users.email`), plus d'éventuelles boîtes partagées listées dans
-`GMAIL_EXTRA_MAILBOXES`. Inutile de connaître les adresses à l'avance.
+l'application (`users.email`), du DOMAINE lui-même quand l'annuaire est
+accessible (`boites_du_domaine`), plus d'éventuelles boîtes partagées listées
+dans `GMAIL_EXTRA_MAILBOXES`. Inutile de connaître les adresses à l'avance.
 
 Deux dossiers sont ingérés, avec des rôles distincts :
   * INBOX  -> `source_type='email'`      : mémoire d'entreprise, recherche RAG ;
@@ -37,6 +40,13 @@ from mail.style import source_id as source_id_envoye, PREFIXE_ENVOYE
 logger = logging.getLogger("duret.ingestion.gmail")
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+# Scope SÉPARÉ, volontairement distinct de celui des mails : lister les comptes
+# du domaine n'a rien à voir avec lire leur courrier. Deux scopes distincts,
+# c'est deux autorisations à accorder dans la console Admin — et la possibilité
+# de n'accorder que la première, ou de retirer l'une sans l'autre.
+SCOPES_ANNUAIRE = ["https://www.googleapis.com/auth/admin.directory.user.readonly"]
+
 _RE_BALISES = re.compile(r"<[^>]+>")
 
 
@@ -100,8 +110,85 @@ def _service(boite: str):
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
+def _service_annuaire():
+    """Client Admin SDK, empruntant l'identité d'un ADMINISTRATEUR du domaine.
+
+    Différence essentielle avec Gmail : là on emprunte chaque boîte, ici il faut
+    une identité administrateur — l'annuaire n'est pas lisible par un compte
+    ordinaire. D'où un réglage distinct, `GOOGLE_ADMIN_SUBJECT`.
+    """
+    import os
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    fichier = settings.google_sa_file
+    sujet = (settings.google_admin_subject or "").strip()
+    if not sujet or not fichier or not os.path.exists(fichier):
+        return None
+    creds = service_account.Credentials.from_service_account_file(
+        fichier, scopes=SCOPES_ANNUAIRE, subject=sujet)
+    return build("admin", "directory_v1", credentials=creds, cache_discovery=False)
+
+
+async def boites_du_domaine() -> list[str]:
+    """Toutes les boîtes du domaine, demandées à l'annuaire Google.
+
+    Sans cela, une personne SANS compte dans l'application a une boîte
+    invisible : la liste était déduite des seuls comptes applicatifs, et il
+    fallait déclarer chaque adresse à la main.
+
+    Ne lève jamais. La découverte est un CONFORT : si le scope annuaire n'est
+    pas délégué, ou si aucun compte administrateur n'est configuré, on renvoie
+    une liste vide et le connecteur retombe sur les comptes de l'application.
+    """
+    import asyncio
+
+    domaine = (settings.gmail_domain or "").strip().lower()
+
+    def _lister() -> list[str]:
+        service = _service_annuaire()
+        if service is None:
+            logger.info("Découverte du domaine désactivée : GOOGLE_ADMIN_SUBJECT "
+                        "ou clé de compte de service absente.")
+            return []
+        trouvees: list[str] = []
+        jeton = None
+        while True:
+            requete = service.users().list(
+                domain=domaine or None,
+                customer=None if domaine else "my_customer",
+                maxResults=500, orderBy="email", pageToken=jeton)
+            reponse = requete.execute()
+            for u in reponse.get("users", []):
+                # Un compte suspendu ou archivé n'a plus de boîte à lire.
+                if u.get("suspended") or u.get("archived"):
+                    continue
+                adresse = (u.get("primaryEmail") or "").strip().lower()
+                if "@" in adresse:
+                    trouvees.append(adresse)
+            jeton = reponse.get("nextPageToken")
+            if not jeton:
+                return trouvees
+
+    try:
+        # Le client Google est SYNCHRONE : hors de la boucle événementielle,
+        # sinon la pagination fige tout le backend le temps de l'inventaire.
+        trouvees = await asyncio.to_thread(_lister)
+    except Exception as e:  # noqa: BLE001
+        # 403 = scope annuaire non délégué. C'est le cas le plus fréquent, et il
+        # ne doit pas faire échouer la synchronisation des mails.
+        logger.info("Découverte du domaine impossible (%s) — seuls les comptes "
+                    "de l'application seront synchronisés.", e)
+        return []
+
+    if domaine:
+        trouvees = [b for b in trouvees if b.endswith("@" + domaine)]
+    logger.info("Découverte du domaine : %d boîte(s)", len(trouvees))
+    return trouvees
+
+
 async def boites_a_synchroniser() -> list[str]:
-    """Boîtes à parcourir : comptes actifs de l'application + boîtes partagées.
+    """Boîtes à parcourir : comptes de l'application, domaine, boîtes partagées.
 
     On part des utilisateurs plutôt que d'une liste figée : les adresses n'ont
     pas à être connues à l'avance, et une nouvelle recrue est prise en compte
@@ -114,6 +201,13 @@ async def boites_a_synchroniser() -> list[str]:
         adresse = (r["email"] or "").strip().lower()
         if "@" in adresse:
             boites.append(adresse)
+
+    # Puis tout le domaine, si l'annuaire est accessible. L'ordre compte : les
+    # comptes de l'application restent en tête, ce sont les plus utiles.
+    if settings.gmail_decouvrir_domaine:
+        for adresse in await boites_du_domaine():
+            if adresse not in boites:
+                boites.append(adresse)
 
     for extra in (settings.gmail_extra_mailboxes or "").split(","):
         extra = extra.strip().lower()

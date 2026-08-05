@@ -172,6 +172,15 @@ class Settings(BaseSettings):
     google_sa_file: str = "secrets/google_service_account.json"
     gmail_domain: Optional[str] = None          # ex. duret-sols.fr — refuse toute boîte hors domaine
     gmail_extra_mailboxes: Optional[str] = None  # boîtes partagées, séparées par des virgules
+    # Découverte des boîtes du domaine via l'Admin SDK (Directory API), au lieu
+    # de se limiter aux comptes de l'application. Sans elle, une personne sans
+    # compte applicatif a une boîte invisible, y compris pour un administrateur.
+    gmail_decouvrir_domaine: bool = True
+    # L'API Directory exige d'emprunter l'identité d'un ADMINISTRATEUR du
+    # domaine — contrairement à Gmail, où l'on emprunte chaque boîte. Sans ce
+    # réglage, la découverte est simplement désactivée : le connecteur retombe
+    # sur les comptes de l'application, il n'échoue pas.
+    google_admin_subject: Optional[str] = None   # ex. admin@duret-sols.fr
     gmail_max_messages: int = 100               # messages par dossier et par boîte, à chaque synchro
     gmail_access_level: str = "all"             # visibilité des mails ingérés
 

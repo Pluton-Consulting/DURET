@@ -76,10 +76,43 @@ async def rechercher_documents(data: dict, user) -> dict:
         })
 
     if not resultats:
-        return {"requete": requete, "resultats": [], "nombre": 0,
-                "message": ("Aucun document ne correspond. Si la formulation peut être "
-                            "améliorée, relance une recherche avec d'autres termes ; "
-                            "sinon, dis simplement que la mémoire ne contient rien "
-                            "là-dessus.")}
+        # Une recherche vide ne dit RIEN sur le contenu global de la mémoire.
+        # Sans cette distinction, le modèle conclut « la mémoire ne contient
+        # aucun mail » alors qu'elle en contient des dizaines qui n'ont
+        # simplement pas atteint le seuil de similarité — une affirmation fausse
+        # sur l'état du système, bien plus grave qu'un « je ne trouve pas ».
+        inventaire = await _inventaire()
+        return {
+            "requete": requete, "resultats": [], "nombre": 0,
+            "inventaire_memoire": inventaire,
+            "message": (
+                "Aucun document ne correspond à CETTE recherche. "
+                + (f"La mémoire contient pourtant : {inventaire}. "
+                   "Ne dis donc PAS qu'elle est vide : dis que tu n'as rien trouvé "
+                   "sur ce point précis, et propose des termes plus concrets "
+                   "(un nom de client, un numéro de dossier, une période)."
+                   if inventaire else
+                   "La mémoire est effectivement vide pour les types consultés : "
+                   "tu peux le dire.")),
+        }
 
     return {"requete": requete, "nombre": len(resultats), "resultats": resultats}
+
+
+async def _inventaire() -> str:
+    """Ce que la mémoire contient réellement, par type de source.
+
+    Un simple comptage, pas une recherche : c'est la seule façon de distinguer
+    « je n'ai rien trouvé » de « il n'y a rien ». Ne lève jamais — un inventaire
+    indisponible rend une chaîne vide, et le modèle reste prudent.
+    """
+    try:
+        from database.connection import get_db
+        async with get_db() as conn:
+            lignes = await conn.fetch(
+                "SELECT source_type, COUNT(DISTINCT source_id) AS n "
+                "FROM documents GROUP BY source_type ORDER BY n DESC LIMIT 12")
+    except Exception as e:  # noqa: BLE001
+        logger.info("Inventaire de la mémoire indisponible : %s", e)
+        return ""
+    return ", ".join(f"{l['n']} {l['source_type']}" for l in lignes if l["n"]) or ""

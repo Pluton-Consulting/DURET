@@ -88,7 +88,7 @@ def _objet_equilibre(texte: str, debut: int) -> str | None:
     return None
 
 
-def _action_json_nu(texte: str):
+def _action_json_nu(texte: str, role: str | None = None):
     """Reconnaît un appel d'outil rendu en JSON nu, sans aucune balise."""
     for amorce in _DEBUT_JSON_NU_RE.finditer(texte or ""):
         brut = _objet_equilibre(texte, amorce.start())
@@ -101,7 +101,7 @@ def _action_json_nu(texte: str):
         if not isinstance(data, dict):
             continue
         nom = data.get("skill") or data.get("name") or data.get("tool") or data.get("function")
-        if nom not in catalogue():
+        if nom not in catalogue(role):
             continue
         args = data.get("args") or data.get("arguments") or data.get("parameters") or {}
         if isinstance(args, str):
@@ -111,7 +111,7 @@ def _action_json_nu(texte: str):
                 continue
         if not isinstance(args, dict):
             continue
-        if [p for p in catalogue()[nom][1] if not str(args.get(p) or "").strip()]:
+        if [p for p in catalogue(role)[nom][1] if not str(args.get(p) or "").strip()]:
             continue
         fin = amorce.start() + len(brut)
         reste = (texte[:amorce.start()] + texte[fin:]).strip()
@@ -119,16 +119,16 @@ def _action_json_nu(texte: str):
     return None, texte, None
 
 
-def _action_native(texte: str):
+def _action_native(texte: str, role: str | None = None):
     """Convertit un appel natif en `{skill, args}`, ou None si illisible."""
     trouve = BLOC_NATIF_RE.search(texte or "")
     if not trouve:
-        return _action_json_nu(texte or "")
+        return _action_json_nu(texte or "", role)
 
     reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
     corps = trouve.group(1)
     nom = corps.splitlines()[0].strip() if corps.strip() else ""
-    if nom not in catalogue():
+    if nom not in catalogue(role):
         return None, reste, None
 
     args = {}
@@ -142,7 +142,7 @@ def _action_native(texte: str):
                 pass
         args[cle.strip()] = valeur
 
-    manquants = [p for p in catalogue()[nom][1]
+    manquants = [p for p in catalogue(role)[nom][1]
                  if not str(args.get(p) or "").strip()]
     if manquants:
         return None, reste, None
@@ -179,7 +179,7 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "tire des connaissances, des manières de faire et des brouillons de skills. "
         "Dure plusieurs heures. Ne la propose jamais de toi-même : uniquement sur "
         "demande explicite",
-        [], ["collecter", "max_lots_par_boite"]),
+        [], ["collecter", "max_lots_par_boite", "acces_skills"]),
     "statut_enrichissement": (
         "Avancement de la campagne d'enrichissement en cours (administration)",
         [], []),
@@ -204,14 +204,35 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
 # On les charge périodiquement dans ce registre. Les natifs restent PRIORITAIRES
 # (leur signature est déclarée dans le code, pas devinée) ; un skill en base ne
 # peut pas en masquer un.
-_EXTERNES: dict[str, tuple[str, list[str], list[str]]] = {}
+# nom -> (description, requis[], optionnels[], niveau d'accès)
+_EXTERNES: dict[str, tuple[str, list[str], list[str], str]] = {}
 _EXTERNES_EXPIRE: float = 0.0
 DUREE_CACHE_CATALOGUE_S = 300
 
 
-def catalogue() -> dict[str, tuple[str, list[str], list[str]]]:
-    """Vue fusionnée : skills natifs d'abord, puis ceux du registre en base."""
-    return {**_EXTERNES, **CATALOGUE_AGENT1}
+def _niveaux_visibles(role: str | None) -> set[str]:
+    """Niveaux d'accès qu'un rôle peut voir. Même échelle que les documents."""
+    from security.acces import niveaux_visibles
+    return niveaux_visibles(role)
+
+
+def catalogue(role: str | None = None) -> dict[str, tuple[str, list[str], list[str]]]:
+    """Skills visibles par ce rôle : natifs d'abord, puis le registre en base.
+
+    Sans `role`, seuls les skills ouverts à tous sont rendus. C'est volontaire :
+    un appelant qui oublie de transmettre le rôle obtient la vue la PLUS
+    restreinte, jamais la plus large.
+
+    Les NATIFS ne sont pas filtrés : leur portée est déjà bornée par leur propre
+    contrôle de droits, au moment d'agir (une boîte mail, une permission). Les
+    masquer priverait un utilisateur légitime de la recherche documentaire.
+    """
+    visibles = _niveaux_visibles(role)
+    externes = {nom: valeur[:3] for nom, valeur in _EXTERNES.items()
+                if valeur[3] in visibles}
+    return {**externes, **CATALOGUE_AGENT1}
+
+
 
 
 async def rafraichir_catalogue(force: bool = False) -> int:
@@ -233,7 +254,8 @@ async def rafraichir_catalogue(force: bool = False) -> int:
         from database.connection import get_db
         async with get_db() as conn:
             lignes = await conn.fetch(
-                "SELECT name, description FROM skills "
+                "SELECT name, description, COALESCE(access_level, 'all') AS access_level "
+                "FROM skills "
                 "WHERE status IN ('validated', 'stable') AND COALESCE(enabled, true) "
                 "  AND (agent IS NULL OR agent = 'agent1') "
                 "ORDER BY name")
@@ -243,18 +265,19 @@ async def rafraichir_catalogue(force: bool = False) -> int:
 
     # La table ne décrit pas les paramètres attendus : on n'en invente aucun.
     # C'est l'exécuteur qui validera au moment de l'appel.
-    _EXTERNES = {r["name"]: ((r["description"] or "skill interne").strip()[:160], [], [])
+    _EXTERNES = {r["name"]: ((r["description"] or "skill interne").strip()[:160], [], [],
+                             r["access_level"])
                  for r in lignes if r["name"] not in CATALOGUE_AGENT1}
     logger.debug("Catalogue de skills : %d natifs + %d en base",
                  len(CATALOGUE_AGENT1), len(_EXTERNES))
     return len(_EXTERNES)
 
 
-def instruction_actions() -> str:
+def instruction_actions(role: str | None = None) -> str:
     """Bloc à ajouter au prompt système. Constant : le préfixe reste stable, donc
     le cache de prompt du fournisseur continue de s'appliquer."""
     lignes = []
-    for nom, (desc, requis, optionnels) in catalogue().items():
+    for nom, (desc, requis, optionnels) in catalogue(role).items():
         params = ", ".join([f"{p}*" for p in requis] + list(optionnels)) or "aucun"
         lignes.append(f'- {nom} : {desc}. Paramètres ({params}) — * = obligatoire.')
     return (
@@ -287,7 +310,7 @@ def instruction_actions() -> str:
     )
 
 
-def extraire_action(texte: str) -> tuple[Optional[dict], str, Optional[str]]:
+def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict], str, Optional[str]]:
     """Extrait l'action d'une réponse LLM.
 
     Retourne `(action, texte_sans_bloc, erreur)` :
@@ -301,7 +324,7 @@ def extraire_action(texte: str) -> tuple[Optional[dict], str, Optional[str]]:
     trouve = BLOC_ACTION_RE.search(texte or "")
     if not trouve:
         # Pas de bloc balisé : le modèle a-t-il utilisé sa syntaxe native ?
-        return _action_native(texte or "")
+        return _action_native(texte or "", role)
 
     reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
 
@@ -314,9 +337,9 @@ def extraire_action(texte: str) -> tuple[Optional[dict], str, Optional[str]]:
         return None, reste, "le bloc action doit contenir un objet JSON"
 
     skill = data.get("skill")
-    if skill not in catalogue():
+    if skill not in catalogue(role):
         return None, reste, (f"skill inconnu : {skill}. "
-                             f"Choisis parmi : {', '.join(catalogue())}")
+                             f"Choisis parmi : {', '.join(catalogue(role))}")
 
     args = data.get("args")
     if args is None:
@@ -324,7 +347,7 @@ def extraire_action(texte: str) -> tuple[Optional[dict], str, Optional[str]]:
     if not isinstance(args, dict):
         return None, reste, "« args » doit être un objet JSON"
 
-    requis = catalogue()[skill][1]
+    requis = catalogue(role)[skill][1]
     manquants = [p for p in requis if not str(args.get(p) or "").strip()]
     if manquants:
         return None, reste, (f"paramètres obligatoires manquants pour {skill} : "

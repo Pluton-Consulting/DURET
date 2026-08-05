@@ -303,7 +303,7 @@ Exemple, pour présenter des mails : une carte PAR message.
 Voici les messages trouvés :
 ```ui
 {"type":"email","subject":"CONTACT architecte","from":"lb@lbbl-architectes.fr","date":"23/07/2026","preview":"Demande d'intervention sur un projet a Sainte-Eulalie..."}
-```""" + instruction_actions()
+```""" + instruction_actions(state.get("user_role"))
 
     # Dernière passe imposée : la boucle d'actions est close, il ne reste qu'à
     # rédiger. Sans cette consigne, le modèle peut redemander une action, dont
@@ -378,7 +378,11 @@ async def tools_node(state: AgentState, config=None) -> dict:
     from mail.skills import EFFETS_NATIFS
     from tasks.identity import charger_executant
 
-    action, texte, erreur = extraire_action(state.get("llm_response") or "")
+    # Le rôle est transmis pour que la vue qui VALIDE soit exactement celle
+    # qui a été ANNONCÉE au modèle. Un écart entre les deux se lirait comme
+    # une fuite : un skill hors périmètre deviendrait appelable.
+    action, texte, erreur = extraire_action(
+        state.get("llm_response") or "", state.get("user_role"))
     iteration = (state.get("tool_iterations") or 0) + 1
     resultats = list(state.get("tool_results") or [])
 

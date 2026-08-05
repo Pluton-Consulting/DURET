@@ -18,17 +18,9 @@ def _vec_literal(vec: List[float]) -> str:
     """
     return "[" + ",".join(f"{float(x):.8f}" for x in vec) + "]"
 
-# Mapping rôle → access_levels autorisés
-# Un rôle peut accéder à tous les niveaux inférieurs au sien
-ROLE_ACCESS_LEVELS = {
-    "super_admin":   ["all", "commercial_plus", "bureau_etudes_plus", "direction_only", "admin_only"],
-    "direction":     ["all", "commercial_plus", "bureau_etudes_plus", "direction_only", "admin_only"],
-    "bureau_etudes": ["all", "commercial_plus", "bureau_etudes_plus"],
-    "commercial":    ["all", "commercial_plus"],
-    "conducteur":    ["all", "commercial_plus"],
-    "administratif": ["all"],
-    "terrain":       ["all"],
-}
+# Échelle des accès : définie dans `security/acces.py`, source unique partagée
+# avec le catalogue de skills. Réexportée ici pour ne rien casser des appelants.
+from security.acces import ROLE_ACCESS_LEVELS  # noqa: F401
 
 
 class VectorStoreClient:

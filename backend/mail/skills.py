@@ -318,6 +318,38 @@ async def rechercher_documents(data: dict, user) -> dict:
 SKILLS_NATIFS["rechercher_documents"] = rechercher_documents
 
 
+async def lire_mails(data: dict, user) -> dict:
+    """Lit les derniers messages d'une boîte, EN DIRECT.
+
+    Le contrôle de droits passe par `verifier_acces`, comme tous les skills mail :
+    sa boîte, celles qui lui sont déléguées, toutes si administrateur — et
+    l'accès administrateur est journalisé. Sans boîte précisée, c'est la sienne.
+
+    `envoi=False` : consulter n'est pas écrire au nom de quelqu'un. Une
+    délégation en lecture seule suffit donc à lire, pas à rédiger.
+    """
+    from mail.lecture import lire_boite
+
+    boite = await verifier_acces(user, data.get("mailbox") or getattr(user, "email", None))
+    try:
+        limite = int(data.get("limite") or 10)
+    except (TypeError, ValueError):
+        limite = 10
+
+    try:
+        return await lire_boite(boite, data.get("dossier") or "recus", limite)
+    except NotImplementedError as e:
+        raise MailSkillError(str(e))
+    except Exception as e:  # noqa: BLE001 - une messagerie injoignable n'est pas une panne du chat
+        logger.warning("Lecture de %s impossible : %s", boite, e)
+        raise MailSkillError(
+            f"La boîte {boite} n'a pas pu être consultée ({e}). "
+            "Vérifiez la configuration de la messagerie.")
+
+
+SKILLS_NATIFS["lire_mails"] = lire_mails
+
+
 async def lancer_enrichissement(data: dict, user) -> dict:
     from learning.skills import lancer_enrichissement as _lancer
     return await _lancer(data, user)
@@ -351,6 +383,8 @@ EFFETS_NATIFS = {
     # Recherche dans la mémoire d'entreprise : ne modifie rien, et reste bornée
     # aux droits de l'appelant (cloisonnement des boîtes mail compris).
     "rechercher_documents": "lecture",
+    # Lire une boîte ne modifie rien et reste borné par `verifier_acces`.
+    "lire_mails": "lecture",
     # Campagne d'enrichissement : elle n'écrit QUE dans nos propres données
     # (mémoire, profils de style, brouillons de skills) et ne sort rien du
     # système. Le vrai garde-fou n'est pas l'effet mais la PERMISSION, vérifiée

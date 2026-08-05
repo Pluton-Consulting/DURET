@@ -158,6 +158,13 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "internes. Peut être relancé avec d'autres termes si la première recherche "
         "ne donne rien",
         ["requete"], ["types"]),
+    "lire_mails": (
+        "LIT les derniers messages d'une boîte mail, en direct. À utiliser dès qu'on "
+        "te parle de consulter, lire, voir ou faire le point sur des mails. Ne "
+        "cherche PAS dans la mémoire pour cela : cette action va chercher les "
+        "messages réels. dossier : recus (défaut) ou envoyes ; limite : 1 à 25. "
+        "Sans mailbox, c'est la boîte de la personne connectée",
+        [], ["mailbox", "dossier", "limite"]),
     "triage_email_entrant": (
         "Classe et priorise un message reçu (catégorie, urgence, action suggérée)",
         ["mailbox"], ["objet", "corps"]),

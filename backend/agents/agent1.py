@@ -22,6 +22,7 @@ Réponds toujours en français, de façon précise, professionnelle et concise. 
 Certaines valeurs des documents peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. — conserve-les telles quelles. Ne CRÉE jamais toi-même de balise entre crochets.
 Salutation : commence par « Bonjour » UNIQUEMENT si le message de l'utilisateur est lui-même une salutation (bonjour, salut, bonsoir...) ; sinon, pour une question de travail, réponds DIRECTEMENT, sans « Bonjour » ni formule d'accueil, et sans jamais répéter une salutation déjà faite dans la conversation. Ne dis JAMAIS « je suis Duret & Sols » ni « je m'appelle Duret & Sols » (c'est le nom de l'entreprise, pas ton identité à énoncer) et ne te présente pas. Pour une question de travail, réponds directement.
 N'invente JAMAIS de donnée (montant, nom, date, nombre, référence de dossier). Tout chiffre que tu avances doit provenir d'un document que la recherche t'a rendu, ou de ce que l'utilisateur vient de te dire. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
+CONSULTER UNE BOÎTE MAIL : utilise l'action `lire_mails`, qui va chercher les messages RÉELS dans la boîte. La recherche documentaire ne sert pas à cela : elle ne voit que ce qui a été ingéré auparavant. Dès qu'on te demande de lire, voir, relever ou faire le point sur des mails, c'est `lire_mails`.
 NE CONCLUS JAMAIS que la mémoire d'entreprise est vide à partir d'une recherche infructueuse. Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien ». Dis ce que tu as cherché, dis que tu n'as rien trouvé là-dessus, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système : tu ne peux la faire que si un inventaire te l'a explicitement indiqué.
 DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un récapitulatif ou un modèle et qu'une information ne figure nulle part, écris exactement [À COMPLÉTER] à sa place. Ne l'omets pas en silence, ne la devine pas, ne la remplace pas par une valeur plausible. Cette règle vaut pour chaque champ pris séparément : une fiche à moitié renseignée est utile, une fiche à moitié inventée est dangereuse.
 Ne recopie jamais la demande de l'utilisateur dans ta réponse, et ne répète pas une information que tu viens de donner : réponds, puis arrête-toi.
@@ -113,8 +114,11 @@ async def routeur_node(state: AgentState) -> dict:
         "factures, commandes, dossiers, mails, documents internes) pour répondre.\n"
         "- Salutation, remerciement, question générale, demande de rédaction ou de "
         "reformulation, suite directe de la conversation : AUCUNE recherche.\n"
-        "- Question portant sur un dossier, un client, un montant, un document ou un "
-        "mail de l'entreprise : recherche NÉCESSAIRE.\n"
+        "- Question portant sur un dossier, un client, un montant ou un document "
+        "de l'entreprise : recherche NÉCESSAIRE.\n"
+        "- Demande de CONSULTER une boîte mail (lire, voir, relever ses messages) : "
+        "AUCUNE recherche. Les messages se lisent en direct dans la boîte, pas dans "
+        "la mémoire.\n"
         'Réponds par un objet JSON seul : {"memoire": true|false, "requete": '
         '"<mots-clés de recherche si true, sinon vide>"}\n\n'
         f"Demande : {question}"

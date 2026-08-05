@@ -116,40 +116,75 @@ async def ingestion_webhook(
     return {"ok": True, "source_id": doc.source_id, "chunks": chunks}
 
 
+# État des synchronisations lancées depuis l'interface. En mémoire : une
+# synchronisation interrompue par un redémarrage se relance, elle est idempotente.
+_SYNCS: dict[str, dict] = {}
+
+CONNECTEURS = {
+    "outlook": ("Messagerie Microsoft 365", "ingestion.connectors.outlook"),
+    "gmail": ("Messagerie Google Workspace", "ingestion.connectors.gmail"),
+    "google_drive": ("Google Drive", "ingestion.connectors.google_drive"),
+    "extrabat": ("Extrabat", "ingestion.connectors.extrabat"),
+    "deytime": ("Deytime", "ingestion.connectors.deytime"),
+    "synology": ("NAS Synology", "ingestion.connectors.synology"),
+}
+
+
+async def _executer_sync(source: str, module: str, user_id: str) -> None:
+    """Déroule la synchronisation en tâche de fond et consigne le résultat."""
+    import time
+    etat = _SYNCS[source]
+    try:
+        run = __import__(module, fromlist=["sync"]).sync
+        resultat = await run()
+        etat.update({"etat": "terminee", "resultat": resultat or {},
+                     "fin": time.time()})
+        await log_action(action="ingestion_sync", user_id=user_id,
+                         metadata={"source": source, **(resultat or {})})
+    except NotImplementedError as e:
+        etat.update({"etat": "non_configure", "erreur": str(e), "fin": time.time()})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Sync %s échouée : %s", source, e)
+        etat.update({"etat": "echec", "erreur": str(e)[:400], "fin": time.time()})
+
+
+@router.get("/sync")
+async def etat_syncs(current_user: User = Depends(get_current_user)):
+    """Connecteurs disponibles et état de la dernière synchronisation de chacun."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
+    return [{"source": cle, "libelle": libelle, **_SYNCS.get(cle, {"etat": "jamais"})}
+            for cle, (libelle, _) in CONNECTEURS.items()]
+
+
 @router.post("/sync/{source}")
 async def trigger_sync(source: str, current_user: User = Depends(get_current_user)):
-    """Déclenche une synchronisation via un connecteur API direct (super_admin)."""
+    """Déclenche une synchronisation. Administration système.
+
+    Elle tourne en TÂCHE DE FOND : parcourir plusieurs boîtes prend des minutes,
+    et chaque message consomme un embedding. Une requête HTTP expirerait bien
+    avant la fin, et l'utilisateur ne saurait pas si le travail a abouti.
+    L'avancement se lit sur `GET /sync`.
+    """
+    import asyncio
+    import time
+
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
 
-    try:
-        if source == "google_drive":
-            from ingestion.connectors.google_drive import sync as run
-        elif source == "outlook":
-            from ingestion.connectors.outlook import sync as run
-        elif source == "extrabat":
-            from ingestion.connectors.extrabat import sync as run
-        elif source == "deytime":
-            from ingestion.connectors.deytime import sync as run
-        elif source == "synology":
-            from ingestion.connectors.synology import sync as run
-        elif source == "gmail":
-            from ingestion.connectors.gmail import sync as run
-        else:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Connecteur inconnu : {source}")
-    except HTTPException:
-        raise
+    if source not in CONNECTEURS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Connecteur inconnu : {source}")
+    if _SYNCS.get(source, {}).get("etat") == "en_cours":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Une synchronisation {source} est déjà en cours.")
 
-    try:
-        result = await run()
-    except NotImplementedError as e:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(e))
-    except Exception as e:
-        logger.warning("Sync %s échouée : %s", source, e)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Connecteur {source} : {e}")
-
-    await log_action(action="ingestion_sync", user_id=str(current_user.id), metadata={"source": source, **(result or {})})
-    return {"source": source, **(result or {})}
+    libelle, module = CONNECTEURS[source]
+    _SYNCS[source] = {"etat": "en_cours", "libelle": libelle, "debut": time.time(),
+                      "par": current_user.email, "resultat": None, "erreur": None}
+    asyncio.create_task(_executer_sync(source, module, str(current_user.id)))
+    return {"source": source, "lance": True,
+            "note": "Synchronisation lancée en tâche de fond ; l'avancement s'affiche ici."}
 
 
 # ── Import manuel de fichiers (paramètres > Import de données) ──────────────

@@ -2,8 +2,9 @@
 import { useState, useEffect } from "react"
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
+import SyncTab from "@/components/settings/SyncTab"
 
-type SubTab = "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import"
+type SubTab = "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro"
 type Role = "super_admin" | "direction" | "commercial" | "bureau_etudes" | "conducteur" | "administratif" | "terrain"
 type Agent = "agent1" | "agent2" | "agent3"
 
@@ -36,6 +37,9 @@ const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
   { key: "quotas", label: "Quotas", roles: ["super_admin"] },
   { key: "services", label: "Services connectés", roles: ["super_admin"] },
   { key: "import", label: "Import de données", roles: ["super_admin", "direction"] },
+  // Déclencher une synchronisation touche à toutes les sources de
+  // l'entreprise : réservé à l'administration système, comme l'endpoint.
+  { key: "synchro", label: "Synchronisations", roles: ["super_admin"] },
 ]
 
 /* ---------- USERS TAB ---------- */
@@ -780,6 +784,9 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
       )}
       {activeTab === "services" && <ServicesTab apiUrl={apiUrl} backendToken={backendToken} />}
       {activeTab === "import" && <ImportTab apiUrl={apiUrl} backendToken={backendToken} />}
+      {activeTab === "synchro" && currentRole === "super_admin" && (
+        <SyncTab apiUrl={apiUrl} backendToken={backendToken} />
+      )}
     </div>
   )
 }

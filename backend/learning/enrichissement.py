@@ -60,6 +60,13 @@ BUDGET_CARACTERES_PAR_APPEL = 180_000
 MAX_CARACTERES_PAR_MESSAGE = 1200
 MAX_MESSAGES_PAR_BOITE = 2000        # garde-fou : une boîte ne monopolise pas la campagne
 
+# Plafond d'appels d'ANALYSE par boîte. Le nom est conservé — il est déjà exposé
+# dans le catalogue de skills et dans l'API — mais il ne compte plus des paquets
+# de 25 messages : il compte des appels, chacun portant une pleine fenêtre.
+# 2 000 messages de 1 200 caractères tiennent en ~14 appels : 20 laisse de la
+# marge sans permettre l'emballement.
+MAX_LOTS_PAR_BOITE = 20
+
 # Respiration entre deux lots : la cascade gratuite limite le débit, et une
 # campagne qui la sature ferait échouer les conversations en cours.
 PAUSE_ENTRE_LOTS_S = 3.0

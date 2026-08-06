@@ -48,15 +48,56 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
 
   useEffect(() => { charger() }, [charger])
 
+  // ── Enrichissement ────────────────────────────────────────────────
+  // Un seul bouton, des paramètres FIXES : toutes les boîtes, tout le corpus,
+  // modèle principal exigé. Rien n'est laissé au jugement du modèle — c'est
+  // précisément ce qu'on veut d'un traitement de fond déclenché à la main.
+
+  const [enrich, setEnrich] = useState<any>(null)
+
+  const chargerEnrich = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/learning/enrichir/statut`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (res.ok) setEnrich(await res.json())
+    } catch { /* l'état d'une campagne n'est pas critique */ }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { chargerEnrich() }, [chargerEnrich])
+
+  const lancerEnrich = async () => {
+    setBusy("enrichir")
+    try {
+      const res = await fetch(`${apiUrl}/api/learning/enrichir`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        // Paramètres déterministes : on ne demande pas au modèle de choisir.
+        body: JSON.stringify({
+          collecter: true, max_lots_par_boite: 20,
+          exiger_modele_principal: true, acces_skills: "all",
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
+      setErreur("")
+      await chargerEnrich()
+    } catch (e: any) {
+      setErreur(e?.message || "lancement impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
   // Tant qu'une synchronisation tourne, on réinterroge. Dès qu'elles sont
   // toutes au repos, on s'arrête : inutile de solliciter le serveur pour rien.
   useEffect(() => {
     if (minuterie.current) clearTimeout(minuterie.current)
-    if (etats.some((e) => e.etat === "en_cours")) {
-      minuterie.current = setTimeout(charger, 4000)
+    if (etats.some((e) => e.etat === "en_cours") || enrich?.en_cours) {
+      minuterie.current = setTimeout(() => { charger(); chargerEnrich() }, 4000)
     }
     return () => { if (minuterie.current) clearTimeout(minuterie.current) }
-  }, [etats, charger])
+  }, [etats, enrich, charger, chargerEnrich])
 
   const lancer = async (source: string) => {
     setBusy(source)
@@ -101,6 +142,54 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
         <div className="sym-pop" style={{ color: "var(--color-error-text)", fontSize: 13,
                                           marginBottom: 12 }}>⚠ {erreur}</div>
       )}
+
+      {/* Enrichissement complet — un seul geste, des paramètres fixes */}
+      <div className="sym-card" style={{
+        background: "var(--color-surface)", border: "2px solid var(--color-primary)",
+        borderRadius: "var(--radius-card-sm)", padding: "16px 18px", marginBottom: 18,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>
+              Tout enrichir
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 3,
+                          lineHeight: 1.5 }}>
+              Synchronise les boîtes, extrait tout le courrier, construit un profil
+              d'écriture par personne, puis en tire connaissances, manières de faire et
+              brouillons de skills. Plusieurs heures.
+            </div>
+          </div>
+          <span style={{
+            background: enrich?.en_cours ? "var(--color-progress-bg)" : "var(--color-canvas)",
+            color: enrich?.en_cours ? "var(--color-progress-text)" : "var(--color-text-muted)",
+            padding: "5px 12px", borderRadius: "var(--radius-pill)", fontSize: 12,
+            fontWeight: 600, whiteSpace: "nowrap",
+          }}>
+            {enrich?.en_cours ? "En cours…" : (enrich?.phase || "Jamais lancée")}
+          </span>
+          <button onClick={lancerEnrich} disabled={!!enrich?.en_cours || busy === "enrichir"}
+            className="sym-tap" style={{
+              padding: "9px 18px", borderRadius: "var(--radius-pill)", border: "none",
+              background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
+              color: "var(--color-text-on-dark)", fontSize: 13, fontWeight: 700,
+              cursor: enrich?.en_cours ? "not-allowed" : "pointer",
+              opacity: enrich?.en_cours || busy === "enrichir" ? 0.6 : 1,
+            }}>
+            {enrich?.en_cours ? "En cours…" : "Tout enrichir"}
+          </button>
+        </div>
+        {enrich && (enrich.messages_extraits || enrich.appels_analyse) ? (
+          <div style={{ fontSize: 12, color: "var(--color-text-body)", marginTop: 10,
+                        paddingTop: 10, borderTop: "1px solid var(--color-border)" }}>
+            {enrich.messages_extraits} message(s) extrait(s) · {enrich.appels_analyse} appel(s)
+            d'analyse · {enrich.connaissances} connaissance(s) · {enrich.procedures} manière(s)
+            de faire · {(enrich.skills || []).length} skill(s)
+            {enrich.boite_courante ? ` · en cours : ${enrich.boite_courante}` : ""}
+            {(enrich.echecs || []).length ? ` · ${enrich.echecs.length} échec(s)` : ""}
+          </div>
+        ) : null}
+      </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {etats.map((e) => {

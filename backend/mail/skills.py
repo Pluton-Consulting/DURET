@@ -140,7 +140,8 @@ async def triage_email_entrant(data: dict, user) -> dict:
 
     masque, carte = await _protege(f"Objet : {objet}\n\n{corps}")
     prompt = (
-        "Analyse ce message reçu par une entreprise du paysage et classe-le.\n"
+        "Analyse ce message reçu par une entreprise de travaux de sols et de "
+        "revêtements (BTP) et classe-le.\n"
         "Réponds UNIQUEMENT par un objet JSON :\n"
         '{"categorie":"devis|sav|administratif|commercial|interne|indesirable|autre",'
         '"priorite":"haute|moyenne|basse",'

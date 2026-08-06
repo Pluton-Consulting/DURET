@@ -130,6 +130,17 @@ async def retrieve(
             top_k=top_k * marge,
         ) or []
 
+        # REPLI LEXICAL. La recherche vectorielle applique un seuil de
+        # similarité : une formulation abstraite confrontée à des documents
+        # concrets passe légitimement dessous et ne rend RIEN, alors que les
+        # documents existent et contiennent les mots demandés. Le repli
+        # pg_trgm n'était jusqu'ici tenté que faute d'embedding — donc jamais
+        # dans ce cas, le plus fréquent. On le tente aussi sur un résultat vide.
+        if not chunks and embedding:
+            chunks = await vectorstore.search_hybrid(
+                query, None, user_role, top_k=top_k * marge) or []
+            if chunks:
+                logger.debug("RAG : repli lexical (%d résultats)", len(chunks))
         # Post-filtre par type de source si demandé (search_hybrid ne le gère pas).
         if source_types:
             allowed = set(source_types)

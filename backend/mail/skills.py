@@ -436,6 +436,14 @@ async def lire_mails(data: dict, user) -> dict:
 SKILLS_NATIFS["lire_mails"] = lire_mails
 
 
+async def connaissances_acquises(data: dict, user) -> dict:
+    from skills.connaissances import connaissances_acquises as _acquis
+    return await _acquis(data, user)
+
+
+SKILLS_NATIFS["connaissances_acquises"] = connaissances_acquises
+
+
 async def lancer_enrichissement(data: dict, user) -> dict:
     from learning.skills import lancer_enrichissement as _lancer
     return await _lancer(data, user)
@@ -471,6 +479,8 @@ EFFETS_NATIFS = {
     "rechercher_documents": "lecture",
     # Lire une boîte ne modifie rien et reste borné par `verifier_acces`.
     "lire_mails": "lecture",
+    # Inventaire de ce qui a été appris : lecture pure, filtrée par rôle.
+    "connaissances_acquises": "lecture",
     # Campagne d'enrichissement : elle n'écrit QUE dans nos propres données
     # (mémoire, profils de style, brouillons de skills) et ne sort rien du
     # système. Le vrai garde-fou n'est pas l'effet mais la PERMISSION, vérifiée

@@ -158,6 +158,13 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "internes. Peut être relancé avec d'autres termes si la première recherche "
         "ne donne rien",
         ["requete"], ["types"]),
+    "connaissances_acquises": (
+        "LISTE ce que l'assistant a APPRIS de l'entreprise (connaissances et manières "
+        "de faire retenues par les campagnes d'enrichissement). À utiliser dès qu'on "
+        "demande « que sais-tu de nous », « qu'as-tu appris », « quelles connaissances "
+        "as-tu ». C'est un INVENTAIRE, pas une recherche : il rend ce qui existe, sans "
+        "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
+        [], ["sujet"]),
     "lire_mails": (
         "LIT les derniers messages d'UNE boîte, en direct. Pour consulter, relever, "
         "faire le point sur le courrier récent. C'est un ÉCHANTILLON de 25 messages "

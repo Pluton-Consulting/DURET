@@ -100,12 +100,26 @@ async def _colonnes(conn, niveaux: list[str], type_source: str) -> dict:
         if len(vals) < MAX_VALEURS_DISTINCTES:
             vals.append({"valeur": l["valeur"], "n": l["n"]})
 
+    # Vocabulaire commun réellement rempli pour ce type : c'est celui-là qu'il
+    # faut privilégier, parce qu'il est le même d'un export à l'autre.
+    from ingestion.schema import champs_de
+    communs = await conn.fetch(
+        "SELECT DISTINCT d.key AS cle FROM document_metadata m, "
+        "       jsonb_each_text(m.champs) AS d "
+        "WHERE m.source_type = $1 AND m.access_level = ANY($2::text[])",
+        type_source, niveaux)
+    connus = champs_de(type_source)
+
     return {
         "source_type": type_source, "enregistrements": total,
+        "champs_communs": [{"nom": l["cle"], "sens": connus.get(l["cle"], "")}
+                           for l in communs],
         "colonnes": [{"nom": c, "valeurs_frequentes": v}
                      for c, v in list(colonnes.items())[:MAX_COLONNES]],
         "note": ("Valeurs les plus fréquentes seulement, pas la liste complète. "
-                 "Rappelle avec `filtres` (ex. {\"ville\": \"Arcachon\"}) pour un compte exact."),
+                 "Filtre de préférence sur `champs_communs` : ils portent le même nom "
+                 "quel que soit le fichier d'origine. Les `colonnes` sont les entêtes "
+                 "brutes du fichier. Rappelle avec `filtres` pour un compte exact."),
     }
 
 
@@ -121,9 +135,18 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
         return await _colonnes(conn, niveaux, type_source)
     charge = json.dumps(critere, ensure_ascii=False)
 
+    # Le filtre porte sur le vocabulaire COMMUN (`champs`) si les clés en font
+    # partie, sinon sur les entêtes d'origine (`data`). C'est ce qui permet
+    # d'interroger « nom » ou « montant_ht » sans savoir comment le logiciel
+    # exportateur les appelait, tout en gardant l'accès aux colonnes brutes.
+    from ingestion.schema import champs_de
+    connus = champs_de(type_source)
+    colonne = "champs" if connus and all(k in connus for k in critere) else "data"
+
     total = await conn.fetchval(
-        "SELECT COUNT(*) FROM document_metadata "
-        "WHERE source_type = $1 AND access_level = ANY($2::text[]) AND data @> $3::jsonb",
+        f"SELECT COUNT(*) FROM document_metadata "
+        f"WHERE source_type = $1 AND access_level = ANY($2::text[]) "
+        f"AND {colonne} @> $3::jsonb",
         type_source, niveaux, charge)
 
     if not total:
@@ -134,9 +157,10 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
                             "les valeurs réellement présentes.")}
 
     lignes = await conn.fetch(
-        "SELECT title, data, source_filename, ligne FROM document_metadata "
-        "WHERE source_type = $1 AND access_level = ANY($2::text[]) AND data @> $3::jsonb "
-        "ORDER BY ligne NULLS LAST LIMIT $4",
+        f"SELECT title, data, champs, source_filename, ligne FROM document_metadata "
+        f"WHERE source_type = $1 AND access_level = ANY($2::text[]) "
+        f"AND {colonne} @> $3::jsonb "
+        f"ORDER BY ligne NULLS LAST LIMIT $4",
         type_source, niveaux, charge, MAX_ENREGISTREMENTS)
 
     return {

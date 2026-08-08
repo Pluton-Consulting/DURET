@@ -211,6 +211,9 @@ class ImportConfirm(BaseModel):
     id_col: Optional[str] = None
     access_level: str = "all"
     anonymize: bool = False
+    # Association colonne -> champ commun, proposée à l'analyse et révisable.
+    # Revalidée côté serveur : ce qui revient du navigateur n'est jamais cru.
+    mapping: Optional[dict] = None
 
 
 @router.post("/analyze")
@@ -289,6 +292,7 @@ async def confirmer_import(body: ImportConfirm, current_user: User = Depends(get
     structure = entree["structure"]
     nom = entree["filename"]
     from ingestion import import_masse
+    from ingestion.schema import valider
 
     if import_masse.etat()["en_cours"]:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -307,7 +311,9 @@ async def confirmer_import(body: ImportConfirm, current_user: User = Depends(get
         structure.get("rows") or [], structure.get("columns") or [],
         texte_unique=structure.get("text") if structure["kind"] != "tabulaire" else None,
         fichier=nom, source_type=body.source_type, id_col=body.id_col,
-        access_level=body.access_level, anonymize=body.anonymize))
+        access_level=body.access_level, anonymize=body.anonymize,
+        mapping=valider(body.source_type, body.mapping or {},
+                        structure.get("columns") or [])))
 
     return {"ok": True, "lance": True, "lignes": structure["documents_estimes"],
             "message": "Import lance. Suivez l'avancement sur cette page."}

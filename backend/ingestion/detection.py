@@ -128,15 +128,29 @@ async def detecter(nom_fichier: str, structure: dict) -> dict:
         if tabulaire and id_col not in colonnes:      # le modèle a pu inventer un nom
             id_col = _colonne_id_probable(colonnes)
 
+        # RESTRUCTURER, une fois le type connu. Second appel, et non une seule
+        # invite plus grosse : associer des colonnes exige de savoir à QUEL
+        # vocabulaire les rattacher, donc le type doit être tranché avant. Un
+        # seul appel devrait deviner les deux à la fois, et une erreur de type
+        # entraînerait des associations fausses.
+        mapping = {}
+        if tabulaire:
+            from ingestion.schema import correspondance
+            mapping = await correspondance(source_type, colonnes, echantillon)
+
         return {
             "source_type": source_type,
             "confiance": data.get("confiance") if data.get("confiance") in ("haute", "moyenne", "faible") else "moyenne",
             "resume": str(data.get("resume") or "")[:300],
             "id_col": id_col if tabulaire else None,
+            "mapping": mapping,
         }
     except Exception as e:  # noqa: BLE001 - la détection ne doit jamais bloquer l'import
         logger.info("Détection LLM indisponible (%s) — repli heuristique", e)
         repli = _heuristique(nom_fichier, colonnes, echantillon)
         if not tabulaire:
             repli["id_col"] = None
+        # Meme forme que la reponse nominale : sans cette cle, l'ecran d'import
+        # lirait `undefined` la ou il attend une association.
+        repli.setdefault("mapping", {})
         return repli

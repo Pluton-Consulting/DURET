@@ -9,7 +9,10 @@ import { useEffect, useRef, useState } from "react"
  * sera enregistré, corrige le type et la colonne identifiante, puis valide.
  */
 
-type Detection = { source_type: string; confiance: string; resume: string; id_col: string | null }
+// `mapping` associe une colonne du fichier a un champ commun du type ; il est
+// revalide cote serveur, donc ce qui transite ici n'engage rien.
+type Detection = { source_type: string; confiance: string; resume: string;
+                   id_col: string | null; mapping?: Record<string, string> }
 type Analyse = {
   token: string
   filename: string
@@ -104,6 +107,7 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
         body: JSON.stringify({
           token: analyse.token, source_type: type,
           id_col: idCol || null, access_level: acces, anonymize: anonymiser,
+          mapping: analyse.detection.mapping || {},
         }),
       })
       const data = await res.json().catch(() => ({}))

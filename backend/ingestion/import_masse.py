@@ -79,9 +79,20 @@ def _valeurs_propres(ligne: dict) -> dict:
     return propre
 
 
+def _normaliser(valeurs: dict, mapping: dict) -> dict:
+    """Même ligne, exprimée dans le vocabulaire commun du type.
+
+    Les colonnes d'origine ne sont pas remplacées : on ajoute une lecture, on
+    n'en retire aucune.
+    """
+    return {champ: valeurs[colonne]
+            for colonne, champ in (mapping or {}).items()
+            if valeurs.get(colonne)}
+
+
 async def _ecrire_metadonnees(source_id: str, source_type: str, titre: str,
                               donnees: dict, acces: str, fichier: str,
-                              ligne: int) -> None:
+                              ligne: int, champs: dict) -> None:
     """Range les colonnes d'origine à côté du texte vectorisé.
 
     Ne lève jamais : une métadonnée manquante prive d'un filtre exact, elle ne
@@ -94,14 +105,17 @@ async def _ecrire_metadonnees(source_id: str, source_type: str, titre: str,
         async with get_db() as conn:
             await conn.execute(
                 "INSERT INTO document_metadata "
-                "(source_id, source_type, title, data, access_level, source_filename, ligne) "
-                "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) "
+                "(source_id, source_type, title, data, champs, access_level, "
+                " source_filename, ligne) "
+                "VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8) "
                 "ON CONFLICT (source_id, source_type) DO UPDATE SET "
                 "  title = EXCLUDED.title, data = EXCLUDED.data, "
+                "  champs = EXCLUDED.champs, "
                 "  access_level = EXCLUDED.access_level, "
                 "  source_filename = EXCLUDED.source_filename, "
                 "  ligne = EXCLUDED.ligne, updated_at = NOW()",
                 source_id, source_type, titre[:500], json.dumps(donnees, ensure_ascii=False),
+                json.dumps(champs or {}, ensure_ascii=False),
                 acces, fichier[:500], ligne)
     except Exception as e:  # noqa: BLE001
         logger.warning("Métadonnées non écrites pour %s : %s", source_id, e)
@@ -109,7 +123,8 @@ async def _ecrire_metadonnees(source_id: str, source_type: str, titre: str,
 
 async def executer(rows: list[dict], colonnes: list[str], *, texte_unique: Optional[str],
                    fichier: str, source_type: str, id_col: Optional[str],
-                   access_level: str, anonymize: bool) -> dict:
+                   access_level: str, anonymize: bool,
+                   mapping: Optional[dict] = None) -> dict:
     """Ingère tout le fichier. Une ligne fautive n'annule pas les autres."""
     from ingestion.parsers import ligne_en_texte
     from ingestion.pipeline import ingest_document
@@ -164,7 +179,8 @@ async def executer(rows: list[dict], colonnes: list[str], *, texte_unique: Optio
                 # comptabilisé dans les totaux mais introuvable à la lecture.
                 await _ecrire_metadonnees(source_id, source_type,
                                           cle or f"{fichier} ligne {rang}", valeurs,
-                                          access_level, fichier, rang)
+                                          access_level, fichier, rang,
+                                          _normaliser(valeurs, mapping or {}))
             await asyncio.sleep(PAUSE_LOT_S)
 
     except _Fini:

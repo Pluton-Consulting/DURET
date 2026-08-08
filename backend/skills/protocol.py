@@ -165,6 +165,14 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "as-tu ». C'est un INVENTAIRE, pas une recherche : il rend ce qui existe, sans "
         "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
         [], ["sujet"]),
+    "interroger_donnees": (
+        "COMPTE et FILTRE de facon EXACTE dans les donnees importees (fichiers CSV/Excel "
+        "d'un logiciel metier). OBLIGATOIRE des qu'on demande un nombre, un total, une "
+        "liste par critere : la recherche semantique approxime et ne sait pas compter. "
+        "Sans argument : les jeux de donnees disponibles. Avec source_type seul : ses "
+        "colonnes et leurs valeurs reelles. Avec filtres (objet {colonne: valeur}) : le "
+        "compte exact. Verifie TOUJOURS les valeurs reelles avant de filtrer",
+        [], ["source_type", "filtres"]),
     "lire_mails": (
         "LIT les derniers messages d'UNE boîte, en direct. Pour consulter, relever, "
         "faire le point sur le courrier récent. C'est un ÉCHANTILLON de 25 messages "

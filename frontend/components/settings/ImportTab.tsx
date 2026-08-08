@@ -1,5 +1,5 @@
 "use client"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 /**
  * Import de données dans la mémoire d'entreprise.
@@ -37,17 +37,24 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
   const [anonymiser, setAnonymiser] = useState(false)
   const [enCours, setEnCours] = useState<"" | "analyse" | "import">("")
   const [erreur, setErreur] = useState("")
-  const [resultat, setResultat] = useState<{ documents: number; chunks: number; echecs: number } | null>(null)
+  // Suivi de l'import : il tourne desormais en tache de fond cote serveur, donc
+  // la reponse au POST ne contient plus de bilan — elle accuse le lancement.
+  // Le bilan se lit sur /import/etat, tant que la campagne n'est pas finie.
+  const [etat, setEtat] = useState<{
+    en_cours: boolean; phase: string; fichier: string | null
+    total: number; traites: number; documents: number; chunks: number
+    echecs: number; erreur: string | null
+  } | null>(null)
   const [survol, setSurvol] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const reinitialiser = () => {
-    setAnalyse(null); setErreur(""); setResultat(null)
+    setAnalyse(null); setErreur(""); setEtat(null)
     if (inputRef.current) inputRef.current.value = ""
   }
 
   const analyser = async (fichier: File) => {
-    setErreur(""); setResultat(null); setEnCours("analyse")
+    setErreur(""); setEtat(null); setEnCours("analyse")
     try {
       const form = new FormData()
       form.append("file", fichier)
@@ -68,6 +75,25 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
     }
   }
 
+  const chargerEtat = async () => {
+    try {
+      const r = await fetch(`${apiUrl}/api/ingestion/import/etat`, {
+        headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      if (r.ok) setEtat(await r.json())
+    } catch { /* un suivi indisponible ne doit pas masquer l'ecran */ }
+  }
+
+  // On interroge tant que l'import tourne, et on cesse des qu'il est fini :
+  // une page qui continue d'appeler apres coup consomme pour rien.
+  useEffect(() => {
+    if (!etat?.en_cours) return
+    const t = setInterval(chargerEtat, 2000)
+    return () => clearInterval(t)
+  }, [etat?.en_cours])
+
+  useEffect(() => { chargerEtat() }, [])
+
   const confirmer = async () => {
     if (!analyse) return
     setErreur(""); setEnCours("import")
@@ -82,7 +108,7 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.detail || `Erreur ${res.status}`)
-      setResultat(data)
+      await chargerEtat()
       setAnalyse(null)
       if (inputRef.current) inputRef.current.value = ""
     } catch (e: any) {
@@ -138,17 +164,22 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
         </div>
       )}
 
-      {resultat && (
+      {etat && etat.phase !== "inactif" && (
         <div style={{ ...carte, borderColor: "var(--color-primary)", padding: 20 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-primary)", marginBottom: 6 }}>
-            Import terminé
+            {etat.en_cours ? "Import en cours" : etat.erreur ? "Import interrompu" : "Import terminé"}
           </div>
           <div style={{ fontSize: 14, color: "var(--color-text-body)" }}>
-            {resultat.documents} document{resultat.documents > 1 ? "s" : ""} enregistré{resultat.documents > 1 ? "s" : ""}
-            {" "}({resultat.chunks} extraits indexés)
-            {resultat.echecs > 0 && <span style={{ color: "var(--color-error)" }}> — {resultat.echecs} en échec</span>}
+            {etat.en_cours
+              ? `${etat.traites} / ${etat.total} ligne${etat.total > 1 ? "s" : ""} traitée${etat.total > 1 ? "s" : ""}…`
+              : `${etat.documents} document${etat.documents > 1 ? "s" : ""} enregistré${etat.documents > 1 ? "s" : ""}`}
+            {!etat.en_cours && ` (${etat.chunks} extraits indexés)`}
+            {etat.echecs > 0 && <span style={{ color: "var(--color-error)" }}> — {etat.echecs} en échec</span>}
             .
           </div>
+          {etat.erreur && (
+            <div style={{ fontSize: 13, color: "var(--color-error)", marginTop: 6 }}>{etat.erreur}</div>
+          )}
           <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 8 }}>
             La vectorisation se termine en tâche de fond : les données seront interrogeables dans le chat d'ici quelques instants.
           </div>

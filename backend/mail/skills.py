@@ -445,6 +445,14 @@ async def connaissances_acquises(data: dict, user) -> dict:
 SKILLS_NATIFS["connaissances_acquises"] = connaissances_acquises
 
 
+async def interroger_donnees(data: dict, user) -> dict:
+    from skills.donnees import interroger_donnees as _donnees
+    return await _donnees(data, user)
+
+
+SKILLS_NATIFS["interroger_donnees"] = interroger_donnees
+
+
 async def lancer_enrichissement(data: dict, user) -> dict:
     from learning.skills import lancer_enrichissement as _lancer
     return await _lancer(data, user)
@@ -482,6 +490,8 @@ EFFETS_NATIFS = {
     "lire_mails": "lecture",
     # Inventaire de ce qui a été appris : lecture pure, filtrée par rôle.
     "connaissances_acquises": "lecture",
+    # Compte et filtre sur les donnees importees : lecture, filtree par role.
+    "interroger_donnees": "lecture",
     # Campagne d'enrichissement : elle n'écrit QUE dans nos propres données
     # (mémoire, profils de style, brouillons de skills) et ne sort rien du
     # système. Le vrai garde-fou n'est pas l'effet mais la PERMISSION, vérifiée

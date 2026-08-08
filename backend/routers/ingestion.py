@@ -288,44 +288,38 @@ async def confirmer_import(body: ImportConfirm, current_user: User = Depends(get
 
     structure = entree["structure"]
     nom = entree["filename"]
-    from ingestion.parsers import ligne_en_texte
+    from ingestion import import_masse
 
-    documents: list[tuple[str, str]] = []          # (source_id, texte)
-    if structure["kind"] == "tabulaire":
-        id_col = body.id_col if body.id_col in (structure["columns"] or []) else None
-        for i, ligne in enumerate(structure["rows"], 1):
-            texte = ligne_en_texte(ligne)
-            if not texte:
-                continue
-            cle = (ligne.get(id_col) or "").strip() if id_col else ""
-            documents.append((f"{body.source_type}:{cle or f'{nom}#{i}'}", texte))
-    else:
-        documents.append((f"{body.source_type}:{nom}", structure["text"]))
-
-    if not documents:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun document exploitable")
-
-    total_chunks = 0
-    echecs = 0
-    for source_id, texte in documents:
-        try:
-            total_chunks += await ingest_document(
-                text=texte,
-                source_type=body.source_type,
-                source_id=source_id,
-                source_filename=nom,
-                access_level=body.access_level,
-                anonymize=body.anonymize,
-            )
-        except Exception as e:  # noqa: BLE001 - une ligne fautive ne doit pas tout annuler
-            echecs += 1
-            logger.warning("Ingestion de %s échouée : %s", source_id, e)
+    if import_masse.etat()["en_cours"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Un import est deja en cours. Attendez qu'il se termine.")
 
     _IMPORTS.pop(body.token, None)
     await log_action(action="import_fichier", user_id=str(current_user.id),
                      metadata={"fichier": nom, "source_type": body.source_type,
-                               "documents": len(documents), "chunks": total_chunks, "echecs": echecs})
-    return {"ok": True, "documents": len(documents) - echecs, "chunks": total_chunks, "echecs": echecs}
+                               "lignes": structure["documents_estimes"]})
+
+    # EN TACHE DE FOND. La boucle tournait dans la requete : nginx coupe `/api/`
+    # a 300 s, donc au-dela de quelques milliers de lignes l'import etait tue en
+    # cours de route, sans reprise ni marqueur. On rend la main tout de suite et
+    # l'avancement se suit sur GET /import/etat.
+    asyncio.create_task(import_masse.executer(
+        structure.get("rows") or [], structure.get("columns") or [],
+        texte_unique=structure.get("text") if structure["kind"] != "tabulaire" else None,
+        fichier=nom, source_type=body.source_type, id_col=body.id_col,
+        access_level=body.access_level, anonymize=body.anonymize))
+
+    return {"ok": True, "lance": True, "lignes": structure["documents_estimes"],
+            "message": "Import lance. Suivez l'avancement sur cette page."}
+
+
+@router.get("/import/etat")
+async def import_etat(current_user: User = Depends(get_current_user)):
+    """Avancement de l'import en cours (ou du dernier termine)."""
+    if not has_permission(current_user.role, "import_documents"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusee")
+    from ingestion import import_masse
+    return import_masse.etat()
 
 
 @router.get("/status")

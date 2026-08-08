@@ -18,12 +18,21 @@ import re
 logger = logging.getLogger("duret.ingestion.detection")
 
 # Types de source connus du RAG (cf. ingestion/pipeline.py et le prompt d'agent1).
+#
+# Un type par FICHIER : c'est LUI qui scinde réellement la mémoire. Deux natures
+# rangées sous le même type ne se séparent plus jamais ensuite, ni au filtrage,
+# ni au comptage — et il faudrait tout réimporter pour les démêler. On distingue
+# donc ce qui répond à des questions différentes : un prospect ne se compte pas
+# avec un client signé, un bon de commande ne s'additionne pas avec un catalogue
+# fournisseur.
 TYPES = {
     "chantier": "chantiers, suivi de travaux, avancement",
     "devis": "devis, propositions commerciales, chiffrages",
-    "facture": "factures, situations de travaux, règlements",
-    "client": "clients, prospects, contacts",
-    "fournisseur": "fournisseurs, commandes, catalogues, tarifs",
+    "commande": "bons de commande, achats, approvisionnements, commandes fournisseurs",
+    "facture": "factures, situations de travaux, règlements, impayés",
+    "client": "fiches et listes de CLIENTS (affaires déjà signées)",
+    "prospect": "suivi commercial : PROSPECTS, opportunités, relances, pipeline",
+    "fournisseur": "fournisseurs, sous-traitants, catalogues, tarifs",
     "planning": "plannings, calendriers, temps passé",
     "document": "document libre (compte rendu, CCTP, courrier, note)",
 }
@@ -84,11 +93,15 @@ async def detecter(nom_fichier: str, structure: dict) -> dict:
 
     liste = "\n".join(f"- {t} : {d}" for t, d in TYPES.items())
     prompt = (
-        f"Tu analyses un fichier importé dans la mémoire d'une entreprise du bâtiment.\n"
+        f"Tu analyses un fichier importé dans la mémoire d'une entreprise de travaux "
+        f"de sols et de revêtements (BTP).\n"
         f"Nom du fichier : {nom_fichier}\n"
         + (f"Colonnes : {', '.join(colonnes)}\n" if colonnes else "")
         + f"Extrait (anonymisé) :\n{echantillon[:1200]}\n\n"
         f"Types possibles :\n{liste}\n\n"
+        "Choisis le type le PLUS PRÉCIS qui convienne. `document` est un dernier "
+        "recours, pas un choix par défaut : un fichier de prospects n'est pas un "
+        "fichier clients, un bon de commande n'est pas un catalogue fournisseur.\n"
         "Réponds UNIQUEMENT par un objet JSON, sans texte autour :\n"
         '{"source_type":"<un type de la liste>",'
         '"confiance":"haute|moyenne|faible",'

@@ -102,13 +102,15 @@ async def _colonnes(conn, niveaux: list[str], type_source: str) -> dict:
 
     # Vocabulaire commun réellement rempli pour ce type : c'est celui-là qu'il
     # faut privilégier, parce qu'il est le même d'un export à l'autre.
-    from ingestion.schema import champs_de
     communs = await conn.fetch(
         "SELECT DISTINCT d.key AS cle FROM document_metadata m, "
         "       jsonb_each_text(m.champs) AS d "
         "WHERE m.source_type = $1 AND m.access_level = ANY($2::text[])",
         type_source, niveaux)
-    connus = champs_de(type_source)
+    # Le sens n'est connu que pour les amorces ; un champ né d'un import au
+    # sujet imprévu n'en a pas, et c'est normal — son nom parle de lui-même.
+    from ingestion.schema import amorces_de
+    connus = amorces_de(type_source)
 
     return {
         "source_type": type_source, "enregistrements": total,
@@ -139,9 +141,17 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
     # partie, sinon sur les entêtes d'origine (`data`). C'est ce qui permet
     # d'interroger « nom » ou « montant_ht » sans savoir comment le logiciel
     # exportateur les appelait, tout en gardant l'accès aux colonnes brutes.
-    from ingestion.schema import champs_de
-    connus = champs_de(type_source)
-    colonne = "champs" if connus and all(k in connus for k in critere) else "data"
+    #
+    # On interroge les champs RÉELLEMENT PRÉSENTS, et non une liste écrite à
+    # l'avance : un champ né d'un import au sujet imprévu (`surface_m2`…) est
+    # tout aussi légitime, et le confronter à une liste figée le renverrait vers
+    # `data` où il n'existe pas — un zéro faux.
+    presents = {l["cle"] for l in await conn.fetch(
+        "SELECT DISTINCT d.key AS cle FROM document_metadata m, "
+        "       jsonb_each_text(m.champs) AS d "
+        "WHERE m.source_type = $1 AND m.access_level = ANY($2::text[])",
+        type_source, niveaux)}
+    colonne = "champs" if presents and all(k in presents for k in critere) else "data"
 
     total = await conn.fetchval(
         f"SELECT COUNT(*) FROM document_metadata "

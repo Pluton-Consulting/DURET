@@ -165,6 +165,13 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "as-tu ». C'est un INVENTAIRE, pas une recherche : il rend ce qui existe, sans "
         "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
         [], ["sujet"]),
+    "mes_droits": (
+        "Explique les DROITS D'ACCES : ce que la personne connectee peut consulter, "
+        "ce qui lui est ferme, quelles boites mail elle peut lire, et comment le "
+        "cloisonnement fonctionne pour les AUTRES roles. A utiliser des qu'on demande "
+        "« quels sont mes droits », « qui a acces a quoi », « un terrain peut-il voir "
+        "les marges ». Les droits sont LUS dans la configuration reelle",
+        [], []),
     "interroger_donnees": (
         "COMPTE et FILTRE de facon EXACTE dans les donnees importees (fichiers CSV/Excel "
         "d'un logiciel metier). OBLIGATOIRE des qu'on demande un nombre, un total, une "

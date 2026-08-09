@@ -147,6 +147,114 @@ def lire_csv(brut: bytes) -> tuple[list[str], list[dict]]:
     return entetes, lignes
 
 
+def format_tabulaire(brut: bytes) -> str:
+    """Format RÉEL d'un fichier tabulaire, d'après son contenu.
+
+    L'extension ment souvent. Les logiciels de gestion exportent couramment un
+    tableau HTML ou un CSV sous un nom en `.xls`, et un `.xls` authentique n'est
+    pas du tout un `.xlsx` : le premier est un conteneur OLE2, le second une
+    archive zip. Se fier au nom faisait passer tout cela à openpyxl, qui
+    répondait « File is not a zip file » — exact, mais incompréhensible pour qui
+    vient d'exporter depuis son logiciel métier.
+    """
+    tete = brut[:8]
+    if tete[:4] == b"PK\x03\x04":
+        return "xlsx"                      # archive zip : OOXML
+    if tete[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "xls"                       # conteneur OLE2 : Excel 97-2003
+    debut = brut[:4096].lstrip()[:512].lower()
+    if debut.startswith(b"<") and (b"<table" in brut[:65536].lower()
+                                   or b"<html" in debut or b"<?xml" in debut):
+        return "html"
+    return "csv"                           # texte délimité, quel que soit le nom
+
+
+def lire_html(brut: bytes) -> tuple[list[str], list[dict]]:
+    """Lit le premier tableau d'un export HTML déguisé en tableur.
+
+    Écrit sur la bibliothèque standard : `pandas.read_html` exigerait lxml,
+    bs4 ou html5lib, absents ici. Un tableau d'export est plat — pas de
+    tableaux imbriqués, pas de mise en forme — donc un analyseur simple suffit
+    et évite d'ajouter trois dépendances pour un cas de compatibilité.
+    """
+    from html.parser import HTMLParser
+
+    class _Tableau(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.lignes: list[list[str]] = []
+            self._ligne: list[str] | None = None
+            self._cellule: list[str] | None = None
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "tr":
+                self._ligne = []
+            elif tag in ("td", "th") and self._ligne is not None:
+                self._cellule = []
+            elif tag == "br" and self._cellule is not None:
+                self._cellule.append(" ")
+
+        def handle_endtag(self, tag):
+            if tag in ("td", "th") and self._cellule is not None:
+                self._ligne.append(" ".join("".join(self._cellule).split()))
+                self._cellule = None
+            elif tag == "tr" and self._ligne is not None:
+                if any(c for c in self._ligne):
+                    self.lignes.append(self._ligne[:MAX_COLONNES])
+                self._ligne = None
+
+        def handle_data(self, data):
+            if self._cellule is not None:
+                self._cellule.append(data)
+
+    analyseur = _Tableau()
+    # Pas de `unescape` avant l'analyse : `convert_charrefs` décode déjà les
+    # entités DANS le texte des cellules. Décoder en amont transformerait un
+    # « &lt;table&gt; » écrit dans une cellule en vraie balise, et disloquerait
+    # la structure du tableau.
+    analyseur.feed(_decoder(brut))
+    if not analyseur.lignes:
+        raise FichierNonSupporte(
+            "Ce fichier ressemble à une page HTML mais ne contient aucun tableau. "
+            "Réexportez-le en CSV ou en Excel (.xlsx).")
+
+    entetes = [c.strip() for c in analyseur.lignes[0]]
+    lignes = []
+    for ligne in analyseur.lignes[1:MAX_LIGNES + 1]:
+        d = {e: v.strip() for e, v in zip(entetes, ligne) if e and v.strip()}
+        if d:
+            lignes.append(d)
+    return [e for e in entetes if e], lignes
+
+
+def lire_xls(brut: bytes) -> tuple[list[str], list[dict]]:
+    """Excel 97-2003 (.xls authentique). openpyxl ne sait pas le lire."""
+    try:
+        import xlrd
+    except ImportError as e:
+        raise FichierNonSupporte(
+            "Ce fichier est un Excel ancien (.xls, format 97-2003) que le serveur "
+            "ne sait pas lire. Ouvrez-le puis « Enregistrer sous » en .xlsx ou en "
+            "CSV, et réimportez-le.") from e
+
+    classeur = xlrd.open_workbook(file_contents=brut)
+    feuille = classeur.sheet_by_index(0)
+    if not feuille.nrows:
+        raise FichierNonSupporte("Fichier Excel vide (aucune ligne).")
+
+    def _texte(c) -> str:
+        return "" if c is None else " ".join(str(c).split())
+
+    entetes = [_texte(v) for v in feuille.row_values(0)][:MAX_COLONNES]
+    lignes = []
+    for i in range(1, min(feuille.nrows, MAX_LIGNES + 1)):
+        d = {e: _texte(v) for e, v in zip(entetes, feuille.row_values(i))
+             if e and _texte(v)}
+        if d:
+            lignes.append(d)
+    return [e for e in entetes if e], lignes
+
+
 def lire_excel(brut: bytes) -> tuple[list[str], list[dict]]:
     try:
         from openpyxl import load_workbook
@@ -274,9 +382,27 @@ def analyser(nom: str, brut: bytes) -> dict:
                 "text": texte, "documents_estimes": 1}
 
     if fam == "tabulaire":
-        entetes, lignes = lire_csv(brut) if n.endswith(".csv") else lire_excel(brut)
+        # Le CONTENU décide, pas l'extension : un export nommé `.xls` est très
+        # souvent un tableau HTML ou un CSV, et un vrai `.xls` n'est pas un
+        # `.xlsx`. Choisir d'après le nom envoyait tout à openpyxl, qui refusait
+        # avec « File is not a zip file ».
+        reel = format_tabulaire(brut)
+        lecteurs = {"xlsx": lire_excel, "xls": lire_xls,
+                    "html": lire_html, "csv": lire_csv}
+        try:
+            entetes, lignes = lecteurs[reel](brut)
+        except FichierNonSupporte:
+            raise
+        except Exception as e:
+            raise FichierNonSupporte(
+                f"Lecture impossible : le fichier « {nom} » a été reconnu comme "
+                f"{reel.upper()} d'après son contenu, mais n'a pas pu être lu ({e}). "
+                "Réexportez-le en CSV ou en Excel (.xlsx).") from e
         if not lignes:
-            raise FichierNonSupporte("Fichier tabulaire vide ou illisible (aucune ligne de données).")
+            raise FichierNonSupporte(
+                f"Aucune ligne de données lisible dans « {nom} » (reconnu comme "
+                f"{reel.upper()}). Vérifiez que la première ligne contient bien "
+                "les en-têtes de colonnes.")
         return {"kind": "tabulaire", "columns": entetes, "rows": lignes,
                 "text": None, "documents_estimes": len(lignes)}
 

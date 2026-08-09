@@ -30,6 +30,7 @@ google-auth-oauthlib>=1.2.0         # flux OAuth (consentement) Google Drive
 msal>=1.31.0                        # Outlook / Microsoft 365 (Graph, app-only)
 pandas>=2.2.0                       # import exports CSV/Excel (Extrabat, Deytime)
 openpyxl>=3.1.0                     # lecture des .xlsx
+xlrd>=2.0.1                         # .xls 97-2003 : openpyxl ne lit QUE le zip OOXML
 pdfplumber>=0.11.0                  # extraction de texte des PDF (Drive, webhook)
 tzdata>=2024.1                      # base de fuseaux horaires (planification des taches)
 pytesseract>=0.3.13                 # OCR des PDF scannés / photos de documents

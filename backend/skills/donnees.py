@@ -47,12 +47,67 @@ async def interroger_donnees(data: dict, user) -> dict:
         async with get_db() as conn:
             if not type_source:
                 return await _catalogue(conn, niveaux)
+
+            # Un jeu de données INEXISTANT ne doit pas répondre « zéro ». Observé
+            # en production : « fournisseurs » demandé au pluriel alors que le
+            # type est « fournisseur », zéro rendu, et l'assistant en a déduit
+            # que les données n'étaient pas importées — juste après en avoir
+            # listé quatre-vingt-dix. Un zéro sur un nom qui n'existe pas est
+            # indiscernable d'un zéro sur un jeu réellement vide.
+            reel, existants = await _resoudre_type(conn, niveaux, type_source)
+            if reel is None:
+                return {
+                    "source_type_demande": type_source, "nombre": 0,
+                    "jeux_de_donnees": existants,
+                    "message": (f"Il n'existe aucun jeu de données nommé « {type_source} ». "
+                                f"Ce n'est PAS un jeu vide : ce nom n'existe pas. "
+                                f"Disponibles : {', '.join(existants) or 'aucun'}. "
+                                "Reformule avec l'un de ces noms."),
+                }
+
             if not filtres:
-                return await _colonnes(conn, niveaux, type_source)
-            return await _filtrer(conn, niveaux, type_source, filtres)
+                resultat = await _colonnes(conn, niveaux, reel)
+            else:
+                resultat = await _filtrer(conn, niveaux, reel, filtres)
+            if reel != type_source:
+                resultat["source_type_demande"] = type_source
+                resultat["note_nom"] = (f"« {type_source} » a été compris comme « {reel} », "
+                                        "le nom réel du jeu de données.")
+            return resultat
     except Exception as e:  # noqa: BLE001 - une lecture ratée n'est pas une panne du chat
         logger.warning("Interrogation des données impossible : %s", e)
         return {"message": "Les données importées sont momentanément indisponibles."}
+
+
+def _cle_comparaison(nom: str) -> str:
+    """Forme comparable d'un nom de jeu de données.
+
+    Sans accents, en minuscules, et sans le « s » final : le modèle écrit
+    naturellement « fournisseurs » ou « Devis » là où le type est « fournisseur ».
+    Exiger le nom exact ferait dépendre une réponse chiffrée d'un pluriel.
+    """
+    import unicodedata
+    plat = "".join(c for c in unicodedata.normalize("NFD", (nom or "").strip().lower())
+                   if unicodedata.category(c) != "Mn")
+    return plat[:-1] if len(plat) > 3 and plat.endswith("s") else plat
+
+
+async def _resoudre_type(conn, niveaux: list[str], demande: str) -> tuple[str | None, list[str]]:
+    """Nom RÉEL du jeu de données visé, ou None s'il n'existe pas.
+
+    Rend aussi la liste de ce qui existe : c'est elle qui permet de dire « ce
+    nom n'existe pas, voici les vrais » plutôt que de laisser croire à un vide.
+    """
+    existants = [l["source_type"] for l in await conn.fetch(
+        "SELECT DISTINCT source_type FROM document_metadata "
+        "WHERE access_level = ANY($1::text[]) ORDER BY source_type", niveaux)]
+    if demande in existants:
+        return demande, existants
+    cible = _cle_comparaison(demande)
+    proches = [t for t in existants if _cle_comparaison(t) == cible]
+    # Une seule correspondance : on la retient. Plusieurs : on ne devine pas,
+    # choisir au hasard donnerait un chiffre juste pour le mauvais jeu.
+    return (proches[0] if len(proches) == 1 else None), existants
 
 
 async def _catalogue(conn, niveaux: list[str]) -> dict:
@@ -84,8 +139,14 @@ async def _colonnes(conn, niveaux: list[str], type_source: str) -> dict:
         "WHERE source_type = $1 AND access_level = ANY($2::text[])",
         type_source, niveaux)
     if not total:
+        # Le jeu EXISTE (le nom a été résolu) mais rien n'est visible à ce
+        # profil. Le dire ainsi, et pas « il n'y a pas de données » : la
+        # nuance est tout l'écart entre un problème de droits et une absence.
         return {"source_type": type_source, "enregistrements": 0,
-                "message": f"Aucun enregistrement « {type_source} » visible à ce profil."}
+                "message": (f"Le jeu de données « {type_source} » existe, mais aucun "
+                            "de ses enregistrements n'est visible à ce profil. "
+                            "C'est une question de droits d'accès, pas une absence "
+                            "de données : ne conclus pas qu'il n'y en a pas.")}
 
     lignes = await conn.fetch(
         "SELECT cle, valeur, COUNT(*) AS n FROM ("

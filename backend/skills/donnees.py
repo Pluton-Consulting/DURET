@@ -182,7 +182,8 @@ async def _colonnes(conn, niveaux: list[str], type_source: str) -> dict:
         "note": ("Valeurs les plus fréquentes seulement, pas la liste complète. "
                  "Filtre de préférence sur `champs_communs` : ils portent le même nom "
                  "quel que soit le fichier d'origine. Les `colonnes` sont les entêtes "
-                 "brutes du fichier. Rappelle avec `filtres` pour un compte exact."),
+                 "brutes du fichier. Rappelle avec `filtres` pour un compte exact. "
+                 "Réponds toujours par une PHRASE, jamais par un nombre seul."),
     }
 
 
@@ -240,5 +241,7 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
                              "fichier": l["source_filename"], "ligne": l["ligne"]}
                             for l in lignes],
         "note": (f"{total} enregistrement(s) au total ; {min(total, MAX_ENREGISTREMENTS)} "
-                 f"montré(s). Le nombre est EXACT, cite-le tel quel."),
+                 f"montré(s). Le nombre est EXACT, cite-le tel quel. Réponds par une "
+                 f"PHRASE qui dit ce qui est compté, jamais par le nombre seul : un "
+                 f"chiffre nu se lit comme une panne, même quand il est juste."),
     }

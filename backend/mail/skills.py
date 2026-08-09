@@ -159,8 +159,14 @@ async def triage_email_entrant(data: dict, user) -> dict:
 
 async def rediger_email(data: dict, user) -> dict:
     """Rédige un BROUILLON, dans le style de l'expéditeur, pour un type donné."""
-    # `envoi=True` : rédiger AU NOM d'une boîte exige le droit d'écriture dessus.
-    boite = await verifier_acces(user, data.get("mailbox"), envoi=True)
+    # Sans boîte précisée, on prend celle de la personne — même règle qu'à la
+    # lecture. Auparavant l'appel echouait et AUCUN brouillon n'etait produit :
+    # l'assistant reclamait l'adresse au lieu de rediger, alors que le cahier
+    # des charges demande un brouillon troue de [A COMPLETER]. Le controle de
+    # droits reste entier : `envoi=True` exige toujours l'ecriture sur la boite
+    # finalement retenue.
+    cible = await _boite_a_lire(data, user)
+    boite = await verifier_acces(user, cible, envoi=True)
 
     type_mail = (data.get("type_mail") or "reponse").strip()
     if type_mail not in TYPES_MAIL:
@@ -328,12 +334,58 @@ SKILLS_NATIFS["rechercher_documents"] = rechercher_documents
 _ADRESSE_RE = re.compile(r"^[^@\s<>\[\]]+@[^@\s<>\[\]]+\.[a-z]{2,}$", re.I)
 
 
+async def boites_visibles(user) -> list[str]:
+    """Boîtes qu'on a le droit de NOMMER à cette personne.
+
+    Relevé en recette : en répondant sur les mails, l'assistant énumérait toutes
+    les adresses du domaine. Aucune donnée n'était exposée — la lecture reste
+    contrôlée — mais la LISTE partait à l'écran. Chez un profil terrain, cela
+    revient à publier l'annuaire des boîtes de l'entreprise, ce que le
+    cloisonnement du cahier des charges exclut.
+
+    On filtre donc ce qui est MONTRÉ, en plus de ce qui est lu.
+    """
+    connues = await boites_connues()
+    try:
+        from mail.authorization import boites_par_id
+        autorisees = await boites_par_id(str(getattr(user, "id", "") or ""))
+    except Exception as e:  # noqa: BLE001 - dans le doute, ne rien nommer
+        logger.info("Boîtes autorisées illisibles : %s", e)
+        return []
+    if autorisees == ["*"]:
+        return connues
+    permis = {normaliser(b) for b in autorisees}
+    return [b for b in connues if b in permis]
+
+
+def resoudre_boite(demandee: str, visibles: list[str]) -> Optional[str]:
+    """« contact » → « contact@symbiose-paysage.fr », si c'est sans ambiguïté.
+
+    Personne n'écrit une adresse entière dans une phrase. Refuser un nom partiel
+    que le système sait pourtant résoudre est la même erreur que refuser un
+    pluriel sur un jeu de données : on fait dépendre la réponse d'une forme
+    d'écriture plutôt que d'une intention.
+
+    Une seule correspondance est retenue. Deux boîtes commençant pareil
+    (`contact@` et `contacts@`) laissent la question ouverte : deviner
+    donnerait la bonne réponse pour la mauvaise boîte.
+    """
+    cible = (demandee or "").strip().lower()
+    if not cible:
+        return None
+    exact = [b for b in visibles if b.split("@")[0].lower() == cible]
+    if len(exact) == 1:
+        return exact[0]
+    debut = [b for b in visibles if b.lower().startswith(cible)]
+    return debut[0] if len(debut) == 1 else None
+
+
 async def boites_connues() -> list[str]:
     """Boîtes que le système sait nommer : configurées, ou déjà en mémoire.
 
-    Sert à AIDER, pas à autoriser : la liste est ensuite passée au filtre de
-    droits comme n'importe quelle adresse. Un utilisateur ne verra donc que
-    celles auxquelles il a droit, même si la liste en cite d'autres.
+    Vue NON filtrée, réservée aux usages internes (résolution, diagnostic).
+    Pour tout ce qui peut atteindre un utilisateur, passer par
+    `boites_visibles`, qui applique le cloisonnement.
     """
     trouvees: list[str] = []
     for source in (getattr(settings, "ms_mailbox", None),
@@ -363,12 +415,19 @@ async def _boite_a_lire(data: dict, user) -> str:
     demandee = normaliser(data.get("mailbox"))
 
     if demandee and not _ADRESSE_RE.match(demandee):
-        connues = await boites_connues()
+        # Un nom partiel se résout avant de refuser : « contact » désigne sans
+        # ambiguïté contact@<domaine> quand c'est la seule qui commence ainsi.
+        visibles = await boites_visibles(user)
+        resolue = resoudre_boite(demandee, visibles)
+        if resolue:
+            logger.info("Boîte « %s » résolue en %s", demandee, resolue)
+            return resolue
         raise MailSkillError(
-            f"« {demandee} » n'est pas une adresse mail. N'invente jamais ce "
-            "paramètre : soit tu donnes une adresse réelle, soit tu l'omets. "
-            + (f"Boîtes connues : {', '.join(connues)}." if connues else
-               "Aucune boîte n'est configurée sur cette instance."))
+            f"« {demandee} » n'est pas une adresse mail et ne correspond à "
+            "aucune boîte accessible. N'invente jamais ce paramètre : soit tu "
+            "donnes une adresse réelle, soit tu l'omets. "
+            + (f"Boîtes accessibles : {', '.join(visibles)}." if visibles else
+               "Aucune boîte ne vous est accessible."))
     if demandee:
         return demandee
 
@@ -384,9 +443,9 @@ async def _boite_a_lire(data: dict, user) -> str:
     # donc pas de boîte propre à lire : on prend la boîte de l'entreprise si
     # elle est connue, plutôt que d'échouer sur une adresse qui n'existe pas
     # dans le tenant.
-    connues = await boites_connues()
-    if connues:
-        return connues[0]
+    visibles = await boites_visibles(user)
+    if visibles:
+        return visibles[0]
     raise MailSkillError(
         "Aucune boîte à lire : votre compte "
         f"({propre or 'sans adresse'}) n'appartient pas au domaine de messagerie"
@@ -424,11 +483,11 @@ async def lire_mails(data: dict, user) -> dict:
         # Un 404 du fournisseur ne veut pas dire « erreur » pour l'utilisateur :
         # il veut dire « cette boîte n'existe pas là où je cherche ».
         if "404" in detail:
-            connues = await boites_connues()
+            visibles = await boites_visibles(user)
             raise MailSkillError(
                 f"La boîte {boite} n'existe pas dans la messagerie de l'entreprise. "
-                + (f"Boîtes connues : {', '.join(connues)}." if connues else
-                   "Aucune boîte n'est configurée."))
+                + (f"Boîtes accessibles : {', '.join(visibles)}." if visibles else
+                   "Aucune boîte ne vous est accessible."))
         raise MailSkillError(
             f"La boîte {boite} n'a pas pu être consultée ({detail}). "
             "Vérifiez la configuration de la messagerie.")

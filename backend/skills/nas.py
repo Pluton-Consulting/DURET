@@ -26,6 +26,39 @@ import logging
 logger = logging.getLogger("duret.skills.nas")
 
 
+# Causes reelles derriere les exceptions reseau, en clair. Un nom de classe ne
+# dit rien a l'utilisateur ; ce qu'il faut verifier, si.
+_CAUSES = {
+    "ConnectError": "le NAS n'est pas joignable depuis le serveur (adresse, port, "
+                    "pare-feu, ou relais QuickConnect indisponible)",
+    "ConnectTimeout": "le NAS n'a pas repondu a temps (relais QuickConnect lent, "
+                      "ou adresse injoignable)",
+    "ReadTimeout": "le NAS a accepte la connexion mais n'a pas repondu a temps",
+    "SSLError": "le certificat du NAS a ete refuse (mettre SYNOLOGY_VERIFY_TLS=false)",
+    "JSONDecodeError": "la reponse n'est pas du JSON : l'adresse ne pointe pas sur "
+                       "l'API DSM (page HTML QuickConnect ?)",
+    "NotImplementedError": "Synology n'est pas configure (identifiants manquants)",
+}
+
+
+def _detail(quoi: str, e: Exception) -> str:
+    """Message exploitable, meme quand l'exception n'en porte aucun.
+
+    Beaucoup d'exceptions reseau ont un str() VIDE : le message se terminait
+    alors par « : » et n'apprenait rien, ni a l'utilisateur ni au journal. Le
+    TYPE est toujours renseigne, et c'est souvent lui qui designe la cause.
+    """
+    nom = type(e).__name__
+    # exc_info : la trace part au journal, pas a l'ecran. L'utilisateur n'a que
+    # faire d'une pile d'appels, l'administrateur en a besoin.
+    logger.warning("NAS — %s : %s (%s)", quoi, nom, e or "sans message", exc_info=True)
+    cause = _CAUSES.get(nom)
+    texte = str(e).strip()
+    return (f"{quoi} — {nom}"
+            + (f" : {texte}" if texte else "")
+            + (f". Probablement : {cause}." if cause else "."))
+
+
 async def nas_lister(data: dict, user) -> dict:
     """Contenu d'un dossier du NAS."""
     from nas.acces import lister, verifier_role, NasRefuse, dossiers_autorises
@@ -51,8 +84,7 @@ async def nas_lister(data: dict, user) -> dict:
     except NasRefuse as e:
         return {"message": str(e)}
     except Exception as e:  # noqa: BLE001 - un NAS injoignable n'est pas une panne du chat
-        logger.info("NAS : listing impossible (%s)", e)
-        return {"message": f"Le NAS n'a pas pu être consulté : {e}"}
+        return {"message": _detail("Le NAS n'a pas pu être consulté", e)}
 
 
 async def nas_lire(data: dict, user) -> dict:
@@ -70,8 +102,7 @@ async def nas_lire(data: dict, user) -> dict:
     except NasRefuse as e:
         return {"message": str(e)}
     except Exception as e:  # noqa: BLE001
-        logger.info("NAS : lecture impossible (%s)", e)
-        return {"message": f"Le fichier n'a pas pu être lu : {e}"}
+        return {"message": _detail("Le fichier n'a pas pu être lu", e)}
 
 
 async def nas_chercher(data: dict, user) -> dict:
@@ -86,8 +117,7 @@ async def nas_chercher(data: dict, user) -> dict:
     except NasRefuse as e:
         return {"message": str(e)}
     except Exception as e:  # noqa: BLE001
-        logger.info("NAS : recherche impossible (%s)", e)
-        return {"message": f"La recherche a échoué : {e}"}
+        return {"message": _detail("La recherche a échoué", e)}
 
 
 async def nas_deposer(data: dict, user) -> dict:
@@ -125,5 +155,4 @@ async def nas_deposer(data: dict, user) -> dict:
     except NasRefuse as e:
         return {"message": str(e)}
     except Exception as e:  # noqa: BLE001
-        logger.info("NAS : dépôt impossible (%s)", e)
-        return {"depose": False, "message": f"Le dépôt a échoué : {e}"}
+        return {"depose": False, "message": _detail("Le dépôt a échoué", e)}

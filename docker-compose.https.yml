@@ -1,0 +1,51 @@
+# ============================================================
+# Overlay HTTPS — OPTIONNEL, a ajouter EN PLUS des deux autres.
+# ============================================================
+#   HTTP  (defaut) : docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#   HTTPS          : docker compose -f docker-compose.yml -f docker-compose.prod.yml #                                   -f docker-compose.https.yml up -d --build
+#
+# Pourquoi un fichier SEPARE plutot qu'un service de plus en production : active
+# par defaut, il reclamerait APP_HOSTNAME, VPN_IP, ACME_EMAIL et un PAT Gandi, et
+# ferait echouer tout deploiement dont le .env ne les porte pas encore. Un
+# dispositif de securite qui casse le deploiement finit par etre contourne.
+#
+# AVANT DE L'ACTIVER, dans .env :
+#   HEADSCALE_IP=127.0.0.1                     nginx repasse en INTERNE. S'il reste
+#                                              sur l'IP du VPN, nginx et Caddy se
+#                                              disputent le port 80 et rien ne demarre.
+#   VPN_IP=100.64.0.1                          `tailscale ip -4` du VPS
+#   APP_HOSTNAME=<hote>.pluton-consulting.fr
+#   ACME_EMAIL=<adresse>
+#   GANDI_API_TOKEN=<PAT>                      un Personal Access Token cree sur
+#                                              admin.gandi.net — PAS une cle API
+#                                              LiveDNS : le module caddy-dns/gandi
+#                                              ne l'accepte plus.
+#   NEXTAUTH_URL / NEXT_PUBLIC_API_URL en https://<hote>
+#
+# Le certificat est obtenu par challenge DNS-01 : aucune ouverture publique n'est
+# necessaire, ni pour l'emission ni pour le renouvellement. L'application reste
+# sur l'IP privee du VPN.
+services:
+  # Terminaison HTTPS, DEVANT nginx. N'ecoute que sur l'IP du VPN.
+  # nginx garde tout le routage (/, /api/, WebSocket, en-tetes, taille d'import) ;
+  # Caddy ne fait que le TLS. Rien du routage n'est reecrit, donc rien ne peut y
+  # regresser.
+  caddy:
+    build: ./caddy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${VPN_IP}:80:80"
+      - "${VPN_IP}:443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - nginx
+    networks:
+      - noa_network
+
+volumes:
+  caddy_data:
+  caddy_config:

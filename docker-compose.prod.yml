@@ -2,14 +2,15 @@
 # Overlay PRODUCTION (VPS) — mode HTTP derrière le VPN (Headscale).
 # Usage :  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 # ============================================================
-# L'application est servie en HTTPS par Caddy, qui n'ecoute que sur l'IP VPN du
-# VPS (VPN_IP = `tailscale ip -4`). Le tunnel WireGuard chiffrait deja le trafic,
-# mais il etait la SEULE couche : le jour ou l'app est jointe autrement — port
-# ouvert, regle de pare-feu ratee — tout repassait en clair, identifiants compris.
+# L'application est servie en HTTP par nginx, lie a l'IP VPN du VPS
+# (HEADSCALE_IP = `tailscale ip -4`). Le tunnel WireGuard chiffre deja tout le
+# trafic : rien ne circule en clair sur Internet.
 #
-# nginx reste derriere, en interne (HEADSCALE_IP=127.0.0.1) : il garde tout le
-# routage (/, /api/, WebSocket, en-tetes, taille d'import), Caddy ne fait que la
-# terminaison TLS. Rien du routage n'est reecrit, donc rien ne peut y regresser.
+# HTTPS : pret mais NON ACTIVE. Tout est ecrit (caddy/, docker-compose.https.yml) ;
+# il suffit d'ajouter `-f docker-compose.https.yml` a la commande et de remplir les
+# variables listees dans ce fichier. Tant que le VPN reste la seule voie d'acces,
+# HTTP y est defendable — mais c'est UNE SEULE couche : le jour ou l'application
+# est jointe autrement, tout repasse en clair, identifiants compris.
 services:
   postgres:
     restart: unless-stopped
@@ -27,28 +28,3 @@ services:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-
-  # Terminaison HTTPS. N'ECOUTE QUE sur l'IP du VPN (${VPN_IP}) : l'application
-  # reste injoignable depuis Internet, le certificat est obtenu par DNS-01 (aucune
-  # ouverture publique n'est necessaire pour le renouvellement).
-  # nginx repasse en interne (HEADSCALE_IP=127.0.0.1) ; Caddy le joint par le
-  # reseau Docker.
-  caddy:
-    build: ./caddy
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "${VPN_IP}:80:80"
-      - "${VPN_IP}:443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - nginx
-    networks:
-      - noa_network
-
-volumes:
-  caddy_data:
-  caddy_config:

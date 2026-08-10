@@ -53,8 +53,62 @@ class SynologyError(RuntimeError):
     """Erreur DSM lisible (jamais de mot de passe dans le message)."""
 
 
+# Codes COMMUNS à toutes les API DSM (100-119).
+_ERREURS_COMMUNES = {
+    100: "erreur inconnue",
+    101: "paramètre d'API manquant",
+    102: "cette API n'existe pas sur ce NAS",
+    103: "cette méthode n'existe pas",
+    104: "version d'API non supportée par ce NAS",
+    105: "la session n'a pas la permission pour cette opération",
+    106: "session expirée",
+    107: "session interrompue par une connexion en double",
+    119: "session invalide (SID introuvable)",
+}
+
+# Codes de FILESTATION. Ils RÉUTILISENT la plage 400+ des codes
+# d'authentification avec un sens TOTALEMENT DIFFÉRENT : 408 vaut « mot de passe
+# expiré » à la connexion et « ce fichier n'existe pas » ici. Traduire avec le
+# mauvais dictionnaire produit un message parfaitement crédible et parfaitement
+# faux — vécu : « le mot de passe a expiré » alors que le dossier demandé
+# n'existait simplement pas, ce qui a envoyé chercher pendant une heure du côté
+# des identifiants.
+_ERREURS_FICHIERS = {
+    400: "paramètre invalide pour cette opération de fichier",
+    401: "erreur inconnue de l'opération de fichier",
+    402: "système trop occupé",
+    403: "cet utilisateur n'a pas le droit d'effectuer cette opération",
+    404: "ce groupe n'a pas le droit d'effectuer cette opération",
+    405: "utilisateur et groupe sans droit sur cette opération",
+    406: "informations de compte illisibles",
+    407: "opération non autorisée",
+    408: "ce dossier ou fichier N'EXISTE PAS sur le NAS "
+         "(vérifiez le nom exact du partage dans File Station)",
+    409: "système de fichiers non supporté",
+    410: "connexion au système de fichiers distant impossible",
+    411: "système de fichiers en lecture seule",
+    414: "un fichier de ce nom existe déjà",
+    416: "plus d'espace disponible sur le NAS",
+    418: "nom ou chemin illégal",
+    421: "ressource occupée",
+    599: "cette tâche de fichier n'existe pas",
+}
+
+
 def _message(code: int, contexte: str) -> str:
-    return f"Synology ({contexte}) : {_ERREURS.get(code, f'erreur DSM {code}')}"
+    """Traduit un code DSM avec le dictionnaire de SA famille d'API.
+
+    Le contexte porte le nom de l'API (« SYNO.FileStation.List.list ») : c'est
+    lui qui décide du dictionnaire. Sans cette distinction, un code de fichier
+    était lu comme un code d'authentification.
+    """
+    if code in _ERREURS_COMMUNES:
+        table = _ERREURS_COMMUNES
+    elif "FileStation" in contexte:
+        table = _ERREURS_FICHIERS
+    else:
+        table = _ERREURS
+    return f"Synology ({contexte}) : {table.get(code, f'erreur DSM {code}')}"
 
 
 async def _resoudre_quickconnect(client, qc_id: str) -> Optional[str]:

@@ -77,24 +77,56 @@ async def _resoudre_quickconnect(client, qc_id: str) -> Optional[str]:
         logger.warning("Résolution QuickConnect impossible : %s", e)
         return None
 
-    service = (data.get("service") or {})
-    port = service.get("https_port") or service.get("port") or 5001
-
-    # Par ordre de qualité : DDNS/hôte externe, puis IP externe, puis relais.
+    service = data.get("service") or {}
     serveur = data.get("server") or {}
-    hote = (serveur.get("ddns") or "").strip()
-    if hote and hote.lower() not in ("null", "none"):
-        return f"https://{hote}:{port}"
+
+    # CHAQUE ADRESSE A SON PROPRE PORT. C'est le piège : appliquer `https_port`
+    # (5001, le port INTERNE) à l'adresse publique ou au relais donne des URL
+    # qui ne répondront jamais. Observé sur un NAS réel : port interne 5001,
+    # port externe 63358, port de relais 41061 — trois valeurs différentes.
+    interne = service.get("https_port") or service.get("port") or 5001
+    candidats: list[tuple[str, str]] = []
+
+    ddns = (serveur.get("ddns") or "").strip()
+    if ddns and ddns.lower() not in ("null", "none"):
+        candidats.append(("DDNS", f"https://{ddns}:{interne}"))
 
     externe = (serveur.get("external") or {}).get("ip")
     if externe:
-        return f"https://{externe}:{port}"
+        candidats.append(("IP publique",
+                          f"https://{externe}:{service.get('ext_port') or interne}"))
 
-    relais = data.get("env", {}).get("relay_region") or data.get("smartdns", {}).get("host")
-    if relais:
-        return f"https://{relais}:{port}"
+    # Le RELAIS Synology, celui que les clients officiels empruntent. Il vit dans
+    # `relay_dn`/`relay_port` — pas dans `smartdns.host` ni `env.relay_region`,
+    # qui ne sont pas des points d'entrée (le premier sert la page HTML, le
+    # second n'est qu'un code de région).
+    relais, port_relais = service.get("relay_dn"), service.get("relay_port")
+    if relais and port_relais:
+        candidats.append(("relais", f"https://{relais}:{port_relais}"))
 
-    logger.warning("QuickConnect %s : aucune adresse exploitable dans la réponse", qc_id)
+    if not candidats:
+        logger.warning("QuickConnect %s : aucune adresse exploitable", qc_id)
+        return None
+
+    # ON SONDE, ON NE DEVINE PAS. Classer par « qualité » puis rendre la première
+    # sans vérifier menait droit au mur : un NAS derrière une box sans
+    # redirection annonce une IP publique parfaitement inatteignable, et l'appel
+    # suivant expirait sans que rien n'indique pourquoi.
+    for nature, url in candidats:
+        try:
+            r = await client.get(f"{url}/webapi/query.cgi",
+                                 params={"api": "SYNO.API.Info", "version": 1,
+                                         "method": "query"},
+                                 timeout=8)
+            if r.status_code < 400 and (r.json() or {}).get("success"):
+                logger.info("QuickConnect %s : %s joignable", qc_id, nature)
+                return url
+        except Exception:  # noqa: BLE001 - un candidat muet n'est pas une panne
+            pass
+        logger.info("QuickConnect %s : %s ne répond pas", qc_id, nature)
+
+    logger.warning("QuickConnect %s : aucune des %d adresses ne répond "
+                   "(DSM éteint, ou relais indisponible)", qc_id, len(candidats))
     return None
 
 

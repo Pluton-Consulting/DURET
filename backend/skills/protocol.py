@@ -195,6 +195,21 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "humaine. N'ecrase jamais un fichier existant. Il n'existe AUCUN moyen de "
         "supprimer, deplacer ou renommer : ne le promets pas",
         ["dossier", "document_id"], ["nom"]),
+    "retenir": (
+        "RETIENT DEFINITIVEMENT une consigne, une regle ou un mot de vocabulaire "
+        "maison. A utiliser des que l'utilisateur dit « retiens que », « souviens-toi "
+        "que », « desormais », « chez nous on appelle ». La consigne sera rappelee a "
+        "CHAQUE echange, sans qu'il faille la repeter. pour_tous : true pour toute "
+        "l'entreprise (direction seulement), sinon elle ne vaut que pour cette personne",
+        ["consigne"], ["pour_tous", "acces"]),
+    "consignes_retenues": (
+        "LISTE les consignes deja retenues. A utiliser quand on demande « que sais-tu "
+        "de nos regles », « qu'est-ce que je t'ai appris »",
+        [], []),
+    "oublier": (
+        "RETIRE une consigne retenue, par son texte ou son identifiant. A utiliser sur "
+        "« oublie que », « ne tiens plus compte de »",
+        ["consigne"], []),
     "creer_document": (
         "OUVRE un document telechargeable (docx, pdf ou xlsx). Ne produit encore "
         "aucun fichier. format : docx|pdf|xlsx ; titre ; entete et pied : textes "

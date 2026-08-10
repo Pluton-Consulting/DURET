@@ -324,6 +324,14 @@ Voici les messages trouvés :
 {"type":"email","subject":"CONTACT architecte","from":"lb@lbbl-architectes.fr","date":"23/07/2026","preview":"Demande d'intervention sur un projet a Sainte-Eulalie..."}
 ```""" + instruction_actions(state.get("user_role"))
 
+    # CONSIGNES APPRISES, injectees a CHAQUE tour et non cherchees. Une regle de
+    # comportement (« chez nous "le serveur" designe le NAS ») doit etre presente
+    # AVANT que le modele choisisse son action : rangee en memoire, elle serait
+    # retrouvee par ressemblance, donc parfois — et une regle qui vaut une fois
+    # sur deux est pire qu'une regle absente.
+    from learning.consignes import texte_injecte
+    system_prompt += await texte_injecte(state.get("user_id"), state.get("user_role"))
+
     # Dernière passe imposée : la boucle d'actions est close, il ne reste qu'à
     # rédiger. Sans cette consigne, le modèle peut redemander une action, dont
     # le bloc serait retiré à l'affichage — donc une réponse vide.

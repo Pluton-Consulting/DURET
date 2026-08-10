@@ -36,4 +36,5 @@ tzdata>=2024.1                      # base de fuseaux horaires (planification de
 pytesseract>=0.3.13                 # OCR des PDF scannés / photos de documents
 pypdfium2>=4.30.0                   # rendu des pages PDF en image pour l'OCR
 python-docx>=1.1.0                   # lecture des .docx (import de documents)
+reportlab>=4.2.0                    # rendu PDF : en-tetes, pieds numerotes, tableaux paginés
 python-multipart>=0.0.9             # upload de fichiers (FastAPI UploadFile)

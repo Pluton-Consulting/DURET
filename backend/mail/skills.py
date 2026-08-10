@@ -520,6 +520,26 @@ async def mes_droits(data: dict, user) -> dict:
 SKILLS_NATIFS["mes_droits"] = mes_droits
 
 
+async def creer_document(data: dict, user) -> dict:
+    from skills.bureau import creer_document as _c
+    return await _c(data, user)
+
+
+async def ajouter_document(data: dict, user) -> dict:
+    from skills.bureau import ajouter_document as _a
+    return await _a(data, user)
+
+
+async def terminer_document(data: dict, user) -> dict:
+    from skills.bureau import terminer_document as _t
+    return await _t(data, user)
+
+
+SKILLS_NATIFS["creer_document"] = creer_document
+SKILLS_NATIFS["ajouter_document"] = ajouter_document
+SKILLS_NATIFS["terminer_document"] = terminer_document
+
+
 async def lancer_enrichissement(data: dict, user) -> dict:
     from learning.skills import lancer_enrichissement as _lancer
     return await _lancer(data, user)
@@ -561,6 +581,11 @@ EFFETS_NATIFS = {
     "interroger_donnees": "lecture",
     # Description des droits de l'appelant : lecture de sa propre configuration.
     "mes_droits": "lecture",
+    # Produire un fichier telechargeable : rien ne sort de l'entreprise et
+    # rien n'est envoye, donc ecriture interne et non effet externe.
+    "creer_document": "ecriture_interne",
+    "ajouter_document": "ecriture_interne",
+    "terminer_document": "ecriture_interne",
     # Campagne d'enrichissement : elle n'écrit QUE dans nos propres données
     # (mémoire, profils de style, brouillons de skills) et ne sort rien du
     # système. Le vrai garde-fou n'est pas l'effet mais la PERMISSION, vérifiée

@@ -254,7 +254,8 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   return (
     <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <MessageList messages={messages} onAction={sendMessage} />
+        <MessageList messages={messages} onAction={sendMessage}
+                     apiUrl={process.env.NEXT_PUBLIC_API_URL || ""} backendToken={token} />
 
         <style>{`
           @keyframes symOrb { 0%,100%{transform:scale(.8);opacity:.55} 50%{transform:scale(1.15);opacity:1} }

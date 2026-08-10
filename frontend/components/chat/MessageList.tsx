@@ -8,7 +8,8 @@ interface Message {
   content: string
 }
 
-export default function MessageList({ messages, onAction }: { messages: Message[]; onAction?: (v: string) => void }) {
+export default function MessageList({ messages, onAction, apiUrl, backendToken }:
+  { messages: Message[]; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
   const finRef = useRef<HTMLDivElement>(null)
   const conteneurRef = useRef<HTMLDivElement>(null)
   // L'utilisateur suit-il le fil, ou est-il remonté pour relire ? Cette intention
@@ -72,7 +73,8 @@ export default function MessageList({ messages, onAction }: { messages: Message[
         ) : (
           <div key={msg.id} data-testid="message-assistant"
                style={{ alignSelf: "flex-start", maxWidth: "100%" }}>
-            <MessageRenderer content={msg.content} onAction={onAction} />
+            <MessageRenderer content={msg.content} onAction={onAction}
+                             apiUrl={apiUrl} backendToken={backendToken} />
           </div>
         )
       )}

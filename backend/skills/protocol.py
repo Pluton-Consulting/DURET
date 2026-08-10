@@ -165,6 +165,24 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "as-tu ». C'est un INVENTAIRE, pas une recherche : il rend ce qui existe, sans "
         "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
         [], ["sujet"]),
+    "creer_document": (
+        "OUVRE un document telechargeable (docx, pdf ou xlsx). Ne produit encore "
+        "aucun fichier. format : docx|pdf|xlsx ; titre ; entete et pied : textes "
+        "repetes sur chaque page ; paysage : bool. Enchaine ensuite avec "
+        "`ajouter_document` autant de fois qu'il le faut, puis `terminer_document`",
+        ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter"]),
+    "ajouter_document": (
+        "VERSE du contenu dans un document ouvert. `elements` est une liste de "
+        "blocs : {bloc:titre, texte, niveau}, {bloc:paragraphe, texte}, "
+        "{bloc:liste, items, ordonnee}, {bloc:tableau, entetes, lignes, legende}, "
+        "{bloc:feuille, nom, entetes, lignes} (onglet en xlsx), {bloc:saut_page}, "
+        "{bloc:separateur}. APPELLE-LE PLUSIEURS FOIS pour un document long : "
+        "environ 400 blocs par appel, sans limite au nombre d'appels",
+        ["document_id", "elements"], []),
+    "terminer_document": (
+        "FERME le document et rend le lien de telechargement. A appeler une seule "
+        "fois, quand tout le contenu est verse",
+        ["document_id"], []),
     "mes_droits": (
         "Explique les DROITS D'ACCES : ce que la personne connectee peut consulter, "
         "ce qui lui est ferme, quelles boites mail elle peut lire, et comment le "

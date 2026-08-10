@@ -20,6 +20,7 @@ export * from "./business/QuoteCard"
 export * from "./business/InvoiceCard"
 export * from "./business/EmailCard"
 export * from "./business/DocCard"
+export * from "./business/FileCard"
 export * from "./business/ContactCard"
 export * from "./business/ProjectCard"
 

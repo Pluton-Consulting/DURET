@@ -2,7 +2,7 @@
 import type { ReactNode } from "react"
 import { RichText } from "./RichText"
 import {
-  QuoteCard, InvoiceCard, EmailCard, DocCard, ContactCard, ProjectCard,
+  QuoteCard, InvoiceCard, EmailCard, DocCard, FileCard, ContactCard, ProjectCard,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
   Callout, StatTile, Badge, QuickReplies, BulletList,
@@ -34,6 +34,7 @@ const REQUIRED: Record<string, string[]> = {
   invoice: ["number", "client", "amount"],
   email: ["subject", "from"],
   doc: ["name"],
+  fichier: ["url"],
   contact: ["name"],
   project: ["name", "client"],
   table: ["columns", "rows"],
@@ -60,7 +61,8 @@ function present(v: any): boolean {
   return true
 }
 
-function renderBlock(block: any, onAction?: (v: string) => void): ReactNode {
+function renderBlock(block: any, onAction?: (v: string) => void,
+                     acces?: { apiUrl?: string; backendToken?: string }): ReactNode {
   if (!block || typeof block !== "object") return null
   const { type, ...p } = block
   const req = REQUIRED[type]
@@ -70,6 +72,9 @@ function renderBlock(block: any, onAction?: (v: string) => void): ReactNode {
     case "invoice":       return <InvoiceCard {...p} />
     case "email":         return <EmailCard {...p} />
     case "doc":           return <DocCard {...p} />
+    // Le telechargement est controle cote serveur : le composant a besoin
+    // du jeton, un lien nu partirait sans en-tete et serait refuse.
+    case "fichier":       return <FileCard {...p} {...acces} />
     case "contact":       return <ContactCard {...p} />
     case "project":       return <ProjectCard {...p} />
     case "table":         return <SimpleTable {...p} />
@@ -90,7 +95,8 @@ function renderBlock(block: any, onAction?: (v: string) => void): ReactNode {
   }
 }
 
-export function MessageRenderer({ content, onAction }: { content: string; onAction?: (v: string) => void }) {
+export function MessageRenderer({ content, onAction, apiUrl, backendToken }:
+  { content: string; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
   const parts = parse(content)
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start", maxWidth: "90%" }}>
@@ -104,7 +110,7 @@ export function MessageRenderer({ content, onAction }: { content: string; onActi
             </div>
           )
         }
-        const node = renderBlock(part.block, onAction)
+        const node = renderBlock(part.block, onAction, { apiUrl, backendToken })
         return node ? <div key={i} className="sym-in">{node}</div> : null
       })}
     </div>

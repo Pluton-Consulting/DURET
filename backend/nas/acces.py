@@ -60,6 +60,29 @@ def normaliser(chemin: str) -> str:
     return posixpath.normpath(c).rstrip("/") or "/"
 
 
+def verifier_role(user) -> None:
+    """Ce profil a-t-il le droit de consulter le NAS ?
+
+    Le confinement borne CE QUI est visible ; il ne dit rien de QUI peut le
+    voir. Sans ce contrôle, tout utilisateur de l'application — y compris un
+    profil terrain — lirait l'intégralité des dossiers ouverts, alors que les
+    mails sont cloisonnés par personne et les documents par rôle. Le NAS ne peut
+    pas être la seule porte sans serrure.
+
+    Le niveau exigé est `synology_access_level`, celui-là même sous lequel la
+    synchronisation range les fichiers ingérés : lire un document dans le chat
+    et le lire sur le NAS demandent ainsi le même droit, ce qui évite qu'un
+    chemin contourne l'autre.
+    """
+    from config import settings
+    from security.acces import niveaux_visibles
+
+    exige = (settings.synology_access_level or "all").strip()
+    if exige not in niveaux_visibles(getattr(user, "role", "")):
+        raise NasRefuse(
+            "Votre profil n'a pas accès au serveur de fichiers de l'entreprise.")
+
+
 def verifier(chemin: str) -> str:
     """Rend le chemin normalisé s'il est dans le périmètre. Lève sinon.
 
@@ -71,6 +94,14 @@ def verifier(chemin: str) -> str:
         raise NasRefuse(
             "Aucun dossier NAS n'est ouvert à l'assistant. Un administrateur doit "
             "renseigner SYNOLOGY_FOLDERS avec les dossiers autorisés.")
+    # « / » ouvrirait le NAS ENTIER : dossiers personnels, sauvegardes,
+    # comptabilité. On refuse explicitement plutôt que de laisser un
+    # administrateur croire qu'il a configuré un périmètre.
+    if "/" in racines:
+        raise NasRefuse(
+            "SYNOLOGY_FOLDERS vaut « / », ce qui exposerait tout le NAS : dossiers "
+            "personnels et sauvegardes compris. Indiquez les dossiers précis à "
+            "ouvrir, par exemple /chantiers,/devis.")
     vise = normaliser(chemin)
     for racine in racines:
         if vise == racine or vise.startswith(racine + "/"):

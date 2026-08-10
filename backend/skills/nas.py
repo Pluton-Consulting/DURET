@@ -12,8 +12,12 @@ s'en aperçoit avant d'avoir besoin du fichier. Les ajouter serait une décision
 d'exploitation, pas une commodité technique — elle appartient aux dirigeants,
 pas à l'assistant.
 
-Tous les chemins passent par le confinement de `nas.acces` : hors des dossiers
-autorisés, la demande est refusée avant même d'atteindre le NAS.
+DEUX BORNES, ET ELLES NE DISENT PAS LA MÊME CHOSE :
+  * le CONFINEMENT borne CE QUI est visible — hors des dossiers autorisés, la
+    demande est refusée avant même d'atteindre le NAS ;
+  * le contrôle de RÔLE borne QUI peut le voir. Sans lui, tout utilisateur, y
+    compris un profil terrain, lirait l'intégralité des dossiers ouverts, alors
+    que les mails sont cloisonnés par personne et les documents par rôle.
 """
 from __future__ import annotations
 
@@ -24,7 +28,11 @@ logger = logging.getLogger("duret.skills.nas")
 
 async def nas_lister(data: dict, user) -> dict:
     """Contenu d'un dossier du NAS."""
-    from nas.acces import lister, NasRefuse, dossiers_autorises
+    from nas.acces import lister, verifier_role, NasRefuse, dossiers_autorises
+    try:
+        verifier_role(user)
+    except NasRefuse as e:
+        return {"message": str(e)}
     chemin = (data.get("chemin") or "").strip()
     if not chemin:
         racines = dossiers_autorises()
@@ -43,7 +51,11 @@ async def nas_lister(data: dict, user) -> dict:
 
 async def nas_lire(data: dict, user) -> dict:
     """Contenu textuel d'un fichier du NAS."""
-    from nas.acces import lire, NasRefuse
+    from nas.acces import lire, verifier_role, NasRefuse
+    try:
+        verifier_role(user)
+    except NasRefuse as e:
+        return {"message": str(e)}
     chemin = (data.get("chemin") or "").strip()
     if not chemin:
         return {"message": "Donne le chemin complet du fichier à lire."}
@@ -58,7 +70,11 @@ async def nas_lire(data: dict, user) -> dict:
 
 async def nas_chercher(data: dict, user) -> dict:
     """Recherche un fichier par son nom, dans le périmètre autorisé."""
-    from nas.acces import chercher, NasRefuse
+    from nas.acces import chercher, verifier_role, NasRefuse
+    try:
+        verifier_role(user)
+    except NasRefuse as e:
+        return {"message": str(e)}
     try:
         return await chercher(data.get("motif") or "", data.get("dossier"))
     except NasRefuse as e:
@@ -70,7 +86,11 @@ async def nas_chercher(data: dict, user) -> dict:
 
 async def nas_deposer(data: dict, user) -> dict:
     """Dépose sur le NAS un document produit par l'assistant. ÉCRITURE."""
-    from nas.acces import deposer, NasRefuse
+    from nas.acces import deposer, verifier_role, NasRefuse
+    try:
+        verifier_role(user)
+    except NasRefuse as e:
+        return {"message": str(e)}
 
     dossier = (data.get("dossier") or "").strip()
     jeton = (data.get("document_id") or "").strip()

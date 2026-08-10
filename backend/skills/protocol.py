@@ -166,24 +166,31 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
         [], ["sujet"]),
     "nas_lister": (
-        "LISTE un dossier du NAS Synology de l'entreprise. Sans `chemin`, rend les "
+        # Le VOCABULAIRE MAISON vit ici, pas dans une consigne de conversation ni
+        # dans la memoire : c'est au moment de choisir l'action que le modele en
+        # a besoin. Personne ne dit « le NAS Synology » — on dit « le serveur »,
+        # « le reseau », « les partages ». Sans ces synonymes, une demande
+        # parfaitement claire pour un humain ne declenche rien.
+        "LISTE un dossier du NAS Synology de l'entreprise. LE NAS, LE SERVEUR, LE "
+        "SERVEUR DE FICHIERS, LE RESEAU, LES PARTAGES RESEAU, LE DISQUE RESEAU et "
+        "SYNOLOGY designent tous LA MEME CHOSE : ce NAS. Sans `chemin`, rend les "
         "dossiers ouverts a l'assistant. Utile pour retrouver un plan, un CCTP, un "
         "dossier de chantier sans attendre une synchronisation. Pour descendre dans "
         "un sous-dossier, reprends son champ `chemin` tel quel : un partage nomme "
         "« Drive » vu dans /home se designe « /home/Drive », jamais « /Drive »",
         [], ["chemin"]),
     "nas_lire": (
-        "LIT un fichier du NAS et en rend le texte (PDF, Word, Excel, CSV, scan par "
+        "LIT un fichier du NAS (dit aussi « le serveur », « le reseau », « les partages ») et en rend le texte (PDF, Word, Excel, CSV, scan par "
         "reconnaissance de caracteres). Le `chemin` doit etre celui rendu par "
         "`nas_lister` ou `nas_chercher`, repris TEL QUEL : un chemin reconstruit a "
         "partir du seul nom perd son dossier parent et ne designe rien",
         ["chemin"], []),
     "nas_chercher": (
-        "CHERCHE un fichier par son nom sur le NAS, dans les dossiers autorises. "
+        "CHERCHE un fichier par son nom sur le NAS (dit aussi « le serveur »), dans les dossiers autorises. "
         "motif : un morceau de nom ; dossier : ou chercher (optionnel)",
         ["motif"], ["dossier"]),
     "nas_deposer": (
-        "DEPOSE sur le NAS un document deja produit par `terminer_document`. "
+        "DEPOSE sur le NAS (dit aussi « le serveur ») un document deja produit par `terminer_document`. "
         "ATTENTION : ecrit sur le serveur de l'entreprise, demande une validation "
         "humaine. N'ecrase jamais un fichier existant. Il n'existe AUCUN moyen de "
         "supprimer, deplacer ou renommer : ne le promets pas",

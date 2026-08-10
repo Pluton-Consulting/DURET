@@ -206,7 +206,23 @@ async def _login(client, base: str) -> str:
     }
     if settings.synology_otp_code:
         params["otp_code"] = settings.synology_otp_code
-    data = await _appel(client, base, "SYNO.API.Auth", "login", 6, **params)
+    try:
+        data = await _appel(client, base, "SYNO.API.Auth", "login", 6, **params)
+    except SynologyError as e:
+        # UN REFUS D'IDENTIFIANTS APRÈS UNE RÉSOLUTION RÉUSSIE a une signature
+        # très particulière : le NAS joint répond, mais ce n'est pas celui où
+        # vit ce compte. Un parc avec deux NAS suffit à s'y perdre — le mot de
+        # passe « marche pourtant sur le web », parce qu'on l'essaie sur l'autre
+        # machine. DSM ne peut pas le dire (son code 400 couvre aussi bien le
+        # compte inconnu que le mot de passe faux), donc on le dit ici.
+        qc = (settings.synology_quickconnect_id or "").strip()
+        if qc and "incorrect" in str(e):
+            raise SynologyError(
+                f"{e}. Vérifiez aussi que l'identifiant QuickConnect « {qc} » "
+                "désigne bien le NAS où existe ce compte : des identifiants "
+                "valides sur un AUTRE NAS produisent exactement cette erreur."
+            ) from e
+        raise
     return data["sid"]
 
 

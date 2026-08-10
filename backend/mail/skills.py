@@ -540,6 +540,32 @@ SKILLS_NATIFS["ajouter_document"] = ajouter_document
 SKILLS_NATIFS["terminer_document"] = terminer_document
 
 
+async def nas_lister(data: dict, user) -> dict:
+    from skills.nas import nas_lister as _f
+    return await _f(data, user)
+
+
+async def nas_lire(data: dict, user) -> dict:
+    from skills.nas import nas_lire as _f
+    return await _f(data, user)
+
+
+async def nas_chercher(data: dict, user) -> dict:
+    from skills.nas import nas_chercher as _f
+    return await _f(data, user)
+
+
+async def nas_deposer(data: dict, user) -> dict:
+    from skills.nas import nas_deposer as _f
+    return await _f(data, user)
+
+
+SKILLS_NATIFS["nas_lister"] = nas_lister
+SKILLS_NATIFS["nas_lire"] = nas_lire
+SKILLS_NATIFS["nas_chercher"] = nas_chercher
+SKILLS_NATIFS["nas_deposer"] = nas_deposer
+
+
 async def lancer_enrichissement(data: dict, user) -> dict:
     from learning.skills import lancer_enrichissement as _lancer
     return await _lancer(data, user)
@@ -586,6 +612,13 @@ EFFETS_NATIFS = {
     "creer_document": "ecriture_interne",
     "ajouter_document": "ecriture_interne",
     "terminer_document": "ecriture_interne",
+    # Consulter le NAS : lecture, confinee aux dossiers autorises.
+    "nas_lister": "lecture",
+    "nas_lire": "lecture",
+    "nas_chercher": "lecture",
+    # ECRIRE sur le serveur de l'entreprise sort du perimetre de l'app :
+    # effet externe, donc validation humaine avant depart.
+    "nas_deposer": "externe",
     # Campagne d'enrichissement : elle n'écrit QUE dans nos propres données
     # (mémoire, profils de style, brouillons de skills) et ne sort rien du
     # système. Le vrai garde-fou n'est pas l'effet mais la PERMISSION, vérifiée

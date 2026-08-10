@@ -165,6 +165,26 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "as-tu ». C'est un INVENTAIRE, pas une recherche : il rend ce qui existe, sans "
         "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
         [], ["sujet"]),
+    "nas_lister": (
+        "LISTE un dossier du NAS Synology de l'entreprise. Sans `chemin`, rend les "
+        "dossiers ouverts a l'assistant. Utile pour retrouver un plan, un CCTP, un "
+        "dossier de chantier sans attendre une synchronisation",
+        [], ["chemin"]),
+    "nas_lire": (
+        "LIT un fichier du NAS et en rend le texte (PDF, Word, Excel, CSV, scan par "
+        "reconnaissance de caracteres). Donne le chemin complet obtenu par "
+        "`nas_lister` ou `nas_chercher`",
+        ["chemin"], []),
+    "nas_chercher": (
+        "CHERCHE un fichier par son nom sur le NAS, dans les dossiers autorises. "
+        "motif : un morceau de nom ; dossier : ou chercher (optionnel)",
+        ["motif"], ["dossier"]),
+    "nas_deposer": (
+        "DEPOSE sur le NAS un document deja produit par `terminer_document`. "
+        "ATTENTION : ecrit sur le serveur de l'entreprise, demande une validation "
+        "humaine. N'ecrase jamais un fichier existant. Il n'existe AUCUN moyen de "
+        "supprimer, deplacer ou renommer : ne le promets pas",
+        ["dossier", "document_id"], ["nom"]),
     "creer_document": (
         "OUVRE un document telechargeable (docx, pdf ou xlsx). Ne produit encore "
         "aucun fichier. format : docx|pdf|xlsx ; titre ; entete et pied : textes "

@@ -1,0 +1,36 @@
+# Caddy : terminaison HTTPS de l'application, DEVANT nginx.
+#
+# Certificat public Let's Encrypt obtenu par challenge DNS-01 Gandi. C'est ce qui
+# permet un certificat VALIDE pour un service qui n'est PAS joignable
+# publiquement : l'application reste sur l'IP privee du VPN, rien n'est expose.
+# Un certificat auto-signe aurait exige de l'installer sur chaque poste et chaque
+# telephone, et le premier oubli redonne l'ecran d'avertissement que les gens
+# apprennent alors a ignorer.
+#
+# AUTHENTIFICATION GANDI : un PERSONAL ACCESS TOKEN (PAT), pas une cle API.
+# Le module caddy-dns/gandi a change : il n'accepte PLUS la cle API LiveDNS, elle
+# est remplacee par le PAT. La forme reste positionnelle (`dns gandi <valeur>`),
+# seule la NATURE de la valeur change — c'est pourquoi une ancienne cle API
+# echouerait aujourd'hui sans que la syntaxe paraisse fautive.
+# Creer le PAT sur https://admin.gandi.net, avec le droit de gerer le DNS du
+# domaine, puis le poser dans .env (GANDI_API_TOKEN).
+
+{
+	email {env.ACME_EMAIL}
+}
+
+{env.APP_HOSTNAME} {
+	tls {
+		dns gandi {env.GANDI_API_TOKEN}
+	}
+	encode zstd gzip
+
+	# HSTS : une fois le HTTPS en place, le navigateur refuse de redescendre en
+	# clair. Pose seulement apres avoir verifie que tout repond en https, sinon
+	# un retour arriere devient impossible cote navigateur pendant un an.
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Tout est delegue a nginx (qui route /, /api/ et le WebSocket, et pose les
+	# en-tetes de securite). Caddy relaie nativement les WebSockets.
+	reverse_proxy nginx:80
+}

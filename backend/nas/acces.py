@@ -157,7 +157,14 @@ async def lister(chemin: str) -> dict:
     return {
         "chemin": vise, "entrees": entrees, "total": total,
         "tronque": total > len(entrees),
-        "note": (f"{len(entrees)} entrée(s) sur {total}."
+        # Le modèle doit REPRENDRE le `chemin` de chaque entrée, pas le
+        # reconstruire. Constaté : après avoir listé /home et vu le dossier
+        # « Drive », il a demandé « /Drive » — qui n'existe pas — au lieu de
+        # « /home/Drive » qu'il avait sous les yeux. Un chemin recompose à
+        # partir du seul nom perd son dossier parent.
+        "note": (f"{len(entrees)} entrée(s) sur {total}. Pour ouvrir l'une d'elles, "
+                 "réutilise EXACTEMENT son champ `chemin` : ne le reconstruis pas à "
+                 "partir du nom, tu perdrais le dossier parent."
                  + (" Liste tronquée : affine avec un sous-dossier."
                     if total > len(entrees) else "")),
     }

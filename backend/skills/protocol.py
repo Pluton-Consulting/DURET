@@ -168,12 +168,15 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
     "nas_lister": (
         "LISTE un dossier du NAS Synology de l'entreprise. Sans `chemin`, rend les "
         "dossiers ouverts a l'assistant. Utile pour retrouver un plan, un CCTP, un "
-        "dossier de chantier sans attendre une synchronisation",
+        "dossier de chantier sans attendre une synchronisation. Pour descendre dans "
+        "un sous-dossier, reprends son champ `chemin` tel quel : un partage nomme "
+        "« Drive » vu dans /home se designe « /home/Drive », jamais « /Drive »",
         [], ["chemin"]),
     "nas_lire": (
         "LIT un fichier du NAS et en rend le texte (PDF, Word, Excel, CSV, scan par "
-        "reconnaissance de caracteres). Donne le chemin complet obtenu par "
-        "`nas_lister` ou `nas_chercher`",
+        "reconnaissance de caracteres). Le `chemin` doit etre celui rendu par "
+        "`nas_lister` ou `nas_chercher`, repris TEL QUEL : un chemin reconstruit a "
+        "partir du seul nom perd son dossier parent et ne designe rien",
         ["chemin"], []),
     "nas_chercher": (
         "CHERCHE un fichier par son nom sur le NAS, dans les dossiers autorises. "

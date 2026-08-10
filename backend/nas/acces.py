@@ -45,10 +45,22 @@ class NasRefuse(PermissionError):
 
 
 def dossiers_autorises() -> list[str]:
-    """Racines ouvertes à l'assistant. Vide = rien n'est accessible."""
+    """Racines ouvertes à l'assistant. Vide = rien n'est accessible.
+
+    « / » est ÉCARTÉ ici comme il l'est dans `verifier`. Les deux fonctions
+    doivent appliquer la même règle : quand elles divergeaient, l'assistant
+    s'entendait annoncer « le dossier racine vous est accessible » puis se voyait
+    refuser ce même dossier au moment de l'ouvrir. Deux règles contradictoires
+    sur la même donnée valent moins que pas de règle du tout — celui qui les lit
+    conclut que l'outil est cassé, et il a raison.
+    """
     from config import settings
     brut = (settings.synology_folders or "").strip()
-    return [normaliser(d) for d in brut.split(",") if d.strip()]
+    racines = [normaliser(d) for d in brut.split(",") if d.strip()]
+    if "/" in racines:
+        logger.warning("SYNOLOGY_FOLDERS contient « / » : ignoré (exposerait tout "
+                       "le NAS). Indiquez les partages précis à ouvrir.")
+    return [r for r in racines if r != "/"]
 
 
 def normaliser(chemin: str) -> str:
@@ -89,19 +101,17 @@ def verifier(chemin: str) -> str:
     Le message ne dit PAS ce qui existe ailleurs : décrire l'arborescence
     interdite à celui qui vient de s'y heurter la lui apprendrait.
     """
+    # `dossiers_autorises` a déjà écarté « / » : le refus est donc porté par le
+    # cas « aucune racine », et il doit l'expliquer. Un second contrôle sur « / »
+    # ici serait inatteignable — du code mort qui laisse croire à une protection
+    # supplémentaire alors qu'elle vit ailleurs.
     racines = dossiers_autorises()
     if not racines:
         raise NasRefuse(
             "Aucun dossier NAS n'est ouvert à l'assistant. Un administrateur doit "
-            "renseigner SYNOLOGY_FOLDERS avec les dossiers autorisés.")
-    # « / » ouvrirait le NAS ENTIER : dossiers personnels, sauvegardes,
-    # comptabilité. On refuse explicitement plutôt que de laisser un
-    # administrateur croire qu'il a configuré un périmètre.
-    if "/" in racines:
-        raise NasRefuse(
-            "SYNOLOGY_FOLDERS vaut « / », ce qui exposerait tout le NAS : dossiers "
-            "personnels et sauvegardes compris. Indiquez les dossiers précis à "
-            "ouvrir, par exemple /chantiers,/devis.")
+            "renseigner SYNOLOGY_FOLDERS avec les partages précis à ouvrir "
+            "(ex. /chantiers,/devis). « / » n'est pas accepté : il exposerait tout "
+            "le serveur, dossiers personnels et sauvegardes compris.")
     vise = normaliser(chemin)
     for racine in racines:
         if vise == racine or vise.startswith(racine + "/"):

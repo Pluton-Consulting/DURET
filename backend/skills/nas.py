@@ -39,7 +39,13 @@ async def nas_lister(data: dict, user) -> dict:
         return {"dossiers_autorises": racines,
                 "message": ("Voici les dossiers ouverts. Rappelle `nas_lister` avec "
                             "l'un d'eux." if racines else
-                            "Aucun dossier du NAS n'est ouvert à l'assistant.")}
+                            "Aucun dossier du NAS n'est ouvert à l'assistant. Un "
+                            "administrateur doit renseigner SYNOLOGY_FOLDERS avec les "
+                            "partages precis a ouvrir (ex. /chantiers,/devis). "
+                            "« / » n'est pas accepte : il exposerait tout le serveur, "
+                            "dossiers personnels et sauvegardes compris. "
+                            "Dis-le tel quel, ne propose pas de nom de dossier au "
+                            "hasard : tu ne sais pas lesquels existent.")}
     try:
         return await lister(chemin)
     except NasRefuse as e:

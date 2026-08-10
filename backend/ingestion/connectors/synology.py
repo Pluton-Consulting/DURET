@@ -101,6 +101,31 @@ async def _resoudre_quickconnect(client, qc_id: str) -> Optional[str]:
 async def _base_url(client) -> str:
     """URL de base du NAS : adresse directe si fournie, sinon QuickConnect."""
     directe = (settings.synology_base_url or "").strip().rstrip("/")
+
+    # PIÈGE COURANT. « https://mon-nas.quickconnect.to » est l'adresse que
+    # Synology AFFICHE à l'utilisateur, donc la seule qu'on ait souvent sous la
+    # main — mais ce n'est PAS un point d'entrée d'API : cet hôte sert une page
+    # HTML dont le JavaScript va, lui, chercher la vraie adresse. Appeler
+    # /webapi/entry.cgi dessus rend du HTML, et l'erreur qui en sort n'aide pas.
+    #
+    # Renseignée ici, elle court-circuiterait en plus la résolution QuickConnect
+    # juste en dessous. On en extrait donc l'identifiant et on résout, plutôt que
+    # de laisser échouer sur un message incompréhensible.
+    if directe and "quickconnect.to" in directe.lower():
+        hote = directe.split("//")[-1].split("/")[0]
+        identifiant = hote.split(".")[0]
+        logger.info("URL QuickConnect donnée comme adresse directe : résolution "
+                    "de l'identifiant « %s »", identifiant)
+        url = await _resoudre_quickconnect(client, identifiant)
+        if url:
+            return url
+        raise SynologyError(
+            f"« {directe} » est l'adresse d'affichage QuickConnect, pas un point "
+            f"d'entrée d'API, et l'identifiant « {identifiant} » n'a pas pu être "
+            "résolu. Renseignez SYNOLOGY_QUICKCONNECT_ID avec l'identifiant SEUL, "
+            "ou mieux SYNOLOGY_BASE_URL avec l'adresse directe du NAS "
+            "(https://<ip-du-nas>:5001).")
+
     if directe:
         return directe
 

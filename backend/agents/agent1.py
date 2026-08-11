@@ -47,6 +47,18 @@ Typographie : n'utilise JAMAIS de tiret cadratin (—) ni de tiret demi-cadratin
 MAX_ACTIONS_PAR_TOUR = 8
 
 
+# ANNONCE SANS ACTE. Le modèle écrit « je crée le PDF », « je commence par
+# compter », et n'émet AUCUN bloc d'action. Le tour se terminait sur cette
+# phrase : l'utilisateur lit une promesse, redemande, et obtient la même
+# promesse. Observé sur plusieurs tours d'affilée.
+#
+# On ne peut pas l'empêcher d'écrire cela ; on peut refuser que ce soit la FIN
+# du tour. Une seule relance, avec une consigne explicite — au-delà on
+# insisterait sur un modèle qui ne veut pas, et la note de sortie explique alors
+# honnêtement pourquoi rien n'a été fait.
+from agents.annonce import est_une_annonce
+
+
 # ── Nœuds ────────────────────────────────────────────────────────────
 
 async def rag_node(state: AgentState) -> dict:
@@ -342,6 +354,13 @@ Voici les messages trouvés :
     from learning.consignes import texte_injecte
     system_prompt += await texte_injecte(state.get("user_id"), state.get("user_role"))
 
+    if state.get("relance_annonce"):
+        system_prompt += (
+            "\n\nATTENTION : au message précédent tu as ANNONCÉ une action sans "
+            "l'exécuter. Une annonce n'exécute rien. Émets MAINTENANT le bloc "
+            "```action correspondant, sans le commenter et sans réécrire ton "
+            "intention. Si l'action a déjà été faite, sers-toi de son résultat.")
+
     # Dernière passe imposée : la boucle d'actions est close, il ne reste qu'à
     # rédiger. Sans cette consigne, le modèle peut redemander une action, dont
     # le bloc serait retiré à l'affichage — donc une réponse vide.
@@ -458,6 +477,16 @@ async def tools_node(state: AgentState, config=None) -> dict:
                 "tool_repair_used": True}
 
     if action is None:
+        corps = (texte or "").strip()
+        # Il a ANNONCÉ sans agir : on lui rend la main plutôt que de clore le
+        # tour sur une promesse. Une seule fois, et seulement s'il reste du
+        # budget — sinon on insisterait indéfiniment.
+        if (corps and est_une_annonce(corps)
+                and not state.get("relance_annonce")
+                and iteration <= MAX_ACTIONS_PAR_TOUR):
+            logger.info("Annonce sans action détectée — relance du modèle")
+            return {"llm_response": "", "relance_annonce": True,
+                    "tool_iterations": iteration, "tool_results": resultats}
         return _sortir()
 
     if iteration > MAX_ACTIONS_PAR_TOUR:

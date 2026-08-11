@@ -39,7 +39,9 @@ def _docx(entete: dict, elements, sortie: str) -> str:
     from docx import Document
     from docx.enum.section import WD_ORIENT
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.shared import Pt, Cm
+    from docx.shared import Pt, Cm, RGBColor
+
+    from bureautique.modele import COULEURS, TAILLES
 
     doc = Document()
     section = doc.sections[0]
@@ -75,7 +77,15 @@ def _docx(entete: dict, elements, sortie: str) -> str:
         if bloc == "titre":
             doc.add_heading(e["texte"], e["niveau"])
         elif bloc == "paragraphe":
-            doc.add_paragraph(e["texte"])
+            p = doc.add_paragraph()
+            run = p.add_run(e["texte"])
+            run.font.bold = e.get("gras", False)
+            run.font.italic = e.get("italique", False)
+            run.font.size = Pt(TAILLES.get(e.get("taille"), 11))
+            if e.get("couleur"):
+                run.font.color.rgb = RGBColor.from_string(COULEURS[e["couleur"]])
+            if e.get("centre"):
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         elif bloc == "liste":
             style = "List Number" if e["ordonnee"] else "List Bullet"
             for item in e["items"]:
@@ -186,7 +196,7 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
             flux.append(Paragraph(_echapper(e["texte"]),
                                   styles[f"Heading{min(e['niveau'], 4)}"]))
         elif bloc == "paragraphe":
-            flux.append(Paragraph(_echapper(e["texte"]), styles["BodyText"]))
+            flux.append(Paragraph(_echapper(e["texte"]), _style_paragraphe(e, styles)))
         elif bloc == "liste":
             for i, item in enumerate(e["items"], 1):
                 puce = f"{i}." if e["ordonnee"] else "•"
@@ -211,6 +221,42 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
 
     doc.build(flux, onFirstPage=decor, onLaterPages=decor)
     return sortie
+
+
+def _style_paragraphe(e: dict, styles):
+    """Style PDF d'un paragraphe, d'après sa mise en forme demandée.
+
+    Un style est construit à la volée plutôt que puisé dans une table : les
+    combinaisons (gras × taille × couleur × centré) sont trop nombreuses pour
+    être toutes prévues, et un style manquant rendrait le texte silencieusement
+    sans sa mise en forme.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import ParagraphStyle
+
+    from bureautique.modele import COULEURS, TAILLES
+
+    taille = TAILLES.get(e.get("taille"), 11)
+    style = ParagraphStyle(
+        f"p{taille}{e.get('couleur','')}{e.get('gras')}{e.get('centre')}",
+        parent=styles["BodyText"],
+        fontSize=taille,
+        # L'interligne doit suivre la taille, sinon un texte en 36 points se
+        # chevauche d'une ligne à l'autre.
+        leading=taille * 1.25,
+        alignment=TA_CENTER if e.get("centre") else styles["BodyText"].alignment,
+    )
+    if e.get("couleur"):
+        style.textColor = colors.HexColor("#" + COULEURS[e["couleur"]])
+    gras, italique = e.get("gras"), e.get("italique")
+    if gras and italique:
+        style.fontName = "Helvetica-BoldOblique"
+    elif gras:
+        style.fontName = "Helvetica-Bold"
+    elif italique:
+        style.fontName = "Helvetica-Oblique"
+    return style
 
 
 def _echapper(texte: str) -> str:
@@ -262,7 +308,7 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
-    from bureautique.modele import MAX_FEUILLES
+    from bureautique.modele import MAX_FEUILLES, COULEURS, TAILLES
 
     classeur = Workbook()
     classeur.remove(classeur.active)
@@ -332,6 +378,12 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
                 bold=True, size=max(14 - e["niveau"], 10))
         elif bloc == "paragraphe":
             ecrire([e["texte"]])
+            c = feuille.cell(row=ligne_courante - 1, column=1)
+            c.font = Font(bold=e.get("gras", False), italic=e.get("italique", False),
+                          size=TAILLES.get(e.get("taille"), 11),
+                          color=(COULEURS[e["couleur"]] if e.get("couleur") else None))
+            if e.get("centre"):
+                c.alignment = Alignment(horizontal="center", vertical="top", wrap_text=True)
         elif bloc == "liste":
             for i, item in enumerate(e["items"], 1):
                 ecrire([f"{i}." if e["ordonnee"] else "•", item])

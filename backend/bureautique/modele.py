@@ -23,9 +23,20 @@ from __future__ import annotations
 FORMATS = ("docx", "pdf", "xlsx")
 
 # Un bloc = un type + ses champs. Les champs absents prennent un défaut sûr.
+# Mise en forme d'un paragraphe : vocabulaire FERMÉ, traduit par chaque rendu.
+# Demander une taille en points ou un code couleur laisserait passer des valeurs
+# invalides, et un rouge choisi au hasard peut être illisible à l'impression.
+TAILLES = {"petit": 8, "normal": 11, "grand": 20, "tres_grand": 36}
+COULEURS = {
+    "rouge": "C0272D", "vert": "2F5233", "bleu": "2B579A",
+    "orange": "C2610A", "gris": "6B6B6B", "noir": "000000",
+}
+
 BLOCS = {
     "titre":       "texte, niveau (1 à 4)",
-    "paragraphe":  "texte",
+    "paragraphe":  "texte, et au choix : gras, italique, centre (booléens), "
+                   "taille (petit|normal|grand|tres_grand), "
+                   "couleur (rouge|vert|bleu|orange|gris|noir)",
     "liste":       "items[], ordonnee (bool)",
     "tableau":     "entetes[], lignes[[]], legende",
     "saut_page":   "(aucun champ)",
@@ -73,7 +84,21 @@ def normaliser_element(brut: dict) -> dict | None:
 
     if bloc == "paragraphe":
         texte = _texte(brut.get("texte"))
-        return {"bloc": "paragraphe", "texte": texte} if texte else None
+        if not texte:
+            return None
+        # Mise en forme facultative, en vocabulaire FERMÉ. On demande « grand »
+        # et « rouge », pas une taille en points ni un code hexadécimal : le
+        # modèle produirait des valeurs invalides ou des couleurs illisibles, et
+        # chaque format les exprime différemment. Ici, l'intention est bornée et
+        # chaque rendu la traduit comme il sait le faire.
+        taille = _texte(brut.get("taille"), 12).lower()
+        couleur = _texte(brut.get("couleur"), 12).lower()
+        return {"bloc": "paragraphe", "texte": texte,
+                "gras": bool(brut.get("gras")),
+                "italique": bool(brut.get("italique")),
+                "centre": bool(brut.get("centre")),
+                "taille": taille if taille in TAILLES else "normal",
+                "couleur": couleur if couleur in COULEURS else ""}
 
     if bloc == "liste":
         items = [_texte(i, 2000) for i in (brut.get("items") or [])]

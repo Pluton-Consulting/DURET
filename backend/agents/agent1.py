@@ -34,7 +34,17 @@ Typographie : n'utilise JAMAIS de tiret cadratin (—) ni de tiret demi-cadratin
 # Nombre maximal d'actions exécutées dans un même tour. Chaque action coûte un
 # aller-retour LLM supplémentaire : au-delà, le modèle tourne en rond plus qu'il
 # n'avance, et la facture grimpe pour rien.
-MAX_ACTIONS_PAR_TOUR = 3
+#
+# RELEVÉ DE 3 À 8. Trois suffisaient tant qu'une demande se traduisait par une
+# recherche puis une réponse. Produire un document en demande TROIS à lui seul
+# (créer, remplir, terminer) : la moindre consultation préalable faisait dépasser
+# le budget, et le tour se terminait sur « je vais le faire » sans que rien ne
+# soit fait — observé sur « compte les dossiers puis fais-en un PDF ».
+#
+# Le garde-fou contre les boucles ne repose de toute façon pas sur ce chiffre :
+# une action REJOUÉE à l'identique est reconnue par son empreinte et resservie
+# sans être exécutée. Ce qui est borné ici, c'est le travail qui AVANCE.
+MAX_ACTIONS_PAR_TOUR = 8
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────

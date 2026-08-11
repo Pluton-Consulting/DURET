@@ -220,6 +220,9 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "VERSE du contenu dans un document ouvert. `elements` est une liste de "
         "blocs : {bloc:titre, texte, niveau}, {bloc:paragraphe, texte}, "
         "{bloc:liste, items, ordonnee}, {bloc:tableau, entetes, lignes, legende}, "
+        "un paragraphe acceptant aussi gras, italique, centre (booleens), "
+        "taille (petit|normal|grand|tres_grand) et couleur (rouge|vert|bleu|"
+        "orange|gris|noir), "
         "{bloc:feuille, nom, entetes, lignes} (onglet en xlsx), {bloc:saut_page}, "
         "{bloc:separateur}. APPELLE-LE PLUSIEURS FOIS pour un document long : "
         "environ 400 blocs par appel, sans limite au nombre d'appels",

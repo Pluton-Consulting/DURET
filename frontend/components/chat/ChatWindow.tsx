@@ -6,7 +6,6 @@ import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, ChatEvent } from "@/lib/ws"
-import JournalActivite from "./JournalActivite"
 
 interface Message {
   id: string
@@ -78,10 +77,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const [loading, setLoading] = useState(false)
   const [thinkingNode, setThinkingNode] = useState<string | null>(null)
   const [thinkingSteps, setThinkingSteps] = useState<string[]>([])
-  // Journal d'activite : ce que l'assistant FAIT, en clair. La frise dit ou
-  // il en est, elle ne dit pas quoi — c'est ce qui manquait pour voir ou ca
-  // bloque sans ouvrir les journaux du serveur.
-  const [journal, setJournal] = useState<string[]>([])
+  // Ce que l'assistant FAIT, en clair, au-dessus du champ de saisie. Une
+  // SEULE ligne qui se remplace : un journal qui s'allonge oblige a lire
+  // pour retrouver l'etat courant, alors qu'on veut le voir d'un coup d'oeil.
+  const [activite, setActivite] = useState<string>("")
   const [pendingValidation, setPendingValidation] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
@@ -157,7 +156,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     setLoading(true)
     setThinkingNode(null)
     setThinkingSteps([])
-    setJournal([])
+    setActivite("")
     setPendingValidation(false)
 
     const tid = threadId ?? newId()
@@ -243,14 +242,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
               setThinkingNode(n)
               setThinkingSteps((prev) => (prev[prev.length - 1] === n ? prev : [...prev, n]))
             }
+            // Un noeud sans libelle laisse la ligne PRECEDENTE en place :
+            // l'effacer ferait clignoter le bandeau a chaque etape muette.
             const libelle = typeof event.libelle === "string" ? event.libelle.trim() : ""
-            // Un noeud sans libelle reste silencieux : mieux vaut ne rien
-            // afficher qu'un nom technique. Et on ne repete pas la meme ligne
-            // deux fois de suite — un aller-retour llm/tools la produirait a
-            // chaque passage.
-            if (libelle) {
-              setJournal((prev) => (prev[prev.length - 1] === libelle ? prev : [...prev, libelle]))
-            }
+            if (libelle) setActivite(libelle)
           }
         },
         onError: () => fallbackPost(),
@@ -291,8 +286,11 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         {loading && (
           <div className="sym-think" role="status" aria-live="polite">
             <span className="sym-orb" aria-hidden="true" />
-            <div className="sym-step" key={thinkingNode || "start"}>
-              {stepLabel(thinkingNode)}
+            <div className="sym-step" key={activite || thinkingNode || "start"}>
+              {/* Le libelle concret prime : « je liste un dossier du serveur »
+                  situe le travail, « Execution d'une action » ne dit rien. On
+                  retombe sur le nom d'etape tant qu'aucun libelle n'est arrive. */}
+              {activite || stepLabel(thinkingNode)}
               <span className="sym-dots" aria-hidden="true"><i /><i /><i /></span>
             </div>
           </div>
@@ -308,7 +306,6 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       </div>
 
       <ReasoningPath steps={thinkingSteps} loading={loading} />
-      <JournalActivite lignes={journal} actif={loading} />
     </div>
   )
 }

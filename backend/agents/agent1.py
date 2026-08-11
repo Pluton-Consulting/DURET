@@ -477,16 +477,6 @@ async def tools_node(state: AgentState, config=None) -> dict:
                 "tool_repair_used": True}
 
     if action is None:
-        corps = (texte or "").strip()
-        # Il a ANNONCÉ sans agir : on lui rend la main plutôt que de clore le
-        # tour sur une promesse. Une seule fois, et seulement s'il reste du
-        # budget — sinon on insisterait indéfiniment.
-        if (corps and est_une_annonce(corps)
-                and not state.get("relance_annonce")
-                and iteration <= MAX_ACTIONS_PAR_TOUR):
-            logger.info("Annonce sans action détectée — relance du modèle")
-            return {"llm_response": "", "relance_annonce": True,
-                    "tool_iterations": iteration, "tool_results": resultats}
         return _sortir()
 
     if iteration > MAX_ACTIONS_PAR_TOUR:
@@ -628,6 +618,17 @@ def should_validate(state: AgentState) -> str:
 
 # ── Graph ─────────────────────────────────────────────────────────────
 
+async def relance_node(state: AgentState) -> dict:
+    """Le modèle a annoncé une action sans l'émettre : on lui rend la main.
+
+    Ce nœud existe parce qu'une fonction de routage ne peut pas modifier l'état.
+    Il ne fait rien d'autre que poser le drapeau et vider la promesse, pour que
+    la passe suivante reparte sur une consigne explicite.
+    """
+    logger.info("Annonce sans action — relance du modèle")
+    return {"relance_annonce": True, "llm_response": ""}
+
+
 def route_apres_llm(state: AgentState) -> str:
     """Le modèle a-t-il demandé une action ?"""
     from skills.protocol import BLOC_ACTION_RE, BLOC_NATIF_RE
@@ -637,7 +638,17 @@ def route_apres_llm(state: AgentState) -> str:
     # Deux syntaxes : le bloc demandé, et celle que certains modèles de la
     # cascade émettent d'eux-mêmes. Ignorer la seconde la laissait s'afficher.
     demande = BLOC_ACTION_RE.search(texte) or BLOC_NATIF_RE.search(texte)
-    return "tools" if demande else "rehydrate"
+    if demande:
+        return "tools"
+    # ANNONCE SANS ACTE. « Je crée le PDF » sans bloc d'action : le tour se
+    # terminait ici, sur une promesse présentée comme une réponse.
+    #
+    # La détection doit vivre ICI et nulle part ailleurs : sans bloc d'action,
+    # `tools` n'est JAMAIS appelé, donc un contrôle placé là-bas ne s'exécute
+    # pas — il en avait tout l'air, et c'est ce qui l'a rendu difficile à voir.
+    if not state.get("relance_annonce") and est_une_annonce(texte):
+        return "relance"
+    return "rehydrate"
 
 
 def route_apres_tools(state: AgentState) -> str:
@@ -680,8 +691,11 @@ def build_agent1_graph():
     graph.add_edge("browser", "llm")
     # Boucle d'outils : llm -> tools -> llm -> ... jusqu'à ce que le modèle réponde
     # sans demander d'action (ou que le garde-fou l'arrête).
+    graph.add_node("relance", relance_node)
     graph.add_conditional_edges("llm", route_apres_llm,
-                                {"tools": "tools", "rehydrate": "rehydrate"})
+                                {"tools": "tools", "relance": "relance",
+                                 "rehydrate": "rehydrate"})
+    graph.add_edge("relance", "llm")
     graph.add_conditional_edges("tools", route_apres_tools,
                                 {"llm": "llm", "rehydrate": "rehydrate"})
     graph.add_edge("rehydrate", "validation_check")

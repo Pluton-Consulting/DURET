@@ -28,9 +28,9 @@ LIBELLES = {
     "search_docs": "je cherche dans la mémoire d'entreprise",
     "browser": "je consulte le web",
     "llm": "je réfléchis",
-    # Le modele a annonce sans agir : on le reprend. Le dire evite que
-    # l'ecran paraisse fige pendant la passe supplementaire.
-    "relance": "je reprends l'action",
+    # Le modele a annonce sans agir : on lui fait produire l'action dans un
+    # appel dedie. Le dire evite que l'ecran paraisse fige pendant cette passe.
+    "forcer": "je passe à l'exécution",
     "tools": "j'exécute une action",
     "rehydrate": "je finalise la réponse",
     "validation_check": "je vérifie ce qui doit être validé",

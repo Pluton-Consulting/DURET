@@ -354,12 +354,15 @@ Voici les messages trouvés :
     from learning.consignes import texte_injecte
     system_prompt += await texte_injecte(state.get("user_id"), state.get("user_role"))
 
-    if state.get("relance_annonce"):
-        system_prompt += (
-            "\n\nATTENTION : au message précédent tu as ANNONCÉ une action sans "
-            "l'exécuter. Une annonce n'exécute rien. Émets MAINTENANT le bloc "
-            "```action correspondant, sans le commenter et sans réécrire ton "
-            "intention. Si l'action a déjà été faite, sers-toi de son résultat.")
+    # Il y avait ici un rappel « ATTENTION, tu as annoncé sans exécuter »,
+    # ajouté quand `relance_annonce` était levé. RETIRÉ, pour deux raisons.
+    # D'abord il ne servait à rien : les traces montrent le rappel bien présent
+    # dans le prompt, et le modèle annonçant quand même. Ensuite il est devenu
+    # inatteignable — le drapeau n'est plus levé que par `forcer_action_node`,
+    # qui va vers `tools` ou termine le tour, jamais vers une nouvelle passe de
+    # ce nœud. Un garde-fou qui ne s'exécute pas rassure sans protéger : c'est
+    # déjà ce qui avait rendu la première détection d'annonce si difficile à
+    # débusquer. La reprise se fait maintenant dans un appel dédié.
 
     # Dernière passe imposée : la boucle d'actions est close, il ne reste qu'à
     # rédiger. Sans cette consigne, le modèle peut redemander une action, dont
@@ -605,7 +608,15 @@ async def rehydrate_node(state: AgentState) -> dict:
     rien_fait = not any(r.get("ok") for r in resultats)
     if state.get("relance_annonce") and rien_fait and "?" not in text \
             and est_une_annonce(text):
-        logger.info("Tour sans effet — non enregistré dans l'historique")
+        logger.info("Tour sans effet — annonce ni affichée ni enregistrée")
+        # ET LA PROMESSE NE S'AFFICHE PAS NON PLUS. Laisser « je vais créer le
+        # PDF » en réponse d'un tour qui n'a rien fait rend l'échec indiscernable
+        # d'un affichage manquant : on ne sait plus si l'assistant travaille
+        # encore, s'il s'est arrêté, ou si l'écran ne suit pas. Une phrase nette
+        # vaut mieux qu'une promesse : le tour est fini, et rien n'a été produit.
+        sortie["final_response"] = (
+            "Je n'ai pas réussi à exécuter l'action : rien n'a été fait. "
+            "Reformulez la demande, ou découpez-la en une seule étape à la fois.")
         return sortie
 
     # L'historique est émis ICI, et non dans `llm_node` : ce nœud s'exécute
@@ -653,15 +664,87 @@ def should_validate(state: AgentState) -> str:
 
 # ── Graph ─────────────────────────────────────────────────────────────
 
-async def relance_node(state: AgentState) -> dict:
-    """Le modèle a annoncé une action sans l'émettre : on lui rend la main.
+async def forcer_action_node(state: AgentState, config=None) -> dict:
+    """Le modèle a annoncé une action sans l'émettre : on la lui FAIT produire.
 
-    Ce nœud existe parce qu'une fonction de routage ne peut pas modifier l'état.
-    Il ne fait rien d'autre que poser le drapeau et vider la promesse, pour que
-    la passe suivante reparte sur une consigne explicite.
+    POURQUOI UN APPEL À PART, ET NON UNE CONSIGNE DE PLUS. La version précédente
+    se contentait de rendre la main au modèle avec un « ATTENTION, tu as annoncé
+    sans exécuter » ajouté au prompt système. Les traces montrent que cette
+    consigne ÉTAIT bien présente et qu'il a annoncé quand même : dans le même
+    contexte se trouvaient quatre de ses propres tours ne contenant qu'une
+    promesse. Une phrase d'instruction ne pèse rien contre quatre démonstrations
+    du contraire, et durcir encore la formulation ne ferait que répéter l'échec.
+
+    On change donc de levier. Cet appel-ci part d'un contexte NEUF : ni
+    historique, ni documents, ni personnalité — le catalogue des actions, la
+    demande, ce qui a déjà été fait, et l'intention annoncée. Sa seule sortie
+    admise est un bloc ```action. Le modèle n'a plus à choisir entre parler et
+    agir : parler n'est plus une réponse possible.
+
+    Le bloc obtenu repart dans `llm_response` et le tour continue par `tools` :
+    l'exécution reste au SEUL endroit qui contrôle les droits, classe l'effet et
+    déduplique. Ce nœud choisit, il n'exécute pas.
     """
-    logger.info("Annonce sans action — relance du modèle")
-    return {"relance_annonce": True, "llm_response": ""}
+    import json as _json
+    from skills.protocol import (instruction_actions, extraire_action,
+                                 rafraichir_catalogue)
+
+    role = state.get("user_role")
+    await rafraichir_catalogue()
+
+    consigne = (
+        "Tu es le sélecteur d'actions d'un assistant interne. Ta SEULE sortie "
+        "admise est un bloc ```action. N'écris ni phrase, ni explication, ni "
+        "commentaire : tout texte hors du bloc est jeté sans être lu."
+        + instruction_actions(role) +
+        "\n\nSi, et seulement si, aucune action de la liste ne peut faire "
+        "avancer la demande, réponds le seul mot RIEN, sans bloc."
+    )
+
+    faits = "\n".join(
+        f"- {r.get('skill') or '?'} : {'réussie' if r.get('ok') else 'en échec'}"
+        for r in (state.get("tool_results") or [])) or "- aucune"
+
+    demande = (
+        "Demande de l'utilisateur :\n"
+        f"{state.get('anonymized_query') or state.get('query', '')}\n\n"
+        f"Actions déjà exécutées à ce tour :\n{faits}\n\n"
+        "L'assistant vient d'écrire cette intention SANS l'exécuter :\n"
+        f"« {(state.get('llm_response') or '').strip()[:400]} »\n\n"
+        "Produis le bloc ```action de la PROCHAINE action à exécuter."
+    )
+
+    llm = get_llm(LLMTier(state.get("llm_tier", "standard")))
+    try:
+        reponse = await llm.ainvoke(
+            [SystemMessage(content=consigne), HumanMessage(content=demande)],
+            config=config)
+        texte = str(reponse.content or "")
+    except Exception as e:  # noqa: BLE001 - un forçage raté n'est pas une panne
+        logger.warning("Forçage d'action impossible : %s", e)
+        return {"relance_annonce": True}
+
+    action, _, erreur = extraire_action(texte, role)
+    if action is None:
+        # Le drapeau reste levé : le tour est reconnu sans effet, la promesse ne
+        # sera ni affichée comme une réponse ni rangée dans l'historique.
+        logger.info("Forçage sans résultat (%s)", erreur or "aucun bloc produit")
+        return {"relance_annonce": True}
+
+    logger.info("Action forcée : %s", action.get("skill"))
+    return {"relance_annonce": True,
+            "llm_response": "```action\n"
+                            + _json.dumps(action, ensure_ascii=False) + "\n```"}
+
+
+def route_apres_forcage(state: AgentState) -> str:
+    """L'action a-t-elle pu être produite ?"""
+    from skills.protocol import BLOC_ACTION_RE
+    if BLOC_ACTION_RE.search(state.get("llm_response") or ""):
+        return "tools"
+    # Rien n'a pu être produit : inutile de refaire tourner le modèle, il vient
+    # de refuser deux fois. On termine le tour, et l'utilisateur l'apprend.
+    return "rehydrate"
 
 
 def route_apres_llm(state: AgentState) -> str:
@@ -682,7 +765,7 @@ def route_apres_llm(state: AgentState) -> str:
     # `tools` n'est JAMAIS appelé, donc un contrôle placé là-bas ne s'exécute
     # pas — il en avait tout l'air, et c'est ce qui l'a rendu difficile à voir.
     if not state.get("relance_annonce") and est_une_annonce(texte):
-        return "relance"
+        return "forcer"
     return "rehydrate"
 
 
@@ -726,11 +809,15 @@ def build_agent1_graph():
     graph.add_edge("browser", "llm")
     # Boucle d'outils : llm -> tools -> llm -> ... jusqu'à ce que le modèle réponde
     # sans demander d'action (ou que le garde-fou l'arrête).
-    graph.add_node("relance", relance_node)
+    # Annonce sans acte : on ne redemande pas au modèle de bien vouloir agir (il
+    # a déjà refusé une fois, consigne en main) — on lui fait produire l'action
+    # dans un appel dédié, puis on l'exécute.
+    graph.add_node("forcer", forcer_action_node)
     graph.add_conditional_edges("llm", route_apres_llm,
-                                {"tools": "tools", "relance": "relance",
+                                {"tools": "tools", "forcer": "forcer",
                                  "rehydrate": "rehydrate"})
-    graph.add_edge("relance", "llm")
+    graph.add_conditional_edges("forcer", route_apres_forcage,
+                                {"tools": "tools", "rehydrate": "rehydrate"})
     graph.add_conditional_edges("tools", route_apres_tools,
                                 {"llm": "llm", "rehydrate": "rehydrate"})
     graph.add_edge("rehydrate", "validation_check")

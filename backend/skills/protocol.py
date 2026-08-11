@@ -396,6 +396,15 @@ def instruction_actions(role: str | None = None) -> str:
         "N'invente jamais les paramètres d'une action. S'il te manque une information "
         "indispensable (le destinataire, la référence d'un devis, le contexte), "
         "DEMANDE-LA au lieu de lancer l'action avec une valeur plausible.\n"
+        # Symétrique de la règle du dessus : celle-là interdit de PARLER sans
+        # agir. Relevée en production sur une demande en plusieurs étapes, où le
+        # modèle annonçait son plan à chaque tour sans jamais émettre de bloc.
+        "N'ANNONCE JAMAIS UNE ACTION SANS L'ÉMETTRE. N'écris pas « je vais faire », "
+        "« je commence par », « je crée maintenant » : ces phrases n'exécutent RIEN. "
+        "Une demande en plusieurs étapes se traite UNE ÉTAPE À LA FOIS — émets la "
+        "PREMIÈRE action immédiatement, sans décrire le plan ; son résultat te "
+        "reviendra et tu émettras la suivante. Ne dis ce que tu as fait qu'APRÈS "
+        "l'avoir fait.\n"
         "Skills disponibles :\n" + "\n".join(lignes) +
         # L'exemple porte volontairement sur l'action SANS EFFET (une recherche) :
         # des modèles modestes recopient l'exemple mot pour mot et l'exécutent tel

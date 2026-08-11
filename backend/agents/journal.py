@@ -28,6 +28,9 @@ LIBELLES = {
     "search_docs": "je cherche dans la mémoire d'entreprise",
     "browser": "je consulte le web",
     "llm": "je réfléchis",
+    # Le modele a annonce sans agir : on le reprend. Le dire evite que
+    # l'ecran paraisse fige pendant la passe supplementaire.
+    "relance": "je reprends l'action",
     "tools": "j'exécute une action",
     "rehydrate": "je finalise la réponse",
     "validation_check": "je vérifie ce qui doit être validé",

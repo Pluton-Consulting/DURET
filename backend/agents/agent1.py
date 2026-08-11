@@ -540,7 +540,20 @@ async def tools_node(state: AgentState, config=None) -> dict:
         anonymizer.anonymize_chunks, [contenu], state.get("entity_map") or {})
     resultats.append({"skill": action["skill"], "ok": ok, "payload_hash": empreinte,
                       "resultat_masque": masques[0]})
+    # UNE ACTION A ETE EXECUTEE : le drapeau de relance retombe, pour que le
+    # modele puisse etre repris s'il cale de nouveau plus loin.
+    #
+    # Une seule relance par TOUR ne suffisait pas : produire un document en
+    # demande trois d'affilee (creer, remplir, terminer), et le modele annonce
+    # entre chacune. Il repartait apres la premiere relance, puis s'arretait a la
+    # suivante — « je vais ajouter le nombre de dossiers dans le document cree ».
+    #
+    # Remettre le drapeau a zero ne risque PAS la boucle infinie : il ne retombe
+    # que lorsqu'une action a REELLEMENT abouti, donc que le travail a avance.
+    # Un modele qui n'agirait jamais n'obtient toujours qu'une seule relance, et
+    # le budget d'actions borne le reste.
     return {"tool_results": resultats, "tool_iterations": iteration,
+            "relance_annonce": False,
             "entity_map": carte_maj}
 
 

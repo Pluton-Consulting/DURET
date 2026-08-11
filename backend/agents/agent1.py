@@ -497,12 +497,23 @@ async def tools_node(state: AgentState, config=None) -> dict:
             for k, v in action["args"].items()}
 
     empreinte = hash_payload(action["skill"], args)
-    for r in resultats:
-        if r.get("payload_hash") == empreinte:
-            # Le modèle redemande la même action : on resert le résultat plutôt
-            # que de la rejouer (une rédaction relancée coûte un appel LLM de plus).
-            resultats.append({**r, "resultat_masque": "(déjà exécuté ce tour)"})
-            return {"tool_results": resultats, "tool_iterations": iteration}
+    deja = [r for r in resultats if r.get("payload_hash") == empreinte]
+    if deja:
+        # DEUXIÈME REDEMANDE IDENTIQUE : le tour n'avance plus. Insister ne peut
+        # rien produire de neuf — la réponse serait la même — et chaque passe
+        # coûte un appel de modèle. On arrête et on dit pourquoi.
+        if len(deja) >= 2:
+            return _sortir(f"l'action « {action['skill']} » a été redemandée à "
+                           "l'identique sans que la demande avance.")
+        # Le modèle redemande la même action : on ressert son RÉSULTAT plutôt que
+        # de la rejouer. Il contenait auparavant « (déjà exécuté ce tour) » et
+        # rien d'autre — or c'est justement là que se trouvait l'identifiant du
+        # document dont le modèle avait besoin. On lui reprenait l'information au
+        # moment précis où il la redemandait.
+        resultats.append({**deja[0], "resultat_masque":
+                          "(déjà exécuté à ce tour — son résultat, inchangé)\n"
+                          + str(deja[0].get("resultat_masque") or "")})
+        return {"tool_results": resultats, "tool_iterations": iteration}
 
     effet = EFFETS_NATIFS.get(action["skill"], "externe")
     if effet == "externe":
@@ -697,13 +708,29 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         "admise est un bloc ```action. N'écris ni phrase, ni explication, ni "
         "commentaire : tout texte hors du bloc est jeté sans être lu."
         + instruction_actions(role) +
+        "\n\nLes identifiants (document_id, chemins, références) se RECOPIENT "
+        "depuis les résultats fournis, caractère pour caractère. N'en invente "
+        "jamais un qui ressemble : il serait rejeté."
         "\n\nSi, et seulement si, aucune action de la liste ne peut faire "
         "avancer la demande, réponds le seul mot RIEN, sans bloc."
     )
 
-    faits = "\n".join(
-        f"- {r.get('skill') or '?'} : {'réussie' if r.get('ok') else 'en échec'}"
-        for r in (state.get("tool_results") or [])) or "- aucune"
+    # LE RÉSULTAT, PAS SEULEMENT LE VERDICT. La première version ne listait que
+    # « creer_document : réussie » — sans le `document_id` qu'elle avait rendu.
+    # Le modèle, à qui l'on demandait l'action suivante, ne pouvait donc pas la
+    # former : il a inventé un identifiant plausible, l'ajout a été refusé, et il
+    # a rouvert un document en boucle. Un sélecteur d'actions à qui l'on cache ce
+    # que les actions ont produit ne peut pas enchaîner.
+    lignes = []
+    for r in (state.get("tool_results") or []):
+        brut = str(r.get("resultat_masque") or "")
+        # Tronqué : ce nœud a besoin des identifiants (en tête des résultats),
+        # pas du contenu entier — le modèle principal, lui, l'a déjà.
+        extrait = brut[:800] + (" […tronqué]" if len(brut) > 800 else "")
+        lignes.append(f"- {r.get('skill') or '?'} : "
+                      f"{'réussie' if r.get('ok') else 'EN ÉCHEC'}\n"
+                      f"  résultat : {extrait}")
+    faits = "\n".join(lignes) or "- aucune"
 
     demande = (
         "Demande de l'utilisateur :\n"

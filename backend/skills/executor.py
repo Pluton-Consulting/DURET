@@ -26,8 +26,10 @@ logger = logging.getLogger("duret.skills")
 RUNNABLE_STATUSES = ("validated", "stable")
 
 
-class SkillError(Exception):
-    """Skill introuvable ou non exécutable (statut insuffisant)."""
+# Réexporté depuis `skills.erreurs` : les skills doivent pouvoir lever sans
+# importer la base de données. `from skills.executor import SkillError` reste
+# valide partout, et la classe reste unique.
+from skills.erreurs import SkillError  # noqa: E402,F401
 
 
 async def list_skills(agent: str | None = None, statuses: tuple | None = None,

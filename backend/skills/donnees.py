@@ -76,7 +76,11 @@ async def interroger_donnees(data: dict, user) -> dict:
             return resultat
     except Exception as e:  # noqa: BLE001 - une lecture ratée n'est pas une panne du chat
         logger.warning("Interrogation des données impossible : %s", e)
-        return {"message": "Les données importées sont momentanément indisponibles."}
+        # Un ECHEC, pas une reponse. Rendu comme un dictionnaire ordinaire, il
+        # passait pour une interrogation reussie : le modele en concluait que la
+        # donnee n'existait pas, au lieu de dire que la lecture avait echoue.
+        from skills.erreurs import SkillError
+        raise SkillError("Les données importées sont momentanément indisponibles.")
 
 
 def _cle_comparaison(nom: str) -> str:

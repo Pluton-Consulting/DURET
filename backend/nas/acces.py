@@ -239,7 +239,9 @@ async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
 
     motif = (motif or "").strip()
     if not motif:
-        return {"message": "Donne un morceau de nom de fichier à chercher."}
+        # Un refus, pas un résultat : rendu comme un dictionnaire ordinaire, il
+        # passait pour une recherche réussie et sans correspondance.
+        raise NasRefuse("Donne un morceau de nom de fichier à chercher.")
 
     racines = [verifier(dossier)] if dossier else dossiers_autorises()
     if not racines:

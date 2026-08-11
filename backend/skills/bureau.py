@@ -29,6 +29,24 @@ def _proprietaire(user) -> str:
     return str(getattr(user, "id", "") or "")
 
 
+def _echec(message: str):
+    """Un échec doit se signaler comme un échec.
+
+    Ces fonctions rendaient `{"message": "Document inconnu, expiré..."}` — un
+    dictionnaire ordinaire, donc une RÉUSSITE aux yeux de tout le reste du
+    système : `ok` valait True, le journal d'écran affichait l'action comme
+    aboutie, et la passe suivante lisait « ajouter_document : réussie ».
+
+    Relevé en production : le modèle a cru son document rempli, puis a découvert
+    dans le texte du résultat qu'il ne l'était pas. Il a alors rouvert un
+    document, quatre fois de suite, jusqu'à épuiser le budget d'actions du tour.
+    Une heure de tourne-en-rond, née d'un booléen qui disait le contraire du
+    message juste à côté.
+    """
+    from skills.erreurs import SkillError
+    raise SkillError(message)
+
+
 async def creer_document(data: dict, user) -> dict:
     """Ouvre un document. Ne produit encore aucun fichier."""
     from bureautique.atelier import ouvrir
@@ -36,7 +54,7 @@ async def creer_document(data: dict, user) -> dict:
 
     proprio = _proprietaire(user)
     if not proprio:
-        return {"message": "Impossible d'ouvrir un document sans compte identifié."}
+        _echec("Impossible d'ouvrir un document sans compte identifié.")
 
     entete = normaliser_entete(data or {})
     jeton = ouvrir(entete, proprio)
@@ -62,15 +80,19 @@ async def ajouter_document(data: dict, user) -> dict:
     if isinstance(elements, dict):
         elements = [elements]
     if not isinstance(elements, list):
-        return {"message": "`elements` doit être une liste de blocs."}
+        _echec("`elements` doit être une liste de blocs.")
 
     try:
         retenus = ajouter(jeton, elements[:MAX_PAR_APPEL], _proprietaire(user))
     except KeyError:
-        return {"message": "Document inconnu, expiré, ou ouvert par quelqu'un d'autre. "
-                           "Rouvre-en un avec `creer_document`."}
+        # Le `document_id` reçu ne correspond à aucun document ouvert. Le plus
+        # souvent il a été INVENTÉ : les vrais jetons sont imprévisibles, un
+        # modèle qui ne l'a pas sous les yeux en fabrique un qui y ressemble.
+        _echec("Document inconnu, expiré, ou ouvert par quelqu'un d'autre. "
+               "Reprends le `document_id` EXACT rendu par `creer_document`, "
+               "ou rouvre un document.")
     except ValueError as e:
-        return {"message": str(e)}
+        _echec(str(e))
 
     f = fiche(jeton, _proprietaire(user)) or {}
     ignores = len(elements) - retenus
@@ -96,12 +118,13 @@ async def terminer_document(data: dict, user) -> dict:
     try:
         f = terminer(jeton, _proprietaire(user))
     except KeyError:
-        return {"message": "Document inconnu, expiré, ou ouvert par quelqu'un d'autre."}
+        _echec("Document inconnu, expiré, ou ouvert par quelqu'un d'autre. "
+               "Reprends le `document_id` EXACT rendu par `creer_document`.")
     except ValueError as e:
-        return {"message": str(e)}
+        _echec(str(e))
     except Exception as e:  # noqa: BLE001 - un rendu raté ne doit pas casser le chat
         logger.warning("Rendu du document %s impossible : %s", jeton[:8], e)
-        return {"message": f"Le document n'a pas pu être produit ({e})."}
+        _echec(f"Le document n'a pas pu être produit ({e}).")
 
     entete = f["entete"]
     return {

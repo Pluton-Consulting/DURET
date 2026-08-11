@@ -41,6 +41,22 @@ _CAUSES = {
 }
 
 
+def _echec(message: str):
+    """Un échec doit se signaler comme un échec.
+
+    Ces fonctions rendaient `{"message": "..."}` — un dictionnaire ordinaire,
+    donc une RÉUSSITE partout ailleurs : `ok` valait True, l'action s'affichait
+    comme aboutie, et la passe suivante lisait « nas_deposer : réussie ». Le
+    modèle croyait le fichier posé sur le serveur alors qu'il n'était pas parti,
+    et l'annonçait à l'utilisateur.
+
+    Un refus de rôle, un NAS injoignable, un document introuvable : ce sont des
+    échecs. Ils doivent porter ce nom, sans quoi rien en amont ne peut réagir.
+    """
+    from skills.erreurs import SkillError
+    raise SkillError(message)
+
+
 def _detail(quoi: str, e: Exception) -> str:
     """Message exploitable, meme quand l'exception n'en porte aucun.
 
@@ -65,7 +81,7 @@ async def nas_lister(data: dict, user) -> dict:
     try:
         verifier_role(user)
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
     chemin = (data.get("chemin") or "").strip()
     if not chemin:
         racines = dossiers_autorises()
@@ -82,9 +98,9 @@ async def nas_lister(data: dict, user) -> dict:
     try:
         return await lister(chemin)
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
     except Exception as e:  # noqa: BLE001 - un NAS injoignable n'est pas une panne du chat
-        return {"message": _detail("Le NAS n'a pas pu être consulté", e)}
+        _echec(_detail("Le NAS n'a pas pu être consulté", e))
 
 
 async def nas_lire(data: dict, user) -> dict:
@@ -93,16 +109,16 @@ async def nas_lire(data: dict, user) -> dict:
     try:
         verifier_role(user)
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
     chemin = (data.get("chemin") or "").strip()
     if not chemin:
-        return {"message": "Donne le chemin complet du fichier à lire."}
+        _echec("Donne le chemin complet du fichier à lire.")
     try:
         return await lire(chemin)
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
     except Exception as e:  # noqa: BLE001
-        return {"message": _detail("Le fichier n'a pas pu être lu", e)}
+        _echec(_detail("Le fichier n'a pas pu être lu", e))
 
 
 async def nas_chercher(data: dict, user) -> dict:
@@ -111,13 +127,13 @@ async def nas_chercher(data: dict, user) -> dict:
     try:
         verifier_role(user)
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
     try:
         return await chercher(data.get("motif") or "", data.get("dossier"))
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
     except Exception as e:  # noqa: BLE001
-        return {"message": _detail("La recherche a échoué", e)}
+        _echec(_detail("La recherche a échoué", e))
 
 
 async def nas_deposer(data: dict, user) -> dict:
@@ -126,13 +142,13 @@ async def nas_deposer(data: dict, user) -> dict:
     try:
         verifier_role(user)
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
 
     dossier = (data.get("dossier") or "").strip()
     jeton = (data.get("document_id") or "").strip()
     if not dossier or not jeton:
-        return {"message": "Il faut le dossier du NAS et le `document_id` d'un "
-                           "document déjà terminé (`terminer_document`)."}
+        _echec("Il faut le dossier du NAS et le `document_id` d'un document "
+               "déjà terminé (`terminer_document`).")
 
     # On ne dépose QUE des documents produits ici, et seulement ceux de la
     # personne : téléverser un chemin arbitraire du serveur ferait de ce skill
@@ -141,8 +157,9 @@ async def nas_deposer(data: dict, user) -> dict:
     proprio = str(getattr(user, "id", "") or "")
     chemin = chemin_fichier(jeton, proprio)
     if not chemin:
-        return {"message": "Document inconnu, pas encore terminé, ou appartenant "
-                           "à quelqu'un d'autre."}
+        _echec("Document inconnu, pas encore terminé, ou appartenant à "
+               "quelqu'un d'autre. Reprends le `document_id` EXACT rendu par "
+               "`terminer_document`.")
 
     f = fiche(jeton, proprio) or {}
     entete = f.get("entete") or {}
@@ -153,6 +170,6 @@ async def nas_deposer(data: dict, user) -> dict:
             contenu = fichier.read()
         return await deposer(dossier, nom, contenu)
     except NasRefuse as e:
-        return {"message": str(e)}
+        _echec(str(e))
     except Exception as e:  # noqa: BLE001
-        return {"depose": False, "message": _detail("Le dépôt a échoué", e)}
+        _echec(_detail("Le dépôt a échoué", e))

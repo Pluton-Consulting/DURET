@@ -122,10 +122,24 @@ def verifier(chemin: str) -> str:
 
 
 async def _session(client):
-    """Adresse + session DSM. Réutilise le connecteur existant."""
+    """Adresse + session DSM. Réutilise le connecteur existant.
+
+    Une adresse gardée en cache peut devenir morte : bail DHCP renouvelé, relais
+    Synology déplacé. On l'oublie alors, pour que l'appel suivant reparte d'une
+    résolution fraîche au lieu de s'obstiner pendant toute la durée du cache.
+    """
+    import httpx
+
     from ingestion.connectors import synology as c
     base = await c._base_url(client)
-    sid = await c._login(client, base)
+    try:
+        sid = await c._login(client, base)
+    except httpx.HTTPError:
+        # Panne de TRANSPORT : l'adresse est en cause, pas les identifiants.
+        # Un refus DSM (mot de passe, droits) ne passe pas par ici et ne doit
+        # surtout pas invalider une adresse parfaitement bonne.
+        c.oublier_adresse()
+        raise
     return base, sid
 
 

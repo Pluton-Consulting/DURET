@@ -184,9 +184,35 @@ async def _resoudre_quickconnect(client, qc_id: str) -> Optional[str]:
     return None
 
 
+# Adresse résolue, gardée en mémoire. SANS ce cache, chaque appel de skill
+# relançait une résolution complète : une requête chez Synology, puis jusqu'à
+# trois sondages de 8 s. Deux consequences, et la seconde est la pire : c'était
+# lent, et surtout le résolveur de Synology finissait par ne plus répondre —
+# d'où un NAS joignable une fois sur deux, sans rien de changé entre les deux.
+_CACHE_URL: dict = {"url": None, "expire": 0.0}
+DUREE_CACHE_URL_S = 600.0
+
+
+def oublier_adresse() -> None:
+    """Invalide l'adresse mise en cache : le prochain appel la redemandera.
+
+    Appelé quand le NAS cesse de répondre — son adresse a pu changer (bail DHCP,
+    relais déplacé). Sans cette invalidation, on s'obstinerait dix minutes sur
+    une adresse morte.
+    """
+    _CACHE_URL.update({"url": None, "expire": 0.0})
+
+
 async def _base_url(client) -> str:
     """URL de base du NAS : adresse directe si fournie, sinon QuickConnect."""
+    import time
+
     directe = (settings.synology_base_url or "").strip().rstrip("/")
+
+    # Adresse déjà résolue et encore fraîche : on la réutilise. C'est ce qui
+    # évite de redemander à Synology à chaque question.
+    if not directe and _CACHE_URL["url"] and time.monotonic() < _CACHE_URL["expire"]:
+        return _CACHE_URL["url"]
 
     # PIÈGE COURANT. « https://mon-nas.quickconnect.to » est l'adresse que
     # Synology AFFICHE à l'utilisateur, donc la seule qu'on ait souvent sous la
@@ -225,10 +251,13 @@ async def _base_url(client) -> str:
     url = await _resoudre_quickconnect(client, qc)
     if not url:
         raise SynologyError(
-            f"QuickConnect « {qc} » n'a pas pu être résolu. Renseignez plutôt "
-            "SYNOLOGY_BASE_URL (adresse directe du NAS)."
+            f"QuickConnect « {qc} » n'a pas pu être résolu. Le service de "
+            "résolution Synology n'a pas répondu, ou le NAS est hors ligne. "
+            "Réessayez dans un instant, ou renseignez SYNOLOGY_BASE_URL "
+            "(adresse directe du NAS, plus rapide et plus fiable)."
         )
-    logger.info("QuickConnect résolu vers une adresse directe")
+    _CACHE_URL.update({"url": url, "expire": time.monotonic() + DUREE_CACHE_URL_S})
+    logger.info("QuickConnect résolu, adresse gardée %d s", int(DUREE_CACHE_URL_S))
     return url
 
 

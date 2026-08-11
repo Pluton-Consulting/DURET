@@ -584,17 +584,39 @@ async def rehydrate_node(state: AgentState) -> dict:
         allowed = set(allowed)
         entity_map = {k: v for k, v in entity_map.items() if k in allowed}
 
-    return {
-        "final_response": anonymizer.rehydrate(text, entity_map),
-        # L'historique est émis ICI, et non dans `llm_node` : ce nœud s'exécute
-        # exactement une fois par tour, quel que soit le nombre d'actions. On n'y
-        # stocke QUE du texte masqué : aucune PII ne dort dans le checkpoint ni ne
-        # repart vers le LLM.
-        "messages": [
-            HumanMessage(content=state.get("anonymized_query") or state.get("query", "")),
-            AIMessage(content=text),
-        ],
-    }
+    sortie = {"final_response": anonymizer.rehydrate(text, entity_map)}
+
+    # UN TOUR SANS EFFET NE S'ÉCRIT PAS DANS L'HISTORIQUE.
+    #
+    # Le modèle relit ses propres tours. Quand une annonce sans acte y est
+    # rangée, elle devient un EXEMPLE : au tour suivant il la recopie, et
+    # l'exemple se duplique. Relevé dans les traces, l'historique envoyé au
+    # modèle contenait quatre tours d'assistant d'affilée qui n'étaient que
+    # « je vais compter les dossiers, puis créer le PDF » — après quoi aucune
+    # consigne système ne pesait plus rien face à quatre démonstrations du
+    # contraire.
+    #
+    # On ne coupe que le cas AVÉRÉ : la reprise a déjà eu lieu ce tour-ci
+    # (`relance_annonce`), aucune action n'a abouti, et le texte est encore une
+    # promesse. Le tour n'a alors rien produit — l'oublier ne perd rien et
+    # évite d'enseigner le geste. La question posée à l'utilisateur est
+    # épargnée : elle, appelle une réponse et doit rester dans le fil.
+    resultats = state.get("tool_results") or []
+    rien_fait = not any(r.get("ok") for r in resultats)
+    if state.get("relance_annonce") and rien_fait and "?" not in text \
+            and est_une_annonce(text):
+        logger.info("Tour sans effet — non enregistré dans l'historique")
+        return sortie
+
+    # L'historique est émis ICI, et non dans `llm_node` : ce nœud s'exécute
+    # exactement une fois par tour, quel que soit le nombre d'actions. On n'y
+    # stocke QUE du texte masqué : aucune PII ne dort dans le checkpoint ni ne
+    # repart vers le LLM.
+    sortie["messages"] = [
+        HumanMessage(content=state.get("anonymized_query") or state.get("query", "")),
+        AIMessage(content=text),
+    ]
+    return sortie
 
 
 async def validation_check_node(state: AgentState) -> dict:

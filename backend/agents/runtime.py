@@ -111,6 +111,16 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "tool_repair_used": False,
         "tools_finished": False,
         "pending_action": None,
+        # LE DRAPEAU DE RELANCE AUSSI. Il manquait ici, et c'est ce qui gelait
+        # l'assistant : posé lors d'un tour où le modèle avait annoncé sans agir,
+        # il SURVIVAIT au tour via le checkpointer. Or `route_apres_llm` ne
+        # relance que si le drapeau est bas — donc une fois levé et non
+        # redescendu (tour terminé sans action aboutie), le fil entier perdait
+        # définitivement sa reprise : le modèle annonçait, personne ne le
+        # reprenait, l'utilisateur relisait la même promesse à chaque essai.
+        # Vu dans les traces : `relance_annonce: True` dès l'entrée du tour,
+        # avant que le modèle ait écrit quoi que ce soit.
+        "relance_annonce": False,
         # Idem pour la décision du routeur et la raison d'une sortie de boucle :
         # ces canaux sont en « dernière valeur » et survivent au tour. Sans remise
         # à zéro, un tour hérite du « contexte » de sortie du précédent — et le

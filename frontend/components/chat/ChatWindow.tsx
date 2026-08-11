@@ -6,6 +6,7 @@ import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, ChatEvent } from "@/lib/ws"
+import { Callout, KeyValueTable, PrimaryButton, GhostButton } from "@/components/blocks"
 
 interface Message {
   id: string
@@ -89,17 +90,23 @@ const ACTIONS_EXTERNES: Record<string, string> = {
 // Les reperes qui permettent de decider : ou, quoi, pour qui. Jamais le
 // contenu lui-meme — une bulle de chat n'est pas le bon endroit pour relire un
 // corps de mail, et la file de validation le montre deja.
-const REPERES = ["dossier", "chemin", "nom", "destinataire", "titre", "format"]
+const REPERES: [string, string][] = [
+  ["dossier", "Dossier"],
+  ["chemin", "Chemin"],
+  ["nom", "Nom du fichier"],
+  ["destinataire", "Destinataire"],
+  ["titre", "Titre"],
+  ["format", "Format"],
+]
 
-function decrireAction(v: EnAttente): { titre: string; details: string } {
+function decrireAction(v: EnAttente): { titre: string; lignes: [string, string][] } {
   const titre =
     (v.skill && ACTIONS_EXTERNES[v.skill]) || v.motif || "Action à effet externe"
   const a = v.args || {}
-  const details = REPERES
-    .filter((k) => a[k] !== undefined && a[k] !== null && a[k] !== "")
-    .map((k) => `${k} : ${String(a[k])}`)
-    .join("  ·  ")
-  return { titre, details }
+  const lignes = REPERES
+    .filter(([cle]) => a[cle] !== undefined && a[cle] !== null && a[cle] !== "")
+    .map(([cle, etiquette]) => [etiquette, String(a[cle])] as [string, string])
+  return { titre, lignes }
 }
 
 export default function ChatWindow({ threadId: initialThreadId = null, token: tokenProp }: ChatWindowProps) {
@@ -406,38 +413,26 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           </div>
         )}
 
+        {/* Bibliotheque de composants, pas de styles refaits a la main : la
+            carte est un `Callout` d'alerte, les reperes un `KeyValueTable`, les
+            deux issues un `PrimaryButton` et un `GhostButton`. Les memes blocs
+            que l'assistant rend lui-meme dans le chat — une demande d'accord ne
+            doit pas ressembler a une piece rapportee. */}
         {pendingValidation && (() => {
-          const { titre, details } = decrireAction(pendingValidation)
+          const { titre, lignes } = decrireAction(pendingValidation)
           return (
-            <div className="sym-pop sym-card" role="group" aria-label="Action en attente de votre décision"
-                 style={{ margin: "8px 32px", padding: 16, background: "var(--color-surface)", border: "1px solid var(--color-pending-text)", borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <span style={{ background: "var(--color-pending-bg)", color: "var(--color-pending-text)", padding: "3px 10px", borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 700 }}>
-                  ⏳ Votre accord est nécessaire
-                </span>
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text-primary)", lineHeight: 1.45 }}>
-                {titre}
-              </div>
-              {details && (
-                <div style={{ fontFamily: "monospace", fontSize: 12, color: "var(--color-text-muted)", marginTop: 6, wordBreak: "break-word" }}>
-                  {details}
-                </div>
-              )}
-              {validationErreur && (
-                <div style={{ marginTop: 10, fontSize: 13, color: "var(--color-pending-text)" }}>
-                  {validationErreur}
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-                <button onClick={() => resoudreValidation(true)} disabled={validationBusy} className="sym-tap"
-                        style={{ flex: 1, padding: "10px 16px", borderRadius: "var(--radius-pill)", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))", color: "var(--color-text-on-dark)", opacity: validationBusy ? 0.6 : 1 }}>
+            <div className="sym-pop" role="group" aria-label="Action en attente de votre décision"
+                 style={{ margin: "8px 32px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <Callout tone="warning" title="Votre accord est nécessaire">{titre}</Callout>
+              {lignes.length > 0 && <KeyValueTable rows={lignes} />}
+              {validationErreur && <Callout tone="error">{validationErreur}</Callout>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <PrimaryButton onClick={() => resoudreValidation(true)} disabled={validationBusy}>
                   {validationBusy ? "…" : "Approuver"}
-                </button>
-                <button onClick={() => resoudreValidation(false)} disabled={validationBusy} className="sym-tap"
-                        style={{ flex: 1, padding: "10px 16px", borderRadius: "var(--radius-pill)", border: "1px solid var(--color-pending-text)", cursor: "pointer", fontWeight: 700, fontSize: 14, background: "var(--color-surface)", color: "var(--color-pending-text)", opacity: validationBusy ? 0.6 : 1 }}>
+                </PrimaryButton>
+                <GhostButton danger onClick={() => resoudreValidation(false)} disabled={validationBusy}>
                   Refuser
-                </button>
+                </GhostButton>
               </div>
             </div>
           )

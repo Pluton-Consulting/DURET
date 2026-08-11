@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation"
 import { signOut } from "next-auth/react"
 import { useState, useEffect, useRef } from "react"
 import { getVisibleTabs } from "@/lib/permissions"
+import Logo from "./Logo"
 
 interface Props {
   role: string
@@ -54,15 +55,13 @@ export default function TopNav({ role, email, name }: Props) {
         gap: 0,
       }}
     >
-      {/* Logo */}
+      {/* Logo — un seul tracé, partagé avec l'écran de connexion. */}
       <Link
         href="/accueil"
         className="sym-tap"
         style={{ marginRight: 36, flexShrink: 0, display: "flex", alignItems: "center", transition: "opacity 0.15s ease" }}
       >
-        <span style={{ fontSize: 20, fontWeight: 800, color: "var(--color-primary)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
-          Duret <span style={{ color: "var(--color-primary-mid)" }}>&amp; Sols</span>
-        </span>
+        <Logo taille={20} />
       </Link>
 
       {/* Tabs */}

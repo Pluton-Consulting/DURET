@@ -1,4 +1,8 @@
-const KIND: Record<string, string> = { PDF: "#C0392B", XLSX: "#1E7D46", DWG: "#2E6BB0", DOCX: "#2B579A", ZIP: "#7A5C29" }
+// Couleurs de FORMAT, pas de marque : chacune reprend celle que l'éditeur du
+// format a rendue familière (rouge Acrobat, vert Excel, bleu Word). Le DWG, lui,
+// n'en a pas d'établie — il prend donc le bleu de Duret, assombri pour porter du
+// texte blanc. C'est le seul de la liste qui relève de la charte.
+const KIND: Record<string, string> = { PDF: "#C0392B", XLSX: "#1E7D46", DWG: "#0A6FB4", DOCX: "#2B579A", ZIP: "#7A5C29" }
 
 /** Chip DOCUMENT (badge type de fichier + nom + méta). */
 export function DocCard({ name = "CCTP_lot_revetements.pdf", kind = "PDF", meta = "1,4 Mo · 24 p." }: { name?: string; kind?: string; meta?: string }) {

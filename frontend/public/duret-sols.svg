@@ -1,0 +1,23 @@
+<!--
+  Marque Duret & Sols — trois carrés évidés.
+
+  Redessinée à partir du logo fourni (logo duret.jpeg), aux mesures relevées sur
+  l'image et non à l'œil : côtés 0,282 / 0,523 / 1 du carré bleu, traits de 36 à
+  40 unités, positions relatives conservées. Refaire ces proportions à
+  l'estime donnerait un décalage que personne ne sait nommer mais que tout le
+  monde voit.
+
+  En SVG plutôt qu'en JPEG : net à toutes les tailles, et FOND TRANSPARENT — le
+  fichier d'origine porte un aplat noir qui poserait un rectangle sombre au
+  milieu d'une barre de navigation claire. Les carrés étant évidés, ils se
+  posent sur n'importe quel fond.
+
+  Les couleurs sont écrites en dur, volontairement : une marque ne suit pas le
+  thème de l'interface, c'est l'interface qui suit la marque.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 640"
+     fill="none" role="img" aria-label="Duret &amp; Sols">
+  <rect x="404" y="20"  width="598" height="598" stroke="#0687DA" stroke-width="40"/>
+  <rect x="20"  y="314" width="294" height="292" stroke="#F41122" stroke-width="40"/>
+  <rect x="172" y="68"  width="144" height="142" stroke="#FFE202" stroke-width="36"/>
+</svg>

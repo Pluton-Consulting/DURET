@@ -17,36 +17,57 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
         <style dangerouslySetInnerHTML={{ __html: `
-          :root {
-            --color-primary:        #1E3A5F;
-            --color-primary-hover:  #16304F;
-            --color-primary-mid:    #2E6BB0;
-            --color-primary-light:  #AECBE8;
-            --color-primary-subtle: #EAF1FA;
-            --color-leaf:           #4A90D9;
-            --color-canvas:         #F1F5FA;
+          /* ── Charte Duret & Sols ──────────────────────────────────────
+             Tirée du logo : trois carrés évidés, bleu / rouge / jaune, sur
+             noir. Les trois teintes sont relevées SUR l'image et non estimées
+             (#0687DA, #F41122, #FFE202).
+
+             Elles ne peuvent pas servir telles quelles partout. Mesuré :
+             #0687DA ne donne que 3,83 de contraste avec du blanc — sous le
+             seuil de 4,5 — et #FFE202 tombe à 1,30, donc illisible en texte
+             quelle que soit la taille. On garde donc les teintes EXACTES pour
+             la marque (--color-brand-*), et on en dérive des variantes
+             assombries pour tout ce qui porte du texte. Le logo reste juste,
+             l'interface reste lisible. */
+            --color-brand-blue:     #0687DA;   /* le carré bleu, tel quel */
+            --color-brand-red:      #F41122;   /* le carré rouge, tel quel */
+            --color-brand-yellow:   #FFE202;   /* le carré jaune, tel quel */
+            --color-brand-ink:      #0B0E11;   /* le fond noir du logo */
+
+            --color-primary:        #0A6FB4;   /* blanc dessus : 5,32 */
+            --color-primary-hover:  #0B5F9B;
+            --color-primary-mid:    #0687DA;   /* la teinte de marque */
+            --color-primary-light:  #9DD1F2;
+            --color-primary-subtle: #E5F2FB;
+            --color-leaf:           #0687DA;
+            --color-canvas:         #F4F6F8;
             --color-surface:        #FFFFFF;
-            --color-border:         #DCE4EE;
-            --color-text-primary:   #16202E;
-            --color-text-body:      #33424F;
-            --color-text-muted:     #78899B;
+            --color-border:         #DFE4EA;
+            --color-text-primary:   #0B0E11;   /* le noir du logo : 19,35 */
+            --color-text-body:      #2E3742;   /* 12,06 */
+            --color-text-muted:     #606B78;   /* 5,21 — lisible sur le canevas */
             --color-text-on-dark:   #FFFFFF;
-            --color-on-dark-accent: #AECBE8;
-            --color-paid-bg:        #DDEBF7;
-            --color-paid-text:      #1F5FA6;
-            --color-pending-bg:     #FDF3E3;
-            --color-pending-text:   #9A6520;
-            --color-progress-bg:    #E4EDFB;
-            --color-progress-text:  #2B5AA0;
-            --color-error-bg:       #FEE2E2;
-            --color-error-text:     #DC2626;
+            --color-on-dark-accent: #9DD1F2;
+            --color-paid-bg:        #E5F2FB;
+            --color-paid-text:      #0B66A6;   /* 6,06 */
+            /* Le jaune de la marque, en fond seulement ; le texte au-dessus est
+               un ambre profond, sans quoi rien ne se lit. */
+            --color-pending-bg:     #FFF8CC;
+            --color-pending-text:   #7A6B00;   /* 4,97 sur ce fond */
+            --color-progress-bg:    #E5F2FB;
+            --color-progress-text:  #0A6FB4;
+            /* Idem pour le rouge : #F41122 plafonne à 4,24 avec du blanc. */
+            --color-error-bg:       #FDE7E9;
+            --color-error-text:     #CC0E1B;   /* 5,76 */
             --radius-card:          20px;
             --radius-card-sm:       14px;
             --radius-pill:          9999px;
             --radius-icon:          10px;
-            --shadow-card:          0 2px 12px rgba(16,32,48,0.07);
-            --shadow-hover:         0 4px 20px rgba(16,32,48,0.12);
-            --shadow-card-hover:    0 4px 20px rgba(16,32,48,0.12);
+            /* Ombres teintées de l'encre du logo, pas d'un gris neutre : une
+               ombre grise sous une interface bleue paraît sale. */
+            --shadow-card:          0 2px 12px rgba(11,14,17,0.07);
+            --shadow-hover:         0 4px 20px rgba(11,14,17,0.13);
+            --shadow-card-hover:    0 4px 20px rgba(11,14,17,0.13);
             --font:                 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             --font-family:          'Inter', sans-serif;
           }

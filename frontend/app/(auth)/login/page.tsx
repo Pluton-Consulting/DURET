@@ -1,5 +1,6 @@
 "use client"
 import { useState } from "react"
+import { MarqueDuret } from "@/components/nav/Logo"
 
 type State = "idle" | "loading" | "sent" | "refused" | "error"
 
@@ -52,9 +53,13 @@ export default function LoginPage() {
       background: "radial-gradient(circle at 50% -10%, var(--color-primary-subtle), transparent 55%), var(--color-canvas)",
     }}>
       <div className="sym-in sym-card" style={card}>
-        <div className="sym-in sym-in-1" style={{ textAlign: "center", margin: "0 auto 32px" }}>
-          <span style={{ fontSize: 30, fontWeight: 800, color: "var(--color-primary)", letterSpacing: "-0.02em" }}>
-            Duret <span style={{ color: "var(--color-primary-mid)" }}>&amp; Sols</span>
+        {/* La marque en grand : c'est le premier écran, et le seul avant
+            l'authentification. Elle se déplie ici verticalement — le symbole
+            au-dessus du nom — pour tenir dans la largeur de la carte. */}
+        <div className="sym-in sym-in-1" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, margin: "0 auto 32px" }}>
+          <MarqueDuret taille={54} />
+          <span style={{ fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.02em", lineHeight: 1 }}>
+            Duret <span style={{ color: "var(--color-brand-blue)" }}>&amp; Sols</span>
           </span>
         </div>
 

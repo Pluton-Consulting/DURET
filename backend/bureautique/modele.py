@@ -27,8 +27,16 @@ FORMATS = ("docx", "pdf", "xlsx")
 # Demander une taille en points ou un code couleur laisserait passer des valeurs
 # invalides, et un rouge choisi au hasard peut être illisible à l'impression.
 TAILLES = {"petit": 8, "normal": 11, "grand": 20, "tres_grand": 36}
+# Le bleu est celui de la MARQUE, assombri pour rester lisible à l'impression
+# (5,3 de contraste sur blanc) : un document sorti par l'assistant porte
+# l'identité de l'entreprise.
+#
+# Les autres restent des couleurs de document, pas des couleurs de marque —
+# quand on demande « en rouge », on attend un rouge de correction, pas le rouge
+# vif du logo, qui fatigue sur un paragraphe entier. Et toujours pas de jaune :
+# illisible sur blanc à toute taille.
 COULEURS = {
-    "rouge": "C0272D", "vert": "2F5233", "bleu": "2B579A",
+    "rouge": "C0272D", "vert": "2F5233", "bleu": "0A6FB4",
     "orange": "C2610A", "gris": "6B6B6B", "noir": "000000",
 }
 

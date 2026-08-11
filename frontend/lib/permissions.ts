@@ -21,14 +21,22 @@ export const ROLE_LABELS: Record<string, string> = {
   terrain:       "Terrain",
 }
 
+// Pastilles de rôle. Deux exigences qui tirent en sens inverse : rester dans la
+// famille de la marque (encre, bleu, rouge du logo), et rester DISTINGUABLES
+// entre elles — sept nuances du même bleu ne se lisent plus.
+//
+// Elles servent de texte sur une teinte très pâle d'elles-mêmes : chacune est
+// donc vérifiée à 4,5 minimum sur fond clair. Le bleu pur du logo (#0687DA)
+// plafonne à 3,83 et n'apparaît pas ici — il reste à la marque, où il n'a pas
+// de texte à porter.
 export const ROLE_COLORS: Record<string, string> = {
-  super_admin:   "#16283F",
-  direction:     "#1E3A5F",
-  commercial:    "#2563eb",
-  bureau_etudes: "#0891b2",
-  conducteur:    "#d97706",
-  administratif: "#6b7280",
-  terrain:       "#92400e",
+  super_admin:   "#0B0E11",   // l'encre du logo — 19,35
+  direction:     "#0A6FB4",   // le bleu de marque, assombri — 5,32
+  commercial:    "#0B66A6",   // 6,06
+  bureau_etudes: "#0B7285",   // 5,59
+  conducteur:    "#A16207",   // le jaune de marque, assombri — 4,92
+  administratif: "#606B78",   // 5,42
+  terrain:       "#CC0E1B",   // le rouge de marque, assombri — 5,76
 }
 
 export interface TabDef {

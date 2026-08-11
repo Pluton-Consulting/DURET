@@ -6,6 +6,7 @@ import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, ChatEvent } from "@/lib/ws"
+import JournalActivite from "./JournalActivite"
 
 interface Message {
   id: string
@@ -77,6 +78,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const [loading, setLoading] = useState(false)
   const [thinkingNode, setThinkingNode] = useState<string | null>(null)
   const [thinkingSteps, setThinkingSteps] = useState<string[]>([])
+  // Journal d'activite : ce que l'assistant FAIT, en clair. La frise dit ou
+  // il en est, elle ne dit pas quoi — c'est ce qui manquait pour voir ou ca
+  // bloque sans ouvrir les journaux du serveur.
+  const [journal, setJournal] = useState<string[]>([])
   const [pendingValidation, setPendingValidation] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
@@ -152,6 +157,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     setLoading(true)
     setThinkingNode(null)
     setThinkingSteps([])
+    setJournal([])
     setPendingValidation(false)
 
     const tid = threadId ?? newId()
@@ -237,6 +243,14 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
               setThinkingNode(n)
               setThinkingSteps((prev) => (prev[prev.length - 1] === n ? prev : [...prev, n]))
             }
+            const libelle = typeof event.libelle === "string" ? event.libelle.trim() : ""
+            // Un noeud sans libelle reste silencieux : mieux vaut ne rien
+            // afficher qu'un nom technique. Et on ne repete pas la meme ligne
+            // deux fois de suite — un aller-retour llm/tools la produirait a
+            // chaque passage.
+            if (libelle) {
+              setJournal((prev) => (prev[prev.length - 1] === libelle ? prev : [...prev, libelle]))
+            }
           }
         },
         onError: () => fallbackPost(),
@@ -294,6 +308,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       </div>
 
       <ReasoningPath steps={thinkingSteps} loading={loading} />
+      <JournalActivite lignes={journal} actif={loading} />
     </div>
   )
 }

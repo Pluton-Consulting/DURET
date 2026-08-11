@@ -28,6 +28,7 @@ from agents.checkpointer import get_checkpointer, close_checkpointer
 from agents.router import build_main_graph
 from database.connection import get_db
 from config import settings
+from agents.journal import libelle
 
 logger = logging.getLogger("duret.runtime")
 
@@ -302,7 +303,11 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                     interruption = _extract_interrupt({"__interrupt__": update})
                     yield {"type": "validation_required", "node": "human_gate", "data": interruption}
             else:
-                yield {"type": "node", "node": node_name, "data": _safe(update)}
+                # `libelle` dit CE QUE l'assistant fait, en francais. Sans lui
+                # l'ecran n'affiche qu'un nom d'etape, et « redaction » pendant
+                # quarante secondes n'apprend rien a personne.
+                yield {"type": "node", "node": node_name, "data": _safe(update),
+                       "libelle": libelle(node_name, update if isinstance(update, dict) else {})}
 
     snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else {}

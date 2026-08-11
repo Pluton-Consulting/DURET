@@ -129,10 +129,14 @@ async def human_gate_node(state: AgentState) -> dict:
 
     approved = bool(decision.get("approved")) if isinstance(decision, dict) else bool(decision)
     validated_by = decision.get("validated_by") if isinstance(decision, dict) else None
+    validation_id = decision.get("validation_id") if isinstance(decision, dict) else None
 
     return {
         "validation_status": "approved" if approved else "rejected",
         "validated_by": validated_by,
+        # Quelle ligne a été résolue : `execute_action_node` la relira par son
+        # identifiant, pas par « la dernière approuvée du fil ».
+        "validation_id": validation_id,
         "requires_validation": False,
     }
 
@@ -165,12 +169,22 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
         return {"pending_action": None,
                 "final_response": "Action annulée : le compte du demandeur n'est plus actif."}
 
+    # LA ligne résolue, ciblée par son identifiant quand il a traversé la
+    # reprise. Le repli « dernière approuvée du fil » reste pour les reprises
+    # anciennes, mais il est fragile : un fil de test porte plusieurs
+    # validations, et la plus récente n'est pas forcément celle-ci.
     async with get_db() as conn:
-        approuve = await conn.fetchval(
-            """SELECT payload_hash FROM validations
-               WHERE thread_id = $1 AND status = 'approved'
-               ORDER BY resolved_at DESC NULLS LAST LIMIT 1""",
-            state.get("thread_id"))
+        if state.get("validation_id"):
+            approuve = await conn.fetchval(
+                """SELECT payload_hash FROM validations
+                   WHERE id = $1::uuid AND status = 'approved'""",
+                str(state["validation_id"]))
+        else:
+            approuve = await conn.fetchval(
+                """SELECT payload_hash FROM validations
+                   WHERE thread_id = $1 AND status = 'approved'
+                   ORDER BY resolved_at DESC NULLS LAST LIMIT 1""",
+                state.get("thread_id"))
 
     attendu = hash_payload(action["skill"], action.get("args") or {})
     if not approuve or approuve != attendu:

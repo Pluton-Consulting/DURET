@@ -246,16 +246,17 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
     graph = await get_graph()
     config = _graph_config(thread_id, validated_by, extra_tags=["resume"])
 
-    result = await graph.ainvoke(
-        Command(resume={"approved": approved, "validated_by": validated_by}), config
-    )
-
-    snapshot = await graph.aget_state(config)
-    state = snapshot.values if isinstance(snapshot.values, dict) else result
-
-    # Met à jour la ligne validations. On cible par ID quand on l'a : un même fil
-    # peut porter plusieurs validations en attente (une action par tour), et le
-    # filtre par thread_id seul en résoudrait plusieurs d'un coup avec UNE décision.
+    # LA DÉCISION S'ENREGISTRE AVANT DE REPRENDRE LE GRAPHE. L'ordre inverse a
+    # annulé une action pourtant approuvée : `execute_action_node` s'exécute
+    # PENDANT `ainvoke` et relit la base pour y trouver l'empreinte approuvée —
+    # or la ligne était encore `pending`, sa mise à jour n'arrivant qu'après la
+    # reprise. Vu dans les traces : les deux empreintes identiques dans l'état,
+    # la décision bien à « approved », et le nœud qui annule quand même.
+    #
+    # Écrire d'abord ne fragilise rien : le point d'entrée a déjà vérifié que la
+    # ligne était `pending` (409 sinon), et le verrou d'exécution reste
+    # l'empreinte — une ligne approuvée dont le payload ne correspond pas
+    # n'exécute rien.
     async with get_db() as conn:
         if validation_id:
             await conn.execute(
@@ -271,6 +272,18 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
                    WHERE thread_id = $3 AND status = 'pending'""",
                 "approved" if approved else "rejected", validated_by, thread_id,
             )
+
+    # L'identifiant traverse la reprise : `execute_action_node` cible ainsi LA
+    # ligne résolue, au lieu de « la dernière approuvée du fil » — un fil de
+    # test en porte plusieurs, et la plus récente n'est pas forcément la bonne.
+    result = await graph.ainvoke(
+        Command(resume={"approved": approved, "validated_by": validated_by,
+                        "validation_id": str(validation_id) if validation_id else None}),
+        config,
+    )
+
+    snapshot = await graph.aget_state(config)
+    state = snapshot.values if isinstance(snapshot.values, dict) else result
 
     return {
         "status": "completed",

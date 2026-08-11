@@ -118,21 +118,43 @@ async def _resoudre_quickconnect(client, qc_id: str) -> Optional[str]:
     officiellement : on l'essaie, et on retombe proprement si le format change.
     Renvoie une URL de base, ou None.
     """
-    try:
+    async def _interroger(commande: str) -> dict:
         r = await client.post(
             "https://global.quickconnect.to/Serv.php",
-            json={"version": 1, "command": "get_server_info",
+            json={"version": 1, "command": commande,
                   "stop_when_error": False, "stop_when_success": False,
                   "id": "dsm_portal_https", "serverID": qc_id},
             timeout=15,
         )
-        data = r.json()
+        return r.json() or {}
+
+    try:
+        data = await _interroger("get_server_info")
     except Exception as e:
         logger.warning("Résolution QuickConnect impossible : %s", e)
         return None
 
     service = data.get("service") or {}
     serveur = data.get("server") or {}
+
+    # LE RELAIS SE DEMANDE, IL NE SE LIT PAS. `get_server_info` décrit le NAS ;
+    # il ne rend un `relay_dn` que si un tunnel est DÉJÀ ouvert. Quand il n'y en
+    # a pas — cas normal après quelques minutes d'inactivité — il faut en
+    # réclamer un avec `request_tunnel`, comme le fait le client Synology.
+    #
+    # C'est ce qui explique un NAS joignable un jour et injoignable le lendemain
+    # sans qu'on ait rien touché : le tunnel de la veille avait expiré. Et le
+    # port change à CHAQUE allocation (44591 puis 32418 sur le même NAS), donc
+    # une adresse retenue trop longtemps devient fausse d'elle-même.
+    if not service.get("relay_dn"):
+        try:
+            tunnel = await _interroger("request_tunnel")
+            if (tunnel.get("service") or {}).get("relay_dn"):
+                service = tunnel["service"]
+                serveur = tunnel.get("server") or serveur
+                logger.info("QuickConnect %s : tunnel de relais demandé et obtenu", qc_id)
+        except Exception as e:  # noqa: BLE001 - on gardera les autres candidats
+            logger.info("QuickConnect %s : demande de tunnel refusée (%s)", qc_id, e)
 
     # CHAQUE ADRESSE A SON PROPRE PORT. C'est le piège : appliquer `https_port`
     # (5001, le port INTERNE) à l'adresse publique ou au relais donne des URL

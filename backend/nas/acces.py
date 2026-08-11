@@ -133,14 +133,22 @@ async def _session(client):
     from ingestion.connectors import synology as c
     base = await c._base_url(client)
     try:
-        sid = await c._login(client, base)
+        return base, await c._login(client, base)
     except httpx.HTTPError:
         # Panne de TRANSPORT : l'adresse est en cause, pas les identifiants.
         # Un refus DSM (mot de passe, droits) ne passe pas par ici et ne doit
         # surtout pas invalider une adresse parfaitement bonne.
+        #
+        # Le cas courant est un tunnel de relais QuickConnect expiré : son port
+        # change à chaque allocation, donc l'adresse gardée devient fausse d'un
+        # instant à l'autre. On réessaie UNE fois avec une adresse fraîche —
+        # sans quoi la première demande échouerait et seule la suivante
+        # aboutirait, ce qui se lit comme « ça marche une fois sur deux ».
         c.oublier_adresse()
-        raise
-    return base, sid
+        logger.info("NAS injoignable à l'adresse retenue : nouvelle résolution")
+
+    base = await c._base_url(client)
+    return base, await c._login(client, base)
 
 
 async def lister(chemin: str) -> dict:

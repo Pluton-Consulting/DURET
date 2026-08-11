@@ -325,7 +325,18 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
         # run_turn persiste la validation, pas stream_turn : une demande levée par le
         # WebSocket n'atteignait donc JAMAIS la file de validation. On comble ici.
         validation_id = await _persist_validation(thread_id, user_id, state, interruption)
-        yield {"type": "pending_validation", "thread_id": thread_id, "validation_id": validation_id}
+        # CE QUI EST EN ATTENTE, pas seulement QU'IL Y A une attente. L'écran
+        # n'affichait qu'un « ⏳ en attente de validation humaine » : la personne
+        # ne savait ni ce qu'elle validait, ni où le faire. On envoie donc le
+        # motif et l'action, pour que la décision se prenne dans la conversation
+        # où elle a été demandée.
+        intr = interruption or {}
+        charge = intr.get("payload") or state.get("validation_payload") or {}
+        yield {"type": "pending_validation", "thread_id": thread_id,
+               "validation_id": validation_id,
+               "reason": intr.get("reason") or state.get("validation_reason"),
+               "skill": charge.get("skill") if isinstance(charge, dict) else None,
+               "args": charge.get("args") if isinstance(charge, dict) else None}
     else:
         yield {"type": "final", "thread_id": thread_id, "response": _response_from_state(state)}
 

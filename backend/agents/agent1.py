@@ -56,7 +56,7 @@ MAX_ACTIONS_PAR_TOUR = 8
 # du tour. Une seule relance, avec une consigne explicite — au-delà on
 # insisterait sur un modèle qui ne veut pas, et la note de sortie explique alors
 # honnêtement pourquoi rien n'a été fait.
-from agents.annonce import est_une_annonce
+from agents.annonce import est_une_annonce, cloture_attendue
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -741,6 +741,18 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         "Produis le bloc ```action de la PROCHAINE action à exécuter."
     )
 
+    # Quand un travail est resté OUVERT, on ne laisse pas deviner : dire quelle
+    # fermeture manque évite qu'un document déjà rempli soit rouvert une fois de
+    # plus — c'est exactement la boucle qu'on a observée.
+    manquante = cloture_attendue(state.get("tool_results"))
+    if manquante:
+        demande += (
+            f"\n\nATTENTION : un document est OUVERT et n'a pas été fermé. Tant "
+            f"que `{manquante}` n'a pas été appelé, AUCUN fichier n'existe — il "
+            f"n'y a donc rien à télécharger ni à déposer. C'est l'action "
+            f"attendue, avec le `document_id` déjà rendu. N'en ouvre pas un "
+            f"nouveau : le travail déjà versé serait perdu.")
+
     llm = get_llm(LLMTier(state.get("llm_tier", "standard")))
     try:
         reponse = await llm.ainvoke(
@@ -792,6 +804,17 @@ def route_apres_llm(state: AgentState) -> str:
     # `tools` n'est JAMAIS appelé, donc un contrôle placé là-bas ne s'exécute
     # pas — il en avait tout l'air, et c'est ce qui l'a rendu difficile à voir.
     if not state.get("relance_annonce") and est_une_annonce(texte):
+        return "forcer"
+
+    # TRAVAIL RESTÉ OUVERT. Le signal qui ne dépend pas des mots : un document
+    # ouvert et jamais fermé n'a produit aucun fichier, quoi qu'en dise la
+    # réponse. La détection par formulation, elle, énumère des verbes et en
+    # oublie toujours un — « je crée » était couvert, « j'y ajoute » non, et le
+    # tour s'est arrêté sur la promesse.
+    #
+    # Pas de boucle possible : la fermeture aboutie retire l'attente, et le
+    # budget d'actions du tour borne le reste.
+    if cloture_attendue(state.get("tool_results")):
         return "forcer"
     return "rehydrate"
 

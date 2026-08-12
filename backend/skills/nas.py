@@ -173,3 +173,44 @@ async def nas_deposer(data: dict, user) -> dict:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001
         _echec(_detail("Le dépôt a échoué", e))
+
+
+# ── Déclarations : tout ce que le système doit savoir, ICI ───────────
+# Ces quatre gestes élémentaires restent disponibles pour ce que la
+# bibliothèque composée (skills/outils.py) ne couvre pas. Leurs descriptions
+# renvoient vers les fonctions composées : ce sont elles, la voie normale.
+from skills.registre import Declaration
+
+SKILLS = {
+    "nas_lister": Declaration(
+        fonction=nas_lister,
+        description=("LISTE le detail d'un dossier du serveur. Sans `chemin`, "
+                     "les dossiers ouverts a l'assistant. Prefere `nas_apercu` "
+                     "pour compter"),
+        optionnels=["chemin"],
+        effet="lecture",
+        libelle="je liste un dossier du serveur"),
+    "nas_lire": Declaration(
+        fonction=nas_lire,
+        description=("LIT un fichier du serveur par son CHEMIN exact. Prefere "
+                     "`nas_ouvrir`, qui trouve le chemin tout seul"),
+        requis=["chemin"],
+        effet="lecture",
+        libelle="je lis un fichier du serveur"),
+    "nas_chercher": Declaration(
+        fonction=nas_chercher,
+        description="CHERCHE un fichier par son nom sur le serveur, sans le lire",
+        requis=["motif"], optionnels=["dossier"],
+        effet="lecture",
+        libelle="je cherche un fichier sur le serveur"),
+    "nas_deposer": Declaration(
+        fonction=nas_deposer,
+        description=("DEPOSE sur le serveur un fichier deja produit. Ecrit sur "
+                     "le serveur : validation humaine. N'ecrase jamais. Aucune "
+                     "suppression ni renommage n'est possible : ne le promets pas"),
+        requis=["dossier", "document_id"], optionnels=["nom"],
+        # Écrire sur le serveur de l'entreprise sort du périmètre de
+        # l'application : effet EXTERNE, validation humaine obligatoire.
+        effet="externe",
+        libelle="je dépose le fichier sur le serveur"),
+}

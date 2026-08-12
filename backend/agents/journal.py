@@ -58,27 +58,16 @@ ACTES = {
     "creer_document": "je prépare le document",
     "ajouter_document": "j'écris dans le document",
     "terminer_document": "je finalise le document",
-    "nas_lister": "je liste un dossier du serveur",
-    "nas_lire": "je lis un fichier du serveur",
-    "nas_chercher": "je cherche un fichier sur le serveur",
-    "nas_deposer": "je dépose le fichier sur le serveur",
-    # Bibliotheque d'outils : une fonction composee fait plusieurs gestes, le
-    # libelle dit le RESULTAT vise et non l'enchainement — « je cherche puis je
-    # lis » n'apprend rien de plus a qui regarde l'ecran.
-    "nas_apercu": "je regarde ce que contient le dossier",
-    "nas_arborescence": "je parcours les dossiers du serveur",
-    "nas_ouvrir": "j'ouvre le fichier",
-    "nas_lire_lot": "je lis les fichiers",
-    "nas_deposer_document": "je finalise et dépose le document",
-    "produire_document": "je produis le document",
-    "mode_emploi": "je relis le mode d'emploi de l'outil",
+    # Les skills propres au projet (NAS, bibliotheque d'outils) portent leur
+    # libelle dans leur DECLARATION (`skills/*.py`, dictionnaire SKILLS) : cette
+    # table ne garde que le socle commun. `_acte()` interroge le registre.
     "retenir": "j'enregistre la consigne",
     "oublier": "je retire la consigne",
     "consignes_retenues": "je relis les consignes",
     "lancer_enrichissement": "je lance l'analyse du courrier",
     "statut_enrichissement": "je regarde où en est l'analyse",
-    "preparer_visuel": "je prépare le brief du visuel",
-    "generer_visuel": "je génère le visuel",
+    # Les libelles des visuels appartenaient a l'AUTRE projet (Symbiose) : un
+    # skill que ce backend n'a jamais eu n'a pas a etre traduit ici.
 }
 
 MAX_DETAIL = 80
@@ -98,6 +87,22 @@ def _detail(args: dict) -> str:
     return ""
 
 
+def _acte(nom: str) -> str | None:
+    """Le libellé d'un skill : la table du socle, puis le REGISTRE.
+
+    Les skills propres au projet portent leur libellé dans leur déclaration,
+    à côté de leur fonction : déposer un module suffit, cette table n'a plus à
+    en connaître.
+    """
+    if nom in ACTES:
+        return ACTES[nom]
+    try:
+        from skills.registre import libelle as libelle_declare
+        return libelle_declare(nom)
+    except Exception:   # noqa: BLE001 - le journal ne casse jamais un tour
+        return None
+
+
 def libelle(node: str, update: dict | None = None) -> str:
     """Phrase à afficher pour ce nœud, ou chaîne vide s'il n'y a rien à dire."""
     update = update if isinstance(update, dict) else {}
@@ -108,7 +113,7 @@ def libelle(node: str, update: dict | None = None) -> str:
     if node == "tools" and isinstance(resultats, list) and resultats:
         dernier = resultats[-1] or {}
         nom = dernier.get("skill") or ""
-        texte = ACTES.get(nom, f"j'exécute {nom}" if nom else "j'exécute une action")
+        texte = _acte(nom) or (f"j'exécute {nom}" if nom else "j'exécute une action")
         if dernier.get("ok") is False:
             texte += " — sans succès"
         return texte
@@ -116,13 +121,13 @@ def libelle(node: str, update: dict | None = None) -> str:
     if node == "tools" and update.get("pending_action"):
         action = update["pending_action"] or {}
         nom = action.get("skill") or ""
-        return f"{ACTES.get(nom, nom)} — en attente de votre validation".strip()
+        return f"{_acte(nom) or nom} — en attente de votre validation".strip()
 
     return LIBELLES.get(node, "")
 
 
 def libelle_action(skill: str, args: dict | None = None) -> str:
     """Phrase pour une action sur le point d'être exécutée."""
-    texte = ACTES.get(skill, f"j'exécute {skill}")
+    texte = _acte(skill) or f"j'exécute {skill}"
     detail = _detail(args or {})
     return f"{texte} : {detail}" if detail else texte

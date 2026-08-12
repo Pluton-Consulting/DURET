@@ -138,3 +138,79 @@ async def mode_emploi(data: dict, user) -> dict:
         return {"outils": [{"nom": n, "libelle": l} for n, l in outils_disponibles()],
                 "note": "Précise `outil` pour obtenir son mode d'emploi."}
     return {"outil": nom, "mode_emploi": lire_doc(nom)}
+
+
+# ── Déclarations : tout ce que le système doit savoir, ICI ───────────
+# Description (pour le catalogue montré au modèle), effet (pour la validation
+# humaine), libellé (pour l'écran), fonction. Le cœur vient lire — plus rien à
+# déclarer dans protocol.py, mail/skills.py ni journal.py.
+from skills.registre import Declaration
+
+SKILLS = {
+    "nas_apercu": Declaration(
+        fonction=nas_apercu,
+        description=(
+            # Le VOCABULAIRE MAISON vit dans la première entrée NAS du
+            # catalogue : c'est au moment de CHOISIR l'action que le modèle en a
+            # besoin. Personne ne dit « le NAS Synology » — on dit « le
+            # serveur », « le réseau », « les partages ».
+            "COMPTE et resume un dossier du serveur : combien de dossiers, de "
+            "fichiers, de quels types. LE SERVEUR, LE NAS, LE RESEAU, LES "
+            "PARTAGES et SYNOLOGY designent la meme chose. A utiliser des "
+            "qu'on demande un NOMBRE ou « ce qu'il y a dans » : les comptes "
+            "sont exacts"),
+        optionnels=["chemin"],
+        effet="lecture",
+        libelle="je regarde ce que contient le dossier"),
+    "nas_arborescence": Declaration(
+        fonction=nas_arborescence,
+        description="ARBRE d'un dossier du serveur sur plusieurs niveaux, en une fois",
+        requis=["chemin"], optionnels=["profondeur"],
+        effet="lecture",
+        libelle="je parcours les dossiers du serveur"),
+    "nas_ouvrir": Declaration(
+        fonction=nas_ouvrir,
+        description=("OUVRE et lit un fichier du serveur depuis son NOM, sans en "
+                     "connaitre le chemin. La voie normale pour lire un fichier"),
+        requis=["nom"],
+        effet="lecture",
+        libelle="j'ouvre le fichier"),
+    "nas_lire_lot": Declaration(
+        fonction=nas_lire_lot,
+        description=("LIT plusieurs fichiers du serveur correspondant a un motif "
+                     "(5 maximum)"),
+        requis=["motif"], optionnels=["dossier", "limite"],
+        effet="lecture",
+        libelle="je lis les fichiers"),
+    "nas_deposer_document": Declaration(
+        fonction=nas_deposer_document,
+        description=("FINALISE un document en cours et le DEPOSE sur le serveur, "
+                     "en un geste. Ecrit sur le serveur : demande une validation "
+                     "humaine"),
+        requis=["document_id", "dossier"], optionnels=["nom"],
+        # Le depot ecrit sur le serveur de l'entreprise : effet EXTERNE, donc
+        # validation humaine — composer deux gestes ne compose pas les droits.
+        effet="externe",
+        libelle="je finalise et dépose le document"),
+    "produire_document": Declaration(
+        fonction=produire_document,
+        description=(
+            "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois "
+            "et rend le lien. `blocs` : liste de {bloc:titre|paragraphe|liste|"
+            "tableau|saut_page|feuille}. Un paragraphe accepte gras, italique, "
+            "centre (booleens), taille (petit|normal|grand|tres_grand) et "
+            "couleur (rouge|vert|bleu|orange|gris|noir). LA voie normale pour "
+            "un document"),
+        requis=["titre", "blocs"],
+        optionnels=["format", "entete", "pied", "numeroter"],
+        effet="ecriture_interne",
+        libelle="je produis le document"),
+    "mode_emploi": Declaration(
+        fonction=mode_emploi,
+        description=("MODE D'EMPLOI complet d'un outil (nas, documents) : "
+                     "conventions, limites, pannes connues. A lire quand aucune "
+                     "action ne couvre le besoin"),
+        optionnels=["outil"],
+        effet="lecture",
+        libelle="je relis le mode d'emploi de l'outil"),
+}

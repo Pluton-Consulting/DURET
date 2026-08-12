@@ -88,6 +88,14 @@ def effet_du_skill(name: str, ligne=None) -> str:
     from mail.skills import EFFETS_NATIFS
     if name in EFFETS_NATIFS:
         return EFFETS_NATIFS[name]
+    # Skills déclarés au REGISTRE (propres au projet) : l'effet vit dans la
+    # déclaration, à côté de la fonction — plus de table à tenir ici. Le défaut
+    # du registre est « externe », comme celui de cette fonction : un oubli
+    # verrouille, il n'ouvre jamais.
+    from skills.registre import effet as effet_declare
+    declare = effet_declare(name)
+    if declare:
+        return declare
     try:
         valeur = ligne["effect"] if ligne is not None else None
     except (KeyError, TypeError):
@@ -132,8 +140,13 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
     Lève SkillError si le skill est introuvable ou non exécutable.
     """
     from mail.skills import SKILLS_NATIFS
+    from skills.registre import fonction as fonction_declaree
 
-    if name in SKILLS_NATIFS:
+    # Registre d'abord ? Non : les NATIFS gardent la priorité, leur signature
+    # est déclarée dans le code du socle. Un module de projet ne peut pas
+    # masquer un skill du socle en réutilisant son nom.
+    executable = SKILLS_NATIFS.get(name) or fonction_declaree(name)
+    if executable is not None:
         if user is None:
             # Sans identité, impossible de vérifier les droits sur une boîte :
             # on refuse plutôt que d'exécuter avec des droits indéterminés.
@@ -150,7 +163,7 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
         _verifier_effet(name, data, ref, approbation)
 
         start = time.monotonic()
-        sortie = await SKILLS_NATIFS[name](data or {}, user)
+        sortie = await executable(data or {}, user)
         duree = int((time.monotonic() - start) * 1000)
         try:
             async with get_db() as conn:

@@ -565,46 +565,12 @@ SKILLS_NATIFS["consignes_retenues"] = consignes_retenues
 SKILLS_NATIFS["oublier"] = oublier
 
 
-async def nas_lister(data: dict, user) -> dict:
-    from skills.nas import nas_lister as _f
-    return await _f(data, user)
-
-
-async def nas_lire(data: dict, user) -> dict:
-    from skills.nas import nas_lire as _f
-    return await _f(data, user)
-
-
-async def nas_chercher(data: dict, user) -> dict:
-    from skills.nas import nas_chercher as _f
-    return await _f(data, user)
-
-
-async def nas_deposer(data: dict, user) -> dict:
-    from skills.nas import nas_deposer as _f
-    return await _f(data, user)
-
-
-SKILLS_NATIFS["nas_lister"] = nas_lister
-SKILLS_NATIFS["nas_lire"] = nas_lire
-SKILLS_NATIFS["nas_chercher"] = nas_chercher
-SKILLS_NATIFS["nas_deposer"] = nas_deposer
-
-
-# ── Bibliothèque d'outils : les cas d'usage réunis en un appel ───────
-# Ces fonctions ne remplacent pas les gestes élémentaires ci-dessus, elles les
-# enchaînent. Chacune supprime des allers-retours avec le modèle, qui sont 57 %
-# du temps d'une demande, et supprime aussi l'erreur d'enchaînement — la chaîne
-# est écrite une fois plutôt que rejouée de mémoire à chaque tour.
-for _nom in ("nas_apercu", "nas_arborescence", "nas_ouvrir", "nas_lire_lot",
-             "nas_deposer_document", "produire_document", "mode_emploi"):
-    def _relais(nom=_nom):
-        async def appeler(data: dict, user) -> dict:
-            import importlib
-            return await getattr(importlib.import_module("skills.outils"), nom)(data, user)
-        return appeler
-    SKILLS_NATIFS[_nom] = _relais()
-del _nom
+# Les skills du NAS et de la bibliothèque d'outils ne passent plus par ici :
+# chaque module de `skills/` les déclare dans son dictionnaire `SKILLS`
+# (fonction, description, effet, libellé — tout au même endroit), et
+# l'exécuteur les trouve via `skills/registre.py`. Ce fichier appartient au
+# socle commun des projets : ce qui change d'un client à l'autre n'y a plus
+# sa place.
 
 
 async def lancer_enrichissement(data: dict, user) -> dict:
@@ -659,27 +625,10 @@ EFFETS_NATIFS = {
     "retenir": "ecriture_interne",
     "oublier": "ecriture_interne",
     "consignes_retenues": "lecture",
-    # Consulter le NAS : lecture, confinee aux dossiers autorises.
-    "nas_lister": "lecture",
-    "nas_lire": "lecture",
-    "nas_chercher": "lecture",
-    # ECRIRE sur le serveur de l'entreprise sort du perimetre de l'app :
-    # effet externe, donc validation humaine avant depart.
-    "nas_deposer": "externe",
-    # BIBLIOTHEQUE D'OUTILS. Composer des gestes ne compose PAS des droits :
-    # chaque fonction garde l'effet du geste le plus fort qu'elle contient.
-    # Lire reste lire, meme quand on lit dix fichiers d'un coup.
-    "nas_apercu": "lecture",
-    "nas_arborescence": "lecture",
-    "nas_ouvrir": "lecture",
-    "nas_lire_lot": "lecture",
-    # Celle-ci FINALISE un document puis le DEPOSE : le depot ecrit sur le
-    # serveur de l'entreprise, donc effet externe, comme `nas_deposer`.
-    "nas_deposer_document": "externe",
-    # Produire un fichier telechargeable : rien ne sort de l'entreprise.
-    "produire_document": "ecriture_interne",
-    # Lire un mode d'emploi : un fichier du depot, aucun effet.
-    "mode_emploi": "lecture",
+    # NAS et bibliothèque d'outils : leurs effets vivent dans leurs
+    # DÉCLARATIONS (skills/nas.py, skills/outils.py), à côté de leurs
+    # fonctions. `effet_du_skill` interroge le registre après cette table, avec
+    # le même défaut fail-closed : non déclaré = externe = verrouillé.
     # Campagne d'enrichissement : elle n'écrit QUE dans nos propres données
     # (mémoire, profils de style, brouillons de skills) et ne sort rien du
     # système. Le vrai garde-fou n'est pas l'effet mais la PERMISSION, vérifiée

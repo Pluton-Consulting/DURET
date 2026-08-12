@@ -29,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
              la marque (--color-brand-*), et on en dérive des variantes
              assombries pour tout ce qui porte du texte. Le logo reste juste,
              l'interface reste lisible. */
+          :root {
             --color-brand-blue:     #0687DA;   /* le carré bleu, tel quel */
             --color-brand-red:      #F41122;   /* le carré rouge, tel quel */
             --color-brand-yellow:   #FFE202;   /* le carré jaune, tel quel */

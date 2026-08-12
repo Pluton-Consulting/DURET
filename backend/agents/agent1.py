@@ -433,8 +433,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
 
     from security.anonymizer import anonymizer
     from skills.protocol import extraire_action
-    from skills.executor import execute_skill, hash_payload, SkillError
-    from mail.skills import EFFETS_NATIFS
+    from skills.executor import execute_skill, hash_payload, SkillError, effet_du_skill
     from tasks.identity import charger_executant
 
     # Le rôle est transmis pour que la vue qui VALIDE soit exactement celle
@@ -515,7 +514,18 @@ async def tools_node(state: AgentState, config=None) -> dict:
                           + str(deja[0].get("resultat_masque") or "")})
         return {"tool_results": resultats, "tool_iterations": iteration}
 
-    effet = EFFETS_NATIFS.get(action["skill"], "externe")
+    # L'EFFET SE DEMANDE À L'AUTORITÉ, il ne se lit pas dans une table.
+    #
+    # Ce nœud interrogeait `EFFETS_NATIFS` en direct. Quand les skills du NAS et
+    # de la bibliothèque d'outils sont passés au registre, ils ont quitté cette
+    # table — et `.get(nom, "externe")` les a donc TOUS classés en effet externe.
+    # Résultat : lister un dossier demandait une validation humaine, et la
+    # bibliothèque entière devenait inutilisable. Rien ne le signalait : le
+    # défaut de sécurité est verrouillant, donc silencieux.
+    #
+    # `effet_du_skill` est le seul endroit qui connaît les deux sources (table
+    # du socle, puis registre du projet) et garde le même défaut fail-closed.
+    effet = effet_du_skill(action["skill"])
     if effet == "externe":
         # JAMAIS exécuté ici. On arme la validation humaine du graphe parent.
         return {
@@ -554,21 +564,23 @@ async def tools_node(state: AgentState, config=None) -> dict:
         anonymizer.anonymize_chunks, [contenu], state.get("entity_map") or {})
     resultats.append({"skill": action["skill"], "ok": ok, "payload_hash": empreinte,
                       "resultat_masque": masques[0]})
-    # UNE ACTION A ETE EXECUTEE : le drapeau de relance retombe, pour que le
-    # modele puisse etre repris s'il cale de nouveau plus loin.
+    # UNE ACTION A ABOUTI : le drapeau de relance retombe, pour que le modele
+    # puisse etre repris s'il cale de nouveau plus loin.
     #
     # Une seule relance par TOUR ne suffisait pas : produire un document en
     # demande trois d'affilee (creer, remplir, terminer), et le modele annonce
     # entre chacune. Il repartait apres la premiere relance, puis s'arretait a la
     # suivante — « je vais ajouter le nombre de dossiers dans le document cree ».
     #
-    # Remettre le drapeau a zero ne risque PAS la boucle infinie : il ne retombe
-    # que lorsqu'une action a REELLEMENT abouti, donc que le travail a avance.
-    # Un modele qui n'agirait jamais n'obtient toujours qu'une seule relance, et
-    # le budget d'actions borne le reste.
-    return {"tool_results": resultats, "tool_iterations": iteration,
-            "relance_annonce": False,
-            "entity_map": carte_maj}
+    # SEULEMENT SI ELLE A ABOUTI. Le code le rearmait aussi apres un ECHEC,
+    # contrairement a ce que cette explication promettait : une action qui rate
+    # en boucle redonnait donc un forcage a chaque tour, sans que rien n'avance.
+    # C'est exactement la boucle que ce commentaire disait impossible.
+    maj = {"tool_results": resultats, "tool_iterations": iteration,
+           "entity_map": carte_maj}
+    if ok:
+        maj["relance_annonce"] = False
+    return maj
 
 
 async def rehydrate_node(state: AgentState) -> dict:

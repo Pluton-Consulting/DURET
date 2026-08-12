@@ -33,16 +33,33 @@ async def apercu(chemin: Optional[str] = None) -> dict:
     fallait lister puis faire compter le modèle, qui se trompait d'autant plus
     que la liste était longue — compter n'est pas ce qu'un modèle fait de mieux.
     """
-    from nas.acces import connexion, _lister_ouvert, dossiers_autorises
+    from nas.acces import connexion, _lister_ouvert, dossiers_autorises, NasRefuse
 
+    if not chemin:
+        # AUCUN DOSSIER OUVERT n'est un refus, pas un serveur vide. Répondre
+        # « 0 dossier et 0 fichier » se lisait comme « le serveur est vide »,
+        # et le modèle le répétait à l'utilisateur.
+        racines_ouvertes = dossiers_autorises()
+        if not racines_ouvertes:
+            raise NasRefuse(
+                "Aucun dossier du serveur n'est ouvert à l'assistant. Un "
+                "administrateur doit renseigner les partages à ouvrir. Ce n'est "
+                "PAS un serveur vide : dis-le tel quel.")
+
+    illisibles = []
     async with connexion() as (client, base, sid):
         if chemin:
-            brut = await _lister_ouvert(client, base, sid, chemin)
-            racines = [brut]
+            racines = [await _lister_ouvert(client, base, sid, chemin)]
         else:
             # Sans chemin : l'inventaire des racines ouvertes, chacune résumée.
-            racines = [await _lister_ouvert(client, base, sid, d)
-                       for d in dossiers_autorises()]
+            # Une racine illisible ne doit pas effacer les autres — c'était le
+            # cas, la première exception annulant tout l'aperçu.
+            racines = []
+            for d in racines_ouvertes:
+                try:
+                    racines.append(await _lister_ouvert(client, base, sid, d))
+                except Exception as e:  # noqa: BLE001
+                    illisibles.append({"chemin": d, "raison": str(e)[:120]})
 
     resume = []
     for r in racines:
@@ -64,16 +81,46 @@ async def apercu(chemin: Optional[str] = None) -> dict:
             "octets_total": octets,
             "types_de_fichiers": dict(sorted(types.items(), key=lambda kv: -kv[1])[:8]),
             "noms_des_dossiers": [d.get("nom") for d in dossiers][:40],
-            "tronque": bool(r.get("tronque")),
+            # LA TRONCATURE SE DÉDUIT, elle ne se croit pas sur parole. On
+            # comparait le seul drapeau `tronque` : absent, il valait False, et
+            # un dossier de 4 321 entrées était annoncé « 200, comptés et non
+            # estimés ». Le total rendu par le serveur tranche mieux qu'un
+            # drapeau qu'on peut oublier de poser.
+            "tronque": bool(r.get("tronque")) or int(r.get("total") or 0) > len(entrees),
+            # Ce que le SERVEUR annonce, quand il en dit plus que ce qu'il a
+            # rendu : c'est la seule façon de savoir qu'on ne compte qu'une page.
+            "total_reel": r.get("total"),
         })
 
     total_dossiers = sum(r["dossiers"] for r in resume)
     total_fichiers = sum(r["fichiers"] for r in resume)
-    return {"emplacements": resume,
+
+    # UN COMPTE TRONQUÉ N'EST PAS UN COMPTE. Le listage s'arrête à 200 entrées ;
+    # annoncer « 200 fichiers, comptés et non estimés » sur un dossier qui en
+    # contient 4 321 est un mensonge, et c'est celui que le modèle répète. On le
+    # dit, avec le total réel que le serveur nous a donné.
+    tronques = [r for r in resume if r["tronque"]]
+    if tronques:
+        reels = ", ".join(f"{t['chemin']} ({t.get('total_reel')} entrées)"
+                          for t in tronques if t.get("total_reel"))
+        note = (f"Compte PARTIEL : {total_dossiers} dossier(s) et "
+                f"{total_fichiers} fichier(s) sur la première page seulement. "
+                f"Le serveur en annonce davantage — {reels}. "
+                "Ne présente PAS ces nombres comme le total : descends dans un "
+                "sous-dossier pour compter précisément.")
+    else:
+        note = (f"{total_dossiers} dossier(s) et {total_fichiers} fichier(s). "
+                "Les nombres ci-dessus sont comptés, pas estimés : "
+                "reprends-les tels quels.")
+
+    if illisibles:
+        note += (f" {len(illisibles)} dossier(s) n'ont pas pu être lus : "
+                 + ", ".join(i["chemin"] for i in illisibles) + ".")
+
+    return {"emplacements": resume, "illisibles": illisibles,
             "total_dossiers": total_dossiers, "total_fichiers": total_fichiers,
-            "note": (f"{total_dossiers} dossier(s) et {total_fichiers} fichier(s). "
-                     "Les nombres ci-dessus sont comptés, pas estimés : "
-                     "reprends-les tels quels.")}
+            "complet": not tronques and not illisibles,
+            "note": note}
 
 
 async def arborescence(chemin: str, profondeur: int = 2) -> dict:
@@ -85,7 +132,7 @@ async def arborescence(chemin: str, profondeur: int = 2) -> dict:
     dizaines de milliers de dossiers, et une exploration sans limite ne
     reviendrait jamais.
     """
-    from nas.acces import connexion, _lister_ouvert
+    from nas.acces import connexion, _lister_ouvert, NasRefuse
 
     profondeur = max(1, min(int(profondeur or 2), MAX_PROFONDEUR))
     vus = 0
@@ -98,12 +145,33 @@ async def arborescence(chemin: str, profondeur: int = 2) -> dict:
             vus += 1
             try:
                 brut = await _lister_ouvert(client, base, sid, courant)
-            except Exception as e:  # noqa: BLE001 - un dossier illisible n'arrête pas l'arbre
-                noeud["erreur"] = str(e)[:120]
+            except NasRefuse:
+                # UN REFUS DE PÉRIMÈTRE N'EST PAS UN ARBRE VIDE. À la racine
+                # demandée, il doit remonter : rendre `{"enfants": []}` faisait
+                # dire au modèle « ce dossier est vide » alors que l'accès était
+                # refusé — un refus de sécurité déguisé en information fausse.
+                if noeud is arbre:
+                    raise
+                noeud["erreur"] = "accès refusé (hors du périmètre autorisé)"
+                noeud["explore"] = False
                 continue
+            except Exception as e:  # noqa: BLE001 - un dossier illisible n'arrête pas l'arbre
+                if noeud is arbre:
+                    raise
+                noeud["erreur"] = str(e)[:120]
+                noeud["explore"] = False
+                continue
+            noeud["explore"] = True
             for e in brut.get("entrees") or []:
                 enfant = {"nom": e.get("nom"), "chemin": e.get("chemin"),
                           "dossier": bool(e.get("dossier")), "octets": e.get("octets")}
+                # `explore` DIT LA VÉRITÉ, sur CHAQUE dossier. Un dossier non
+                # ouvert — parce qu'il est au dernier niveau, ou parce que le
+                # budget d'exploration s'est épuisé — n'était pas distinguable
+                # d'un dossier vide : le modèle concluait « il n'y a rien
+                # dedans » sur un dossier qu'on n'avait simplement pas ouvert.
+                if enfant["dossier"]:
+                    enfant["explore"] = False
                 noeud["enfants"].append(enfant)
                 if enfant["dossier"] and niveau + 1 < profondeur:
                     enfant["enfants"] = []
@@ -141,6 +209,11 @@ async def ouvrir(nom_ou_chemin: str) -> dict:
                 lu = await _lire_ouvert(client, base, sid, demande)
                 if lu.get("type"):
                     return {**lu, "trouve_par": "chemin"}
+                # Le chemin EXISTE mais n'a pas pu être lu (trop volumineux,
+                # format non pris en charge) : le message le dit. Relancer une
+                # recherche DSM ne trouverait que ce même fichier, pour échouer
+                # pareil — deux appels lents pour rien.
+                return {**lu, "trouve_par": "chemin"}
             except NasRefuse:
                 raise            # hors périmètre : ne pas contourner par la recherche
             except Exception:
@@ -221,6 +294,14 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
     """
     from bureautique.atelier import terminer, chemin_fichier
     from nas.acces import deposer
+
+    # UN PROPRIÉTAIRE VIDE N'EST PAS UN PROPRIÉTAIRE. `fiche()` compare
+    # `proprietaire == f["proprietaire"]` : une chaîne vide ne correspondrait à
+    # rien aujourd'hui, mais rien ne le garantit — et un document appartient à
+    # quelqu'un, ou l'opération n'a pas lieu. On refuse ici, où c'est explicite.
+    if not (proprietaire or "").strip():
+        raise PermissionError(
+            "Impossible de déposer un document sans compte identifié.")
 
     fiche = terminer(document_id, proprietaire)      # lève si inconnu ou vide
     chemin = chemin_fichier(document_id, proprietaire)

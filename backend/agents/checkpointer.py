@@ -5,6 +5,7 @@ AsyncPostgresSaver (psycopg3 pool) en prod : reprise sur erreur, human-in-the-lo
 durable même après redémarrage du process.
 Fallback automatique sur MemorySaver si le setup Postgres échoue (dép/clé/DB absente).
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -14,6 +15,10 @@ logger = logging.getLogger("duret.checkpointer")
 
 _checkpointer = None
 _pool = None
+# `if _checkpointer is not None` suivi d'un `await` rend la main à la boucle :
+# sans verrou, N appels concurrents ouvraient N pools, dont un seul restait
+# référencé — les autres, jamais fermés, gardaient leurs connexions Postgres.
+_verrou = asyncio.Lock()
 
 
 def _psycopg_dsn() -> str:
@@ -29,6 +34,16 @@ async def get_checkpointer():
     global _checkpointer, _pool
     if _checkpointer is not None:
         return _checkpointer
+
+    async with _verrou:
+        if _checkpointer is not None:   # re-vérification SOUS le verrou
+            return _checkpointer
+        return await _construire()
+
+
+async def _construire():
+    """Construit le checkpointer. À n'appeler que sous `_verrou`."""
+    global _checkpointer, _pool
 
     if settings.checkpointer_postgres:
         try:

@@ -26,27 +26,59 @@ from __future__ import annotations
 
 import re
 
-# Ce qui compte : le FUTUR PROCHE à la première personne. Une phrase au passé
-# (« j'ai listé ») décrit un acte accompli et ne doit pas déclencher de reprise,
-# sinon on rejouerait indéfiniment un travail déjà fait.
-ANNONCE_SANS_ACTE = re.compile(
-    r"\b(?:"
-    # Futur proche, explicite.
-    r"je (?:vais|commence|m['’]y mets|me mets|procède|prépare|entame)"
-    # Présent de narration : « je crée le PDF ». Sans bloc d'action, c'est une
-    # promesse — s'il l'avait fait, il en donnerait le RÉSULTAT, au passé
-    # (« j'ai listé », « il y a 18 dossiers »). L'adverbe n'est pas exigé : la
-    # phrase de production la plus courante n'en portait aucun.
-    r"|je (?:crée|créé|liste|cherche|lis|rédige|génère|compte|regarde|récupère"
-    r"|finalise|termine|dépose|ajoute|complète|remplis|enregistre|envoie|ouvre)\b"
-    # Élision, avec ou sans pronom intercalé : « j'ajoute », « j'y ajoute ».
-    # C'est cette forme qui manquait, sur la phrase même qui a fait échouer le
-    # tour : « J'y ajoute le nombre de dossiers (18)... puis je finalise ».
-    r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais|inscris)"
-    r"|c['’]est parti"
-    r"|je le fais"
-    r"|maintenant[^.!?]{0,25}\bje\b"
-    r")",
+# LA CASCADE PRODUIT PARFOIS DU FRANÇAIS SANS ACCENT. « Je cree le document »
+# n'était pas reconnu alors que « Je crée le document » l'était : le même
+# modèle, selon le fournisseur qui répondait, passait ou non le contrôle.
+#
+# Les motifs ci-dessous sont donc écrits SANS ACCENT, et le texte est dépouillé
+# avant comparaison. Les deux formes tombent ainsi sur la même règle — écrire
+# les deux variantes à la main aurait doublé chaque liste, pour n'en oublier une
+# qu'au premier ajout.
+_ACCENTS = str.maketrans("àâäéèêëîïôöùûüçœ", "aaaeeeeiioouuucœ")
+
+
+def _sans_accent(texte: str) -> str:
+    return texte.translate(_ACCENTS)
+
+
+# Futur proche explicite : aucune ambiguïté, c'est une promesse.
+_FUTUR = (r"je (?:vais|commence|m['’]y mets|me mets|procede|prepare|entame)"
+          r"|c['’]est parti"
+          r"|je le fais"
+          r"|maintenant[^.!?]{0,25}\bje\b")
+
+# VERBES DE PRODUCTION au présent. « je crée le PDF » est une promesse : s'il
+# l'avait fait, il en donnerait le RÉSULTAT — « le document est prêt », « j'ai
+# créé ». On ne fabrique pas quelque chose « en direct » dans une phrase.
+_PRODUCTION = (r"je (?:cree|redige|genere|produis|finalise|termine|depose"
+               r"|ajoute|complete|remplis|enregistre|envoie|ouvre)\b"
+               # Élision, avec ou sans pronom intercalé : « j'y ajoute ».
+               r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais|inscris)")
+
+# VERBES DE LECTURE au présent : « je compte 18 dossiers », « d'après ce que je
+# lis dans le CCTP ». Ce sont les tournures NORMALES d'un résultat d'observation
+# — les traiter comme des promesses détruisait de vraies réponses (mesuré : 4
+# sur 4). Ils ne comptent donc QUE derrière un marqueur de futur, déjà couvert
+# par `_FUTUR` (« je vais compter », « je commence par lire »).
+ANNONCE_SANS_ACTE = re.compile(rf"\b(?:{_FUTUR}|{_PRODUCTION})", re.IGNORECASE)
+
+# CE QUI N'EST PAS UNE PROMESSE, quoi qu'en dise le verbe. Deux familles :
+#
+# LA QUESTION. « Voulez-vous que je crée le document ? » demande un accord ;
+# la traiter comme une annonce faisait produire l'action sans jamais montrer la
+# question — l'utilisateur voyait le document apparaître à la place de la
+# question qu'on lui posait.
+#
+# LA DEMANDE D'INFORMATION. « Je vais avoir besoin du numéro de chantier »
+# porte « je vais », mais n'annonce aucun acte : elle attend une réponse. Sans
+# cette exclusion, la phrase était remplacée par « je n'ai pas réussi à
+# exécuter l'action » — et la question posée à l'utilisateur disparaissait.
+_PAS_UNE_PROMESSE = re.compile(
+    r"\?"
+    r"|\b(?:voulez-vous|souhaitez-vous|dois-je|puis-je|faut-il|preferez-vous"
+    r"|est-ce que|pouvez-vous|pourriez-vous|lequel|laquelle|lesquels)\b"
+    r"|j['’]ai besoin|je vais avoir besoin|il me faut|il me manque"
+    r"|je vais devoir|precisez|indiquez-moi|de quel",
     re.IGNORECASE,
 )
 
@@ -67,8 +99,26 @@ CLOTURES = {
 
 
 def est_une_annonce(texte: str) -> bool:
-    """Le texte promet-il une action au lieu de la faire ?"""
-    return bool(ANNONCE_SANS_ACTE.search(texte or ""))
+    """Le texte promet-il une action au lieu de la faire ?
+
+    Deux conséquences pèsent sur cette réponse, et toutes deux sont lourdes :
+    un « oui » fait FABRIQUER une action par le nœud de forçage, et fait
+    REMPLACER la réponse à l'écran si rien n'aboutit. Un faux positif ne coûte
+    donc pas un appel de trop — il exécute ce que personne n'a demandé, ou
+    détruit une réponse juste.
+
+    D'où le refus catégorique sur une question : demander l'autorisation d'agir
+    n'est pas agir, et la réponse attendue est celle de l'utilisateur.
+    """
+    # Un appelant peut passer autre chose qu'une chaîne (état mal formé, valeur
+    # d'un modèle). Cette fonction décide d'un routage : elle ne doit jamais
+    # être ce qui fait tomber un tour.
+    if not isinstance(texte, str):
+        texte = str(texte or "")
+    nu = _sans_accent(texte)
+    if _PAS_UNE_PROMESSE.search(nu):
+        return False
+    return bool(ANNONCE_SANS_ACTE.search(nu))
 
 
 def cloture_attendue(resultats) -> str | None:

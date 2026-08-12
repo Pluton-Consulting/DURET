@@ -71,17 +71,24 @@ ACTES = {
 }
 
 MAX_DETAIL = 80
+# Le libellé COMPLET est borné lui aussi : un nom de skill venu du registre en
+# base peut être long, et la ligne d'activité tient sur une seule ligne d'écran.
+MAX_LIBELLE = 140
 
 
 def _detail(args: dict) -> str:
-    """Le « sur quoi » de l'action : un chemin, un dossier, un titre.
+    """Le « sur quoi » de l'action : un chemin, un dossier.
 
-    On ne prend QUE des repères de localisation, jamais du contenu — une requête
-    de recherche ou un corps de mail passerait ici en clair, hors de tout
-    cloisonnement.
+    On ne prend QUE des repères de LOCALISATION, jamais du contenu. La règle
+    n'était pas tenue : `motif` est une requête de recherche et `titre` un
+    texte libre dicté par l'utilisateur — tous deux passaient en clair sur un
+    écran qui promet de n'afficher aucun contenu. Un journal d'activité ne doit
+    pas devenir une seconde voie de lecture, échappant au cloisonnement.
     """
-    for cle in ("chemin", "dossier", "source_type", "mailbox", "titre", "motif"):
-        valeur = (args or {}).get(cle)
+    if not isinstance(args, dict):
+        return ""
+    for cle in ("chemin", "dossier", "source_type", "mailbox"):
+        valeur = args.get(cle)
         if valeur and isinstance(valeur, str):
             return valeur.strip()[:MAX_DETAIL]
     return ""
@@ -111,17 +118,23 @@ def libelle(node: str, update: dict | None = None) -> str:
     # dire, bien plus que « rédaction en cours ».
     resultats = update.get("tool_results")
     if node == "tools" and isinstance(resultats, list) and resultats:
-        dernier = resultats[-1] or {}
+        # Le dernier résultat n'est pas forcément un dictionnaire : un état mal
+        # formé suffisait à faire lever `AttributeError` ICI, c'est-à-dire dans
+        # le code qui décrit le travail — le tour entier tombait parce que
+        # l'écran n'arrivait pas à en parler.
+        dernier = resultats[-1]
+        dernier = dernier if isinstance(dernier, dict) else {}
         nom = dernier.get("skill") or ""
         texte = _acte(nom) or (f"j'exécute {nom}" if nom else "j'exécute une action")
         if dernier.get("ok") is False:
             texte += " — sans succès"
-        return texte
+        return texte[:MAX_LIBELLE]
 
     if node == "tools" and update.get("pending_action"):
-        action = update["pending_action"] or {}
+        action = update["pending_action"]
+        action = action if isinstance(action, dict) else {}
         nom = action.get("skill") or ""
-        return f"{_acte(nom) or nom} — en attente de votre validation".strip()
+        return f"{_acte(nom) or nom} — en attente de votre validation".strip()[:MAX_LIBELLE]
 
     return LIBELLES.get(node, "")
 
@@ -130,4 +143,4 @@ def libelle_action(skill: str, args: dict | None = None) -> str:
     """Phrase pour une action sur le point d'être exécutée."""
     texte = _acte(skill) or f"j'exécute {skill}"
     detail = _detail(args or {})
-    return f"{texte} : {detail}" if detail else texte
+    return (f"{texte} : {detail}" if detail else texte)[:MAX_LIBELLE]

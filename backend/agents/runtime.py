@@ -18,6 +18,7 @@ Contrat TurnResult (dict) :
   validation_id : Optional[str]   (si pending_validation)
   validation    : Optional[dict]  (reason/payload/draft, si pending_validation)
 """
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator, Optional
@@ -97,8 +98,20 @@ async def fil_suspendu(thread_id: str) -> bool:
     graph = await get_graph()
     try:
         snapshot = await graph.aget_state(_graph_config(thread_id))
-    except Exception:   # noqa: BLE001 - un fil inconnu n'est pas suspendu
-        return False
+    except Exception as e:  # noqa: BLE001
+        # ON NE SAIT PAS — donc on REFUSE. Un fil inconnu ne passe pas par ici :
+        # `aget_state` rend alors un instantané vide. Ce qui atterrit là, c'est
+        # une PANNE de lecture du checkpoint (pool saturé, délai, connexion
+        # refusée). Conclure « pas suspendu » lancerait un tour sur un fil arrêté
+        # au `human_gate`, jetterait l'interruption, et rendrait l'approbation
+        # d'après incohérente — exactement l'interdit que ce garde-fou existe
+        # pour faire respecter. Il serait fail-open précisément au moment où il
+        # sert : quand l'infrastructure vacille.
+        logger.error("Lecture du checkpoint impossible pour %s (%s) — tour refusé",
+                     thread_id, e)
+        raise FilOccupe(
+            "Impossible de vérifier l'état de cette conversation pour le "
+            "moment. Réessayez dans quelques instants.") from e
     return bool(getattr(snapshot, "next", None))
 
 
@@ -120,10 +133,27 @@ def _graph_config(thread_id: str, user_id: Optional[str] = None,
     return cfg
 
 
+# UN SEUL GRAPHE, MÊME SOUS UNE RAFALE. `if _graph is None:` suivi d'un `await`
+# rend la main à la boucle avant l'affectation : N requêtes concurrentes
+# passaient toutes le test et construisaient N graphes et N checkpointers.
+#
+# Ce n'est pas théorique : `main.py` avale volontairement l'échec de
+# l'initialisation au démarrage (« le graphe ne doit pas empêcher l'API de
+# démarrer »), donc `_graph` reste à None quand Postgres n'est pas encore prêt —
+# et la première rafale de requêtes initialise en parallèle. Conséquences
+# mesurées : plusieurs pools ouverts et jamais fermés, et si le repli mémoire
+# joue, des historiques de conversation séparés selon le graphe attrapé.
+_init = asyncio.Lock()
+
+
 async def init_runtime() -> None:
     """Compile le graph principal avec le checkpointer (appelé au startup)."""
     global _graph
-    if _graph is None:
+    if _graph is not None:
+        return
+    async with _init:
+        if _graph is not None:      # re-vérification SOUS le verrou
+            return
         checkpointer = await get_checkpointer()
         _graph = await build_main_graph(checkpointer)
         logger.info("Runtime LangGraph initialisé")

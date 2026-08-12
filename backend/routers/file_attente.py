@@ -68,16 +68,27 @@ MAX_CARACTERES_DEMANDE = 4000
 _semaphore: Optional[asyncio.Semaphore] = None
 
 
+_boucle_semaphore = None
+
+
 def _porte() -> asyncio.Semaphore:
-    """Le sémaphore, créé dans la boucle d'événements du serveur.
+    """Le sémaphore, créé dans la boucle d'événements qui s'en sert.
 
     Créé à l'import, il s'attacherait à la boucle du processus de MIGRATION ou
     d'un shell — et tout `acquire` ultérieur lèverait « attached to a different
-    loop ». Paresseux, il naît dans la boucle qui s'en sert.
+    loop ». La création paresseuse ne suffisait pas : elle ne faisait que
+    RETARDER l'attachement, le sémaphore restant ensuite dans un global pour
+    toujours. Un second `asyncio.run` — un test, un script d'administration,
+    une reprise après arrêt de la boucle — retombait sur le même objet.
+
+    On mémorise donc la boucle avec lui, et on repart d'un sémaphore neuf
+    quand elle a changé.
     """
-    global _semaphore
-    if _semaphore is None:
+    global _semaphore, _boucle_semaphore
+    boucle = asyncio.get_running_loop()
+    if _semaphore is None or _boucle_semaphore is not boucle:
         _semaphore = asyncio.Semaphore(MAX_SIMULTANEES)
+        _boucle_semaphore = boucle
     return _semaphore
 
 
@@ -122,7 +133,22 @@ def _libelle_echec(e: Exception) -> str:
 
 
 async def _executer(tache_id: str, user_id: str, query: str) -> None:
-    """Déroule une tâche dans le graphe habituel, en notant sa progression."""
+    """Déroule une tâche dans le graphe habituel, en notant sa progression.
+
+    LA PROGRESSION VIVANTE NE S'EFFACE QU'À LA TOUTE FIN. Elle était retirée
+    dans un `finally` placé avant l'écriture de l'état final : entre les deux,
+    l'écran retombait sur le texte PERSISTÉ — « en file d'attente » — alors que
+    la tâche venait d'aboutir. La progression semblait reculer, puis sauter à
+    « terminée ». Le nettoyage est donc ici, après que la base porte le mot de
+    la fin, quel que soit le chemin de sortie.
+    """
+    try:
+        await _derouler_tache(tache_id, user_id, query)
+    finally:
+        _VIVANTES.pop(tache_id, None)
+
+
+async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
     from agents import runtime
     from tasks.identity import charger_executant
 
@@ -160,25 +186,45 @@ async def _executer(tache_id: str, user_id: str, query: str) -> None:
                 elif t == "pending_validation":
                     validation_id = str(ev.get("validation_id") or "") or None
 
+        # NOTRE délai, pas celui d'un autre. Depuis Python 3.11,
+        # `asyncio.TimeoutError` EST `TimeoutError` : un délai dépassé chez le
+        # fournisseur de modèle ou sur le NAS remontait comme le nôtre et
+        # s'affichait « délai dépassé (20 min) » après vingt secondes, son
+        # détail perdu dans le journal.
+        #
+        # Un drapeau ne suffit pas : le `except` qui le pose attrape les DEUX,
+        # puisque c'est la même classe. On emballe donc l'exception venue du
+        # dedans dans un type à nous — après quoi le `TimeoutError` qui remonte
+        # ne peut plus venir que de `wait_for` lui-même.
+        class _Interne(Exception):
+            """Panne survenue DANS le tour, quel qu'en soit le type d'origine."""
+
+        async def _emballe():
+            try:
+                await _derouler()
+            except asyncio.CancelledError:
+                raise                      # l'annulation du délai doit passer
+            except BaseException as e:     # noqa: BLE001
+                raise _Interne() from e
+
         try:
-            await asyncio.wait_for(_derouler(), timeout=DELAI_MAX_S)
+            await asyncio.wait_for(_emballe(), timeout=DELAI_MAX_S)
         except asyncio.TimeoutError:
             logger.warning("Tâche différée %s : délai de %d s dépassé",
                            tache_id, DELAI_MAX_S)
             await _terminer(tache_id, "echec",
                             erreur=f"délai dépassé ({DELAI_MAX_S // 60} min)")
             return
-        except Exception as e:  # noqa: BLE001 - une tâche fautive ne tue pas les autres
+        except (_Interne, Exception) as brut:  # noqa: BLE001 - une tâche fautive ne tue pas les autres
             # Le message BRUT reste dans le journal serveur ; l'utilisateur, lui,
             # reçoit une phrase. Une erreur de pilote Postgres ou un corps
             # d'API fournisseur porte des adresses internes et des noms de
             # déploiement, qui n'ont rien à faire sur une carte de chat — ni à
             # dormir des mois dans une colonne de base.
+            e = brut.__cause__ if isinstance(brut, _Interne) and brut.__cause__ else brut
             logger.warning("Tâche différée %s en échec : %s", tache_id, e, exc_info=True)
             await _terminer(tache_id, "echec", erreur=_libelle_echec(e))
             return
-        finally:
-            _VIVANTES.pop(tache_id, None)
 
         if validation_id:
             # SUSPENDUE, pas terminée : le graphe attend dans le checkpointer.
@@ -196,17 +242,44 @@ async def _executer(tache_id: str, user_id: str, query: str) -> None:
 async def _terminer(tache_id: str, statut: str, *, reponse: Optional[str] = None,
                     erreur: Optional[str] = None, validation_id: Optional[str] = None,
                     progress: Optional[str] = None) -> None:
-    async with get_db() as conn:
-        await conn.execute(
-            """UPDATE taches_differees
-               SET status = $1,
-                   response = COALESCE($2, response),
-                   error = COALESCE($3, error),
-                   validation_id = COALESCE($4::uuid, validation_id),
-                   progress = COALESCE($5, progress),
-                   updated_at = NOW()
-               WHERE id = $6::uuid""",
-            statut, reponse, erreur, validation_id, progress, tache_id)
+    """Écrit l'état final. NE LÈVE JAMAIS.
+
+    Une panne d'écriture ici laissait la ligne « en cours » POUR TOUJOURS : sa
+    carte tournait sans fin, et le créneau restait pris dans le quota de la
+    personne — sans aucun moyen de s'en sortir, puisque la requalification au
+    démarrage ne touche que les tâches d'AVANT le redémarrage. On réessaie une
+    fois, puis on se rabat sur le strict minimum : sortir de « en cours ».
+    """
+    for tentative in (1, 2):
+        try:
+            async with get_db() as conn:
+                await conn.execute(
+                    """UPDATE taches_differees
+                       SET status = $1,
+                           response = COALESCE($2, response),
+                           error = COALESCE($3, error),
+                           validation_id = COALESCE($4::uuid, validation_id),
+                           progress = COALESCE($5, progress),
+                           updated_at = NOW()
+                       WHERE id = $6::uuid""",
+                    statut, reponse, erreur, validation_id, progress, tache_id)
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Tâche %s : écriture de l'état « %s » impossible "
+                           "(tentative %d) : %s", tache_id, statut, tentative, e)
+            if tentative == 1:
+                await asyncio.sleep(0.5)
+
+    # Dernier recours : au moins ne pas laisser la ligne « en cours ». Sans
+    # cela, la personne perd un créneau de quota définitivement.
+    try:
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE taches_differees SET status = 'echec', "
+                "error = 'état final non enregistré', updated_at = NOW() "
+                "WHERE id = $1::uuid AND status = 'en_cours'", tache_id)
+    except Exception:  # noqa: BLE001 - la base est injoignable, il n'y a plus rien à tenter
+        logger.error("Tâche %s laissée « en cours » : base injoignable", tache_id)
 
 
 @router.post("/taches")
@@ -227,10 +300,19 @@ async def lancer_tache(body: NouvelleTache, current_user: User = Depends(get_cur
     async with get_db() as conn:
         # Plafond par personne : sans lui, un seul compte empile des centaines
         # de demandes derrière le sémaphore global et fait attendre tout le monde.
+        # UNE TÂCHE PLUS VIEILLE QUE LE DÉLAI MAXIMAL NE TOURNE PLUS.
+        # Si l'écriture de son état final a échoué (base momentanément
+        # injoignable), sa ligne reste « en cours » jusqu'au prochain
+        # redémarrage — et son créneau de quota avec elle. La personne se
+        # retrouvait bloquée à 429 sans rien pouvoir y faire. On ne compte donc
+        # que les tâches qui peuvent encore être vivantes.
         en_cours = await conn.fetchval(
             """SELECT COUNT(*) FROM taches_differees
-               WHERE user_id = $1 AND status IN ('en_cours', 'attente_validation')""",
-            current_user.id)
+               WHERE user_id = $1
+                 AND (status = 'attente_validation'
+                      OR (status = 'en_cours'
+                          AND updated_at > NOW() - ($2 || ' seconds')::interval))""",
+            current_user.id, str(DELAI_MAX_S + 120))
         if int(en_cours or 0) >= MAX_PAR_PERSONNE:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

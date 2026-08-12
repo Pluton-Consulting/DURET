@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import posixpath
+from contextlib import asynccontextmanager
 from typing import Optional
 
 logger = logging.getLogger("duret.nas.acces")
@@ -151,21 +152,41 @@ async def _session(client):
     return base, await c._login(client, base)
 
 
-async def lister(chemin: str) -> dict:
-    """Contenu d'un dossier : sous-dossiers et fichiers, avec tailles."""
+@asynccontextmanager
+async def connexion():
+    """Une session DSM ouverte, à partager entre plusieurs gestes.
+
+    POURQUOI. Chaque fonction publique de ce module ouvre sa session, agit, puis
+    se déconnecte. C'est juste pour un geste isolé, et coûteux dès qu'il y en a
+    plusieurs : mesuré en production, une seule liste de dossier prend six
+    secondes, dont l'essentiel en résolution d'adresse et connexion — pas en
+    lecture. Enchaîner « cherche puis lis » payait donc deux fois ce prix.
+
+    Les fonctions composées de `outils/nas.py` ouvrent UNE session et enchaînent
+    dedans. Les fonctions publiques ci-dessous continuent d'en ouvrir une
+    chacune : leur usage isolé reste le cas courant, et rien de leur
+    comportement ne change.
+    """
     import httpx
     from config import settings
     from ingestion.connectors import synology as c
 
-    vise = verifier(chemin)
     async with httpx.AsyncClient(verify=settings.synology_verify_tls) as client:
         base, sid = await _session(client)
         try:
-            data = await c._appel(client, base, "SYNO.FileStation.List", "list", 2,
-                                  sid=sid, folder_path=vise, limit=MAX_ENTREES,
-                                  additional='["size","time"]')
+            yield client, base, sid
         finally:
             await c._logout(client, base, sid)
+
+
+async def _lister_ouvert(client, base, sid, chemin: str) -> dict:
+    """Liste un dossier dans une session DÉJÀ ouverte."""
+    from ingestion.connectors import synology as c
+
+    vise = verifier(chemin)
+    data = await c._appel(client, base, "SYNO.FileStation.List", "list", 2,
+                          sid=sid, folder_path=vise, limit=MAX_ENTREES,
+                          additional='["size","time"]')
 
     entrees = []
     for f in (data.get("files") or [])[:MAX_ENTREES]:
@@ -192,20 +213,19 @@ async def lister(chemin: str) -> dict:
     }
 
 
-async def lire(chemin: str) -> dict:
-    """Texte d'un fichier du NAS, extrait par le même lecteur que les imports."""
-    import httpx
-    from config import settings
+async def lister(chemin: str) -> dict:
+    """Contenu d'un dossier : sous-dossiers et fichiers, avec tailles."""
+    async with connexion() as (client, base, sid):
+        return await _lister_ouvert(client, base, sid, chemin)
+
+
+async def _lire_ouvert(client, base, sid, chemin: str) -> dict:
+    """Lit un fichier dans une session DÉJÀ ouverte."""
     from ingestion.connectors import synology as c
     from ingestion.parsers import analyser, FichierNonSupporte
 
     vise = verifier(chemin)
-    async with httpx.AsyncClient(verify=settings.synology_verify_tls) as client:
-        base, sid = await _session(client)
-        try:
-            brut = await c._telecharger(client, base, sid, vise)
-        finally:
-            await c._logout(client, base, sid)
+    brut = await c._telecharger(client, base, sid, vise)
 
     if not brut:
         return {"chemin": vise, "message": "Fichier introuvable ou vide sur le NAS."}
@@ -231,10 +251,15 @@ async def lire(chemin: str) -> dict:
             "tronque": len(structure.get("text") or "") > MAX_CARACTERES}
 
 
-async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
-    """Recherche par NOM de fichier, dans le périmètre autorisé."""
-    import httpx
-    from config import settings
+async def lire(chemin: str) -> dict:
+    """Texte d'un fichier du NAS, extrait par le même lecteur que les imports."""
+    async with connexion() as (client, base, sid):
+        return await _lire_ouvert(client, base, sid, chemin)
+
+
+async def _chercher_ouvert(client, base, sid, motif: str,
+                           dossier: Optional[str] = None) -> dict:
+    """Cherche par nom dans une session DÉJÀ ouverte."""
     from ingestion.connectors import synology as c
 
     motif = (motif or "").strip()
@@ -248,33 +273,34 @@ async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
         raise NasRefuse("Aucun dossier NAS n'est ouvert à l'assistant.")
 
     trouves: list[dict] = []
-    async with httpx.AsyncClient(verify=settings.synology_verify_tls) as client:
-        base, sid = await _session(client)
-        try:
-            for racine in racines:
-                depart = await c._appel(client, base, "SYNO.FileStation.Search", "start", 2,
-                                        sid=sid, folder_path=racine, pattern=f"*{motif}*")
-                tache = depart.get("taskid")
-                if not tache:
-                    continue
-                import asyncio
-                for _ in range(10):          # la recherche DSM est asynchrone
-                    await asyncio.sleep(1.0)
-                    res = await c._appel(client, base, "SYNO.FileStation.Search", "list", 2,
-                                         sid=sid, taskid=tache, limit=50,
-                                         additional='["size"]')
-                    if res.get("finished"):
-                        break
-                for f in (res.get("files") or [])[:50]:
-                    trouves.append({"nom": f.get("name"), "chemin": f.get("path"),
-                                    "dossier": bool(f.get("isdir"))})
-                await c._appel(client, base, "SYNO.FileStation.Search", "stop", 2,
-                               sid=sid, taskid=tache)
-        finally:
-            await c._logout(client, base, sid)
+    for racine in racines:
+        depart = await c._appel(client, base, "SYNO.FileStation.Search", "start", 2,
+                                sid=sid, folder_path=racine, pattern=f"*{motif}*")
+        tache = depart.get("taskid")
+        if not tache:
+            continue
+        import asyncio
+        for _ in range(10):          # la recherche DSM est asynchrone
+            await asyncio.sleep(1.0)
+            res = await c._appel(client, base, "SYNO.FileStation.Search", "list", 2,
+                                 sid=sid, taskid=tache, limit=50,
+                                 additional='["size"]')
+            if res.get("finished"):
+                break
+        for f in (res.get("files") or [])[:50]:
+            trouves.append({"nom": f.get("name"), "chemin": f.get("path"),
+                            "dossier": bool(f.get("isdir"))})
+        await c._appel(client, base, "SYNO.FileStation.Search", "stop", 2,
+                       sid=sid, taskid=tache)
 
     return {"motif": motif, "nombre": len(trouves), "resultats": trouves[:50],
             "dossiers_explores": racines}
+
+
+async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
+    """Recherche par NOM de fichier, dans le périmètre autorisé."""
+    async with connexion() as (client, base, sid):
+        return await _chercher_ouvert(client, base, sid, motif, dossier)
 
 
 async def deposer(chemin_dossier: str, nom: str, contenu: bytes) -> dict:

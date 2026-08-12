@@ -62,6 +62,16 @@ ACTES = {
     "nas_lire": "je lis un fichier du serveur",
     "nas_chercher": "je cherche un fichier sur le serveur",
     "nas_deposer": "je dépose le fichier sur le serveur",
+    # Bibliotheque d'outils : une fonction composee fait plusieurs gestes, le
+    # libelle dit le RESULTAT vise et non l'enchainement — « je cherche puis je
+    # lis » n'apprend rien de plus a qui regarde l'ecran.
+    "nas_apercu": "je regarde ce que contient le dossier",
+    "nas_arborescence": "je parcours les dossiers du serveur",
+    "nas_ouvrir": "j'ouvre le fichier",
+    "nas_lire_lot": "je lis les fichiers",
+    "nas_deposer_document": "je finalise et dépose le document",
+    "produire_document": "je produis le document",
+    "mode_emploi": "je relis le mode d'emploi de l'outil",
     "retenir": "j'enregistre la consigne",
     "oublier": "je retire la consigne",
     "consignes_retenues": "je relis les consignes",

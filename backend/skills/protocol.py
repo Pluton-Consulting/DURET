@@ -165,36 +165,59 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "as-tu ». C'est un INVENTAIRE, pas une recherche : il rend ce qui existe, sans "
         "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
         [], ["sujet"]),
+    # ── SERVEUR DE FICHIERS ────────────────────────────────────────────
+    # Le VOCABULAIRE MAISON reste ici, une seule fois : c'est au moment de
+    # CHOISIR l'action que le modele en a besoin. Personne ne dit « le NAS
+    # Synology » — on dit « le serveur », « le reseau », « les partages ». Sans
+    # ces synonymes, une demande parfaitement claire pour un humain ne
+    # declenche rien.
+    #
+    # Le reste du mode d'emploi — conventions de chemin, limites, pannes
+    # connues — a QUITTE ce catalogue pour `outils/docs/nas.md`, servi a la
+    # demande par `mode_emploi`. Ce catalogue est injecte dans CHAQUE prompt,
+    # y compris pour « bonjour » : ce qui n'y sert pas a choisir n'y a pas sa
+    # place.
+    "nas_apercu": (
+        "COMPTE et resume un dossier du serveur : combien de dossiers, de "
+        "fichiers, de quels types. LE SERVEUR, LE NAS, LE RESEAU, LES PARTAGES "
+        "et SYNOLOGY designent la meme chose. A utiliser des qu'on demande un "
+        "NOMBRE ou « ce qu'il y a dans » : les comptes sont exacts",
+        [], ["chemin"]),
+    "nas_arborescence": (
+        "ARBRE d'un dossier du serveur sur plusieurs niveaux, en une fois",
+        ["chemin"], ["profondeur"]),
+    "nas_ouvrir": (
+        "OUVRE et lit un fichier du serveur depuis son NOM, sans en connaitre "
+        "le chemin. La voie normale pour lire un fichier",
+        ["nom"], []),
+    "nas_lire_lot": (
+        "LIT plusieurs fichiers du serveur correspondant a un motif (5 maximum)",
+        ["motif"], ["dossier", "limite"]),
+    "nas_deposer_document": (
+        "FINALISE un document en cours et le DEPOSE sur le serveur, en un geste. "
+        "Ecrit sur le serveur : demande une validation humaine",
+        ["document_id", "dossier"], ["nom"]),
+    # Gestes elementaires, conserves pour ce que la bibliotheque ne couvre pas.
     "nas_lister": (
-        # Le VOCABULAIRE MAISON vit ici, pas dans une consigne de conversation ni
-        # dans la memoire : c'est au moment de choisir l'action que le modele en
-        # a besoin. Personne ne dit « le NAS Synology » — on dit « le serveur »,
-        # « le reseau », « les partages ». Sans ces synonymes, une demande
-        # parfaitement claire pour un humain ne declenche rien.
-        "LISTE un dossier du NAS Synology de l'entreprise. LE NAS, LE SERVEUR, LE "
-        "SERVEUR DE FICHIERS, LE RESEAU, LES PARTAGES RESEAU, LE DISQUE RESEAU et "
-        "SYNOLOGY designent tous LA MEME CHOSE : ce NAS. Sans `chemin`, rend les "
-        "dossiers ouverts a l'assistant. Utile pour retrouver un plan, un CCTP, un "
-        "dossier de chantier sans attendre une synchronisation. Pour descendre dans "
-        "un sous-dossier, reprends son champ `chemin` tel quel : un partage nomme "
-        "« Drive » vu dans /home se designe « /home/Drive », jamais « /Drive »",
+        "LISTE le detail d'un dossier du serveur. Sans `chemin`, les dossiers "
+        "ouverts a l'assistant. Prefere `nas_apercu` pour compter",
         [], ["chemin"]),
     "nas_lire": (
-        "LIT un fichier du NAS (dit aussi « le serveur », « le reseau », « les partages ») et en rend le texte (PDF, Word, Excel, CSV, scan par "
-        "reconnaissance de caracteres). Le `chemin` doit etre celui rendu par "
-        "`nas_lister` ou `nas_chercher`, repris TEL QUEL : un chemin reconstruit a "
-        "partir du seul nom perd son dossier parent et ne designe rien",
+        "LIT un fichier du serveur par son CHEMIN exact. Prefere `nas_ouvrir`, "
+        "qui trouve le chemin tout seul",
         ["chemin"], []),
     "nas_chercher": (
-        "CHERCHE un fichier par son nom sur le NAS (dit aussi « le serveur »), dans les dossiers autorises. "
-        "motif : un morceau de nom ; dossier : ou chercher (optionnel)",
+        "CHERCHE un fichier par son nom sur le serveur, sans le lire",
         ["motif"], ["dossier"]),
     "nas_deposer": (
-        "DEPOSE sur le NAS (dit aussi « le serveur ») un document deja produit par `terminer_document`. "
-        "ATTENTION : ecrit sur le serveur de l'entreprise, demande une validation "
-        "humaine. N'ecrase jamais un fichier existant. Il n'existe AUCUN moyen de "
-        "supprimer, deplacer ou renommer : ne le promets pas",
+        "DEPOSE sur le serveur un fichier deja produit. Ecrit sur le serveur : "
+        "validation humaine. N'ecrase jamais. Aucune suppression ni "
+        "renommage n'est possible : ne le promets pas",
         ["dossier", "document_id"], ["nom"]),
+    "mode_emploi": (
+        "MODE D'EMPLOI complet d'un outil (nas, documents) : conventions, "
+        "limites, pannes connues. A lire quand aucune action ne couvre le besoin",
+        [], ["outil"]),
     "retenir": (
         "RETIENT DEFINITIVEMENT une consigne, une regle ou un mot de vocabulaire "
         "maison. A utiliser des que l'utilisateur dit « retiens que », « souviens-toi "
@@ -210,26 +233,30 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "RETIRE une consigne retenue, par son texte ou son identifiant. A utiliser sur "
         "« oublie que », « ne tiens plus compte de »",
         ["consigne"], []),
+    # ── DOCUMENTS ──────────────────────────────────────────────────────
+    # `produire_document` d'abord : c'est le cas courant, et il remplace a lui
+    # seul les trois gestes suivants. Mesure en production, la chaine en trois
+    # temps coutait 132 secondes pour un PDF portant un seul nombre, dont 86
+    # d'attente du modele entre les etapes.
+    "produire_document": (
+        "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois et "
+        "rend le lien. `blocs` : liste de {bloc:titre|paragraphe|liste|tableau|"
+        "saut_page|feuille}. Un paragraphe accepte gras, italique, centre "
+        "(booleens), taille (petit|normal|grand|tres_grand) et couleur "
+        "(rouge|vert|bleu|orange|gris|noir). LA voie normale pour un document",
+        ["titre", "blocs"], ["format", "entete", "pied", "numeroter"]),
+    # L'atelier en trois temps : pour les documents trop gros pour un seul appel.
     "creer_document": (
-        "OUVRE un document telechargeable (docx, pdf ou xlsx). Ne produit encore "
-        "aucun fichier. format : docx|pdf|xlsx ; titre ; entete et pied : textes "
-        "repetes sur chaque page ; paysage : bool. Enchaine ensuite avec "
-        "`ajouter_document` autant de fois qu'il le faut, puis `terminer_document`",
+        "OUVRE un document a remplir en PLUSIEURS fois (documents longs "
+        "seulement ; sinon `produire_document`). Ne produit aucun fichier",
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter"]),
     "ajouter_document": (
-        "VERSE du contenu dans un document ouvert. `elements` est une liste de "
-        "blocs : {bloc:titre, texte, niveau}, {bloc:paragraphe, texte}, "
-        "{bloc:liste, items, ordonnee}, {bloc:tableau, entetes, lignes, legende}, "
-        "un paragraphe acceptant aussi gras, italique, centre (booleens), "
-        "taille (petit|normal|grand|tres_grand) et couleur (rouge|vert|bleu|"
-        "orange|gris|noir), "
-        "{bloc:feuille, nom, entetes, lignes} (onglet en xlsx), {bloc:saut_page}, "
-        "{bloc:separateur}. APPELLE-LE PLUSIEURS FOIS pour un document long : "
-        "environ 400 blocs par appel, sans limite au nombre d'appels",
+        "VERSE du contenu dans un document ouvert. Meme vocabulaire de blocs que "
+        "`produire_document`. A appeler autant de fois qu'il le faut",
         ["document_id", "elements"], []),
     "terminer_document": (
-        "FERME le document et rend le lien de telechargement. A appeler une seule "
-        "fois, quand tout le contenu est verse",
+        "FERME le document et rend le lien. Tant qu'il n'est pas appele, "
+        "AUCUN fichier n'existe",
         ["document_id"], []),
     "mes_droits": (
         "Explique les DROITS D'ACCES : ce que la personne connectee peut consulter, "

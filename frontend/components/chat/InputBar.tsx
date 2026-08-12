@@ -10,6 +10,21 @@ export interface PieceJointe {
 interface InputBarProps {
   onSend: (text: string, piece?: PieceJointe) => void
   disabled?: boolean
+  // Une tache tourne deja : ecrire reste possible, l'envoi MET EN FILE au lieu
+  // d'interrompre. Le champ et le bouton le disent, sinon l'utilisateur croit
+  // interrompre la tache en cours.
+  modeFile?: boolean
+}
+
+/** Trois barres indentées : la file d'attente, dessinée plutôt que dite. */
+function IconeFile() {
+  return (
+    <svg width="18" height="14" viewBox="0 0 18 14" fill="none" aria-hidden="true">
+      <rect x="0" y="0" width="14" height="2.6" rx="1.3" fill="currentColor" />
+      <rect x="2.5" y="5.7" width="14" height="2.6" rx="1.3" fill="currentColor" opacity="0.75" />
+      <rect x="5" y="11.4" width="13" height="2.6" rx="1.3" fill="currentColor" opacity="0.5" />
+    </svg>
+  )
 }
 
 // Limite alignée sur MAX_BODY_MB côté backend : mieux vaut refuser tout de suite
@@ -30,7 +45,7 @@ function lireBase64(fichier: File): Promise<string> {
   })
 }
 
-export default function InputBar({ onSend, disabled }: InputBarProps) {
+export default function InputBar({ onSend, disabled, modeFile }: InputBarProps) {
   const [value, setValue] = useState("")
   const [piece, setPiece] = useState<PieceJointe | null>(null)
   const [erreur, setErreur] = useState("")
@@ -145,7 +160,9 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={surTouche}
-          placeholder="Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"
+          placeholder={modeFile
+            ? "Écrivez pour mettre une autre tâche dans la file d'attente"
+            : "Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"}
           disabled={disabled}
           rows={1}
           style={{
@@ -161,15 +178,18 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
           data-testid="envoyer-message"
           onClick={envoyer}
           disabled={!peutEnvoyer}
+          title={modeFile ? "Mettre en file d'attente" : "Envoyer"}
+          aria-label={modeFile ? "Mettre en file d'attente" : "Envoyer"}
           style={{
             background: "linear-gradient(180deg, var(--color-primary-hover), var(--color-primary))",
             color: "var(--color-text-on-dark)", border: "none",
             borderRadius: "var(--radius-pill)", padding: "10px 20px", fontSize: 14,
             fontWeight: 500, cursor: peutEnvoyer ? "pointer" : "not-allowed",
             opacity: peutEnvoyer ? 1 : 0.6, whiteSpace: "nowrap", boxShadow: "var(--shadow-card)",
+            display: "flex", alignItems: "center", gap: 8,
           }}
         >
-          Envoyer
+          {modeFile ? <><IconeFile /> En file</> : "Envoyer"}
         </button>
       </div>
     </div>

@@ -21,9 +21,13 @@ function stageOf(node: string): number {
 interface Props {
   steps: string[]
   loading: boolean
+  // Le bas de la colonne : cartes des taches en arriere-plan et des accords en
+  // attente. Rendu par le parent — cette colonne reste un cadre, elle ne
+  // connait ni les taches ni les validations.
+  rail?: React.ReactNode
 }
 
-export default function ReasoningPath({ steps, loading }: Props) {
+export default function ReasoningPath({ steps, loading, rail }: Props) {
   const visited = new Set(steps.map(stageOf).filter((i) => i >= 0))
   const reached = visited.size ? Math.max(...Array.from(visited)) : -1
 
@@ -37,45 +41,54 @@ export default function ReasoningPath({ steps, loading }: Props) {
     <aside className="sym-path sym-fade">
       <style>{`
         @keyframes symNodePulse { 0%,100%{ box-shadow:0 0 0 4px var(--color-primary-subtle);} 50%{ box-shadow:0 0 0 9px rgba(0,0,0,0);} }
-        .sym-path{ width:26%; min-width:242px; max-width:340px; flex-shrink:0; overflow-y:auto;
-          border-left:1px solid var(--color-border); background:var(--color-surface); padding:24px 22px; }
+        /* Colonne en deux zones : la frise CONDENSEE en haut (elle defile si la
+           place manque), les cartes ancrees en bas. C'est le bas qui porte ce
+           qui attend une decision — il doit rester visible sans defilement. */
+        .sym-path{ width:26%; min-width:242px; max-width:340px; flex-shrink:0;
+          display:flex; flex-direction:column; overflow:hidden;
+          border-left:1px solid var(--color-border); background:var(--color-surface); padding:16px 18px; }
+        .sym-path-haut{ flex:1 1 auto; min-height:0; overflow-y:auto; }
+        .sym-path-bas{ flex-shrink:0; max-height:52%; overflow-y:auto; }
         .sym-path-eyebrow{ font-size:11px; letter-spacing:.14em; text-transform:uppercase;
-          color:var(--color-primary-mid); font-weight:700; margin-bottom:4px; }
-        .sym-path-title{ font-size:15px; font-weight:700; color:var(--color-text-primary); margin-bottom:20px; }
-        .sym-node{ position:relative; display:grid; grid-template-columns:24px 1fr; gap:13px; padding-bottom:22px; }
+          color:var(--color-primary-mid); font-weight:700; margin-bottom:3px; }
+        .sym-path-title{ font-size:14px; font-weight:700; color:var(--color-text-primary); margin-bottom:12px; }
+        .sym-node{ position:relative; display:grid; grid-template-columns:20px 1fr; gap:10px; padding-bottom:12px; }
         .sym-node:last-child{ padding-bottom:0; }
-        .sym-line{ position:absolute; left:11px; top:-22px; width:2px; height:22px; background:var(--color-border); transition:background .3s; }
+        .sym-line{ position:absolute; left:9px; top:-12px; width:2px; height:12px; background:var(--color-border); transition:background .3s; }
         .sym-node.done .sym-line, .sym-node.active .sym-line{ background:var(--color-primary-mid); }
-        .sym-dot{ width:24px; height:24px; border-radius:50%; border:2px solid var(--color-border);
+        .sym-dot{ width:20px; height:20px; border-radius:50%; border:2px solid var(--color-border);
           background:var(--color-surface); display:flex; align-items:center; justify-content:center;
-          font-size:12px; font-weight:700; color:var(--color-text-on-dark); z-index:1; transition:all .3s; }
+          font-size:10px; font-weight:700; color:var(--color-text-on-dark); z-index:1; transition:all .3s; }
         .sym-node.done .sym-dot{ background:var(--color-primary); border-color:var(--color-primary); }
         .sym-node.active .sym-dot{ border-color:var(--color-primary); animation:symNodePulse 1.4s ease-in-out infinite; }
         .sym-node.pending .sym-dot, .sym-node.idle .sym-dot{ opacity:.55; }
         .sym-node.skipped .sym-dot{ border-style:dashed; opacity:.4; }
-        .sym-node-label{ font-size:13.5px; font-weight:600; color:var(--color-text-primary); }
+        .sym-node-label{ font-size:12.5px; font-weight:600; color:var(--color-text-primary); }
         .sym-node.active .sym-node-label{ color:var(--color-primary); }
         .sym-node.pending .sym-node-label, .sym-node.idle .sym-node-label, .sym-node.skipped .sym-node-label{
           color:var(--color-text-muted); font-weight:500; }
-        .sym-node-desc{ font-size:11.5px; color:var(--color-text-muted); margin-top:2px; }
+        .sym-node-desc{ font-size:11px; color:var(--color-text-muted); margin-top:1px; }
         @media (max-width: 900px){ .sym-path{ display:none; } }
         @media (prefers-reduced-motion: reduce){ .sym-node.active .sym-dot{ animation:none; } }
       `}</style>
-      <div className="sym-path-eyebrow">En coulisses</div>
-      <div className="sym-path-title">Chemin de réflexion</div>
-      <div>
-        {STAGES.map((s, i) => (
-          <div className={`sym-node ${stateOf(i)} sym-in sym-in-${Math.min(i + 1, 6)}`} key={s.label}
-               data-testid="etape-reflexion" data-etape={s.label} data-etat={stateOf(i)}>
-            {i > 0 && <span className="sym-line" aria-hidden="true" />}
-            <span className="sym-dot" aria-hidden="true">{stateOf(i) === "done" ? "✓" : ""}</span>
-            <div>
-              <div className="sym-node-label">{s.label}</div>
-              <div className="sym-node-desc">{s.desc}</div>
+      <div className="sym-path-haut">
+        <div className="sym-path-eyebrow">En coulisses</div>
+        <div className="sym-path-title">Chemin de réflexion</div>
+        <div>
+          {STAGES.map((s, i) => (
+            <div className={`sym-node ${stateOf(i)} sym-in sym-in-${Math.min(i + 1, 6)}`} key={s.label}
+                 data-testid="etape-reflexion" data-etape={s.label} data-etat={stateOf(i)}>
+              {i > 0 && <span className="sym-line" aria-hidden="true" />}
+              <span className="sym-dot" aria-hidden="true">{stateOf(i) === "done" ? "✓" : ""}</span>
+              <div>
+                <div className="sym-node-label">{s.label}</div>
+                <div className="sym-node-desc">{s.desc}</div>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
+      {rail && <div className="sym-path-bas">{rail}</div>}
     </aside>
   )
 }

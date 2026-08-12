@@ -252,6 +252,13 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
         )
     except HTTPException:
         raise
+    except runtime.FilOccupe as e:
+        # Un tour tourne déjà sur ce fil, ou il attend une décision humaine. Ce
+        # n'est pas une panne : c'est le garde-fou qui empêche deux exécutions
+        # d'écrire le même historique. Le message est écrit pour être lu tel
+        # quel — et le 409 distingue ce refus d'une erreur de traitement, ce que
+        # l'écran utilise pour proposer la file d'attente.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         success = False
         error_msg = str(e)
@@ -420,6 +427,12 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
                     if event.get("type") == "final":
                         final_response = event.get("response") or ""
                     await websocket.send_json(event)
+            except runtime.FilOccupe as e:
+                # Refus délibéré, pas une panne : le client ne doit PAS se
+                # rabattre sur le POST, qui retomberait sur le même fil occupé.
+                # Un type distinct le lui dit.
+                await websocket.send_json({"type": "fil_occupe", "detail": str(e)})
+                continue
             except Exception as e:
                 await websocket.send_json({"type": "error", "detail": str(e)})
                 continue

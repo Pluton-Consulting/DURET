@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from database.connection import init_db
-from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router, tasks as tasks_router, hooks as hooks_router, learning as learning_router, documents_produits
+from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router, tasks as tasks_router, hooks as hooks_router, learning as learning_router, documents_produits, file_attente
 from agents.runtime import init_runtime, shutdown_runtime
 from config import settings
 
@@ -40,6 +40,14 @@ async def lifespan(app: FastAPI):
         await start_validation_cleanup()
     except Exception as e:
         logging.getLogger("duret").error("start_validation_cleanup a échoué : %s", e)
+    try:
+        # Les tâches de la file tuées par l'arrêt précédent : leur asyncio.Task
+        # n'existe plus, les laisser « en cours » afficherait une progression
+        # figée pour toujours. On dit la vérité : interrompues.
+        from routers.file_attente import requalifier_interrompues
+        await requalifier_interrompues()
+    except Exception as e:
+        logging.getLogger("duret").error("requalifier_interrompues a échoué : %s", e)
     try:
         from security.anonymizer import anonymizer
         if not anonymizer.spacy_available:
@@ -116,6 +124,7 @@ app.include_router(learning_router.router, prefix="/api/learning", tags=["learni
 app.include_router(documents_produits.router, prefix="/api/documents", tags=["documents"])
 # /api/hooks : PAS de JWT — authentification par signature HMAC (voir routers/hooks.py).
 app.include_router(hooks_router.router, prefix="/api/hooks", tags=["hooks"])
+app.include_router(file_attente.router, prefix="/api/file", tags=["file"])
 
 
 @app.get("/api/health")

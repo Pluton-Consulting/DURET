@@ -35,6 +35,73 @@ logger = logging.getLogger("duret.runtime")
 _graph = None
 
 
+class FilOccupe(RuntimeError):
+    """Un tour tourne déjà sur ce fil, ou il attend une décision humaine."""
+
+
+# ── UN SEUL TOUR À LA FOIS PAR FIL ───────────────────────────────────
+#
+# Deux exécutions simultanées sur un même `thread_id` écrivent leurs
+# checkpoints l'une sur l'autre : l'historique se corrompt en silence, et une
+# reprise ultérieure repart d'un état qui n'a jamais existé. Tout le reste du
+# système suppose cet interdit — un fil par tâche différée, un fil par tâche
+# planifiée — mais rien ne le FAISAIT respecter.
+#
+# Les chemins qui pouvaient l'enfreindre, tous vérifiés en revue :
+#   - le repli POST du chat, déclenché par un WebSocket lent alors que le tour
+#     WS continue côté serveur (le serveur ne voit la déconnexion qu'au prochain
+#     envoi, donc pas avant la fin de l'appel au modèle en cours) ;
+#   - un nouveau message envoyé sur un fil suspendu au `human_gate`, qui jetait
+#     l'interruption et rendait l'approbation ultérieure incohérente ;
+#   - deux approbations concurrentes de la même validation.
+#
+# Le verrou est EN MÉMOIRE, donc mono-processus : c'est déjà l'hypothèse de
+# `_VIVANTES` dans la file d'attente. Un déploiement multi-workers demanderait
+# un verrou partagé (Postgres advisory lock) — à traiter le jour où il arrive,
+# pas à simuler aujourd'hui.
+_FILS_EN_COURS: set[str] = set()
+
+
+class _Verrou:
+    """Réserve un fil pour la durée d'un tour. Lève `FilOccupe` s'il est pris."""
+
+    def __init__(self, thread_id: str):
+        self.fil = thread_id
+
+    def __enter__(self):
+        if self.fil in _FILS_EN_COURS:
+            raise FilOccupe(
+                "Un traitement est déjà en cours sur cette conversation. "
+                "Attendez qu'il se termine, ou lancez votre demande en file "
+                "d'attente.")
+        _FILS_EN_COURS.add(self.fil)
+        return self
+
+    def __exit__(self, *exc):
+        _FILS_EN_COURS.discard(self.fil)
+        return False
+
+
+def fil_occupe(thread_id: str) -> bool:
+    """Un tour tourne-t-il en ce moment sur ce fil ?"""
+    return thread_id in _FILS_EN_COURS
+
+
+async def fil_suspendu(thread_id: str) -> bool:
+    """Le fil attend-il une décision humaine (interrompu au `human_gate`) ?
+
+    Un nouveau tour lancé dessus écraserait l'interruption : la validation
+    resterait « en attente » pour toujours, et l'approuver plus tard reprendrait
+    un graphe qui n'est plus au point où il s'était arrêté.
+    """
+    graph = await get_graph()
+    try:
+        snapshot = await graph.aget_state(_graph_config(thread_id))
+    except Exception:   # noqa: BLE001 - un fil inconnu n'est pas suspendu
+        return False
+    return bool(getattr(snapshot, "next", None))
+
+
 def _graph_config(thread_id: str, user_id: Optional[str] = None,
                   extra_tags: Optional[list] = None) -> dict:
     """
@@ -190,17 +257,28 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
                    attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                    attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
                    trigger_kind: str = "chat") -> dict:
-    """Exécute un tour de conversation. Peut suspendre (pending_validation)."""
+    """Exécute un tour de conversation. Peut suspendre (pending_validation).
+
+    Lève `FilOccupe` si un tour tourne déjà sur ce fil, ou s'il attend une
+    décision humaine : deux exécutions sur un même fil corrompent l'historique.
+    """
     graph = await get_graph()
     config = _graph_config(thread_id, user_id)
 
-    result = await graph.ainvoke(
-        _initial_state(query, user_id, user_role, has_attachment, thread_id,
-                       attachment_b64, attachment_mime, attachment_name, attachment_text,
-                       trigger_kind), config
-    )
+    if await fil_suspendu(thread_id):
+        raise FilOccupe(
+            "Cette conversation attend une décision de votre part sur une "
+            "action précédente. Tranchez-la, ou lancez votre demande en file "
+            "d'attente.")
 
-    snapshot = await graph.aget_state(config)
+    with _Verrou(thread_id):
+        result = await graph.ainvoke(
+            _initial_state(query, user_id, user_role, has_attachment, thread_id,
+                           attachment_b64, attachment_mime, attachment_name, attachment_text,
+                           trigger_kind), config
+        )
+
+        snapshot = await graph.aget_state(config)
     paused = bool(snapshot.next)
 
     state = snapshot.values if isinstance(snapshot.values, dict) else result
@@ -242,7 +320,12 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
 
 async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[str] = None,
                       validation_id: Optional[str] = None) -> dict:
-    """Reprend un graph suspendu au human_gate avec la décision humaine."""
+    """Reprend un graph suspendu au human_gate avec la décision humaine.
+
+    Lève `FilOccupe` si un tour tourne déjà sur ce fil : reprendre pendant
+    qu'une exécution écrit ses checkpoints donnerait deux graphes concurrents
+    sur le même historique.
+    """
     graph = await get_graph()
     config = _graph_config(thread_id, validated_by, extra_tags=["resume"])
 
@@ -276,17 +359,17 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
     # L'identifiant traverse la reprise : `execute_action_node` cible ainsi LA
     # ligne résolue, au lieu de « la dernière approuvée du fil » — un fil de
     # test en porte plusieurs, et la plus récente n'est pas forcément la bonne.
-    result = await graph.ainvoke(
-        Command(resume={"approved": approved, "validated_by": validated_by,
-                        "validation_id": str(validation_id) if validation_id else None}),
-        config,
-    )
+    with _Verrou(thread_id):
+        result = await graph.ainvoke(
+            Command(resume={"approved": approved, "validated_by": validated_by,
+                            "validation_id": str(validation_id) if validation_id else None}),
+            config,
+        )
 
-    snapshot = await graph.aget_state(config)
+        snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else result
 
-    return {
-        "status": "completed",
+    commun = {
         "thread_id": thread_id,
         "response": _response_from_state(state),
         "agent_used": state.get("target_agent", "agent1"),
@@ -297,42 +380,69 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
         "validation_status": "approved" if approved else "rejected",
     }
 
+    # LE GRAPHE S'EST-IL DE NOUVEAU ARRÊTÉ ? Aujourd'hui non : après la porte,
+    # le graphe est terminal, aucun nœud atteignable ne peut lever une seconde
+    # interruption. Mais l'appelant, lui, a une branche pour ce cas — et une
+    # branche qu'aucun code ne peut atteindre finit par être crue vraie. On
+    # LIT donc l'état réel plutôt que de retourner « terminé » par principe :
+    # si le graphe change un jour, la validation suivante sera persistée au
+    # lieu d'être perdue en silence.
+    if getattr(snapshot, "next", None):
+        suivante = await _persist_validation(
+            thread_id, validated_by or "", state, _extract_interrupt(result))
+        logger.info("Reprise de %s : une NOUVELLE validation attend (%s)",
+                    thread_id, suivante)
+        return {"status": "pending_validation", "validation_id": suivante, **commun}
+
+    return {"status": "completed", **commun}
+
 
 async def stream_turn(*, query: str, user_id: str, user_role: str,
                       has_attachment: bool, thread_id: str,
                       attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                       attachment_name: Optional[str] = None, attachment_text: Optional[str] = None) -> AsyncIterator[dict]:
-    """Streame l'exécution nœud-par-nœud (pour push WebSocket temps réel)."""
+    """Streame l'exécution nœud-par-nœud (pour push WebSocket temps réel).
+
+    Lève `FilOccupe` si un tour tourne déjà sur ce fil, ou s'il attend une
+    décision humaine — même interdit que `run_turn`, même raison.
+    """
     graph = await get_graph()
     config = _graph_config(thread_id, user_id)
 
-    # subgraphs=True : remonte AUSSI les sous-étapes internes des agents (recherche mémoire,
-    # anonymisation, rédaction, vision…) et pas seulement les gros nœuds (agent1/agent2).
-    _flux = graph.astream(
-        _initial_state(query, user_id, user_role, has_attachment, thread_id,
-                       attachment_b64, attachment_mime, attachment_name, attachment_text),
-        config,
-        stream_mode="updates",
-        subgraphs=True,
-    )
-    interruption = None
-    async for ns, chunk in _flux:
-        for node_name, update in chunk.items():
-            if node_name == "__interrupt__":
-                # Avec subgraphs=True, l'interruption remonte DEUX fois (espace de noms
-                # du sous-graphe puis du parent). On ne la signale qu'une seule fois,
-                # sinon le front afficherait deux demandes pour une seule décision.
-                if interruption is None:
-                    interruption = _extract_interrupt({"__interrupt__": update})
-                    yield {"type": "validation_required", "node": "human_gate", "data": interruption}
-            else:
-                # `libelle` dit CE QUE l'assistant fait, en francais. Sans lui
-                # l'ecran n'affiche qu'un nom d'etape, et « redaction » pendant
-                # quarante secondes n'apprend rien a personne.
-                yield {"type": "node", "node": node_name, "data": _safe(update),
-                       "libelle": libelle(node_name, update if isinstance(update, dict) else {})}
+    if await fil_suspendu(thread_id):
+        raise FilOccupe(
+            "Cette conversation attend une décision de votre part sur une "
+            "action précédente. Tranchez-la, ou lancez votre demande en file "
+            "d'attente.")
 
-    snapshot = await graph.aget_state(config)
+    with _Verrou(thread_id):
+        # subgraphs=True : remonte AUSSI les sous-étapes internes des agents (recherche mémoire,
+        # anonymisation, rédaction, vision…) et pas seulement les gros nœuds (agent1/agent2).
+        _flux = graph.astream(
+            _initial_state(query, user_id, user_role, has_attachment, thread_id,
+                           attachment_b64, attachment_mime, attachment_name, attachment_text),
+            config,
+            stream_mode="updates",
+            subgraphs=True,
+        )
+        interruption = None
+        async for ns, chunk in _flux:
+            for node_name, update in chunk.items():
+                if node_name == "__interrupt__":
+                    # Avec subgraphs=True, l'interruption remonte DEUX fois (espace de noms
+                    # du sous-graphe puis du parent). On ne la signale qu'une seule fois,
+                    # sinon le front afficherait deux demandes pour une seule décision.
+                    if interruption is None:
+                        interruption = _extract_interrupt({"__interrupt__": update})
+                        yield {"type": "validation_required", "node": "human_gate", "data": interruption}
+                else:
+                    # `libelle` dit CE QUE l'assistant fait, en francais. Sans lui
+                    # l'ecran n'affiche qu'un nom d'etape, et « redaction » pendant
+                    # quarante secondes n'apprend rien a personne.
+                    yield {"type": "node", "node": node_name, "data": _safe(update),
+                           "libelle": libelle(node_name, update if isinstance(update, dict) else {})}
+
+        snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else {}
     if snapshot.next:
         # run_turn persiste la validation, pas stream_turn : une demande levée par le

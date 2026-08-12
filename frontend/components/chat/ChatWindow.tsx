@@ -4,9 +4,9 @@ import { useSession } from "next-auth/react"
 import MessageList from "./MessageList"
 import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
+import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, ChatEvent } from "@/lib/ws"
-import { Callout, KeyValueTable, PrimaryButton, GhostButton } from "@/components/blocks"
 
 interface Message {
   id: string
@@ -28,6 +28,11 @@ function newId(): string {
 // Élevé volontairement : évite de lancer un traitement POST en DOUBLE quand le WS
 // est simplement lent (machine chargée) plutôt que réellement bloqué.
 const WS_STALL_MS = 14000
+
+// Cadence de sondage de la file d'attente et des accords. Quatre secondes :
+// assez vif pour que la progression d'une carte semble vivante, assez lent pour
+// que dix onglets ouverts ne pèsent rien.
+const POLL_MS = 4000
 
 // Mémorise le thread courant (localStorage) pour restaurer la conversation quand on
 // quitte l'onglet puis qu'on y revient (le composant se démonte/remonte → état perdu).
@@ -70,45 +75,6 @@ function stepLabel(node: string | null | undefined): string {
   return NODE_LABELS[node] || "Traitement en cours"
 }
 
-// Une action a effet externe suspendue, en attente d'une decision humaine.
-interface EnAttente {
-  id: string
-  motif?: string | null
-  skill?: string | null
-  args?: Record<string, any> | null
-}
-
-// Ce que l'action va faire, dit en francais. Le nom technique (`nas_deposer`)
-// n'apprend rien a qui doit decider s'il l'autorise.
-const ACTIONS_EXTERNES: Record<string, string> = {
-  nas_deposer: "Déposer un fichier sur le serveur de l'entreprise",
-  generer_visuel: "Générer un visuel — cette génération est facturée",
-  rediger_email: "Envoyer un message",
-  redaction_email: "Envoyer un message",
-}
-
-// Les reperes qui permettent de decider : ou, quoi, pour qui. Jamais le
-// contenu lui-meme — une bulle de chat n'est pas le bon endroit pour relire un
-// corps de mail, et la file de validation le montre deja.
-const REPERES: [string, string][] = [
-  ["dossier", "Dossier"],
-  ["chemin", "Chemin"],
-  ["nom", "Nom du fichier"],
-  ["destinataire", "Destinataire"],
-  ["titre", "Titre"],
-  ["format", "Format"],
-]
-
-function decrireAction(v: EnAttente): { titre: string; lignes: [string, string][] } {
-  const titre =
-    (v.skill && ACTIONS_EXTERNES[v.skill]) || v.motif || "Action à effet externe"
-  const a = v.args || {}
-  const lignes = REPERES
-    .filter(([cle]) => a[cle] !== undefined && a[cle] !== null && a[cle] !== "")
-    .map(([cle, etiquette]) => [etiquette, String(a[cle])] as [string, string])
-  return { titre, lignes }
-}
-
 export default function ChatWindow({ threadId: initialThreadId = null, token: tokenProp }: ChatWindowProps) {
   const { data: session } = useSession()
   const token = tokenProp || (session as any)?.backendToken
@@ -121,15 +87,50 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // SEULE ligne qui se remplace : un journal qui s'allonge oblige a lire
   // pour retrouver l'etat courant, alors qu'on veut le voir d'un coup d'oeil.
   const [activite, setActivite] = useState<string>("")
-  // CE QUI est en attente, pas seulement QU'IL Y A une attente. L'ecran
-  // affichait « en attente de validation humaine » et rien d'autre : ni ce
-  // qu'on validait, ni ou le faire — les boutons vivaient sur une autre page,
-  // que personne ne peut deviner. La decision se prend ici, dans la
-  // conversation ou elle a ete demandee.
-  const [pendingValidation, setPendingValidation] = useState<EnAttente | null>(null)
-  const [validationBusy, setValidationBusy] = useState(false)
-  const [validationErreur, setValidationErreur] = useState<string | null>(null)
+
+  // ── La file d'attente ────────────────────────────────────────────────
+  // Trois populations dans la colonne de droite :
+  //  - tachesLocales : la tache principale du chat quand son ecran a ete cede
+  //    a une plus recente. Elle continue sur sa connexion WS ; seule sa CARTE
+  //    vit ici. Locale a l'onglet — a la fermeture, son echange atterrit de
+  //    toute facon dans l'historique de la conversation.
+  //  - tachesFile : les taches differees cote backend (base + sondage). Elles
+  //    survivent a tout : onglet ferme, redemarrage, jours qui passent.
+  //  - accords : les validations en suspens. Persistantes en base, elles
+  //    restent la tant qu'on n'a pas tranche — meme plusieurs jours apres.
+  const [tachesLocales, setTachesLocales] = useState<TacheFond[]>([])
+  const [tachesFile, setTachesFile] = useState<TacheFond[]>([])
+  const [accords, setAccords] = useState<AccordEnAttente[]>([])
+  const [accordEnCours, setAccordEnCours] = useState<string | null>(null)
+  // L'erreur porte l'id de la carte : rattachee au seul « en cours », elle
+  // n'etait jamais visible (les deux etats retombent dans le meme lot de rendu).
+  const [erreurAccord, setErreurAccord] = useState<{ id: string; message: string } | null>(null)
+  // Le role permet-il de trancher ? Les accords sont servis au demandeur, mais
+  // seul un valideur peut les resoudre : sans ca, deux boutons qui echouent.
+  const [peutDecider, setPeutDecider] = useState(false)
+  // Miroir REACT de principalOccupeRef : une ref ne provoque aucun rendu, donc
+  // la barre de saisie ne pouvait pas refleter « le fil est encore pris ».
+  const [principalOccupe, setPrincipalOccupe] = useState(false)
+  // La tache differee qui PILOTE le chat en ce moment (sa progression tient la
+  // banniere). Les autres vivent en cartes.
+  const [tacheActive, setTacheActive] = useState<string | null>(null)
+
   const wsRef = useRef<WebSocket | null>(null)
+  // Cible des evenements de la tache WS en cours : null = le chat, sinon
+  // l'identifiant de sa carte. C'est ce qui permet de « deplacer » une tache
+  // vers la colonne sans toucher a sa connexion.
+  const cibleWsRef = useRef<{ carte: string | null } | null>(null)
+  // Le fil PRINCIPAL est-il occupe ? Distinct de `loading` : une tache WS
+  // deplacee en carte occupe toujours le fil, meme quand le chat est libre.
+  // Envoyer un nouveau message dessus corromprait l'historique (deux
+  // executions sur le meme checkpointer) — dans ce cas, on met en file.
+  const principalOccupeRef = useRef(false)
+  // L'accord qui tient le fil principal suspendu, s'il y en a un. Le fil ne se
+  // libere qu'a sa resolution : avant, tout nouveau tour ecraserait
+  // l'interruption endormie dans le checkpointer.
+  const filSuspenduRef = useRef<string | null>(null)
+  const tacheActiveRef = useRef<string | null>(null)
+  tacheActiveRef.current = tacheActive
 
   // Enregistre le thread courant (state + localStorage) dès qu'il est connu.
   const userKey = (session as any)?.user?.email || null
@@ -150,43 +151,187 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     } catch { /* no-op */ }
   }
 
-  // Décision humaine prise DANS la conversation. Le tour est suspendu au
-  // `human_gate` : la réponse de cet appel est la SUITE du tour, une fois
-  // l'action exécutée (ou refusée) — on la pousse donc comme un message de
-  // l'assistant, sans quoi la conversation resterait figée sur l'attente.
-  const resoudreValidation = async (accorde: boolean) => {
-    const attente = pendingValidation
-    if (!attente || !attente.id || validationBusy) return
-    setValidationBusy(true)
-    setValidationErreur(null)
+  const pushAssistant = (content: string) =>
+    setMessages((prev) => [...prev, { id: newId(), role: "assistant", content }])
+
+  const majCarteLocale = (id: string, patch: Partial<TacheFond>) =>
+    setTachesLocales((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
+
+  // ── Sondage : l'etat de la file et des accords, en une requete ───────
+  // Non reentrant : un tick lent (le chargement du resultat d'une tache active
+  // est un await DANS le handler) ne doit pas se faire doubler par le suivant,
+  // qui retraiterait la meme fin de tache et afficherait la reponse deux fois.
+  const pollEnCoursRef = useRef(false)
+  const pollSeqRef = useRef(0)
+  const monteRef = useRef(true)
+  useEffect(() => () => { monteRef.current = false }, [])
+  const rafraichirEtat = async () => {
+    if (!token || pollEnCoursRef.current) return
+    pollEnCoursRef.current = true
+    const seq = ++pollSeqRef.current
+    try {
+      const res = await apiRequest<{
+        taches: { id: string; query: string; status: string; progress: string
+                  node: string; error: string | null; validation_id: string | null }[]
+        validations: { id: string; reason: string | null; skill: string | null
+                       args: Record<string, any> | null }[]
+      }>("/api/file/etat", { token })
+
+      // Une reponse arrivee dans le desordre ferait reapparaitre un accord
+      // tout juste resolu, avec ses boutons — et un second clic possible.
+      if (seq !== pollSeqRef.current || !monteRef.current) return
+      setPeutDecider(Boolean((res as any).peut_decider))
+      setTachesFile((res.taches || []).map((t) => ({
+        id: t.id, source: "file" as const, question: t.query,
+        etat: (t.status === "attente_validation" ? "attente_validation"
+               : t.status === "terminee" ? "terminee"
+               : t.status === "echec" ? "echec"
+               : t.status === "interrompue" ? "interrompue" : "en_cours"),
+        activite: t.progress || "", erreur: t.error || undefined,
+        validationId: t.validation_id || undefined,
+      })))
+      setAccords((res.validations || []).map((v) => ({
+        id: v.id, motif: v.reason, skill: v.skill, args: v.args,
+      })))
+
+      // La tache active pilote la banniere du chat : sa progression est LE
+      // texte vivant, exactement comme pour une tache principale.
+      const active = tacheActiveRef.current
+        ? (res.taches || []).find((t) => t.id === tacheActiveRef.current)
+        : null
+      if (active) {
+        if (active.status === "en_cours") {
+          if (active.progress) setActivite(active.progress)
+          if (active.node) {
+            setThinkingNode(active.node)
+            setThinkingSteps((prev) =>
+              prev[prev.length - 1] === active.node ? prev : [...prev, active.node])
+          }
+        } else if (active.status === "terminee") {
+          // Le resultat complet s'affiche dans le chat, comme si le tour s'y
+          // etait deroule ; la carte est refermee (deja lue). La REF est videe
+          // tout de suite : l'etat React ne se propage qu'au prochain rendu,
+          // et un tick parti entre-temps rejouerait cette branche.
+          tacheActiveRef.current = null
+          setTacheActive(null)
+          setLoading(false)
+          setThinkingNode(null)
+          try {
+            const d = await apiRequest<{ response: string | null }>(
+              `/api/file/taches/${active.id}`, { token })
+            // Demonte entre-temps (changement d'onglet) : on n'affiche rien, donc
+            // on ne marque RIEN comme vu. Sans ce garde, la reponse disparaissait
+            // de la colonne sans jamais avoir ete lue — l'echange d'une tache
+            // differee vit sur son propre fil, il n'est pas dans l'historique.
+            if (!monteRef.current) return
+            pushAssistant(d.response || "La tâche s'est terminée sans réponse.")
+            await apiRequest(`/api/file/taches/${active.id}/vu`, { method: "POST", token })
+          } catch {
+            if (monteRef.current) pushAssistant("La tâche est terminée — sa carte reste dans la colonne de droite.")
+          }
+        } else if (active.status === "echec" || active.status === "interrompue") {
+          setTacheActive(null)
+          setLoading(false)
+          setThinkingNode(null)
+          pushAssistant(`La tâche n'a pas abouti${active.error ? ` : ${active.error}` : "."}`)
+          if (monteRef.current) {
+            try { await apiRequest(`/api/file/taches/${active.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
+          }
+        } else if (active.status === "attente_validation") {
+          // Suspendue, pas finie : la decision se prend dans la colonne de
+          // droite, aujourd'hui ou dans trois jours. Le chat redevient libre.
+          setTacheActive(null)
+          setLoading(false)
+          setThinkingNode(null)
+          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.")
+        }
+      }
+    } catch { /* un sondage rate n'affiche rien : le suivant corrigera */ }
+  }
+
+  useEffect(() => {
+    if (!token) return
+    rafraichirEtat()
+    const id = setInterval(rafraichirEtat, POLL_MS)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  // ── Les accords : decider ici, aujourd'hui ou dans trois jours ───────
+  // Le tour est suspendu au `human_gate`, son etat vit dans le checkpointer
+  // Postgres : la reprise fonctionne apres n'importe quel delai. La reponse de
+  // cet appel est la SUITE du tour — elle se pousse comme un message.
+  const resoudreAccord = async (id: string, accorde: boolean) => {
+    if (accordEnCours) return
+    setAccordEnCours(id)
+    setErreurAccord(null)
     try {
       const res = await apiRequest<{ status?: string; response?: string; validation_id?: string | null }>(
-        `/api/validations/${attente.id}/resolve`,
+        `/api/validations/${id}/resolve`,
         { method: "POST", token, body: JSON.stringify({ approved: accorde }) }
       )
-      setPendingValidation(null)
-      // La reprise peut buter sur une NOUVELLE action à effet externe : une
-      // demande en plusieurs étapes en compte parfois deux. Sans ce cas, la
-      // seconde attente ne s'afficherait jamais et le tour semblerait perdu.
-      if (res.status === "pending_validation" && res.validation_id) {
-        setPendingValidation({ id: String(res.validation_id) })
+      // La tache de la file liee a cet accord vient d'etre refermee cote
+      // backend : sa reponse s'affiche ICI, sa carte n'a plus rien a montrer.
+      const liee = tachesFile.find((t) => t.validationId === id)
+      if (res.response) pushAssistant(res.response)
+      else if (!accorde) pushAssistant("Action refusée — rien n'a été fait.")
+      if (liee) {
+        try { await apiRequest(`/api/file/taches/${liee.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
       }
-      if (res.response) {
-        setMessages((prev) => [...prev, { id: newId(), role: "assistant", content: res.response as string }])
-      } else if (!accorde) {
-        setMessages((prev) => [...prev, { id: newId(), role: "assistant", content: "Action refusée — rien n'a été fait." }])
+      // Une carte LOCALE suspendue sur ce meme accord n'a plus rien a attendre :
+      // sans ca elle restait « en attente de votre accord » jusqu'au
+      // rechargement de la page, alors que la decision venait d'etre prise.
+      setTachesLocales((prev) => prev.filter((t) => t.validationId !== id))
+      // Le fil principal etait suspendu sur CET accord : il redevient libre.
+      if (filSuspenduRef.current === id) {
+        filSuspenduRef.current = null
+        principalOccupeRef.current = false
+        setPrincipalOccupe(false)
       }
+      await rafraichirEtat()
     } catch (e: any) {
-      // 403 : la personne n'a pas le droit de valider. Le dire, plutôt que de
-      // laisser un bouton qui échoue sans expliquer pourquoi.
-      setValidationErreur(
-        e?.status === 403
-          ? "Vous n'avez pas le droit d'approuver cette action. Une personne de la direction doit le faire, depuis la file de validation."
-          : e?.message || "La décision n'a pas pu être enregistrée."
-      )
+      // 403 : la personne n'a pas le droit de valider. Le dire, plutot que de
+      // laisser un bouton qui echoue sans expliquer pourquoi.
+      setErreurAccord({
+        id,
+        message: e?.status === 403
+          ? "Vous n'avez pas le droit d'approuver cette action. Une personne de la direction doit le faire."
+          : e?.status === 409
+            ? "Cette action vient d'être tranchée ailleurs."
+            : e?.message || "La décision n'a pas pu être enregistrée.",
+      })
     } finally {
-      setValidationBusy(false)
+      setAccordEnCours(null)
     }
+  }
+
+  // Clic sur une carte terminee : le rendu complet s'affiche dans le chat,
+  // question comprise — comme si l'echange s'y etait deroule.
+  const afficherTache = async (t: TacheFond) => {
+    setMessages((prev) => [...prev, { id: newId(), role: "user", content: t.question }])
+    if (t.source === "ws") {
+      pushAssistant(t.reponse || "La tâche s'est terminée sans réponse.")
+      setTachesLocales((prev) => prev.filter((x) => x.id !== t.id))
+      return
+    }
+    try {
+      const d = await apiRequest<{ response: string | null }>(`/api/file/taches/${t.id}`, { token })
+      if (!monteRef.current) return
+      pushAssistant(d.response || "La tâche s'est terminée sans réponse.")
+      await apiRequest(`/api/file/taches/${t.id}/vu`, { method: "POST", token })
+      await rafraichirEtat()
+    } catch {
+      pushAssistant("Le résultat n'a pas pu être relu — réessayez depuis la carte.")
+    }
+  }
+
+  const fermerTache = async (t: TacheFond) => {
+    if (t.source === "ws") {
+      setTachesLocales((prev) => prev.filter((x) => x.id !== t.id))
+      return
+    }
+    setTachesFile((prev) => prev.filter((x) => x.id !== t.id))
+    try { await apiRequest(`/api/file/taches/${t.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
   }
 
   // Restaure la conversation au montage : thread passé en prop, sinon dernier thread
@@ -231,7 +376,82 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
 
   useEffect(() => () => { try { wsRef.current?.close() } catch { /* no-op */ } }, [])
 
+  // ── Ceder l'ecran du chat a une nouvelle demande ─────────────────────
+  // La tache en cours glisse en carte dans la colonne de droite ; sa connexion
+  // et son execution ne bougent pas. Seul l'AFFICHAGE change de place.
+  const basculerActifVersCarte = () => {
+    if (tacheActiveRef.current) {
+      // Tache differee : elle apparait deja dans la liste sondee — la
+      // « detacher » du chat suffit, sa carte prend le relais au prochain tick.
+      setTacheActive(null)
+      return
+    }
+    const cible = cibleWsRef.current
+    if (cible && cible.carte === null) {
+      const carteId = `ws-${newId()}`
+      setTachesLocales((prev) => [{
+        id: carteId, source: "ws" as const,
+        question: queryEnCoursRef.current || "Tâche en cours",
+        etat: "en_cours" as const,
+        activite: activiteRef.current || "",
+      }, ...prev])
+      cible.carte = carteId
+    }
+  }
+  const queryEnCoursRef = useRef<string>("")
+  const activiteRef = useRef<string>("")
+  activiteRef.current = activite
+
+  // ── Mettre une demande en file (le fil principal est occupe) ─────────
+  // `afficherDemande` : faux quand le message est DEJA dans le fil — cas du
+  // basculement en file apres un refus « fil occupe », ou la demande a ete
+  // affichee avant qu'on sache qu'elle ne pourrait pas partir par le chat.
+  const lancerEnFile = async (text: string, afficherDemande = true) => {
+    if (afficherDemande) {
+      setMessages((prev) => [...prev, { id: newId(), role: "user", content: text }])
+    }
+    try {
+      const res = await apiRequest<{ tache_id: string }>(
+        "/api/file/taches",
+        { method: "POST", token, body: JSON.stringify({ query: text }) })
+      setTacheActive(res.tache_id)
+      setLoading(true)
+      setThinkingNode(null)
+      setThinkingSteps([])
+      setActivite("en file d'attente")
+      await rafraichirEtat()
+    } catch (e: any) {
+      pushAssistant(`Erreur : ${e?.message ?? "la mise en file a échoué"}`)
+    }
+  }
+
   const sendMessage = (text: string, piece?: PieceJointe) => {
+    if (!token) {
+      setMessages((prev) => [...prev,
+        { id: newId(), role: "user", content: text },
+        { id: newId(), role: "assistant", content: "Erreur : session expirée, veuillez vous reconnecter." }])
+      return
+    }
+
+    // Le fil principal est occupe (par le chat, ou par une tache deplacee en
+    // carte qui tourne encore dessus) : la nouvelle demande part en FILE, sur
+    // son propre fil backend. Deux executions sur un meme fil se disputeraient
+    // le checkpointer — c'est un interdit structurel, pas une prudence.
+    if (loading || principalOccupeRef.current) {
+      basculerActifVersCarte()
+      // Les pieces jointes ne voyagent pas encore en file : le dire tout de
+      // suite vaut mieux qu'un fichier silencieusement ignore.
+      if (piece) {
+        setMessages((prev) => [...prev,
+          { id: newId(), role: "user", content: `📎 ${piece.name}\n${text}` },
+          { id: newId(), role: "assistant",
+            content: "Les pièces jointes ne peuvent pas rejoindre la file d'attente : attendez la fin de la tâche en cours, puis renvoyez le fichier." }])
+        return
+      }
+      lancerEnFile(text)
+      return
+    }
+
     const attachment = piece
       ? { attachment_name: piece.name, attachment_mime: piece.mime, attachment_b64: piece.b64 }
       : undefined
@@ -243,35 +463,78 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     setThinkingNode(null)
     setThinkingSteps([])
     setActivite("")
-    setPendingValidation(null)
-    setValidationErreur(null)
+    queryEnCoursRef.current = text
 
     const tid = threadId ?? newId()
     if (!threadId) rememberThread(tid)
-
-    const pushAssistant = (content: string) =>
-      setMessages((prev) => [...prev, { id: newId(), role: "assistant", content }])
-
-    if (!token) {
-      pushAssistant("Erreur : session expirée, veuillez vous reconnecter.")
-      setLoading(false)
-      return
-    }
 
     let settled = false
     let stallTimer: ReturnType<typeof setTimeout> | null = null
     const clearStall = () => { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null } }
     const closeWs = () => { try { wsRef.current?.close() } catch { /* no-op */ } }
 
-    const finish = (assistantContent: string | null, enAttente: EnAttente | null) => {
+    // Ou vont les evenements de CE tour : le chat, ou sa carte s'il a ete
+    // deplace. L'objet est partage avec `basculerActifVersCarte` via la ref.
+    const cible: { carte: string | null } = { carte: null }
+    cibleWsRef.current = cible
+    principalOccupeRef.current = true
+    setPrincipalOccupe(true)
+
+    const libérer = () => {
+      principalOccupeRef.current = false
+      setPrincipalOccupe(false)
+      if (cibleWsRef.current === cible) cibleWsRef.current = null
+    }
+
+    const finish = (assistantContent: string | null) => {
       if (settled) return
       settled = true
       clearStall()
+      libérer()
+      if (cible.carte) {
+        // Le tour s'est termine dans sa carte : le resultat y attend le clic.
+        majCarteLocale(cible.carte, {
+          etat: "terminee",
+          reponse: assistantContent ?? "",
+          activite: "terminée",
+        })
+        closeWs()
+        return
+      }
       setThinkingNode(null)
-      if (enAttente) setPendingValidation(enAttente)
-      else if (assistantContent !== null) pushAssistant(assistantContent)
+      if (assistantContent !== null) pushAssistant(assistantContent)
       setLoading(false)
       closeWs()
+    }
+
+    // Une action attend un accord : la carte va vivre dans la colonne de
+    // droite (sondage), qu'on decide maintenant ou dans trois jours.
+    //
+    // LE FIL RESTE OCCUPE. Il est suspendu au `human_gate`, son interruption
+    // dort dans le checkpointer : y lancer un nouveau tour l'ecraserait, et
+    // l'approbation d'apres reprendrait un graphe qui n'est plus au point ou il
+    // s'etait arrete. Les messages suivants partent donc en file — le backend
+    // refuse de toute facon un tour sur un fil suspendu.
+    const suspendre = (validationId?: string) => {
+      if (settled) return
+      settled = true
+      clearStall()
+      closeWs()
+      if (cibleWsRef.current === cible) cibleWsRef.current = null
+      if (cible.carte) {
+        majCarteLocale(cible.carte, { etat: "attente_validation",
+                                      activite: "en attente de votre accord",
+                                      validationId })
+      } else {
+        setThinkingNode(null)
+        setLoading(false)
+        pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.")
+      }
+      // Le fil principal reste PRIS : c'est ce qui envoie les messages suivants
+      // en file au lieu de les lancer sur un fil suspendu. On note quel accord
+      // le libere, sans quoi il resterait bloque pour toujours.
+      if (validationId) filSuspenduRef.current = validationId
+      rafraichirEtat()
     }
 
     // Repli POST /api/chat/ — chemin fiable et vérifié.
@@ -284,7 +547,6 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         apiRequest<{
           response: string; thread_id: string; status?: string
           validation_id?: string | null
-          validation?: { reason?: string | null; payload?: Record<string, any> | null } | null
         }>(
           "/api/chat/",
           { method: "POST", token, body: JSON.stringify({ query: text, thread_id: threadForCall, ...(attachment || {}) }) }
@@ -302,22 +564,35 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           res = await post(newId())
         }
         if (res.thread_id) rememberThread(res.thread_id)
-        const needsValidation =
+        const attend =
           res.status === "pending_validation" || res.status === "validation_required" || Boolean(res.validation_id)
-        if (needsValidation && res.validation_id) {
-          const charge = res.validation?.payload || {}
-          setPendingValidation({
-            id: String(res.validation_id),
-            motif: res.validation?.reason ?? null,
-            skill: charge.skill ?? null,
-            args: charge.args ?? null,
-          })
-        } else pushAssistant(res.response ?? "")
+        if (cible.carte) {
+          majCarteLocale(cible.carte, attend
+            ? { etat: "attente_validation", activite: "en attente de votre accord",
+                validationId: res.validation_id ? String(res.validation_id) : undefined }
+            : { etat: "terminee", reponse: res.response ?? "", activite: "terminée" })
+          if (attend) rafraichirEtat()
+        } else if (attend) {
+          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.")
+          rafraichirEtat()
+        } else {
+          pushAssistant(res.response ?? "")
+        }
       } catch (err: any) {
-        pushAssistant(`Erreur : ${err?.message ?? "requête impossible"}`)
+        if (err?.status === 409) {
+          // Fil occupe : la demande part en file plutot que d'echouer.
+          libérer()
+          lancerEnFile(text, false)
+          return
+        }
+        if (cible.carte) majCarteLocale(cible.carte, { etat: "echec", erreur: err?.message ?? "requête impossible" })
+        else pushAssistant(`Erreur : ${err?.message ?? "requête impossible"}`)
       } finally {
-        setThinkingNode(null)
-        setLoading(false)
+        libérer()
+        if (!cible.carte) {
+          setThinkingNode(null)
+          setLoading(false)
+        }
       }
     }
 
@@ -329,39 +604,39 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           clearStall()  // le WS répond → on annule le repli anti-blocage
           const t = event.type
           if (t === "final" || (t === undefined && event.response !== undefined)) {
-            finish(event.response ?? "", null)
+            finish(event.response ?? "")
           } else if (t === "pending_validation") {
-            finish(null, {
-              id: String(event.validation_id ?? ""),
-              motif: event.reason ?? null,
-              skill: event.skill ?? null,
-              args: event.args ?? null,
-            })
+            suspendre(String(event.validation_id ?? "") || undefined)
           } else if (t === "validation_required") {
-            // Emis PENDANT le parcours, avant que la ligne de validation existe :
-            // il n'a pas encore d'identifiant, donc rien a decider. On laisse
-            // `pending_validation`, qui suit, ouvrir la decision.
-            const d = event.data || {}
-            const charge = d.payload || {}
-            if (d.validation_id) {
-              finish(null, {
-                id: String(d.validation_id),
-                motif: d.reason ?? null,
-                skill: charge.skill ?? null,
-                args: charge.args ?? null,
-              })
-            }
+            // Emis PENDANT le parcours ; c'est `pending_validation`, qui suit
+            // avec l'identifiant persiste, qui fait foi. Rien a faire ici.
+          } else if (t === "fil_occupe") {
+            // Refus delibere du backend (un tour tourne deja sur ce fil, ou il
+            // attend une decision). Le repli POST retomberait sur le meme fil :
+            // on met la demande en file, ce qu'elle aurait du faire.
+            if (settled) return
+            settled = true
+            clearStall()
+            closeWs()
+            libérer()
+            lancerEnFile(text, false)
           } else if (t === "error") {
             fallbackPost()
           } else if (t === "node" || event.node !== undefined) {
             const n = String(event.node ?? (event.data && event.data.node) ?? "")
+            const libelle = typeof event.libelle === "string" ? event.libelle.trim() : ""
+            if (cible.carte) {
+              // La tache vit dans sa carte : c'est ELLE qui recoit le texte
+              // vivant. La banniere du chat appartient a la tache suivante.
+              if (libelle) majCarteLocale(cible.carte, { activite: libelle })
+              return
+            }
             if (n) {
               setThinkingNode(n)
               setThinkingSteps((prev) => (prev[prev.length - 1] === n ? prev : [...prev, n]))
             }
             // Un noeud sans libelle laisse la ligne PRECEDENTE en place :
             // l'effacer ferait clignoter le bandeau a chaque etape muette.
-            const libelle = typeof event.libelle === "string" ? event.libelle.trim() : ""
             if (libelle) setActivite(libelle)
           }
         },
@@ -376,6 +651,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       fallbackPost()
     }
   }
+
+  // La colonne de droite montre toutes les taches SAUF celle qui pilote le
+  // chat : elle, on la regarde deja dans la banniere.
+  const cartesTaches = [
+    ...tachesLocales,
+    ...tachesFile.filter((t) => t.id !== tacheActive),
+  ]
 
   return (
     <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
@@ -413,35 +695,25 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           </div>
         )}
 
-        {/* Bibliotheque de composants, pas de styles refaits a la main : la
-            carte est un `Callout` d'alerte, les reperes un `KeyValueTable`, les
-            deux issues un `PrimaryButton` et un `GhostButton`. Les memes blocs
-            que l'assistant rend lui-meme dans le chat — une demande d'accord ne
-            doit pas ressembler a une piece rapportee. */}
-        {pendingValidation && (() => {
-          const { titre, lignes } = decrireAction(pendingValidation)
-          return (
-            <div className="sym-pop" role="group" aria-label="Action en attente de votre décision"
-                 style={{ margin: "8px 32px", display: "flex", flexDirection: "column", gap: 10 }}>
-              <Callout tone="warning" title="Votre accord est nécessaire">{titre}</Callout>
-              {lignes.length > 0 && <KeyValueTable rows={lignes} />}
-              {validationErreur && <Callout tone="error">{validationErreur}</Callout>}
-              <div style={{ display: "flex", gap: 10 }}>
-                <PrimaryButton onClick={() => resoudreValidation(true)} disabled={validationBusy}>
-                  {validationBusy ? "…" : "Approuver"}
-                </PrimaryButton>
-                <GhostButton danger onClick={() => resoudreValidation(false)} disabled={validationBusy}>
-                  Refuser
-                </GhostButton>
-              </div>
-            </div>
-          )
-        })()}
-
-        <InputBar onSend={sendMessage} disabled={loading} />
+        <InputBar onSend={sendMessage} disabled={false} modeFile={loading || principalOccupe} />
       </div>
 
-      <ReasoningPath steps={thinkingSteps} loading={loading} />
+      <ReasoningPath
+        steps={thinkingSteps}
+        loading={loading}
+        rail={
+          <FileAttente
+            taches={cartesTaches}
+            accords={accords}
+            accordEnCours={accordEnCours}
+            erreurAccord={erreurAccord}
+            peutDecider={peutDecider}
+            onAfficher={afficherTache}
+            onFermer={fermerTache}
+            onResoudre={resoudreAccord}
+          />
+        }
+      />
     </div>
   )
 }

@@ -44,6 +44,12 @@ router = APIRouter()
 # Volontairement SANS les réponses : le contenu ne dort pas en mémoire partagée.
 _VIVANTES: dict[str, dict] = {}
 
+# Tâches TERMINÉES ici mais dont l'état final n'a jamais pu être écrit, la base
+# étant injoignable. Ce processus sait qu'elles ne tournent plus — c'est ce qui
+# rend le rattrapage sûr : on ne touche jamais à une ligne dont on ignore le
+# sort, qu'un autre processus pourrait être en train de faire avancer.
+_A_RATTRAPER: set[str] = set()
+
 # Trois tâches de front au plus. Au-delà, elles attendent leur tour : chaque
 # tâche consomme des appels de modèle, et dix graphes simultanés se voleraient
 # mutuellement les quotas du fournisseur pour finir tous plus tard.
@@ -212,7 +218,11 @@ async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
         except asyncio.TimeoutError:
             logger.warning("Tâche différée %s : délai de %d s dépassé",
                            tache_id, DELAI_MAX_S)
-            await _terminer(tache_id, "echec",
+            # La PROGRESSION doit suivre le statut. Sans elle, `COALESCE` garde
+            # la valeur inscrite à la création : la carte affichait « en file
+            # d'attente » à côté d'une tâche en échec — une progression qui
+            # RECULE, alors que la tâche a bel et bien avancé avant de caler.
+            await _terminer(tache_id, "echec", progress="délai dépassé",
                             erreur=f"délai dépassé ({DELAI_MAX_S // 60} min)")
             return
         except (_Interne, Exception) as brut:  # noqa: BLE001 - une tâche fautive ne tue pas les autres
@@ -223,7 +233,8 @@ async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
             # dormir des mois dans une colonne de base.
             e = brut.__cause__ if isinstance(brut, _Interne) and brut.__cause__ else brut
             logger.warning("Tâche différée %s en échec : %s", tache_id, e, exc_info=True)
-            await _terminer(tache_id, "echec", erreur=_libelle_echec(e))
+            await _terminer(tache_id, "echec", progress="interrompue",
+                            erreur=_libelle_echec(e))
             return
 
         if validation_id:
@@ -278,8 +289,33 @@ async def _terminer(tache_id: str, statut: str, *, reponse: Optional[str] = None
                 "UPDATE taches_differees SET status = 'echec', "
                 "error = 'état final non enregistré', updated_at = NOW() "
                 "WHERE id = $1::uuid AND status = 'en_cours'", tache_id)
+        _A_RATTRAPER.discard(tache_id)
     except Exception:  # noqa: BLE001 - la base est injoignable, il n'y a plus rien à tenter
+        # La base ne répond plus DU TOUT : on note la tâche pour la reprendre
+        # dès qu'une requête réussira. Sans cela, la ligne restait « en cours »
+        # et mangeait un créneau de quota jusqu'à ce que la fenêtre d'ancienneté
+        # l'expire — vingt minutes de refus 429 pour une panne qui n'est pas
+        # celle de la personne.
+        _A_RATTRAPER.add(tache_id)
         logger.error("Tâche %s laissée « en cours » : base injoignable", tache_id)
+
+
+async def _rattraper(conn) -> None:
+    """Solde les états finaux restés en souffrance. NE LÈVE JAMAIS."""
+    if not _A_RATTRAPER:
+        return
+    ids = list(_A_RATTRAPER)
+    try:
+        await conn.execute(
+            "UPDATE taches_differees SET status = 'echec', "
+            "error = 'état final non enregistré', progress = 'interrompue', "
+            "updated_at = NOW() "
+            "WHERE id = ANY($1::uuid[]) AND status = 'en_cours'", ids)
+    except Exception as e:  # noqa: BLE001 - on retentera au prochain passage
+        logger.warning("Rattrapage de %d tâche(s) impossible : %s", len(ids), e)
+        return
+    _A_RATTRAPER.difference_update(ids)
+    logger.info("Rattrapage : %d tâche(s) sorties de « en cours »", len(ids))
 
 
 @router.post("/taches")
@@ -298,6 +334,12 @@ async def lancer_tache(body: NouvelleTache, current_user: User = Depends(get_cur
                    f"{MAX_CARACTERES_DEMANDE}). Découpez-la.")
 
     async with get_db() as conn:
+        # La base répond : c'est le moment de solder les états finaux qu'une
+        # panne d'écriture avait laissés en souffrance, AVANT de compter le
+        # quota — sinon la personne se ferait refuser sur des créneaux que ce
+        # processus sait déjà libérés.
+        await _rattraper(conn)
+
         # Plafond par personne : sans lui, un seul compte empile des centaines
         # de demandes derrière le sémaphore global et fait attendre tout le monde.
         # UNE TÂCHE PLUS VIEILLE QUE LE DÉLAI MAXIMAL NE TOURNE PLUS.
@@ -356,6 +398,21 @@ async def etat(current_user: User = Depends(get_current_user)):
     suspens de la personne. Un seul appel sondé par l'écran plutôt que deux :
     la moitié des requêtes pour le même rafraîchissement.
     """
+    # LA MÉMOIRE SE LIT AVANT LA BASE, et l'ordre n'est pas un détail.
+    #
+    # Elle se lisait après. Entre le SELECT et la lecture mémoire, la tâche
+    # pouvait finir : le nettoyage de `_VIVANTES` passait, et l'on se retrouvait
+    # avec un instantané de ligne pris AVANT la fin (« en cours », progression
+    # « en file d'attente », jamais réécrite pendant l'exécution) et plus rien en
+    # mémoire pour la corriger. La carte reculait de « je rédige le devis » à
+    # « en file d'attente » — mesuré sur 37 sondages sur 285.
+    #
+    # Dans l'autre sens la fenêtre se referme, parce que le nettoyage de
+    # `_VIVANTES` a lieu APRÈS l'écriture de l'état final : si la mémoire est
+    # déjà vide au moment où on la lit, le SELECT qui suit voit forcément la
+    # ligne conclue. Les deux lectures ne peuvent plus être périmées ensemble.
+    instantane = {tid: dict(v) for tid, v in _VIVANTES.items()}
+
     async with get_db() as conn:
         # Les états OUVERTS passent devant, avant toute troncature : une tâche
         # qui tourne encore, ou un accord vieux de trois jours, ne doit pas
@@ -382,7 +439,7 @@ async def etat(current_user: User = Depends(get_current_user)):
     import json as _json
     sortie_taches = []
     for t in taches:
-        vivante = _VIVANTES.get(str(t["id"]), {})
+        vivante = instantane.get(str(t["id"]), {})
         sortie_taches.append({
             "id": str(t["id"]),
             "query": t["query"],

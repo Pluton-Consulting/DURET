@@ -41,19 +41,41 @@ def _sans_accent(texte: str) -> str:
     return texte.translate(_ACCENTS)
 
 
+# UN PRONOM PEUT S'INTERCALER entre « je » et le verbe. « Je vous prépare ça »
+# et « Je vous liste ça dans un tableau » sont des promesses aussi nettes que
+# « je prépare » — elles passaient toutes les deux, parce que chaque motif
+# collait le verbe à « je ». C'était une faille de FORME, pas de vocabulaire :
+# elle laissait passer n'importe quel verbe dès qu'un pronom s'y glissait.
+_PRON = r"(?:vous |me |te |nous |y |le |la |les |leur |lui |en |m['’]|l['’])?"
+
 # Futur proche explicite : aucune ambiguïté, c'est une promesse.
-_FUTUR = (r"je (?:vais|commence|m['’]y mets|me mets|procede|prepare|entame)"
+#
+# La règle « maintenant ... je » a été RETIRÉE : elle attrapait n'importe quel
+# « je » à moins de 25 caractères de « maintenant », quel que soit le verbe —
+# « Maintenant que j'ai les chiffres, je peux vous répondre : 42 000 € » était
+# donc traité comme une promesse, alors que la phrase livre le résultat. Elle
+# ne couvrait rien d'unique : « Maintenant, je crée le document » tombe déjà
+# sous le verbe de production.
+_FUTUR = (rf"je {_PRON}(?:vais|commence|m['’]y mets|me mets|procede|prepare"
+          rf"|entame|m['’]occupe)"
           r"|c['’]est parti"
-          r"|je le fais"
-          r"|maintenant[^.!?]{0,25}\bje\b")
+          r"|je le fais")
 
 # VERBES DE PRODUCTION au présent. « je crée le PDF » est une promesse : s'il
 # l'avait fait, il en donnerait le RÉSULTAT — « le document est prêt », « j'ai
 # créé ». On ne fabrique pas quelque chose « en direct » dans une phrase.
-_PRODUCTION = (r"je (?:cree|redige|genere|produis|finalise|termine|depose"
-               r"|ajoute|complete|remplis|enregistre|envoie|ouvre)\b"
+#
+# Les verbes de RÉCUPÉRATION et de TRANSFERT ont été ajoutés après mesure sur
+# le corpus : « je récupère », « je télécharge », « je lance la recherche »,
+# « je consulte la boîte mail » sont exactement les tournures relevées en
+# production, et aucune n'était reconnue.
+_PRODUCTION = (rf"je {_PRON}(?:cree|redige|genere|produis|finalise|termine"
+               r"|depose|ajoute|complete|remplis|enregistre|envoie|ouvre"
+               r"|recupere|telecharge|sauvegarde|lance|consulte|calcule"
+               r"|liste|poursuis|transmets|extrais|inscris)\b"
                # Élision, avec ou sans pronom intercalé : « j'y ajoute ».
-               r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais|inscris)")
+               r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais"
+               r"|inscris)")
 
 # VERBES DE LECTURE au présent : « je compte 18 dossiers », « d'après ce que je
 # lis dans le CCTP ». Ce sont les tournures NORMALES d'un résultat d'observation
@@ -73,12 +95,19 @@ ANNONCE_SANS_ACTE = re.compile(rf"\b(?:{_FUTUR}|{_PRODUCTION})", re.IGNORECASE)
 # porte « je vais », mais n'annonce aucun acte : elle attend une réponse. Sans
 # cette exclusion, la phrase était remplacée par « je n'ai pas réussi à
 # exécuter l'action » — et la question posée à l'utilisateur disparaissait.
+#
+# LA PHRASE QUI LIVRE. « Je liste ci-dessous les cinq dernières factures :
+# F-2031, F-2032 » emploie le même verbe que « Je vous liste ça dans un
+# tableau », et les deux ne demandent pas le même traitement : la première
+# porte déjà son résultat. Un marqueur de livraison — ci-dessous, ci-joint,
+# voici — dit que le contenu est LÀ, donc qu'il n'y a rien à forcer.
 _PAS_UNE_PROMESSE = re.compile(
     r"\?"
     r"|\b(?:voulez-vous|souhaitez-vous|dois-je|puis-je|faut-il|preferez-vous"
     r"|est-ce que|pouvez-vous|pourriez-vous|lequel|laquelle|lesquels)\b"
     r"|j['’]ai besoin|je vais avoir besoin|il me faut|il me manque"
-    r"|je vais devoir|precisez|indiquez-moi|de quel",
+    r"|je vais devoir|precisez|indiquez-moi|de quel"
+    r"|\bci-dessous\b|\bci-joint|\bvoici\b|\bvoila\b",
     re.IGNORECASE,
 )
 

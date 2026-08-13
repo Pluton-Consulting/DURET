@@ -14,14 +14,32 @@ import {
 
 type Part = { kind: "text"; text: string } | { kind: "ui"; block: any }
 
+// ON ACCEPTE AUSSI ```json ET UN BLOC NU. Relevé en production : le modèle a
+// balisé son composant ```json au lieu de ```ui. Le bloc n'était donc pas
+// reconnu, et l'utilisateur a vu du JSON brut au milieu de la réponse — la
+// pire des sorties, celle qui ressemble à une fuite technique.
+//
+// La consigne du prompt reste ```ui, mais on ne peut pas exiger d'un modèle
+// modeste qu'il ne se trompe jamais de balise sur un contenu que sa forme
+// suffit à identifier. Le filtre de sûreté n'est pas la BALISE, c'est le
+// registre des types plus bas : un objet dont le `type` est inconnu, ou dont
+// un champ requis manque, n'est pas rendu. Élargir la balise n'ouvre donc
+// aucune porte — ça évite seulement d'afficher du JSON à un humain.
+const RE_BLOC = /```(?:ui|json)?\s*(\{[\s\S]*?\})\s*```/g
+
 function parse(content: string): Part[] {
   const parts: Part[] = []
-  const re = /```ui\s*([\s\S]*?)```/g
+  const re = new RegExp(RE_BLOC)
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(content)) !== null) {
+    let bloc: any = null
+    try { bloc = JSON.parse(m[1].trim()) } catch { /* JSON invalide */ }
+    // Un objet SANS `type` n'est pas un composant : c'est du JSON que le
+    // modèle montre volontairement. On le laisse tel quel dans le texte.
+    if (!bloc || typeof bloc.type !== "string") continue
     if (m.index > last) parts.push({ kind: "text", text: content.slice(last, m.index) })
-    try { parts.push({ kind: "ui", block: JSON.parse(m[1].trim()) }) } catch { /* JSON invalide → bloc ignoré */ }
+    parts.push({ kind: "ui", block: bloc })
     last = re.lastIndex
   }
   if (last < content.length) parts.push({ kind: "text", text: content.slice(last) })

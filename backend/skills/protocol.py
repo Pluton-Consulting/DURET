@@ -363,10 +363,26 @@ def instruction_actions(role: str | None = None) -> str:
         params = ", ".join([f"{p}*" for p in requis] + list(optionnels)) or "aucun"
         lignes.append(f'- {nom} : {desc}. Paramètres ({params}) — * = obligatoire.')
     return (
+        # LE CONTRAT EST UNE BOUCLE, PAS UN ALLER-RETOUR.
+        #
+        # Ce texte disait : « émets une action puis ARRÊTE-toi : le résultat te
+        # sera fourni et tu pourras alors rédiger TA RÉPONSE FINALE ». Le modèle
+        # l'appliquait à la lettre — une action, puis il concluait. Sur « écris un
+        # document de dix pages », il ouvrait le document et répondait « Le
+        # document est ouvert, je commence à le remplir » : sa réponse finale,
+        # exactement comme on la lui avait demandée. Le travail s'arrêtait là.
+        #
+        # Quatre correctifs successifs ont échoué sur ce sujet — budget d'actions,
+        # seuil en blocs, détection d'annonce, nœud de forçage — parce qu'ils
+        # traitaient tous le SYMPTÔME pendant que le prompt enseignait la cause.
+        # C'est le contrat qu'il fallait changer.
         "\n\nACTIONS. Tu peux EXÉCUTER une action, et pas seulement répondre. Pour cela, "
         "termine ta réponse par un bloc balisé ```action contenant "
-        '{"skill":"<nom>","args":{...}} puis ARRÊTE-toi : le résultat te sera fourni et '
-        "tu pourras alors rédiger ta réponse finale.\n"
+        '{"skill":"<nom>","args":{...}} et arrête-toi là : le résultat te reviendra.\n'
+        "CE QUI SE PASSE ENSUITE. Tant que la demande n'est pas ENTIÈREMENT satisfaite, "
+        "émets l'action SUIVANTE, autant de fois qu'il le faut. Tu ne rédiges ta réponse "
+        "finale qu'une fois le travail RÉELLEMENT terminé : un document ouvert n'est pas "
+        "un document écrit.\n"
         "Règles : UNE seule action par réponse ; uniquement un skill de la liste ; "
         "si aucune action n'est nécessaire, réponds normalement SANS bloc. "
         "Les balises masquées ([PER_1], [MONTANT_2]...) sont acceptées dans les paramètres. "
@@ -382,12 +398,13 @@ def instruction_actions(role: str | None = None) -> str:
         # Symétrique de la règle du dessus : celle-là interdit de PARLER sans
         # agir. Relevée en production sur une demande en plusieurs étapes, où le
         # modèle annonçait son plan à chaque tour sans jamais émettre de bloc.
+        # La phrase sur les demandes « en plusieurs étapes » a été retirée d'ici :
+        # elle répétait, plus faiblement, ce que dit désormais CE QUI SE PASSE
+        # ENSUITE. Deux formulations du même contrat, c'est deux occasions de se
+        # contredire — et c'est précisément ce qui a produit le défaut.
         "N'ANNONCE JAMAIS UNE ACTION SANS L'ÉMETTRE. N'écris pas « je vais faire », "
         "« je commence par », « je crée maintenant » : ces phrases n'exécutent RIEN. "
-        "Une demande en plusieurs étapes se traite UNE ÉTAPE À LA FOIS — émets la "
-        "PREMIÈRE action immédiatement, sans décrire le plan ; son résultat te "
-        "reviendra et tu émettras la suivante. Ne dis ce que tu as fait qu'APRÈS "
-        "l'avoir fait.\n"
+        "Ne dis ce que tu as fait qu'APRÈS l'avoir fait.\n"
         "Skills disponibles :\n" + "\n".join(lignes) +
         # L'exemple porte volontairement sur l'action SANS EFFET (une recherche) :
         # des modèles modestes recopient l'exemple mot pour mot et l'exécutent tel

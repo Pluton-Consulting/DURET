@@ -307,11 +307,27 @@ async def llm_node(state: AgentState, config=None) -> dict:
     bloc_resultats = ""
     if resultats_outils:
         import json as _json_out
+        # CE MESSAGE DISAIT « appuie-toi dessus POUR RÉPONDRE ». À chaque retour
+        # de résultat, on invitait donc le modèle à conclure — y compris au
+        # milieu d'un travail à peine commencé. Combiné au protocole qui parlait
+        # de « ta réponse finale » après UNE action, il n'avait aucune raison de
+        # continuer : les deux textes lui disaient de s'arrêter.
         bloc_resultats = (
-            "Résultats des actions déjà exécutées pour cette demande (ne les relance "
-            "pas, appuie-toi dessus pour répondre) :\n"
+            "Résultats des actions déjà exécutées pour cette demande (ne les "
+            "relance pas à l'identique) :\n"
             + _json_out.dumps(resultats_outils, ensure_ascii=False, default=str)[:6000]
             + "\n\n")
+        # LE TRAVAIL RESTÉ OUVERT SE DIT, il ne se devine pas. `cloture_attendue`
+        # lit dans les RÉSULTATS — pas dans la prose — qu'un document a été
+        # ouvert sans être fermé. Le lui rappeler ici est le seul rappel qui
+        # arrive au bon moment : juste avant qu'il choisisse entre agir et
+        # conclure.
+        manque = cloture_attendue(resultats_outils)
+        if manque:
+            bloc_resultats += (
+                f"ATTENTION : le travail n'est PAS terminé. Il reste au minimum "
+                f"`{manque}` à exécuter, et le contenu demandé à verser avant. "
+                "N'écris pas ta réponse finale maintenant : émets l'action suivante.\n\n")
 
     # Aucun préambule sur l'absence de documents : c'est le modèle qui décide
     # s'il lui en faut, en appelant l'outil de recherche. Lui annoncer d'office

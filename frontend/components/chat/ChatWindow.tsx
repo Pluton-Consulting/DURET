@@ -111,6 +111,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const [tachesFile, setTachesFile] = useState<TacheFond[]>([])
   const [accords, setAccords] = useState<AccordEnAttente[]>([])
   const [accordEnCours, setAccordEnCours] = useState<string | null>(null)
+  // Double de `accordEnCours`, lisible dans le meme tour que le clic : l'etat
+  // React ne se met a jour qu'au rendu suivant, trop tard pour bloquer un
+  // second clic.
+  const accordEnCoursRef = useRef<string | null>(null)
   // L'erreur porte l'id de la carte : rattachee au seul « en cours », elle
   // n'etait jamais visible (les deux etats retombent dans le meme lot de rendu).
   const [erreurAccord, setErreurAccord] = useState<{ id: string; message: string } | null>(null)
@@ -202,8 +206,14 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const pollSeqRef = useRef(0)
   const monteRef = useRef(true)
   useEffect(() => () => { monteRef.current = false }, [])
+  // Un rafraîchissement demandé pendant qu'un autre tourne était simplement
+  // PERDU : le refus de réentrance rendait la main sans rien faire. On note la
+  // demande et on la rejoue dès que la place est libre — l'appel qui suit une
+  // décision doit aboutir, pas se faire avaler.
+  const rappelDemandeRef = useRef(false)
   const rafraichirEtat = async () => {
-    if (!token || pollEnCoursRef.current) return
+    if (!token) return
+    if (pollEnCoursRef.current) { rappelDemandeRef.current = true; return }
     pollEnCoursRef.current = true
     const seq = ++pollSeqRef.current
     try {
@@ -285,6 +295,20 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         }
       }
     } catch { /* un sondage rate n'affiche rien : le suivant corrigera */ }
+    finally {
+      // LE VERROU SE REND. Il était posé et jamais relâché : le tout premier
+      // sondage le prenait, et tous les suivants repartaient aussitôt sans
+      // rien faire. Plus aucun rafraîchissement, donc une bannière figée sur
+      // son texte de départ et des cartes qui ne partaient jamais — y compris
+      // après une décision. Un verrou sans `finally` ne protège pas, il ferme.
+      pollEnCoursRef.current = false
+      // Un rafraîchissement demandé pendant celui-ci était PERDU : on le
+      // rejoue, pour que l'appel qui suit une décision aboutisse vraiment.
+      if (rappelDemandeRef.current && monteRef.current) {
+        rappelDemandeRef.current = false
+        rafraichirEtat()
+      }
+    }
   }
 
   useEffect(() => {
@@ -303,7 +327,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // Postgres : la reprise fonctionne apres n'importe quel delai. La reponse de
   // cet appel est la SUITE du tour — elle se pousse comme un message.
   const resoudreAccord = async (id: string, accorde: boolean) => {
-    if (accordEnCours) return
+    // GARDE SYNCHRONE. `accordEnCours` est un etat React : entre le clic et le
+    // rendu suivant, il vaut encore null — deux clics rapproches passaient donc
+    // tous les deux. Le premier tranchait, le second recevait un 409 « deja
+    // resolue », et c'est CE message que l'utilisateur lisait sur une carte qui
+    // ne partait plus. Une ref se lit et s'ecrit dans le meme tour.
+    if (accordEnCoursRef.current) return
+    accordEnCoursRef.current = id
     setAccordEnCours(id)
     setErreurAccord(null)
     try {
@@ -336,18 +366,35 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       }
       await rafraichirEtat()
     } catch (e: any) {
-      // 403 : la personne n'a pas le droit de valider. Le dire, plutot que de
-      // laisser un bouton qui echoue sans expliquer pourquoi.
-      setErreurAccord({
-        id,
-        message: e?.status === 403
-          ? "Vous n'avez pas le droit d'approuver cette action. Une personne de la direction doit le faire."
-          : e?.status === 409
-            ? "Cette action vient d'être tranchée ailleurs."
+      if (e?.status === 409) {
+        // 409 = la decision EXISTE deja (double clic, ou un collegue a tranche
+        // avant). Ce n'est pas une erreur a montrer : la carte n'a plus lieu
+        // d'etre, le rafraichissement ci-dessous la retire. L'afficher comme un
+        // echec laissait au contraire une carte morte a l'ecran, portant un
+        // message d'erreur pour une action pourtant bien tranchee.
+        setTachesLocales((prev) => prev.filter((t) => t.validationId !== id))
+        if (filSuspenduRef.current === id) {
+          filSuspenduRef.current = null
+          principalOccupeRef.current = false
+          setPrincipalOccupe(false)
+        }
+      } else {
+        // 403 : la personne n'a pas le droit de valider. Le dire, plutot que de
+        // laisser un bouton qui echoue sans expliquer pourquoi.
+        setErreurAccord({
+          id,
+          message: e?.status === 403
+            ? "Vous n'avez pas le droit d'approuver cette action. Une personne de la direction doit le faire."
             : e?.message || "La décision n'a pas pu être enregistrée.",
-      })
+        })
+      }
     } finally {
+      accordEnCoursRef.current = null
       setAccordEnCours(null)
+      // TOUJOURS rafraichir, y compris apres un echec : le seul chemin qui le
+      // faisait etait celui du succes, donc une carte deja tranchee cote
+      // serveur restait affichee avec son message d'erreur.
+      if (monteRef.current) await rafraichirEtat()
     }
   }
 

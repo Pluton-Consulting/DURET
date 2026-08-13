@@ -11,12 +11,47 @@ import { useCallback, useEffect, useRef, useState } from "react"
 interface EtatSync {
   source: string
   libelle: string
-  etat: "jamais" | "en_cours" | "terminee" | "echec" | "non_configure"
-  debut?: number
-  fin?: number
+  etat: "jamais" | "en_cours" | "terminee" | "echec" | "non_configure" | "interrompue"
+  debut?: string | number
+  fin?: string | number
   par?: string
   resultat?: Record<string, any> | null
   erreur?: string | null
+  etape?: string | null
+  traites?: number
+  total?: number | null
+  pourcentage?: number | null
+  derniere_reussite?: string | null
+}
+
+// LA DATE SE FORME CÔTÉ NAVIGATEUR, JAMAIS AU RENDU SERVEUR. Le conteneur
+// tourne en UTC, le navigateur est à Paris : un `toLocaleString` appelé pendant
+// le rendu produit deux textes différents des deux côtés, et React rend une
+// erreur d'hydratation — exactement les trois erreurs vues en production. D'où
+// le fuseau FIGÉ et l'appel depuis un état, pas depuis le corps du composant.
+function quand(iso?: string | number | null): string {
+  if (!iso) return ""
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  const opts: Intl.DateTimeFormatOptions = {
+    timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit",
+  }
+  const auj = new Date()
+  const jour = (x: Date) => x.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" })
+  const hier = new Date(auj.getTime() - 86400000)
+  if (jour(d) === jour(auj)) return `aujourd'hui à ${d.toLocaleTimeString("fr-FR", opts)}`
+  if (jour(d) === jour(hier)) return `hier à ${d.toLocaleTimeString("fr-FR", opts)}`
+  return `le ${d.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long" })} à ${d.toLocaleTimeString("fr-FR", opts)}`
+}
+
+function duree(debut?: string | number | null, fin?: string | number | null): string {
+  if (!debut) return ""
+  const a = new Date(debut).getTime()
+  const b = fin ? new Date(fin).getTime() : Date.now()
+  const s = Math.max(0, Math.round((b - a) / 1000))
+  if (s < 60) return `${s} s`
+  if (s < 3600) return `${Math.floor(s / 60)} min`
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
 }
 
 const ETIQUETTE: Record<string, { texte: string; bg: string; fg: string }> = {
@@ -25,6 +60,10 @@ const ETIQUETTE: Record<string, { texte: string; bg: string; fg: string }> = {
   terminee: { texte: "Terminée", bg: "var(--color-paid-bg)", fg: "var(--color-paid-text)" },
   echec: { texte: "Échec", bg: "var(--color-error-bg)", fg: "var(--color-error-text)" },
   non_configure: { texte: "Non configuré", bg: "var(--color-pending-bg)", fg: "var(--color-pending-text)" },
+  // « Interrompue » est un état HONNÊTE : le serveur a redémarré pendant la
+  // synchronisation. Le laisser en « en cours » afficherait une barre figée
+  // pour toujours ; le passer en « échec » accuserait le connecteur à tort.
+  interrompue: { texte: "Interrompue", bg: "var(--color-pending-bg)", fg: "var(--color-pending-text)" },
 }
 
 export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
@@ -108,12 +147,19 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
       setErreur("")
-      await charger()
     } catch (e: any) {
       setErreur(e?.message || "lancement impossible")
     } finally {
+      // LE BOUTON SE LIBÈRE AVANT LE RECHARGEMENT, et c'est tout le sujet.
+      // `charger()` était appelé DANS le `try`, avant ce `finally` : le jour
+      // où le backend s'est gelé, il n'est jamais revenu, le `finally` n'a
+      // jamais été atteint, et le bouton est resté grisé indéfiniment. La
+      // personne a cru que rien ne s'était lancé — alors que la
+      // synchronisation tournait.
       setBusy("")
     }
+    // Hors du try/finally : si celui-ci échoue, le bouton est déjà rendu.
+    charger().catch(() => { /* l'état se rattrapera au sondage suivant */ })
   }
 
   const resume = (e: EtatSync) => {
@@ -205,9 +251,46 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
                 <div style={{ fontSize: 14, fontWeight: 700,
                               color: "var(--color-text-primary)" }}>{e.libelle}</div>
                 <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 3 }}>
-                  {resume(e) || "Aucune donnée pour l'instant"}
-                  {e.par ? ` · lancée par ${e.par}` : ""}
+                  {enCours
+                    ? `${e.etape || "en cours"} · depuis ${duree(e.debut)}`
+                    : (resume(e) || "Aucune donnée pour l'instant")}
+                  {!enCours && e.fin ? ` · ${quand(e.fin)}` : ""}
+                  {e.par ? ` · par ${e.par}` : ""}
                 </div>
+                {/* LA DERNIÈRE RÉUSSITE SURVIT À UN ÉCHEC. C'est ce que le
+                    gérant veut savoir : « quand ai-je eu des données à jour ? »
+                    Un échec d'aujourd'hui ne doit pas effacer cette réponse. */}
+                {!enCours && e.derniere_reussite && e.etat !== "terminee" ? (
+                  <div style={{ fontSize: 11, color: "var(--color-text-muted)",
+                                marginTop: 2, opacity: 0.85 }}>
+                    Dernière réussite {quand(e.derniere_reussite)}
+                  </div>
+                ) : null}
+                {enCours ? (
+                  <div style={{ marginTop: 8 }}>
+                    {/* BARRE DÉTERMINÉE si le total est connu, INDÉTERMINÉE
+                        sinon. Le Drive connaît son total, Extrabat jamais :
+                        afficher « 40 % » sans le savoir serait un mensonge que
+                        personne ne peut vérifier. */}
+                    <div style={{ height: 4, borderRadius: 999, overflow: "hidden",
+                                  background: "var(--color-canvas)" }}>
+                      <div style={{
+                        height: "100%", borderRadius: 999,
+                        background: "var(--color-primary)",
+                        width: e.pourcentage != null ? `${e.pourcentage}%` : "35%",
+                        transition: "width .4s ease",
+                        animation: e.pourcentage == null
+                          ? "sym-sync-glisse 1.4s ease-in-out infinite" : undefined,
+                      }} />
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-muted)",
+                                  marginTop: 4 }}>
+                      {e.pourcentage != null
+                        ? `${e.traites} sur ${e.total} · ${e.pourcentage} %`
+                        : `${e.traites ?? 0} traité(s)`}
+                    </div>
+                  </div>
+                ) : null}
               </div>
               <span style={{ background: et.bg, color: et.fg, padding: "5px 12px",
                              borderRadius: "var(--radius-pill)", fontSize: 12,
@@ -226,6 +309,20 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
           )
         })}
       </div>
+
+      <style>{`
+        /* Barre INDÉTERMINÉE : elle glisse au lieu d'afficher un pourcentage
+           inventé. Un connecteur qui ne sait pas compter à l'avance ne doit pas
+           faire semblant — mais l'écran doit quand même montrer que ça vit. */
+        @keyframes sym-sync-glisse {
+          0%   { margin-left: 0;   opacity: .55 }
+          50%  { margin-left: 65%; opacity: 1 }
+          100% { margin-left: 0;   opacity: .55 }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [style*="sym-sync-glisse"] { animation: none !important; opacity: .8 }
+        }
+      `}</style>
     </div>
   )
 }

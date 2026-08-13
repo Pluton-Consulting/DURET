@@ -155,31 +155,161 @@ def _verifier_connecteurs() -> None:
 _verifier_connecteurs()
 
 
-async def _executer_sync(source: str, module: str, user_id: str) -> None:
+async def requalifier_syncs_interrompues() -> int:
+    """Les synchros tuées par un redémarrage ne doivent pas rester « en cours ».
+
+    Même mécanisme que les tâches différées : leur coroutine n'existe plus, et
+    une ligne « en cours » éternelle bloquerait l'index unique — donc toute
+    nouvelle synchronisation de cette source, pour toujours.
+
+    RÉSERVE : ceci suppose UN SEUL processus, ce qui est vrai aujourd'hui
+    (uvicorn sans --workers). Le jour où l'on passe à plusieurs workers, il
+    faudra y ajouter le filtre d'ancienneté utilisé plus bas, sinon on tuerait
+    la ligne d'un frère bien vivant.
+    """
+    try:
+        async with get_db() as conn:
+            n = await conn.fetchval(
+                """WITH maj AS (
+                       UPDATE synchronisations
+                          SET statut = 'interrompue', termine_a = NOW(), maj_a = NOW(),
+                              erreur = 'redémarrage du serveur pendant la synchronisation'
+                        WHERE statut = 'en_cours' RETURNING 1)
+                   SELECT count(*) FROM maj""")
+        if n:
+            logger.info("Synchronisations requalifiées « interrompue » : %d", n)
+        return int(n or 0)
+    except Exception as e:  # noqa: BLE001 - un démarrage ne tombe pas là-dessus
+        logger.warning("Requalification des synchronisations impossible : %s", e)
+        return 0
+
+
+async def _avancement(sync_id: str):
+    """Fabrique le rapporteur d'avancement passé au connecteur.
+
+    L'ÉCRITURE EST ESPACÉE. Un compteur écrit à chaque document ferait des
+    milliers d'UPDATE sur une ingestion de Drive, pour un écran qui se
+    rafraîchit toutes les deux secondes : personne ne verrait la différence, et
+    Postgres porterait la charge. Une écriture par seconde au plus suffit.
+    """
+    import time
+    dernier = {"t": 0.0}
+
+    async def _poser(traites: int, total, etape: str) -> None:
+        if time.monotonic() - dernier["t"] < 1.0:
+            return
+        dernier["t"] = time.monotonic()
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE synchronisations SET traites=$1, total=$2, etape=$3, "
+                "maj_a=NOW() WHERE id=$4::uuid",
+                int(traites or 0), total, (etape or "")[:200], sync_id)
+
+    return _poser
+
+
+async def _conclure(sync_id: str, statut: str, *, resultat=None, erreur=None) -> None:
+    """Écrit l'état final. NE LÈVE JAMAIS.
+
+    Une panne d'écriture ici laisserait la ligne « en cours », et l'index unique
+    interdirait alors toute nouvelle synchronisation de cette source.
+    """
+    import json as _json
+    try:
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE synchronisations SET statut=$1, resultat=$2::jsonb, "
+                "erreur=$3, termine_a=NOW(), maj_a=NOW() WHERE id=$4::uuid",
+                statut, _json.dumps(resultat or {}, ensure_ascii=False, default=str),
+                (erreur or None), sync_id)
+    except Exception as e:  # noqa: BLE001
+        logger.error("Synchronisation %s laissée « %s » : %s", sync_id, statut, e)
+
+
+async def _executer_sync(source: str, module: str, user_id: str,
+                         sync_id: str) -> None:
     """Déroule la synchronisation en tâche de fond et consigne le résultat."""
+    import inspect
     import time
     etat = _SYNCS[source]
     try:
         run = __import__(module, fromlist=["sync"]).sync
-        resultat = await run()
+        # COMPATIBILITÉ : seuls les connecteurs qui SAVENT rendre compte
+        # reçoivent le rapporteur. Imposer le paramètre casserait les autres,
+        # qui n'ont aucune raison d'être réécrits pour un compteur.
+        if "avancer" in inspect.signature(run).parameters:
+            resultat = await run(avancer=await _avancement(sync_id))
+        else:
+            resultat = await run()
         etat.update({"etat": "terminee", "resultat": resultat or {},
                      "fin": time.time()})
+        await _conclure(sync_id, "terminee", resultat=resultat)
         await log_action(action="ingestion_sync", user_id=user_id,
                          metadata={"source": source, **(resultat or {})})
     except NotImplementedError as e:
         etat.update({"etat": "non_configure", "erreur": str(e), "fin": time.time()})
+        await _conclure(sync_id, "non_configure", erreur=str(e)[:400])
     except Exception as e:  # noqa: BLE001
         logger.warning("Sync %s échouée : %s", source, e)
         etat.update({"etat": "echec", "erreur": str(e)[:400], "fin": time.time()})
+        await _conclure(sync_id, "echec", erreur=str(e)[:400])
 
 
 @router.get("/sync")
 async def etat_syncs(current_user: User = Depends(get_current_user)):
-    """Connecteurs disponibles et état de la dernière synchronisation de chacun."""
+    """Connecteurs disponibles et état de la dernière synchronisation de chacun.
+
+    LU EN BASE, plus en mémoire. `_SYNCS` mourait avec le processus : après un
+    redémarrage, l'écran annonçait « Jamais lancée » sur des connecteurs qui
+    venaient de tourner. Il reste en mémoire pour la compatibilité, mais c'est
+    la base qui fait foi.
+    """
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
-    return [{"source": cle, "libelle": libelle, **_SYNCS.get(cle, {"etat": "jamais"})}
-            for cle, (libelle, _) in CONNECTEURS.items()]
+
+    lignes = {}
+    try:
+        async with get_db() as conn:
+            # La DERNIÈRE exécution de chaque source, plus la dernière RÉUSSITE :
+            # un échec d'aujourd'hui ne doit pas effacer « dernière synchro
+            # réussie hier à 9 h », qui est ce que le gérant veut savoir.
+            for r in await conn.fetch(
+                    """SELECT DISTINCT ON (source) source, statut, etape, traites,
+                              total, erreur, lance_par_email, demarre_a, termine_a, maj_a
+                         FROM synchronisations ORDER BY source, demarre_a DESC"""):
+                lignes[r["source"]] = dict(r)
+            for r in await conn.fetch(
+                    """SELECT DISTINCT ON (source) source, termine_a
+                         FROM synchronisations WHERE statut = 'terminee'
+                        ORDER BY source, termine_a DESC"""):
+                if r["source"] in lignes:
+                    lignes[r["source"]]["derniere_reussite"] = r["termine_a"]
+    except Exception as e:  # noqa: BLE001 - l'écran doit s'afficher même sans historique
+        logger.warning("Historique des synchronisations illisible : %s", e)
+
+    sortie = []
+    for cle, (libelle, _) in CONNECTEURS.items():
+        l = lignes.get(cle)
+        if not l:
+            # « jamais » n'est pas un statut stocké : c'est l'absence de ligne.
+            sortie.append({"source": cle, "libelle": libelle, "etat": "jamais"})
+            continue
+        sortie.append({
+            "source": cle, "libelle": libelle, "etat": l["statut"],
+            "etape": l["etape"], "traites": l["traites"], "total": l["total"],
+            "erreur": l["erreur"], "par": l["lance_par_email"],
+            "debut": l["demarre_a"].isoformat() if l["demarre_a"] else None,
+            "fin": l["termine_a"].isoformat() if l["termine_a"] else None,
+            "battement": l["maj_a"].isoformat() if l["maj_a"] else None,
+            "derniere_reussite": (l["derniere_reussite"].isoformat()
+                                  if l.get("derniere_reussite") else None),
+            # Le pourcentage se CALCULE ici, il ne se stocke pas : stocké, il
+            # finirait par contredire les compteurs. Absent quand le total est
+            # inconnu — la barre est alors indéterminée, elle n'invente rien.
+            "pourcentage": (round(100 * l["traites"] / l["total"])
+                            if l["total"] else None),
+        })
+    return sortie
 
 
 @router.post("/sync/{source}")
@@ -200,14 +330,35 @@ async def trigger_sync(source: str, current_user: User = Depends(get_current_use
     if source not in CONNECTEURS:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"Connecteur inconnu : {source}")
-    if _SYNCS.get(source, {}).get("etat") == "en_cours":
+
+    libelle, module = CONNECTEURS[source]
+    async with get_db() as conn:
+        # UNE SYNCHRO PENDUE NE DOIT PAS BLOQUER LA SOURCE POUR TOUJOURS. Si le
+        # processus est mort sans écrire son état final, la ligne reste « en
+        # cours » et l'index unique refuserait toute relance. On libère celles
+        # qui n'ont plus donné signe de vie depuis une demi-heure.
+        await conn.execute(
+            """UPDATE synchronisations
+                  SET statut='interrompue', termine_a=NOW(), maj_a=NOW(),
+                      erreur='aucune nouvelle depuis 30 minutes'
+                WHERE source=$1 AND statut='en_cours'
+                  AND maj_a < NOW() - INTERVAL '30 minutes'""", source)
+        ligne = await conn.fetchrow(
+            "INSERT INTO synchronisations (source, statut, etape, lance_par, "
+            "lance_par_email) VALUES ($1,'en_cours','je démarre',$2,$3) "
+            # L'index unique partiel fait le garde-fou anti-doublon : il tient
+            # au redémarrage et tiendrait à plusieurs workers, ce que le
+            # dictionnaire en mémoire ne faisait ni l'un ni l'autre.
+            "ON CONFLICT DO NOTHING RETURNING id",
+            source, current_user.id, current_user.email)
+    if ligne is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Une synchronisation {source} est déjà en cours.")
 
-    libelle, module = CONNECTEURS[source]
     _SYNCS[source] = {"etat": "en_cours", "libelle": libelle, "debut": time.time(),
                       "par": current_user.email, "resultat": None, "erreur": None}
-    asyncio.create_task(_executer_sync(source, module, str(current_user.id)))
+    asyncio.create_task(_executer_sync(source, module, str(current_user.id),
+                                       str(ligne["id"])))
     return {"source": source, "lance": True,
             "note": "Synchronisation lancée en tâche de fond ; l'avancement s'affiche ici."}
 

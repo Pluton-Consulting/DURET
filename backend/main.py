@@ -46,6 +46,11 @@ async def lifespan(app: FastAPI):
         # figée pour toujours. On dit la vérité : interrompues.
         from routers.file_attente import requalifier_interrompues
         await requalifier_interrompues()
+        # Même raison pour les SYNCHRONISATIONS : une ligne « en cours »
+        # éternelle afficherait une barre figée, et l'index unique refuserait
+        # toute relance de cette source.
+        from routers.ingestion import requalifier_syncs_interrompues
+        await requalifier_syncs_interrompues()
     except Exception as e:
         logging.getLogger("duret").error("requalifier_interrompues a échoué : %s", e)
     try:

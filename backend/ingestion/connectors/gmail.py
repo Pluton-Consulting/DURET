@@ -90,22 +90,54 @@ def _entete(message: dict, nom: str) -> str:
     return ""
 
 
+def _cle_compte_de_service() -> Optional[dict]:
+    """La clé du compte de service, VARIABLE d'abord, fichier ensuite.
+
+    POURQUOI PAS SEULEMENT UN FICHIER. Le déposer sur le serveur suppose les
+    bons droits sur `backend/secrets/`, qui appartient à root — créé par Docker.
+    Le `scp` échoue en « Permission denied », et le contournement (sudo, reprise
+    de propriétaire) est à refaire à chaque machine et facile à oublier au
+    déploiement suivant. `GOOGLE_SA_JSON` reçoit donc le contenu de la clé,
+    sur une ligne, comme les autres identifiants.
+
+    Rend `None` quand rien n'est configuré : c'est à l'appelant de décider si
+    c'est une panne (Gmail) ou un simple repli (l'annuaire).
+    """
+    import json
+    import os
+
+    brut = (settings.google_sa_json or "").strip()
+    if brut:
+        try:
+            return json.loads(brut)
+        except ValueError as e:
+            raise NotImplementedError(
+                f"GOOGLE_SA_JSON illisible ({e}). Attendu : le contenu exact du "
+                "fichier de clé du compte de service, sur UNE seule ligne.") from e
+
+    fichier = settings.google_sa_file
+    if fichier and os.path.exists(fichier):
+        with open(fichier, encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
 def _service(boite: str):
     """Client Gmail empruntant l'identité de `boite`."""
-    import os
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
-    fichier = settings.google_sa_file
-    if not fichier or not os.path.exists(fichier):
+    infos = _cle_compte_de_service()
+    if infos is None:
         raise NotImplementedError(
-            f"Google Workspace non configuré : déposez la clé du compte de service dans "
-            f"{fichier or 'GOOGLE_SA_FILE'} et autorisez la délégation domaine "
-            "(console Admin > Sécurité > Contrôles des API > Délégation à l'échelle du domaine) "
-            f"avec le scope {SCOPES[0]}."
+            "Google Workspace non configuré : collez la clé du compte de service "
+            f"dans GOOGLE_SA_JSON (une ligne) ou déposez-la dans "
+            f"{settings.google_sa_file or 'GOOGLE_SA_FILE'}, puis autorisez la "
+            "délégation domaine (console Admin > Sécurité > Contrôles des API > "
+            f"Délégation à l'échelle du domaine) avec le scope {SCOPES[0]}."
         )
-    creds = service_account.Credentials.from_service_account_file(
-        fichier, scopes=SCOPES, subject=boite       # subject = la boîte empruntée
+    creds = service_account.Credentials.from_service_account_info(
+        infos, scopes=SCOPES, subject=boite         # subject = la boîte empruntée
     )
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
@@ -117,16 +149,17 @@ def _service_annuaire():
     une identité administrateur — l'annuaire n'est pas lisible par un compte
     ordinaire. D'où un réglage distinct, `GOOGLE_ADMIN_SUBJECT`.
     """
-    import os
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
-    fichier = settings.google_sa_file
     sujet = (settings.google_admin_subject or "").strip()
-    if not sujet or not fichier or not os.path.exists(fichier):
+    if not sujet:
         return None
-    creds = service_account.Credentials.from_service_account_file(
-        fichier, scopes=SCOPES_ANNUAIRE, subject=sujet)
+    infos = _cle_compte_de_service()
+    if infos is None:
+        return None
+    creds = service_account.Credentials.from_service_account_info(
+        infos, scopes=SCOPES_ANNUAIRE, subject=sujet)
     return build("admin", "directory_v1", credentials=creds, cache_discovery=False)
 
 

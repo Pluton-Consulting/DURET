@@ -188,6 +188,12 @@ class Settings(BaseSettings):
     # l'identité de chaque boîte, sans consentement individuel. Scope demandé :
     # gmail.readonly uniquement.
     google_sa_file: str = "secrets/google_service_account.json"
+    # LA MÊME CLÉ, EN VARIABLE. Déposer un fichier de secret sur le serveur
+    # suppose les bons droits sur `secrets/`, qui appartient à root — créé par
+    # Docker — d'où un « Permission denied » au scp. Coller ici le contenu de
+    # la clé (une seule ligne) évite tout transfert de fichier. Prioritaire sur
+    # `google_sa_file` quand les deux sont renseignés.
+    google_sa_json: Optional[str] = None
     gmail_domain: Optional[str] = None          # ex. duret-sols.fr — refuse toute boîte hors domaine
     gmail_extra_mailboxes: Optional[str] = None  # boîtes partagées, séparées par des virgules
     # Découverte des boîtes du domaine via l'Admin SDK (Directory API), au lieu

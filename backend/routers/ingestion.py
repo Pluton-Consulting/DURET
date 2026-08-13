@@ -120,14 +120,39 @@ async def ingestion_webhook(
 # synchronisation interrompue par un redémarrage se relance, elle est idempotente.
 _SYNCS: dict[str, dict] = {}
 
+# LES CONNECTEURS DE CE CLIENT, ET EUX SEULS.
+#
+# Cette liste était copiée telle quelle d'un projet à l'autre. Duret & Sols lit
+# son courrier dans Google Workspace et ses documents sur le SERVEUR DE
+# FICHIERS : Google Drive n'y sert à rien, le NAS le remplace. Le proposer à
+# l'écran invitait à lancer une synchronisation qui ne pouvait rien trouver.
+# La liste se change en dupliquant le projet, comme `skills/` et `outils/`.
 CONNECTEURS = {
     "outlook": ("Messagerie Microsoft 365", "ingestion.connectors.outlook"),
     "gmail": ("Messagerie Google Workspace", "ingestion.connectors.gmail"),
-    "google_drive": ("Google Drive", "ingestion.connectors.google_drive"),
     "extrabat": ("Extrabat", "ingestion.connectors.extrabat"),
     "deytime": ("Deytime", "ingestion.connectors.deytime"),
     "synology": ("NAS Synology", "ingestion.connectors.synology"),
 }
+
+# UN CONNECTEUR ANNONCÉ DOIT EXISTER. Le contrôle se fait au démarrage, pas au
+# clic : découvrir un module manquant le jour où quelqu'un lance la
+# synchronisation, c'est le découvrir devant l'utilisateur. `find_spec` ne
+# charge rien — il regarde seulement si le module est trouvable.
+def _verifier_connecteurs() -> None:
+    import importlib.util
+    for nom, (_, module) in CONNECTEURS.items():
+        try:
+            trouve = importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            trouve = False
+        if not trouve:
+            logger.error("Connecteur « %s » déclaré mais introuvable : %s. "
+                         "Il apparaîtra à l'écran et échouera au clic.",
+                         nom, module)
+
+
+_verifier_connecteurs()
 
 
 async def _executer_sync(source: str, module: str, user_id: str) -> None:

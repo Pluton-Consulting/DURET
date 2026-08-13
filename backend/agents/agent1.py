@@ -46,6 +46,14 @@ Typographie : n'utilise JAMAIS de tiret cadratin (—) ni de tiret demi-cadratin
 # sans être exécutée. Ce qui est borné ici, c'est le travail qui AVANCE.
 MAX_ACTIONS_PAR_TOUR = 8
 
+# Les versements dans un document en cours sont exemptés du budget ci-dessus
+# (ils avancent par construction), mais pas sans borne : le document accepte
+# 20 000 éléments, donc un modèle qui en verserait UN par appel obtiendrait
+# 20 000 allers-retours — pas une boucle infinie, un tour qui dure des heures.
+# 40 versements couvrent 16 000 blocs au rythme normal (400 par appel), soit
+# bien au-delà de tout document réel.
+MAX_VERSEMENTS_PAR_TOUR = 40
+
 
 # ANNONCE SANS ACTE. Le modèle écrit « je crée le PDF », « je commence par
 # compter », et n'émet AUCUN bloc d'action. Le tour se terminait sur cette
@@ -484,8 +492,13 @@ async def tools_node(state: AgentState, config=None) -> dict:
     if iteration > MAX_ACTIONS_PAR_TOUR:
         # Formulé comme une RAISON, pas comme un texte à afficher : c'est le
         # modèle qui la met en mots pour l'utilisateur.
-        return _sortir("le nombre de recherches autorisées pour ce tour est atteint "
-                       "sans avoir abouti.")
+        #
+        # Le mot RECHERCHES était faux : le budget porte sur les ACTIONS, quelles
+        # qu'elles soient. Sur une demande de document, l'utilisateur lisait
+        # « le nombre de recherches autorisées est atteint » alors qu'aucune
+        # recherche n'avait eu lieu — un message qui égare au lieu d'expliquer.
+        return _sortir("le nombre d'actions autorisées pour ce tour est atteint "
+                       "sans que la demande ait abouti.")
 
     # Les paramètres arrivent masqués (le modèle ne voit que du texte anonymisé).
     # On les réhydrate avec les MÊMES bornes que la réponse finale : uniquement
@@ -576,7 +589,30 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # contrairement a ce que cette explication promettait : une action qui rate
     # en boucle redonnait donc un forcage a chaque tour, sans que rien n'avance.
     # C'est exactement la boucle que ce commentaire disait impossible.
-    maj = {"tool_results": resultats, "tool_iterations": iteration,
+    # UN VERSEMENT QUI A RÉELLEMENT ÉCRIT NE CONSOMME PAS LE BUDGET.
+    #
+    # Le budget existe contre les tours qui TOURNENT EN ROND. Remplir un
+    # document long, lui, avance à chaque appel — et le catalogue demande
+    # explicitement de le remplir en plusieurs fois. Les deux règles se
+    # contredisaient : « raconte une histoire de dix pages » ouvrait le
+    # document, versait quelques sections, puis se faisait couper par le
+    # garde-fou, avec en prime un message parlant de « recherches ».
+    #
+    # Le rejeu n'est pas ouvert pour autant : on n'exempte que les versements
+    # qui ont retenu au moins un bloc, et le document a sa propre borne
+    # (20 000 éléments), après quoi l'ajout échoue et le budget reprend ses
+    # droits.
+    versements = int(state.get("versements") or 0)
+    a_verse = False
+    if ok and action["skill"] in ("ajouter_document",) and versements < MAX_VERSEMENTS_PAR_TOUR:
+        try:
+            a_verse = int((brut.get("output") or {}).get("ajoutes") or 0) > 0
+        except (AttributeError, TypeError, ValueError):
+            a_verse = False
+
+    maj = {"tool_results": resultats,
+           "tool_iterations": (state.get("tool_iterations") or 0) if a_verse else iteration,
+           "versements": versements + 1 if a_verse else versements,
            "entity_map": carte_maj}
     if ok:
         maj["relance_annonce"] = False

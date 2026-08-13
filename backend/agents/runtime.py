@@ -205,6 +205,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # anti-boucle et les résultats du tour précédent survivraient.
         "tool_results": [],
         "tool_iterations": 0,
+        "versements": 0,
         "tool_repair_used": False,
         "tools_finished": False,
         "pending_action": None,

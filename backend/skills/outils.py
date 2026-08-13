@@ -195,12 +195,17 @@ SKILLS = {
     "produire_document": Declaration(
         fonction=produire_document,
         description=(
+            # Le detail de la mise en forme (valeurs de taille et de couleur)
+            # vit dans `outils/docs/documents.md`, lisible via `mode_emploi` :
+            # le catalogue est injecte a CHAQUE tour, y compris ceux qui ne
+            # produisent aucun document. On y garde de quoi CHOISIR l'action,
+            # pas de quoi la parametrer finement.
             "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois "
             "et rend le lien. `blocs` : liste de {bloc:titre|paragraphe|liste|"
-            "tableau|saut_page|feuille}. Un paragraphe accepte gras, italique, "
-            "centre (booleens), taille (petit|normal|grand|tres_grand) et "
-            "couleur (rouge|vert|bleu|orange|gris|noir). LA voie normale pour "
-            "un document"),
+            "tableau|saut_page|feuille}. LA voie normale pour un document, y "
+            "compris LONG : 400 blocs par appel, soit plusieurs dizaines de "
+            "pages. N'ouvre l'atelier en plusieurs fois qu'au-dela. Mise en "
+            "forme detaillee : `mode_emploi` de l'outil documents"),
         requis=["titre", "blocs"],
         optionnels=["format", "entete", "pied", "numeroter"],
         effet="ecriture_interne",

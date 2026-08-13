@@ -40,6 +40,7 @@ class AgentState(TypedDict):
     # donc à la main dans le nœud, et le canal reste en « dernière valeur ».
     tool_results: Optional[List[dict]]   # résultats MASQUÉS des actions du tour
     tool_iterations: int                 # garde anti-boucle
+    versements: int                      # ajouts à un document : exemptés du budget, mais bornés
     tool_repair_used: bool               # une seule tentative de réparation d'un bloc invalide
     tools_finished: bool                 # force la sortie de boucle
     note_sortie: Optional[str]           # pourquoi la boucle s'est arrêtée sans aboutir

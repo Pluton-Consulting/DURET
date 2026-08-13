@@ -12,6 +12,12 @@ interface Message {
   id: string
   role: "user" | "assistant"
   content: string
+  // Renseignes quand l'echange passe EN ARRIERE-PLAN : la bulle se dessine
+  // alors en creux (contour pointille), et la reponse viendra remplacer le
+  // placeholder A SA PLACE — pas tout en bas, apres les echanges qui l'ont
+  // doublee. Une reponse detachee de sa question ne se lit pas.
+  tacheId?: string
+  placeholder?: boolean
 }
 
 interface ChatWindowProps {
@@ -33,6 +39,9 @@ const WS_STALL_MS = 14000
 // assez vif pour que la progression d'une carte semble vivante, assez lent pour
 // que dix onglets ouverts ne pèsent rien.
 const POLL_MS = 4000
+// Quand une tache differee tient la banniere, son texte doit se renouveler
+// aussi souvent que celui d'une tache du chat — sinon l'ecran parait fige.
+const POLL_ACTIF_MS = 1500
 
 // Mémorise le thread courant (localStorage) pour restaurer la conversation quand on
 // quitte l'onglet puis qu'on y revient (le composant se démonte/remonte → état perdu).
@@ -157,6 +166,34 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const majCarteLocale = (id: string, patch: Partial<TacheFond>) =>
     setTachesLocales((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
 
+  // L'echange part en arriere-plan : sa question passe en creux, et une bulle
+  // d'attente tient la place de la reponse a venir.
+  const marquerEnAttente = (idMessage: string | null, tacheId: string) =>
+    setMessages((prev) => {
+      const suite = prev.map((m) =>
+        m.id === idMessage ? { ...m, tacheId } : m)
+      return [...suite, { id: newId(), role: "assistant" as const,
+                          content: "réponse en cours", tacheId, placeholder: true }]
+    })
+
+  // La reponse arrive : elle REMPLACE la bulle d'attente, et la question
+  // reprend son aspect normal. Si le placeholder a disparu (fil recharge),
+  // on ajoute a la suite plutot que de perdre la reponse.
+  const poserReponse = (tacheId: string, contenu: string) =>
+    setMessages((prev) => {
+      let pose = false
+      const suite = prev.map((m) => {
+        if (m.tacheId !== tacheId) return m
+        if (m.placeholder && !pose) {
+          pose = true
+          return { ...m, content: contenu, tacheId: undefined, placeholder: false }
+        }
+        return { ...m, tacheId: undefined }
+      })
+      return pose ? suite
+                  : [...suite, { id: newId(), role: "assistant" as const, content: contenu }]
+    })
+
   // ── Sondage : l'etat de la file et des accords, en une requete ───────
   // Non reentrant : un tick lent (le chargement du resultat d'une tache active
   // est un await DANS le handler) ne doit pas se faire doubler par le suivant,
@@ -224,7 +261,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             // de la colonne sans jamais avoir ete lue — l'echange d'une tache
             // differee vit sur son propre fil, il n'est pas dans l'historique.
             if (!monteRef.current) return
-            pushAssistant(d.response || "La tâche s'est terminée sans réponse.")
+            poserReponse(active.id, d.response || "La tâche s'est terminée sans réponse.")
             await apiRequest(`/api/file/taches/${active.id}/vu`, { method: "POST", token })
           } catch {
             if (monteRef.current) pushAssistant("La tâche est terminée — sa carte reste dans la colonne de droite.")
@@ -233,7 +270,8 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           setTacheActive(null)
           setLoading(false)
           setThinkingNode(null)
-          pushAssistant(`La tâche n'a pas abouti${active.error ? ` : ${active.error}` : "."}`)
+          poserReponse(active.id,
+                       `La tâche n'a pas abouti${active.error ? ` : ${active.error}` : "."}`)
           if (monteRef.current) {
             try { await apiRequest(`/api/file/taches/${active.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
           }
@@ -252,10 +290,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   useEffect(() => {
     if (!token) return
     rafraichirEtat()
-    const id = setInterval(rafraichirEtat, POLL_MS)
+    // Deux cadences : vive quand une tache differee pilote la banniere (son
+    // texte doit se renouveler comme celui d'une tache du chat), tranquille
+    // sinon — dix onglets ouverts ne doivent rien couter.
+    const id = setInterval(rafraichirEtat, tacheActive ? POLL_ACTIF_MS : POLL_MS)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [token, tacheActive])
 
   // ── Les accords : decider ici, aujourd'hui ou dans trois jours ───────
   // Le tour est suspendu au `human_gate`, son etat vit dans le checkpointer
@@ -270,12 +311,17 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         `/api/validations/${id}/resolve`,
         { method: "POST", token, body: JSON.stringify({ approved: accorde }) }
       )
-      // La tache de la file liee a cet accord vient d'etre refermee cote
-      // backend : sa reponse s'affiche ICI, sa carte n'a plus rien a montrer.
+      // La tache liee a cet accord vient d'etre refermee cote backend : sa
+      // reponse appartient a l'echange qui attend, elle remplit SA bulle.
+      // Sans ce lien, elle atterrissait tout en bas, loin de sa question, et
+      // la bulle d'attente battait indefiniment au-dessus.
       const liee = tachesFile.find((t) => t.validationId === id)
-      if (res.response) pushAssistant(res.response)
-      else if (!accorde) pushAssistant("Action refusée — rien n'a été fait.")
-      if (liee) {
+        || tachesLocales.find((t) => t.validationId === id)
+      const texte = res.response
+        || (accorde ? "Action approuvée." : "Action refusée — rien n'a été fait.")
+      if (liee) poserReponse(liee.id, texte)
+      else pushAssistant(texte)
+      if (liee && liee.source === "file") {
         try { await apiRequest(`/api/file/taches/${liee.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
       }
       // Une carte LOCALE suspendue sur ce meme accord n'a plus rien a attendre :
@@ -308,16 +354,22 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // Clic sur une carte terminee : le rendu complet s'affiche dans le chat,
   // question comprise — comme si l'echange s'y etait deroule.
   const afficherTache = async (t: TacheFond) => {
-    setMessages((prev) => [...prev, { id: newId(), role: "user", content: t.question }])
+    // La question est deja dans le fil si l'echange y a laisse sa bulle
+    // d'attente : la reposer ferait doublon. On ne la remet que pour une
+    // tache dont le fil a perdu la trace (page rechargee).
+    const dejaLa = messages.some((m) => m.tacheId === t.id)
+    if (!dejaLa) {
+      setMessages((prev) => [...prev, { id: newId(), role: "user", content: t.question }])
+    }
     if (t.source === "ws") {
-      pushAssistant(t.reponse || "La tâche s'est terminée sans réponse.")
+      poserReponse(t.id, t.reponse || "La tâche s'est terminée sans réponse.")
       setTachesLocales((prev) => prev.filter((x) => x.id !== t.id))
       return
     }
     try {
       const d = await apiRequest<{ response: string | null }>(`/api/file/taches/${t.id}`, { token })
       if (!monteRef.current) return
-      pushAssistant(d.response || "La tâche s'est terminée sans réponse.")
+      poserReponse(t.id, d.response || "La tâche s'est terminée sans réponse.")
       await apiRequest(`/api/file/taches/${t.id}/vu`, { method: "POST", token })
       await rafraichirEtat()
     } catch {
@@ -326,6 +378,12 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   }
 
   const fermerTache = async (t: TacheFond) => {
+    // Fermer la carte, c'est renoncer a voir le resultat : la bulle d'attente
+    // le dit, au lieu de battre indefiniment pour une reponse qui ne viendra
+    // plus a cet endroit.
+    poserReponse(t.id, t.etat === "echec" || t.etat === "interrompue"
+      ? `La tâche n'a pas abouti${t.erreur ? ` : ${t.erreur}` : "."}`
+      : "Résultat mis de côté — la tâche reste consultable dans l'historique.")
     if (t.source === "ws") {
       setTachesLocales((prev) => prev.filter((x) => x.id !== t.id))
       return
@@ -383,6 +441,9 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     if (tacheActiveRef.current) {
       // Tache differee : elle apparait deja dans la liste sondee — la
       // « detacher » du chat suffit, sa carte prend le relais au prochain tick.
+      // Son echange passe en creux : sa reponse arrivera plus tard, a sa place.
+      marquerEnAttente(idDerniereQuestionRef.current, tacheActiveRef.current)
+      tacheActiveRef.current = null
       setTacheActive(null)
       return
     }
@@ -396,9 +457,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         activite: activiteRef.current || "",
       }, ...prev])
       cible.carte = carteId
+      marquerEnAttente(idDerniereQuestionRef.current, carteId)
     }
   }
   const queryEnCoursRef = useRef<string>("")
+  // L'identifiant du dernier message d'utilisateur envoye : c'est LUI qu'on
+  // marque en creux quand son echange part en arriere-plan.
+  const idDerniereQuestionRef = useRef<string | null>(null)
   const activiteRef = useRef<string>("")
   activiteRef.current = activite
 
@@ -408,18 +473,27 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // affichee avant qu'on sache qu'elle ne pourrait pas partir par le chat.
   const lancerEnFile = async (text: string, afficherDemande = true) => {
     if (afficherDemande) {
-      setMessages((prev) => [...prev, { id: newId(), role: "user", content: text }])
+      const idQuestion = newId()
+      idDerniereQuestionRef.current = idQuestion
+      setMessages((prev) => [...prev, { id: idQuestion, role: "user", content: text }])
     }
     try {
       const res = await apiRequest<{ tache_id: string }>(
         "/api/file/taches",
         { method: "POST", token, body: JSON.stringify({ query: text }) })
+      tacheActiveRef.current = res.tache_id
       setTacheActive(res.tache_id)
       setLoading(true)
       setThinkingNode(null)
       setThinkingSteps([])
-      setActivite("en file d'attente")
+      setActivite("je prends la demande")
+      // Sondage RAPPROCHE le temps qu'elle demarre : la cadence de croisiere
+      // (4 s) laissait la banniere sur son texte d'attente plusieurs secondes,
+      // alors que la tache avait deja commence a travailler.
       await rafraichirEtat()
+      for (const delai of [400, 900, 1600]) {
+        setTimeout(() => { if (monteRef.current) rafraichirEtat() }, delai)
+      }
     } catch (e: any) {
       pushAssistant(`Erreur : ${e?.message ?? "la mise en file a échoué"}`)
     }
@@ -455,9 +529,11 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     const attachment = piece
       ? { attachment_name: piece.name, attachment_mime: piece.mime, attachment_b64: piece.b64 }
       : undefined
+    const idQuestion = newId()
+    idDerniereQuestionRef.current = idQuestion
     setMessages((prev) => [
       ...prev,
-      { id: newId(), role: "user", content: piece ? `📎 ${piece.name}\n${text}` : text },
+      { id: idQuestion, role: "user", content: piece ? `📎 ${piece.name}\n${text}` : text },
     ])
     setLoading(true)
     setThinkingNode(null)

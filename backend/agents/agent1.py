@@ -352,23 +352,43 @@ async def llm_node(state: AgentState, config=None) -> dict:
     # verser le contenu dans le document déjà ouvert » — ouvert au tour d'avant
     # — partait donc sans identifiant ni rappel, et le tour s'est terminé sur
     # la promesse. L'atelier, lui, s'en souvient : on lui demande.
+    #
+    # ET LES TERMINÉS AUSSI. Relevé en production : « test 2 » venait d'être
+    # finalisé (38 Ko), et au tour suivant le modèle a répondu « ce document
+    # n'existe pas », est parti le chercher sur le serveur, puis a proposé de
+    # déposer un document VIDE à sa place. Un document fini sortait de la seule
+    # liste que le modèle voyait — le plus important devenait invisible.
     try:
         import asyncio as _aio
         from bureautique.atelier import ouverts as _docs_ouverts
-        en_cours = await _aio.to_thread(
-            _docs_ouverts, str(state.get("user_id") or ""))
+        from bureautique.atelier import termines as _docs_termines
+        _uid = str(state.get("user_id") or "")
+        en_cours = await _aio.to_thread(_docs_ouverts, _uid)
+        finis = (await _aio.to_thread(_docs_termines, _uid))[:5]
     except Exception:  # noqa: BLE001 - un aperçu manquant ne casse pas le tour
-        en_cours = []
-    if en_cours:
+        en_cours, finis = [], []
+    if en_cours or finis:
         import json as _json_docs
-        bloc_resultats += (
-            "Document(s) que tu as OUVERTS et non terminés (aucun fichier "
-            "n'existe encore) :\n"
-            + _json_docs.dumps(en_cours, ensure_ascii=False)
-            + "\nPour continuer ce travail : `ajouter_document` puis "
-              "`terminer_document` avec CE `document_id`, recopié caractère "
-              "pour caractère. N'en rouvre pas un nouveau : le contenu déjà "
-              "versé serait perdu. Si la demande n'a aucun rapport, ignore-les.\n\n")
+        etat_docs = "ÉTAT DE TES DOCUMENTS (fait autorité, ne le devine jamais) :\n"
+        if en_cours:
+            etat_docs += (
+                "- OUVERTS, non terminés (aucun fichier n'existe encore) :\n"
+                + _json_docs.dumps(en_cours, ensure_ascii=False)
+                + "\n  Pour continuer : `ajouter_document` puis "
+                  "`terminer_document` avec CE `document_id`, recopié caractère "
+                  "pour caractère, SANS réécrire le début (le compte d'éléments "
+                  "fait foi). N'en rouvre pas un du même titre. Pour en jeter "
+                  "un : `abandonner_document`.\n")
+        if finis:
+            etat_docs += (
+                "- TERMINÉS, fichier PRÊT et téléchargeable — mais PAS déposé "
+                "sur le serveur :\n"
+                + _json_docs.dumps(finis, ensure_ascii=False)
+                + "\n  Ces documents ne se trouvent PAS en cherchant sur le "
+                  "serveur : ils vivent ici, avec leur `document_id`. Titre, "
+                  "taille, éléments et pages_estimees ci-dessus répondent "
+                  "directement aux questions dessus.\n")
+        bloc_resultats += etat_docs + "\n"
 
     # Aucun préambule sur l'absence de documents : c'est le modèle qui décide
     # s'il lui en faut, en appelant l'outil de recherche. Lui annoncer d'office
@@ -689,8 +709,21 @@ async def tools_node(state: AgentState, config=None) -> dict:
         except (AttributeError, TypeError, ValueError):
             a_verse = False
 
+    # LES JALONS QUI FERMENT NE CONSOMMENT PAS LE BUDGET NON PLUS. Relevé en
+    # production : « créer un docx de 10 pages » s'est terminé sur « le nombre
+    # d'actions autorisées est atteint » — le budget de 8 se faisait manger par
+    # la fermeture et le ménage, en plus des recherches. Un `terminer_document`
+    # ou un `abandonner_document` qui RÉUSSIT ne peut pas boucler : chacun
+    # consomme un document ouvert (bornés à 5 par personne), et une répétition
+    # à l'identique tombe sur la déduplication. `creer_document`, lui, RESTE
+    # compté : ouvert à volonté avec des titres différents, il est exactement
+    # le geste que le budget doit borner (cf. S11 : le forceur qui rouvre un
+    # document à chaque passe).
+    jalon = ok and action["skill"] in ("terminer_document", "abandonner_document")
+
+    avance = a_verse or jalon
     maj = {"tool_results": resultats,
-           "tool_iterations": (state.get("tool_iterations") or 0) if a_verse else iteration,
+           "tool_iterations": (state.get("tool_iterations") or 0) if avance else iteration,
            "versements": versements + 1 if a_verse else versements,
            "entity_map": carte_maj}
     if ok:
@@ -887,10 +920,12 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
     try:
         import asyncio as _aio
         from bureautique.atelier import ouverts as _docs_ouverts
-        en_cours = await _aio.to_thread(
-            _docs_ouverts, str(state.get("user_id") or ""))
+        from bureautique.atelier import termines as _docs_termines
+        _uid = str(state.get("user_id") or "")
+        en_cours = await _aio.to_thread(_docs_ouverts, _uid)
+        finis = (await _aio.to_thread(_docs_termines, _uid))[:5]
     except Exception:  # noqa: BLE001
-        en_cours = []
+        en_cours, finis = [], []
     if en_cours:
         demande += (
             "\n\nDocument(s) encore OUVERTS de tours précédents :\n"
@@ -898,6 +933,13 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
             + "\nSi l'intention annoncée est de CONTINUER ce document, l'action "
               "attendue est `ajouter_document` (puis `terminer_document`) avec "
               "ce `document_id`, recopié caractère pour caractère.")
+    if finis:
+        demande += (
+            "\n\nDocument(s) TERMINÉS (fichier prêt, pas déposé) :\n"
+            + _json.dumps(finis, ensure_ascii=False)
+            + "\nSi l'intention est de DÉPOSER ou de montrer un de ces "
+              "documents, utilise SON `document_id` — pas celui d'un document "
+              "vide.")
 
     llm = get_llm(LLMTier(state.get("llm_tier", "standard")))
     try:

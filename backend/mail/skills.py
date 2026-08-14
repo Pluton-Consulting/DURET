@@ -535,9 +535,15 @@ async def terminer_document(data: dict, user) -> dict:
     return await _t(data, user)
 
 
+async def abandonner_document(data: dict, user) -> dict:
+    from skills.bureau import abandonner_document as _ab
+    return await _ab(data, user)
+
+
 SKILLS_NATIFS["creer_document"] = creer_document
 SKILLS_NATIFS["ajouter_document"] = ajouter_document
 SKILLS_NATIFS["terminer_document"] = terminer_document
+SKILLS_NATIFS["abandonner_document"] = abandonner_document
 
 
 def _ou_echouer(resultat: dict) -> dict:
@@ -637,6 +643,8 @@ EFFETS_NATIFS = {
     "creer_document": "ecriture_interne",
     "ajouter_document": "ecriture_interne",
     "terminer_document": "ecriture_interne",
+    # Jeter un brouillon jamais produit : rien ne sort, rien ne s'envoie.
+    "abandonner_document": "ecriture_interne",
     # Apprendre une consigne modifie le comportement de l'assistant, pas le
     # monde exterieur : ecriture interne. Le droit d'ecrire POUR TOUS est
     # verifie dans le skill lui-meme.

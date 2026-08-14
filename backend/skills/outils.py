@@ -155,8 +155,9 @@ SKILLS = {
             "COMPTE et resume un dossier du serveur : combien de dossiers, de "
             "fichiers, de quels types. LE SERVEUR, LE NAS, LE RESEAU, LES "
             "PARTAGES et SYNOLOGY designent la meme chose. A utiliser des "
-            "qu'on demande un NOMBRE ou « ce qu'il y a dans » : les comptes "
-            "sont exacts"),
+            "qu'on demande un NOMBRE ou « ce qu'il y a dans ». `chemin` "
+            "accepte le NOM du dossier (ex. « Drive »), pas besoin du chemin "
+            "exact"),
         optionnels=["chemin"],
         effet="lecture",
         libelle="je regarde ce que contient le dossier"),
@@ -165,7 +166,7 @@ SKILLS = {
         description=("ARBRE COMPLET du serveur en UNE action : sans `chemin`, "
                      "TOUS les partages ouverts y passent, avec les comptes. "
                      "Rend `schema` : recopie-le TEL QUEL dans un bloc ```. "
-                     "`chemin` limite a un sous-arbre"),
+                     "`chemin` (NOM accepte) limite a un sous-arbre"),
         optionnels=["chemin", "profondeur"],
         effet="lecture",
         libelle="je parcours les dossiers du serveur"),
@@ -186,8 +187,8 @@ SKILLS = {
     "nas_deposer_document": Declaration(
         fonction=nas_deposer_document,
         description=("FINALISE un document en cours et le DEPOSE sur le serveur, "
-                     "en un geste. Ecrit sur le serveur : demande une validation "
-                     "humaine"),
+                     "en un geste. `dossier` accepte le NOM (ex. « Drive »). "
+                     "Ecrit sur le serveur : demande une validation humaine"),
         requis=["document_id", "dossier"], optionnels=["nom"],
         # Le depot ecrit sur le serveur de l'entreprise : effet EXTERNE, donc
         # validation humaine — composer deux gestes ne compose pas les droits.

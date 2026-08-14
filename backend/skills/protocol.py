@@ -209,6 +209,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "FERME le document et rend le lien. Tant qu'il n'est pas appele, "
         "AUCUN fichier n'existe",
         ["document_id"], []),
+    "abandonner_document": (
+        "JETTE un document ouvert : contenu perdu, aucun fichier. Pour faire "
+        "le menage quand des documents ouverts trainent ou pour repartir de zero",
+        ["document_id"], []),
     "mes_droits": (
         "Explique les DROITS D'ACCES : ce que la personne connectee peut consulter, "
         "ce qui lui est ferme, quelles boites mail elle peut lire, et comment le "

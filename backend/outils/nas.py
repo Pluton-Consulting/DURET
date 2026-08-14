@@ -38,6 +38,110 @@ _LISTAGES_DE_FRONT = 6
 MAX_LOT = 5
 
 
+async def _enfants_dossiers(client, base, sid, chemin: str) -> list[dict]:
+    from nas.acces import _lister_ouvert
+    brut = await _lister_ouvert(client, base, sid, chemin)
+    return [e for e in (brut.get("entrees") or []) if e.get("dossier")]
+
+
+async def _resoudre(client, base, sid, chemin: str) -> str:
+    """Un NOM (« Drive », « Compta/2026 ») vers son chemin réel sur le serveur.
+
+    RELEVÉ EN PRODUCTION : « il y a combien de fichiers dans le dossier
+    Drive ? » → le modèle demande « /Drive » → « ce dossier N'EXISTE PAS sur le
+    NAS » — deux tours de suite, car le partage réel est /home/Drive. L'humain
+    nomme le dossier qu'il a en tête, jamais son chemin de montage : exiger le
+    chemin exact faisait échouer la formulation la plus naturelle. Le Drive de
+    Symbiose a sa résolution par nom depuis le même constat ; le serveur de
+    Duret ne l'avait pas.
+
+    Résolution segment par segment, SOUS LES RACINES OUVERTES uniquement : le
+    confinement ne bouge pas d'un pouce, on cherche seulement où vit le nom.
+    Une racine illisible (partage mal configuré) est ignorée sans bloquer les
+    autres. Quand ça échoue, le refus LISTE ce qui existe : c'est la différence
+    entre une erreur et une piste.
+    """
+    from nas.acces import dossiers_autorises, normaliser, NasRefuse
+
+    vise = normaliser(chemin)
+    # Le chemin tel quel se liste ? C'est un vrai chemin, on ne cherche pas.
+    try:
+        await _enfants_dossiers(client, base, sid, vise)
+        return vise
+    except NasRefuse:
+        raise                    # hors périmètre : la résolution ne contourne pas
+    except Exception:  # noqa: BLE001 - inexistant : on cherche par nom
+        pass
+
+    segments = [s for s in vise.split("/") if s]
+    if not segments:
+        raise NasRefuse("Donne le nom ou le chemin du dossier.")
+    racines = dossiers_autorises()
+
+    # Premier segment : le nom d'une racine elle-même (« home »), sinon un
+    # enfant direct d'une des racines lisibles — exact avant « contient ».
+    #
+    # L'ALIAS DE RACINE NE VAUT QUE SI ELLE SE LISTE. C'est le piège exact de
+    # la production : « /Drive » était CONFIGURÉ comme racine mais n'existait
+    # pas sur le NAS — le nom « Drive » retombait donc sur la racine fantôme,
+    # et la résolution rendait le chemin même qui venait d'échouer, pendant que
+    # le vrai /home/Drive attendait deux niveaux plus loin.
+    courant = None
+    for r in racines:
+        if r.rsplit("/", 1)[-1].lower() == segments[0].lower():
+            try:
+                await _enfants_dossiers(client, base, sid, r)
+                courant = r
+                break
+            except Exception:  # noqa: BLE001 - racine fantôme : on cherche ailleurs
+                continue
+    disponibles: list[str] = []
+    if courant is None:
+        for r in racines:
+            try:
+                enfants = await _enfants_dossiers(client, base, sid, r)
+            except Exception:  # noqa: BLE001 - une racine fantôme ne bloque pas
+                continue
+            disponibles += [e.get("nom") or "" for e in enfants]
+            exacts = [e for e in enfants
+                      if (e.get("nom") or "").lower() == segments[0].lower()]
+            contient = [e for e in enfants
+                        if segments[0].lower() in (e.get("nom") or "").lower()]
+            choisi = exacts or contient
+            if choisi:
+                courant = choisi[0]["chemin"]
+                break
+    if courant is None:
+        raise NasRefuse(
+            f"Aucun dossier « {segments[0]} » sous les racines ouvertes "
+            f"({', '.join(racines)}). Dossiers présents : "
+            f"{', '.join(sorted(set(d for d in disponibles if d))[:25])}. "
+            "Reprends le nom EXACT dans cette liste.")
+
+    # Segments suivants : contraints à leur parent — c'est le sens d'un chemin.
+    for segment in segments[1:]:
+        try:
+            enfants = await _enfants_dossiers(client, base, sid, courant)
+        except NasRefuse:
+            raise
+        except Exception as e:  # noqa: BLE001 - un niveau illisible se DIT
+            raise NasRefuse(
+                f"« {courant} » n'a pas pu être lu pendant la résolution : "
+                f"{str(e)[:120]}")
+        exacts = [e for e in enfants
+                  if (e.get("nom") or "").lower() == segment.lower()]
+        contient = [e for e in enfants
+                    if segment.lower() in (e.get("nom") or "").lower()]
+        choisi = exacts or contient
+        if not choisi:
+            noms = ", ".join(sorted((e.get("nom") or "") for e in enfants)[:25])
+            raise NasRefuse(
+                f"Aucun dossier « {segment} » dans {courant}. Dossiers "
+                f"présents : {noms}. Reprends le nom EXACT dans cette liste.")
+        courant = choisi[0]["chemin"]
+    return courant
+
+
 async def apercu(chemin: Optional[str] = None) -> dict:
     """Ce que contient un dossier, compté et classé — sans lister tout le détail.
 
@@ -62,6 +166,9 @@ async def apercu(chemin: Optional[str] = None) -> dict:
     illisibles = []
     async with connexion() as (client, base, sid):
         if chemin:
+            # Le chemin arrive presque toujours sous forme de NOM : c'est ce
+            # qu'un humain dit, et donc ce que le modèle répète.
+            chemin = await _resoudre(client, base, sid, chemin)
             racines = [await _lister_ouvert(client, base, sid, chemin)]
         else:
             # Sans chemin : l'inventaire des racines ouvertes, chacune résumée.
@@ -218,9 +325,7 @@ async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dic
     profondeur = min(int(profondeur), MAX_PROFONDEUR) if profondeur else MAX_PROFONDEUR
     profondeur = max(1, profondeur)
 
-    if chemin:
-        chemins_racines = [chemin]
-    else:
+    if not chemin:
         chemins_racines = dossiers_autorises()
         if not chemins_racines:
             raise NasRefuse(
@@ -228,14 +333,18 @@ async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dic
                 "administrateur doit renseigner les partages à ouvrir. Ce n'est "
                 "PAS un serveur vide : dis-le tel quel.")
 
-    racines = [{"nom": c, "chemin": c, "enfants": [], "fichiers": 0, "octets": 0}
-               for c in chemins_racines]
-    par_chemin = {r["chemin"]: r for r in racines}
-    total = len(racines)
     partiel = False
     porte = asyncio.Semaphore(_LISTAGES_DE_FRONT)
 
     async with connexion() as (client, base, sid):
+        if chemin:
+            # Un NOM suffit : « Drive » se résout en /home/Drive.
+            chemins_racines = [await _resoudre(client, base, sid, chemin)]
+        racines = [{"nom": c, "chemin": c, "enfants": [], "fichiers": 0,
+                    "octets": 0} for c in chemins_racines]
+        par_chemin = {r["chemin"]: r for r in racines}
+        total = len(racines)
+
         async def _lire(c: str):
             async with porte:
                 try:
@@ -426,7 +535,7 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
     fonction est donc soumise à validation humaine, comme `nas_deposer`.
     """
     from bureautique.atelier import terminer, chemin_fichier
-    from nas.acces import deposer
+    from nas.acces import connexion, deposer
 
     # UN PROPRIÉTAIRE VIDE N'EST PAS UN PROPRIÉTAIRE. `fiche()` compare
     # `proprietaire == f["proprietaire"]` : une chaîne vide ne correspondrait à
@@ -446,6 +555,12 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
     final = nom or f"{entete['titre']}.{entete['format']}"
     with open(chemin, "rb") as f:
         contenu = f.read()
+
+    # « Dépose-le dans Drive » doit suffire : le dossier se résout par NOM,
+    # comme partout ailleurs — c'est au moment du dépôt que l'exigence du
+    # chemin exact coûtait le plus cher, après tout le travail de rédaction.
+    async with connexion() as (client, base, sid):
+        dossier = await _resoudre(client, base, sid, dossier)
 
     depot = await deposer(dossier, final, contenu)
     # UN DÉPÔT RATÉ DOIT ÊTRE UN ÉCHEC, pas un dictionnaire optimiste.

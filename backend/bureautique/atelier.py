@@ -78,7 +78,17 @@ def ouvrir(entete: dict, proprietaire: str) -> str:
     if len(ouverts) >= MAX_OUVERTS_PAR_PERSONNE:
         # On ferme le plus ancien plutôt que de refuser : un document oublié ne
         # doit pas empêcher d'en commencer un nouveau.
-        vieux = min(ouverts, key=lambda j: (_lire_fiche(j) or {}).get("ouvert", 0))
+        #
+        # LES VIDES D'ABORD. Relevé en production : quatre documents ouverts
+        # par des tentatives interrompues, zéro élément chacun — et le
+        # cinquième `ouvrir` fermait LE PLUS ANCIEN, c'est-à-dire le seul
+        # document REMPLI (21 blocs de rédaction). Le quota détruisait
+        # précisément ce qu'il devait protéger. Un document vide ne coûte rien
+        # à perdre ; un document rempli coûte tout le travail versé.
+        vides = [j for j in ouverts
+                 if not int((_lire_fiche(j) or {}).get("elements") or 0)]
+        candidats = vides or ouverts
+        vieux = min(candidats, key=lambda j: (_lire_fiche(j) or {}).get("ouvert", 0))
         abandonner(vieux, proprietaire)
 
     # Jeton imprévisible : il sert de clé de téléchargement, il ne doit pas se
@@ -125,6 +135,41 @@ def ouverts(proprietaire: str) -> list[dict]:
         sortie.append({"document_id": jeton, "titre": entete.get("titre"),
                        "format": entete.get("format"),
                        "elements": int(f.get("elements") or 0)})
+    return sortie
+
+
+def termines(proprietaire: str) -> list[dict]:
+    """Les documents FINIS de cette personne — encore téléchargeables.
+
+    UN DOCUMENT TERMINÉ NE DOIT PAS DISPARAÎTRE DE LA VUE. Relevé en
+    production : « test 2 » venait d'être finalisé (38 Ko, 21 blocs) ; au tour
+    suivant, la liste des documents ne montrant que les OUVERTS, le modèle a
+    répondu « ce document n'existe pas », est parti le chercher sur le serveur
+    (où il n'avait jamais été déposé), et a fini par proposer de déposer un
+    document VIDE à sa place. Le document le plus important de la conversation
+    était le seul que le modèle ne pouvait plus voir.
+    """
+    sortie = []
+    try:
+        fichiers = os.listdir(DOSSIER)
+    except OSError:
+        return sortie
+    for nom in fichiers:
+        if not nom.endswith(".json"):
+            continue
+        jeton = nom[:-5]
+        f = _lire_fiche(jeton)
+        if not f or f.get("proprietaire") != proprietaire or not f.get("fini"):
+            continue
+        entete = f.get("entete") or {}
+        sortie.append({"document_id": jeton, "titre": entete.get("titre"),
+                       "format": entete.get("format"),
+                       "elements": int(f.get("elements") or 0),
+                       "octets": int(f.get("octets") or 0),
+                       "pages_estimees": f.get("pages_estimees")})
+    # Les plus récents d'abord : c'est d'eux qu'on parle dans la conversation.
+    sortie.sort(key=lambda d: (_lire_fiche(d["document_id"]) or {}).get("termine", 0),
+                reverse=True)
     return sortie
 
 
@@ -208,6 +253,34 @@ def _extrait(jeton: str, limite: int = 900) -> str:
     return "\n\n".join(bouts)[:limite]
 
 
+def _pages_estimees(jeton: str, extension: str) -> int | None:
+    """Combien de pages fera le fichier — une ESTIMATION, jamais un mensonge.
+
+    « Il fait combien de pages ? » est la première question posée sur un
+    document produit, et elle restait sans réponse. On l'estime depuis le
+    contenu : les sauts de page explicites d'une part, le volume de texte
+    d'autre part (~2 800 caractères par page en corps 11), et c'est le plus
+    grand des deux qui compte. Un tableur n'a pas de pages : None.
+    """
+    if extension == "xlsx":
+        return None
+    caracteres = 0
+    sauts = 0
+    for e in elements(jeton):
+        bloc = e.get("bloc")
+        if bloc == "saut_page":
+            sauts += 1
+        elif bloc == "titre":
+            caracteres += len(e.get("texte") or "") + 120   # marges d'un titre
+        elif bloc == "paragraphe":
+            caracteres += len(e.get("texte") or "") + 40
+        elif bloc == "liste":
+            caracteres += sum(len(i) + 30 for i in (e.get("items") or []))
+        elif bloc in ("tableau", "feuille"):
+            caracteres += 90 * (1 + len(e.get("lignes") or []))
+    return max(1, 1 + sauts, -(-caracteres // 2800))
+
+
 def terminer(jeton: str, proprietaire: str) -> dict:
     """Rend le fichier et marque le document comme fini."""
     from bureautique.rendu import rendre
@@ -225,7 +298,8 @@ def terminer(jeton: str, proprietaire: str) -> dict:
 
     f.update({"fini": True, "fichier": os.path.basename(sortie),
               "octets": os.path.getsize(sortie), "termine": time.time(),
-              "extrait": _extrait(jeton)})
+              "extrait": _extrait(jeton),
+              "pages_estimees": _pages_estimees(jeton, extension)})
     _ecrire_fiche(jeton, f)
     logger.info("Document %s rendu : %s, %d octets, %d éléments",
                 jeton[:8], extension, f["octets"], f["elements"])

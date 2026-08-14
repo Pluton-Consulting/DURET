@@ -202,12 +202,10 @@ SKILLS = {
             # pas de quoi la parametrer finement.
             "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois "
             "et rend le lien. `blocs` : liste de {bloc:titre|paragraphe|liste|"
-            "tableau|saut_page|feuille}. Pour un document qui tient dans UNE "
-            "reponse : environ 30 blocs de texte redige. AU-DELA (plusieurs "
-            "pages), c'est `creer_document` puis plusieurs `ajouter_document` "
-            "qu'il faut : ta reponse est plafonnee, tu ne peux pas tout "
-            "ecrire d'un coup. Mise en "
-            "forme detaillee : `mode_emploi` de l'outil documents"),
+            "tableau|saut_page|feuille}. Pour ce qui tient dans UNE reponse : "
+            "environ 30 blocs rediges. AU-DELA, ta reponse est plafonnee, "
+            "passe par `creer_document` + `ajouter_document` successifs. "
+            "Mise en forme : `mode_emploi` documents"),
         requis=["titre", "blocs"],
         optionnels=["format", "entete", "pied", "numeroter"],
         effet="ecriture_interne",

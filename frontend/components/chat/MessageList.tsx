@@ -49,7 +49,12 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
   { messages: Message_[]; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
   return (
     <Conversation initial="instant" resize="instant" data-testid="liste-messages">
-      <ConversationContent className="gap-4 px-8 py-6">
+      {/* PLUS D'AIR ENTRE LES MESSAGES QU'AVANT.
+          Seize pixels suffisaient tant que chaque réponse était une carte : le
+          cadre faisait la séparation. Le texte de l'IA coulant désormais à
+          même la page, c'est le blanc qui doit dire où finit une réponse et
+          où commence la question suivante. */}
+      <ConversationContent className="gap-7 px-8 py-6">
         {messages.length === 0 && (
           <ConversationEmptyState
             className="sym-in mt-20"

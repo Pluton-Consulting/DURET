@@ -1,6 +1,7 @@
 "use client"
 import { useState, type ReactNode } from "react"
-import { MessageResponse } from "@/components/ai-elements/message"
+import { CheckIcon, CopyIcon } from "lucide-react"
+import { MessageActions, MessageAction, MessageResponse } from "@/components/ai-elements/message"
 import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, FileCard, ContactCard, ProjectCard,
@@ -179,34 +180,104 @@ function renderBlock(block: any, onAction?: (v: string) => void,
   }
 }
 
+/** LA RÉPONSE SE COPIE, MÊME SANS HTTPS.
+ *
+ *  `navigator.clipboard` n'existe QUE dans un contexte sécurisé. Cette
+ *  application tourne en HTTP sur un VPN fermé : l'API est donc absente, et
+ *  un bouton qui s'appuierait dessus ne ferait rien, sans erreur visible.
+ *  D'où le repli par champ masqué, déprécié mais opérant partout. */
+async function copier(texte: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(texte)
+      return true
+    }
+  } catch { /* on tente le repli */ }
+  try {
+    const zone = document.createElement("textarea")
+    zone.value = texte
+    zone.setAttribute("readonly", "")
+    zone.style.position = "fixed"
+    zone.style.opacity = "0"
+    document.body.appendChild(zone)
+    zone.select()
+    const ok = document.execCommand("copy")
+    zone.remove()
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/** Les actions n'apparaissent qu'au survol du message : présentes quand on en
+ *  a besoin, absentes le reste du temps. `focus-within` les révèle aussi au
+ *  clavier, sans quoi elles seraient inatteignables sans souris. */
+function ActionsReponse({ texte }: { texte: string }) {
+  const [etat, setEtat] = useState<"" | "ok" | "ko">("")
+  if (!texte.trim()) return null
+  return (
+    <MessageActions className="-ml-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+      <MessageAction
+        tooltip={etat === "ok" ? "Copié" : etat === "ko" ? "Copie impossible" : "Copier la réponse"}
+        label="Copier la réponse"
+        onClick={async () => {
+          setEtat(await copier(texte) ? "ok" : "ko")
+          setTimeout(() => setEtat(""), 1800)
+        }}
+      >
+        {etat === "ok" ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      </MessageAction>
+    </MessageActions>
+  )
+}
+
 export function MessageRenderer({ content, onAction, apiUrl, backendToken }:
   { content: string; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
   const parts = parse(content)
+  // Ce qu'on copie : la réponse en toutes lettres, sans les blocs de données
+  // qui ne veulent rien dire hors de l'écran.
+  const texteSeul = parts.filter((p) => p.kind === "text").map((p) => p.text.trim()).join("\n\n").trim()
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start", maxWidth: "90%" }}>
+    // LE TEXTE DE L'IA NE VIT PLUS DANS UNE BOÎTE.
+    //
+    // Chaque paragraphe était enfermé dans une carte blanche à bordure et
+    // ombre. Une réponse un peu longue devenait un empilement de rectangles
+    // identiques, où rien ne se distinguait de rien : ni un titre, ni un
+    // tableau, ni un document. Le cadre, répété, cessait de signifier.
+    //
+    // La réponse coule donc à même la page, comme un texte qu'on lit, et le
+    // CADRE redevient un signal : ce qui est encadré est un objet — une
+    // carte, un graphique, un document. C'est le contraste qui porte la
+    // lecture, pas la décoration.
+    //
+    // La largeur est bornée en CARACTÈRES et non en pixels : au-delà d'une
+    // soixantaine, l'œil perd la ligne suivante en revenant à la marge.
+    <div className="group flex w-full flex-col items-start gap-3">
       {parts.map((part, i) => {
         if (part.kind === "text") {
           const t = part.text.trim()
           if (!t) return null
           return (
-            <div key={i} className="sym-in" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", color: "var(--marque-text-primary)", padding: "12px 16px", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", fontSize: 14, lineHeight: 1.55, maxWidth: 620 }}>
+            <div key={i} className="sym-in w-full max-w-[68ch] text-[var(--marque-text-body)]">
               {/* Streamdown remplace notre rendu maison : titres, listes,
                   tableaux, code coloré et formules, et surtout un rendu
                   correct du markdown ENCORE INCOMPLET pendant que la réponse
-                  s'écrit — une phrase coupée au milieu d'un `**gras**` ne
+                  s'écrit : une phrase coupée au milieu d'un `**gras**` ne
                   fait plus clignoter les astérisques.
 
                   Il est placé APRÈS `parse()`, jamais avant : les blocs
                   ```ui / ```json ont déjà été retirés du texte à ce stade.
                   L'ordre inverse les afficherait comme de jolis blocs de
                   code au lieu de les transformer en composants. */}
-              <MessageResponse className="text-[14px] leading-[1.55]">{t}</MessageResponse>
+              <MessageResponse className="text-[14.5px] leading-[1.65]">{t}</MessageResponse>
             </div>
           )
         }
         const node = renderBlock(part.block, onAction, { apiUrl, backendToken })
         return node ? <div key={i} className="sym-in">{node}</div> : null
       })}
+      <ActionsReponse texte={texteSeul} />
     </div>
   )
 }

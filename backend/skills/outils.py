@@ -202,11 +202,19 @@ SKILLS = {
             # le catalogue est injecte a CHAQUE tour, y compris ceux qui ne
             # produisent aucun document. On y garde de quoi CHOISIR l'action,
             # pas de quoi la parametrer finement.
-            "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois "
-            "et rend le lien. `blocs` : liste de {bloc:titre|paragraphe|liste|"
-            "tableau|saut_page|feuille}. Pour ce qui tient dans UNE reponse : "
-            "environ 30 blocs rediges. AU-DELA, ta reponse est plafonnee, "
-            "passe par `creer_document` + `ajouter_document` successifs. "
+            # LE SEUIL EN PAGES, PAS EN BLOCS. « environ 30 blocs » ne parle
+            # pas a une demande formulee « un docx de 10 pages » : le modele
+            # appelait donc ce geste, obtenait 2 pages, et RECOMMENCAIT — sept
+            # fois, six documents produits, aucun livre. Le geste est en UN
+            # COUP : il finalise, donc rien ne se rallonge apres.
+            # 395 caracteres : le catalogue est injecte a CHAQUE tour, le
+            # plafond de 400 par description n'est pas negociable.
+            "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois. "
+            "`blocs` : {bloc:titre|paragraphe|liste|tableau|saut_page|feuille}. "
+            "UNIQUEMENT si COURT : 2-3 pages, environ 30 blocs. AU-DELA "
+            "(5 pages, 10 pages, rapport, guide) ce geste FINALISE et rien ne "
+            "se rallonge apres : passe par `creer_document` + "
+            "`ajouter_document` repetes + `terminer_document`. "
             "Mise en forme : `mode_emploi` documents"),
         requis=["titre", "blocs"],
         optionnels=["format", "entete", "pied", "numeroter"],

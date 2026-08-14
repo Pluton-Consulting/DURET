@@ -30,6 +30,22 @@ logger = logging.getLogger("duret.skills.protocol")
 # Un bloc ```action ... ``` n'importe où dans la réponse.
 BLOC_ACTION_RE = re.compile(r"```action\s*(.*?)```", re.S)
 
+# UN BLOC OUVERT QUI NE SE REFERME JAMAIS : la signature d'une sortie COUPÉE.
+#
+# Relevé en production le 14/08 : le modèle a tenté de verser dix pages en un
+# seul `ajouter_document`, et la sortie s'est arrêtée net à 3072 jetons — le
+# plafond exact du palier. Sans les trois accents graves de clôture, le bloc
+# n'est plus reconnu par `BLOC_ACTION_RE`, avec deux conséquences qui se
+# cumulent au pire moment :
+#   1. l'action n'est pas exécutée — rien n'est versé ;
+#   2. le filtre d'affichage ne la masque pas — le JSON brut, sur des milliers
+#      de caractères, part à l'écran de l'utilisateur.
+#
+# On reconnaît donc explicitement ce cas. Il ne s'agit pas de deviner : un
+# `​```action` sans clôture ne peut être QUE de la mécanique tronquée, jamais
+# du contenu rédigé pour un humain.
+BLOC_ACTION_TRONQUE_RE = re.compile(r"```action(?![\s\S]*?```)[\s\S]*$", re.S)
+
 # Syntaxes d'appel d'outil NATIVES des modèles de la cascade. Observé en
 # production : LongCat émet parfois son propre balisage au lieu du bloc demandé,
 # et il partait tel quel à l'écran — l'utilisateur recevait du XML. On le
@@ -202,8 +218,15 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "autant qu il faut, puis `terminer_document`. Ne produit aucun fichier",
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter"]),
     "ajouter_document": (
+        # LA TAILLE PAR APPEL MANQUAIT ICI. Le catalogue disait « autant de
+        # fois qu'il le faut » sans jamais dire COMBIEN par fois : le modele a
+        # verse dix pages d'un coup et sa sortie a ete coupee a 3072 jetons, en
+        # plein JSON. Le plafond n'est pas negociable, la consigne doit donc
+        # etre a l'interieur.
         "VERSE du contenu dans un document ouvert. Meme vocabulaire de blocs que "
-        "`produire_document`. A appeler autant de fois qu'il le faut",
+        "`produire_document`. MAXIMUM 12 blocs rediges par appel : au-dela ta "
+        "sortie est COUPEE en plein milieu et l'appel est perdu. Rappelle-la "
+        "autant de fois qu'il le faut, le contenu s'accumule",
         ["document_id", "elements"], []),
     "terminer_document": (
         "FERME le document et rend le lien. Tant qu'il n'est pas appele, "
@@ -443,6 +466,25 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
     """
     trouve = BLOC_ACTION_RE.search(texte or "")
     if not trouve:
+        # UNE SORTIE COUPÉE SE DIT, elle ne se devine pas. Un bloc ouvert et
+        # jamais refermé signifie que le modèle a heurté son plafond de sortie
+        # en plein JSON. Le renvoyer comme une simple « absence d'action »
+        # terminait le tour en silence, en laissant au passage des milliers de
+        # caractères de JSON s'afficher. On le nomme, et on dit quoi faire :
+        # découper. C'est la seule correction qui puisse aboutir — réécrire le
+        # même volume heurterait le même plafond.
+        coupe = BLOC_ACTION_TRONQUE_RE.search(texte or "")
+        if coupe:
+            reste = (texte[:coupe.start()] or "").strip()
+            logger.info("Bloc action tronqué (plafond de sortie atteint) : %d caractères",
+                        len(coupe.group(0)))
+            return None, reste, (
+                "ton bloc action a été COUPÉ avant la fin : il dépasse ce que "
+                "tu peux écrire en une seule réponse. Recommence en versant "
+                "MOINS de contenu d'un coup — 10 à 15 blocs par appel — puis "
+                "rappelle la même action autant de fois qu'il le faut. Le "
+                "contenu déjà versé lors des appels précédents est conservé, "
+                "ne le réécris pas.")
         # Pas de bloc balisé : le modèle a-t-il utilisé sa syntaxe native ?
         return _action_native(texte or "", role)
 

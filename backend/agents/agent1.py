@@ -62,6 +62,11 @@ MAX_VERSEMENTS_PAR_TOUR = 40
 # demandé, ont droit à un plafond large ; les autres gardent le plafond serré,
 # un résultat d'action ordinaire n'ayant rien à faire au-delà.
 # (Le nom varie selon le projet — drive_ ou nas_ — la règle est la même.)
+# Corrections d'un bloc d'action mal formé ou COUPÉ, par tour. Deux essais :
+# une sortie tronquée par le plafond se répète volontiers une fois avant que le
+# modèle réduise vraiment le volume. Au-delà, on n'insiste pas.
+MAX_REPARATIONS_PAR_TOUR = 2
+
 RESULTATS_GENEREUX = {"drive_arborescence", "nas_arborescence"}
 PLAFOND_RESULTAT = 4000
 PLAFOND_RESULTAT_GENEREUX = 12000
@@ -568,13 +573,23 @@ async def tools_node(state: AgentState, config=None) -> dict:
 
     if erreur:
         # Bloc mal formé : on renvoie l'erreur au modèle pour qu'il se corrige,
-        # mais UNE seule fois — sinon deux modèles têtus boucleraient à l'infini.
-        if state.get("tool_repair_used"):
-            return _sortir()
+        # mais un nombre BORNÉ de fois — sinon deux modèles têtus boucleraient
+        # à l'infini.
+        #
+        # DEUX PLUTÔT QU'UNE. Relevé en production le 14/08 : deux sorties
+        # coupées d'affilée sur le même tour (le modèle a réessayé aussi long).
+        # La première armait la reprise, la seconde terminait le tour — après
+        # dix minutes de rédaction, sans rien avoir versé. Corriger un volume
+        # demande parfois deux essais ; chacun coûte un appel, et le plafond
+        # reste franc.
+        reparations = int(state.get("tool_repair_used") or 0)
+        if reparations >= MAX_REPARATIONS_PAR_TOUR:
+            return _sortir("le modèle n'a pas réussi à produire une action "
+                           "exploitable, même après correction.")
         resultats.append({"skill": None, "ok": False,
                           "resultat_masque": f"ERREUR : {erreur}."})
         return {"tool_results": resultats, "tool_iterations": iteration,
-                "tool_repair_used": True}
+                "tool_repair_used": reparations + 1}
 
     if action is None:
         return _sortir()
@@ -753,14 +768,19 @@ async def rehydrate_node(state: AgentState) -> dict:
     from security.anonymizer import anonymizer
 
     from langchain_core.messages import AIMessage
-    from skills.protocol import BLOC_ACTION_RE, BLOC_NATIF_RE, BALISAGE_OUTIL_RE
+    from skills.protocol import (BLOC_ACTION_RE, BLOC_ACTION_TRONQUE_RE,
+                                 BLOC_NATIF_RE, BALISAGE_OUTIL_RE)
 
     text = state.get("llm_response", "") or ""
     # Filet : si une demande d'action survit jusqu'ici (sortie de boucle, limite
     # atteinte), elle ne doit pas s'afficher — c'est de la mécanique interne.
-    # Les trois passes couvrent le bloc demandé, la syntaxe native d'un modèle de
-    # la cascade, puis tout balisage résiduel quel qu'en soit l'émetteur.
+    # Les passes couvrent le bloc demandé, le bloc COUPÉ par le plafond de
+    # sortie, la syntaxe native d'un modèle de la cascade, puis tout balisage
+    # résiduel quel qu'en soit l'émetteur.
     text = BLOC_ACTION_RE.sub("", text)
+    # Un bloc ouvert et jamais refermé échappait aux trois filtres : relevé en
+    # production, 8 000 caractères de JSON affichés à l'utilisateur.
+    text = BLOC_ACTION_TRONQUE_RE.sub("", text)
     text = BLOC_NATIF_RE.sub("", text)
     text = BALISAGE_OUTIL_RE.sub("", text).strip()
     if not text:

@@ -540,11 +540,28 @@ SKILLS_NATIFS["ajouter_document"] = ajouter_document
 SKILLS_NATIFS["terminer_document"] = terminer_document
 
 
+def _ou_echouer(resultat: dict) -> dict:
+    """Un `{"ok": False}` est un ÉCHEC, pas un compte rendu.
+
+    L'exécuteur ne regarde pas DANS le dictionnaire : tout ce qui n'est pas une
+    exception est un succès. Une fonction qui rend son échec sous forme de
+    données ment donc à tout ce qui la lit ensuite — l'écran affiche « action
+    exécutée », et le modèle annonce une consigne enregistrée qui ne l'est pas.
+    Même panne que le dépôt sur le serveur, même correctif.
+    """
+    if isinstance(resultat, dict) and resultat.get("ok") is False:
+        from skills.executor import SkillError
+        raise SkillError(str(resultat.get("message")
+                             or "L'opération n'a pas abouti."))
+    return resultat
+
+
 async def retenir(data: dict, user) -> dict:
     from learning.consignes import ajouter
-    return await ajouter(data.get("consigne") or data.get("texte") or "", user,
-                         pour_tous=bool(data.get("pour_tous")),
-                         access_level=(data.get("acces") or "all"))
+    return _ou_echouer(await ajouter(
+        data.get("consigne") or data.get("texte") or "", user,
+        pour_tous=bool(data.get("pour_tous")),
+        access_level=(data.get("acces") or "all")))
 
 
 async def consignes_retenues(data: dict, user) -> dict:
@@ -557,7 +574,8 @@ async def consignes_retenues(data: dict, user) -> dict:
 
 async def oublier(data: dict, user) -> dict:
     from learning.consignes import retirer
-    return await retirer(data.get("consigne") or data.get("reference") or "", user)
+    return _ou_echouer(await retirer(
+        data.get("consigne") or data.get("reference") or "", user))
 
 
 SKILLS_NATIFS["retenir"] = retenir

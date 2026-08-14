@@ -164,8 +164,19 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     } catch { /* no-op */ }
   }
 
-  const pushAssistant = (content: string) =>
-    setMessages((prev) => [...prev, { id: newId(), role: "assistant", content }])
+  const pushAssistant = (content: string, vivant = false) =>
+    // `vivant` : la bulle N'EST PAS une fin de tour. Elle prend alors le
+    // traitement d'attente — contour pointillé animé — au lieu de l'aspect
+    // d'une réponse terminée.
+    //
+    // POURQUOI. « Une action attend votre accord » s'affichait exactement comme
+    // une réponse finie : rien ne bougeait, et la personne a cru que
+    // l'assistant s'était arrêté alors qu'il tenait le tour ouvert. Une bulle
+    // qui respire dit « je suis toujours là-dessus » sans un mot de plus.
+    setMessages((prev) => [...prev, {
+      id: newId(), role: "assistant", content,
+      ...(vivant ? { placeholder: true } : {}),
+    }])
 
   const majCarteLocale = (id: string, patch: Partial<TacheFond>) =>
     setTachesLocales((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
@@ -291,7 +302,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           setTacheActive(null)
           setLoading(false)
           setThinkingNode(null)
-          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.")
+          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.", true)
         }
       }
     } catch { /* un sondage rate n'affiche rien : le suivant corrigera */ }
@@ -651,7 +662,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       } else {
         setThinkingNode(null)
         setLoading(false)
-        pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.")
+        pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.", true)
       }
       // Le fil principal reste PRIS : c'est ce qui envoie les messages suivants
       // en file au lieu de les lancer sur un fil suspendu. On note quel accord
@@ -696,7 +707,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             : { etat: "terminee", reponse: res.response ?? "", activite: "terminée" })
           if (attend) rafraichirEtat()
         } else if (attend) {
-          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.")
+          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.", true)
           rafraichirEtat()
         } else {
           pushAssistant(res.response ?? "")

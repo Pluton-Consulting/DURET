@@ -315,6 +315,24 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
         contenu = f.read()
 
     depot = await deposer(dossier, final, contenu)
+    # UN DÉPÔT RATÉ DOIT ÊTRE UN ÉCHEC, pas un dictionnaire optimiste.
+    #
+    # `deposer()` ne lève pas : elle rend `{"depose": False, "message": ...}`
+    # quand le NAS refuse — dossier interdit, nom déjà pris, quota. On rendait
+    # malgré tout « Document finalisé ET déposé sur le serveur », et comme
+    # l'exécuteur ne voit qu'un dictionnaire, il concluait au succès. L'écran
+    # affichait « action exécutée après validation », le modèle annonçait le
+    # dépôt, et le fichier n'était nulle part.
+    #
+    # C'est exactement la panne déjà corrigée sur `ajouter_document` : une
+    # fonction qui rend un compte rendu de succès sur un échec ment à tout ce
+    # qui la lit ensuite, y compris à l'utilisateur.
+    if not depot.get("depose"):
+        raise RuntimeError(
+            f"Le dépôt sur le serveur a ÉCHOUÉ : "
+            f"{depot.get('message') or 'raison inconnue'}. Le document est bien "
+            f"produit et reste téléchargeable, mais il n'est PAS sur le serveur. "
+            f"Dis-le clairement.")
     return {"document_id": document_id, "titre": entete["titre"],
             "format": entete["format"], "octets": fiche["octets"],
             "elements": fiche["elements"], **depot,

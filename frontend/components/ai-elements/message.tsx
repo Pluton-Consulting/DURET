@@ -320,26 +320,102 @@ export const MessageBranchPage = ({
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
-// PAS DE MERMAID. Le greffon d'origine est importé statiquement, ce qui
-// entraîne les 82 Mo de la bibliothèque `mermaid` dans le paquet du chat —
-// chargés à chaque ouverture, sur un VPN, pour une syntaxe que l'assistant
-// n'émet jamais. Il rend en outre un langage de DESSIN fourni par le modèle,
-// là où toute notre chaîne de rendu ne manipule que des DONNÉES validées
-// (voir le registre de types de MessageRenderer). On garde donc les trois
-// greffons utiles : idéogrammes, coloration de code, formules.
 const streamdownPlugins = { cjk, code, math };
 
+// ── LES SCHÉMAS, SANS EN PAYER LE PRIX QUAND IL N'Y EN A PAS ──────────────
+//
+// Le greffon mermaid est ce qui transforme une description en diagramme :
+// enchaînement d'étapes, arborescence, organigramme. Importé normalement, il
+// entraîne les 82 Mo de sa bibliothèque dans le paquet du chat, chargés à
+// CHAQUE ouverture, sur un VPN, y compris par les conversations qui ne
+// montreront jamais un schéma.
+//
+// Il n'arrive donc qu'à la demande : la première réponse qui contient un bloc
+// `mermaid` déclenche son téléchargement, et le diagramme se dessine dès
+// qu'il est là. Une conversation sans schéma ne paie rien.
+//
+// DEUX PRÉCAUTIONS.
+//
+// `securityLevel: "strict"` : contrairement au reste de la chaîne, qui ne
+// manipule que des données validées par un registre de types, mermaid exécute
+// un langage de dessin écrit par le modèle. Le mode strict neutralise le HTML
+// et les scripts qu'un diagramme pourrait porter.
+//
+// Les couleurs sont lues dans la charte au moment du rendu, pas écrites ici :
+// un schéma sort vert chez un client et bleu chez l'autre, sans que ce
+// fichier change. C'est la même règle que partout ailleurs.
+let greffonDiagramme: object | null = null;
+
+const useGreffonDiagramme = (actif: boolean) => {
+  const [greffon, setGreffon] = useState<object | null>(greffonDiagramme);
+
+  useEffect(() => {
+    if (!actif || greffon) {
+      return;
+    }
+    let vivant = true;
+    import("@streamdown/mermaid")
+      .then(({ createMermaidPlugin }) => {
+        if (!vivant) {
+          return;
+        }
+        const charte = getComputedStyle(document.documentElement);
+        const lire = (nom: string, repli: string) =>
+          charte.getPropertyValue(nom).trim() || repli;
+        greffonDiagramme ??= createMermaidPlugin({
+          config: {
+            securityLevel: "strict",
+            theme: "base",
+            fontFamily: lire("--marque-font", "Inter, sans-serif"),
+            themeVariables: {
+              primaryColor: lire("--marque-primary-subtle", "#EDF4EC"),
+              primaryTextColor: lire("--marque-text-primary", "#111A10"),
+              primaryBorderColor: lire("--marque-primary", "#182B16"),
+              secondaryColor: lire("--marque-primary-light", "#C8E6C0"),
+              tertiaryColor: lire("--marque-surface", "#FFFFFF"),
+              lineColor: lire("--marque-primary-mid", "#3F7A36"),
+              textColor: lire("--marque-text-body", "#3D4D3C"),
+              mainBkg: lire("--marque-primary-subtle", "#EDF4EC"),
+              nodeBorder: lire("--marque-primary", "#182B16"),
+              background: lire("--marque-surface", "#FFFFFF"),
+            },
+          },
+        });
+        setGreffon(greffonDiagramme);
+      })
+      // Un schéma qui ne se charge pas laisse son texte source visible :
+      // c'est moins bien qu'un dessin, mais l'information reste lisible.
+      .catch(() => undefined);
+    return () => {
+      vivant = false;
+    };
+  }, [actif, greffon]);
+
+  return greffon;
+};
+
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        className
-      )}
-      plugins={streamdownPlugins}
-      {...props}
-    />
-  ),
+  ({ className, ...props }: MessageResponseProps) => {
+    // On ne va chercher le moteur de diagrammes que si CETTE réponse en
+    // contient un. Le test porte sur la source markdown, avant tout rendu.
+    const source = typeof props.children === "string" ? props.children : "";
+    const greffon = useGreffonDiagramme(source.includes("```mermaid"));
+    const plugins = useMemo(
+      () => (greffon ? { ...streamdownPlugins, mermaid: greffon } : streamdownPlugins),
+      [greffon]
+    );
+
+    return (
+      <Streamdown
+        className={cn(
+          "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          className
+        )}
+        plugins={plugins}
+        {...props}
+      />
+    );
+  },
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children &&
     nextProps.isAnimating === prevProps.isAnimating

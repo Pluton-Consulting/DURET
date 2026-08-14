@@ -438,11 +438,27 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"keyvalue","rows":[["Clé","Valeur"]]}
 - {"type":"list","items":["...","..."]}
 - {"type":"callout","tone":"info|success|warning|error","title":"...","text":"..."}
-- {"type":"bars","data":[{"label":"...","value":10}]}
-- {"type":"progress","items":[{"label":"...","pct":72}]}
+- {"type":"bars","data":[{"label":"...","value":10}]} barres verticales, pour COMPARER quelques valeurs.
+- {"type":"hbars","data":[{"label":"...","value":10}],"unit":"€"} barres horizontales : le meme classement quand les libelles sont longs (noms de fournisseurs, de chantiers). `unit` s'affiche apres chaque valeur.
+- {"type":"donut","segments":[{"label":"...","value":45}]} anneau, pour une REPARTITION dont le total fait un tout (postes d'un budget, part de chaque corps d'etat). N'indique JAMAIS de couleur : elles viennent de la charte du client.
+- {"type":"line","values":[12,19,15,27]} courbe, pour une EVOLUTION dans le temps. Les valeurs sont dans l'ordre chronologique.
+- {"type":"gauge","value":68,"label":"..."} jauge de 0 a 100, pour un TAUX unique (marge, avancement, taux de remplissage).
+- {"type":"progress","items":[{"label":"...","pct":72}]} plusieurs avancements compares, en pourcentage.
+- {"type":"status_table","columns":["...","...","Statut"],"rows":[{"cells":["...","..."],"status":"ok|wait|late"}]} tableau dont la derniere colonne est une PASTILLE d'etat. `cells` ne contient PAS le statut, il est rendu a partir de `status`. Prefere-le au tableau simple des qu'une ligne a un etat (livree, en attente, en retard).
 - {"type":"stat","label":"...","value":"...","hint":"..."}
 - {"type":"badge","tone":"primary|success|warning|error|neutral","text":"..."}
 - {"type":"quick_replies","options":["Proposition 1","Proposition 2"]}
+
+SCHEMAS. Pour un enchainement d'etapes, une arborescence, un organigramme ou un circuit de validation, ecris un bloc ```mermaid (PAS ```ui, ce n'est pas un composant : c'est un dessin). Le schema se dessine aux couleurs du client, tu n'as donc aucune couleur ni aucun style a indiquer, seulement la structure. Exemple :
+```mermaid
+flowchart LR
+  A[Demande recue] --> B{Devis existant ?}
+  B -- oui --> C[Mise a jour]
+  B -- non --> D[Redaction]
+  C --> E[Validation]
+  D --> E
+```
+Reserve-le a ce qu'un dessin explique mieux qu'une phrase. Une simple liste d'etapes se rend avec `list`, une repartition avec `donut` : un schema pour trois puces est plus lourd a lire que les puces.
 Exemple, pour présenter des mails : une carte PAR message.
 Voici les messages trouvés :
 ```ui

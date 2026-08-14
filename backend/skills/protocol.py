@@ -196,9 +196,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         # soit plusieurs dizaines de pages, en UN appel. Le modele suivait donc
         # la consigne, versait section par section, et se faisait couper par le
         # budget d'actions : deux regles qui se contredisaient.
-        "OUVRE un document a remplir en PLUSIEURS fois. RESERVE aux documents "
-        "qui depassent 400 blocs (plusieurs dizaines de pages) : en dessous, "
-        "`produire_document` fait tout en UN appel. Ne produit aucun fichier",
+        "OUVRE un document a remplir en PLUSIEURS fois. OBLIGATOIRE des que le "
+        "contenu depasse ce qui tient dans UNE reponse (environ 30 blocs de "
+        "texte redige) : au-dela, verse par `ajouter_document` successifs, "
+        "autant qu il faut, puis `terminer_document`. Ne produit aucun fichier",
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter"]),
     "ajouter_document": (
         "VERSE du contenu dans un document ouvert. Meme vocabulaire de blocs que "

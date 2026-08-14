@@ -517,6 +517,38 @@ async def lire_lot(motif: str, dossier: Optional[str] = None,
                         if len(fichiers) > limite else "."))}
 
 
+def _nom_avec_extension(nom: Optional[str], entete: dict) -> str:
+    """Le nom du fichier déposé PORTE toujours son vrai format.
+
+    RELEVÉ EN PRODUCTION : « appelle-le test 2 » → le modèle a transmis
+    `nom="test 2"`, et le code l'utilisait tel quel. Le fichier est arrivé sur
+    le serveur sans extension : un .docx parfaitement valide (ZIP correct,
+    word/document.xml présent, 3 160 mots) que Windows ne savait pas ouvrir.
+    Toute la chaîne avait fonctionné, et le résultat était inutilisable pour
+    une raison qui n'a rien à voir avec son contenu.
+
+    La même trace montre le modèle écrire tantôt « test 2 », tantôt
+    « test 2.docx » : l'extension ne peut pas dépendre de son humeur. C'est au
+    code de la garantir, puisque lui seul sait dans quel format le fichier a
+    réellement été rendu.
+
+    Une extension MENTEUSE est corrigée, pas conservée : un fichier nommé
+    « rapport.pdf » qui contient un .docx ne s'ouvrira pas davantage. Un point
+    qui ne désigne aucun format connu (« note.v2 ») n'est pas touché — ce n'est
+    pas une extension, c'est une partie du nom.
+    """
+    from bureautique.modele import FORMATS
+
+    fmt = (entete.get("format") or "docx").lower()
+    final = (nom or "").strip() or f"{entete.get('titre') or 'document'}.{fmt}"
+    racine, point, ext = final.rpartition(".")
+    if point and ext.lower() == fmt:
+        return final                      # déjà correcte
+    if point and racine and ext.lower() in FORMATS:
+        return f"{racine}.{fmt}"          # extension fausse : rectifiée
+    return f"{final}.{fmt}"               # absente : ajoutée
+
+
 async def deposer_document(document_id: str, dossier: str, proprietaire: str,
                            nom: Optional[str] = None) -> dict:
     """Finalise un document en cours et le dépose sur le serveur, en un geste.
@@ -552,7 +584,7 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
                                 "introuvable. Recommence-le.")
 
     entete = fiche["entete"]
-    final = nom or f"{entete['titre']}.{entete['format']}"
+    final = _nom_avec_extension(nom, entete)
     with open(chemin, "rb") as f:
         contenu = f.read()
 

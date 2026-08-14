@@ -74,18 +74,34 @@ async def creer_document(data: dict, user) -> dict:
     # d'abord, ouvrir ensuite.
     for d in ouverts(proprio):
         if _meme_titre(d.get("titre"), entete["titre"]):
+            # CETTE NOTE NE DOIT JAMAIS PROPOSER DE DÉTRUIRE.
+            #
+            # Elle se terminait par « Pour repartir de zéro :
+            # `abandonner_document` d'abord ». Relevé en production le 14/08 :
+            # la demande disait « crée un NOUVEAU fichier docx », le modèle a
+            # lu « un document existe déjà, on me dit comment repartir de
+            # zéro », et il a jeté 22 blocs de rédaction — puis recommencé,
+            # deux fois, huit minutes durant.
+            #
+            # Le document rendu ici EST le fichier demandé : il vient d'être
+            # ouvert pour cette demande, ou il l'a été juste avant dans le même
+            # tour. Le dire comme une RÉUSSITE ferme la porte à l'interprétation
+            # qui détruit. L'abandon reste possible — il faut simplement que
+            # l'utilisateur le demande, pas qu'on le suggère.
+            nb = d.get("elements", 0)
             return {
                 "document_id": d["document_id"],
                 "format": d.get("format"),
                 "titre": d.get("titre"),
                 "deja_ouvert": True,
-                "elements": d.get("elements", 0),
-                "note": (f"Un document de ce titre est DÉJÀ ouvert, avec "
-                         f"{d.get('elements', 0)} élément(s). AUCUN nouveau "
-                         "document n'a été créé : continue CELUI-CI avec "
-                         "`ajouter_document` (sans réécrire le début), puis "
-                         "`terminer_document`. Pour repartir de zéro : "
-                         "`abandonner_document` d'abord."),
+                "elements": nb,
+                "note": (f"C'est BIEN le document demandé : il est déjà ouvert "
+                         f"sous ce titre et contient {nb} élément(s) — il n'y "
+                         "avait donc rien à créer, et c'est normal. Poursuis-le "
+                         "avec `ajouter_document` en repartant de la SUITE (ne "
+                         "réécris pas ce qui est déjà versé), puis termine-le. "
+                         "Ne le jette pas et n'en ouvre pas un autre : ce "
+                         "serait perdre le contenu déjà écrit."),
             }
 
     jeton = ouvrir(entete, proprio)
@@ -109,16 +125,38 @@ async def abandonner_document(data: dict, user) -> dict:
     répondre : l'atelier savait abandonner, mais rien ne l'exposait au modèle,
     qui répondait « la suppression n'est pas disponible » pendant que les
     fantômes s'accumulaient jusqu'au quota.
-    """
-    from bureautique.atelier import abandonner
 
+    UN DOCUMENT REMPLI NE SE JETTE PAS SUR UN MALENTENDU. Le geste a servi, dès
+    sa mise en service, à détruire 22 blocs de rédaction en cours parce que la
+    demande contenait le mot « nouveau ». Vider une corbeille est réversible ;
+    ceci ne l'est pas — le contenu n'existe nulle part ailleurs. Un document
+    VIDE part sans cérémonie (c'est le cas d'usage réel : faire le ménage) ;
+    dès qu'il porte du travail, il faut le demander explicitement.
+    """
+    from bureautique.atelier import abandonner, fiche
+
+    proprio = _proprietaire(user)
     jeton = (data.get("document_id") or "").strip()
     if not jeton:
         _echec("Donne le `document_id` du document à abandonner.")
-    if not abandonner(jeton, _proprietaire(user)):
+
+    f = fiche(jeton, proprio)
+    if f is None:
         _echec("Document inconnu, expiré, ou ouvert par quelqu'un d'autre. "
                "Reprends un `document_id` de la liste des documents ouverts.")
-    return {"abandonne": True, "document_id": jeton,
+    nb = int(f.get("elements") or 0)
+    if nb and not data.get("confirme"):
+        _echec(
+            f"REFUSÉ : ce document contient {nb} élément(s) de contenu déjà "
+            "écrit, qui seraient définitivement perdus. Si tu voulais "
+            "simplement continuer le travail, appelle `ajouter_document` avec "
+            "ce `document_id`. Si la personne a EXPRESSÉMENT demandé de le "
+            "jeter, rappelle l'action avec `confirme` à true.")
+
+    if not abandonner(jeton, proprio):
+        _echec("Document inconnu, expiré, ou ouvert par quelqu'un d'autre. "
+               "Reprends un `document_id` de la liste des documents ouverts.")
+    return {"abandonne": True, "document_id": jeton, "elements_perdus": nb,
             "note": "Document jeté : son contenu est perdu, aucun fichier ne sera produit."}
 
 

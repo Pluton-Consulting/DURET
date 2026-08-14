@@ -383,11 +383,14 @@ async def llm_node(state: AgentState, config=None) -> dict:
             etat_docs += (
                 "- OUVERTS, non terminés (aucun fichier n'existe encore) :\n"
                 + _json_docs.dumps(en_cours, ensure_ascii=False)
-                + "\n  Pour continuer : `ajouter_document` puis "
-                  "`terminer_document` avec CE `document_id`, recopié caractère "
-                  "pour caractère, SANS réécrire le début (le compte d'éléments "
-                  "fait foi). N'en rouvre pas un du même titre. Pour en jeter "
-                  "un : `abandonner_document`.\n")
+                + "\n  Ce sont TES documents pour les demandes en cours : "
+                  "continue-les avec `ajouter_document` puis "
+                  "`terminer_document`, en recopiant CE `document_id` caractère "
+                  "pour caractère et SANS réécrire ce qui est déjà versé (le "
+                  "compte d'éléments fait foi). N'en rouvre pas un du même "
+                  "titre. Ne les jette JAMAIS de ta propre initiative, même si "
+                  "la demande dit « nouveau » : un document déjà ouvert sous ce "
+                  "titre EST le document demandé.\n")
         if finis:
             etat_docs += (
                 "- TERMINÉS, fichier PRÊT et téléchargeable — mais PAS déposé "
@@ -718,17 +721,22 @@ async def tools_node(state: AgentState, config=None) -> dict:
         except (AttributeError, TypeError, ValueError):
             a_verse = False
 
-    # LES JALONS QUI FERMENT NE CONSOMMENT PAS LE BUDGET NON PLUS. Relevé en
-    # production : « créer un docx de 10 pages » s'est terminé sur « le nombre
-    # d'actions autorisées est atteint » — le budget de 8 se faisait manger par
-    # la fermeture et le ménage, en plus des recherches. Un `terminer_document`
-    # ou un `abandonner_document` qui RÉUSSIT ne peut pas boucler : chacun
-    # consomme un document ouvert (bornés à 5 par personne), et une répétition
-    # à l'identique tombe sur la déduplication. `creer_document`, lui, RESTE
-    # compté : ouvert à volonté avec des titres différents, il est exactement
-    # le geste que le budget doit borner (cf. S11 : le forceur qui rouvre un
+    # LE JALON QUI FERME NE CONSOMME PAS LE BUDGET. Relevé en production :
+    # « créer un docx de 10 pages » s'est terminé sur « le nombre d'actions
+    # autorisées est atteint » — le budget de 8 se faisait manger par la
+    # fermeture, en plus des recherches. Un `terminer_document` qui RÉUSSIT ne
+    # peut pas boucler : il ferme le document, et le rouvrir passe par
+    # `creer_document`, qui reste compté (cf. S11 : le forceur qui rouvre un
     # document à chaque passe).
-    jalon = ok and action["skill"] in ("terminer_document", "abandonner_document")
+    #
+    # `abandonner_document` A ÉTÉ RETIRÉ DE CETTE EXEMPTION. Je l'y avais mis
+    # en raisonnant « il consomme un document ouvert, donc il ne peut pas
+    # boucler » — c'était faux, et la production l'a montré le jour même :
+    # abandonner LIBÈRE une place, créer la reprend, et le cycle
+    # abandon → création → remplissage → abandon tourne sans jamais croiser de
+    # plafond. Huit minutes, deux fois le travail détruit. Un geste qui DÉFAIT
+    # n'est jamais un geste qui avance.
+    jalon = ok and action["skill"] == "terminer_document"
 
     avance = a_verse or jalon
     maj = {"tool_results": resultats,

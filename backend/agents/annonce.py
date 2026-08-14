@@ -133,6 +133,27 @@ CLOTURES = {
     "ajouter_document": "terminer_document",
 }
 
+# UNE CLÔTURE PEUT ÊTRE SATISFAITE AUTREMENT QUE PAR L'ACTION QU'ON NOMME.
+#
+# `nas_deposer_document` finalise ET dépose en UN geste : c'est exactement
+# l'outil de « crée un docx dans /Drive ». Il ne figurait nulle part ici, avec
+# deux conséquences mesurées :
+#
+#   1. pendant tout le remplissage, le rappel de clôture répétait « il reste
+#      `terminer_document` à exécuter » — le modèle était donc poussé vers la
+#      fermeture SEULE, et une fois fermée, plus rien n'attendait : le tour se
+#      concluait, document jamais déposé. « Il crée, parfois il remplit, mais
+#      jamais il ne dépose », mot pour mot ;
+#   2. quand le modèle utilisait quand même le geste composé, la clôture
+#      restait insatisfaite — on lui réclamait une fermeture déjà faite.
+#
+# Le dépôt reste une action à effet EXTERNE : il suspend le tour pour la
+# validation humaine. Ce n'est pas un contournement de ce garde-fou, c'est la
+# reconnaissance qu'il ferme le document au passage.
+SATISFAIT_PAR = {
+    "terminer_document": {"terminer_document", "nas_deposer_document"},
+}
+
 
 def est_une_annonce(texte: str) -> bool:
     """Le texte promet-il une action au lieu de la faire ?
@@ -171,6 +192,6 @@ def cloture_attendue(resultats) -> str | None:
         skill = r.get("skill") or ""
         if skill in CLOTURES:
             attendue = CLOTURES[skill]
-        elif skill == attendue:
+        elif attendue and skill in SATISFAIT_PAR.get(attendue, {attendue}):
             attendue = None
     return attendue

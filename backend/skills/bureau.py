@@ -198,5 +198,11 @@ async def terminer_document(data: dict, user) -> dict:
                  "pages_estimees) et `extrait` (recopie l'extrait fourni TEL "
                  "QUEL), puis un `fichier` portant `url`, `nom`, `format` et "
                  "`octets` pour le téléchargement. Le lien vaut 24 h et n'est "
-                 "utilisable que par la personne."),
+                 "utilisable que par la personne. "
+                 # CE FICHIER N'EST PAS SUR LE SERVEUR, et c'est le moment de
+                 # le dire : la fermeture était vécue comme la fin du travail,
+                 # donc un document demandé « dans /Drive » s'arrêtait ici.
+                 "ATTENTION : ce fichier n'est PAS sur le serveur de "
+                 "l'entreprise. Si un dépôt a été demandé, il reste à appeler "
+                 "`nas_deposer_document` avec ce `document_id` et le dossier."),
     }

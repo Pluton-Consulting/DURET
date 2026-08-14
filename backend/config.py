@@ -70,6 +70,24 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     model_anthropic_vision: str = "claude-sonnet-4-6"
 
+    # UN MODÈLE MIS EN TÊTE, POUR ESSAYER, SANS TOUCHER AU CODE.
+    #
+    # Comparer deux modèles sur des tours réels est le seul moyen de trancher :
+    # une cascade se juge en production, pas sur une fiche technique. Ce
+    # réglage préfixe la cascade du palier visé ; le reste demeure derrière,
+    # donc un essai raté retombe sur le comportement habituel au lieu de
+    # casser l'application.
+    #
+    # Forme : "<fournisseur>:<modèle>", plusieurs séparés par une virgule,
+    # éventuellement préfixés du palier.
+    #   LLM_TETE=openrouter:deepseek/deepseek-v4-pro
+    #   LLM_TETE=standard=openrouter:deepseek/deepseek-v4-pro
+    #   LLM_TETE=standard=openrouter:deepseek/deepseek-v4-pro,complex=deepseek:deepseek-v4-pro
+    # Sans palier nommé, la tête s'applique à STANDARD et COMPLEX (les deux
+    # paliers qui rédigent) ; LIGHT garde ses modèles rapides, qui ne servent
+    # qu'à orienter et dont la qualité de rédaction n'entre pas en jeu.
+    llm_tete: str = ""
+
     # Vision (Agent 2) : ordre de préférence anthropic > groq. Désactivable.
     vision_enabled: bool = True
 

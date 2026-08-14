@@ -342,9 +342,18 @@ async def llm_node(state: AgentState, config=None) -> dict:
         # conclure.
         manque = cloture_attendue(resultats_outils)
         if manque:
+            # LE CHEMIN QUI DÉPOSE SE DIT ICI. Ne nommer que `terminer_document`
+            # poussait vers la fermeture seule : une fois fermée, plus rien
+            # n'attendait, et le document demandé « dans /Drive » restait sur
+            # le disque de l'assistant. Les deux sorties sont annoncées, avec
+            # celle qui répond à une demande de dépôt en premier.
             bloc_resultats += (
                 f"ATTENTION : le travail n'est PAS terminé. Il reste au minimum "
                 f"`{manque}` à exécuter, et le contenu demandé à verser avant. "
+                "Si un DÉPÔT sur le serveur a été demandé (« dans /Drive », "
+                "« sur le NAS »), la bonne action de clôture est "
+                "`nas_deposer_document` : elle finalise ET dépose en un geste, "
+                "et remplace `terminer_document`. "
                 "N'écris pas ta réponse finale maintenant : émets l'action suivante.\n\n")
 
     # UN DOCUMENT RESTÉ OUVERT D'UN TOUR PRÉCÉDENT SE DIT AUSSI.

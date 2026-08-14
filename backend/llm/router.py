@@ -91,6 +91,53 @@ def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096):
     raise ValueError(f"Fournisseur LLM inconnu : {provider}")
 
 
+def _tete(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
+    """Les candidats mis EN TÊTE par `LLM_TETE`, pour ce palier.
+
+    Sert à essayer un modèle sur des tours réels sans toucher au code : la
+    cascade habituelle reste derrière, donc un essai qui échoue retombe sur le
+    comportement connu au lieu de casser l'application.
+
+    Un réglage mal écrit est IGNORÉ, pas fatal : une variable d'environnement
+    approximative ne doit pas empêcher l'assistant de répondre. Elle est
+    journalisée pour que la faute de frappe se voie.
+    """
+    brut = (getattr(settings, "llm_tete", "") or "").strip()
+    if not brut:
+        return []
+    sortie: list[tuple[str, Optional[str]]] = []
+    for morceau in brut.split(","):
+        morceau = morceau.strip()
+        if not morceau:
+            continue
+        vise = None
+        if "=" in morceau:
+            palier, _, morceau = morceau.partition("=")
+            vise = palier.strip().lower()
+            morceau = morceau.strip()
+        # Sans palier nommé : les deux paliers qui RÉDIGENT. LIGHT ne sert qu'à
+        # orienter en un mot, y mettre un gros modèle serait payer pour rien.
+        if vise is None:
+            if tier not in (LLMTier.STANDARD, LLMTier.COMPLEX):
+                continue
+        elif vise != tier.value:
+            continue
+        fournisseur, _, modele = morceau.partition(":")
+        fournisseur, modele = fournisseur.strip().lower(), modele.strip()
+        if not fournisseur or not modele:
+            logger.warning("LLM_TETE ignoré (forme attendue « fournisseur:modele ») : %r",
+                           morceau)
+            continue
+        if fournisseur not in _OPENAI_COMPAT and fournisseur not in ("groq", "anthropic"):
+            logger.warning("LLM_TETE ignoré (fournisseur inconnu) : %r", fournisseur)
+            continue
+        sortie.append((fournisseur, modele))
+    if sortie:
+        logger.info("LLM_TETE actif sur %s : %s", tier.value,
+                    ", ".join(f"{p}:{m}" for p, m in sortie))
+    return sortie
+
+
 def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     """Cascade de candidats (fournisseur, modèle) pour un palier, filtrée selon les clés dispo."""
     s = settings
@@ -145,8 +192,16 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
             ("openrouter", s.model_or_free_b),
             ("ollama", None),
         ]
+    chain = _tete(tier) + chain
     filtered = [(p, m) for (p, m) in chain if _provider_available(p)]
-    return filtered if settings.llm_fallback_enabled else filtered[:1]
+    # Un même couple peut arriver deux fois quand la tête reprend un candidat
+    # déjà présent : le doublon ferait retenter le modèle qu'on vient d'écarter.
+    vus, uniques = set(), []
+    for c in filtered:
+        if c not in vus:
+            vus.add(c)
+            uniques.append(c)
+    return uniques if settings.llm_fallback_enabled else uniques[:1]
 
 
 # Erreurs pour lesquelles il est inutile de retenter le MÊME modèle → passer au suivant.

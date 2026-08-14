@@ -50,7 +50,7 @@ export interface AccordEnAttente {
 const ACTIONS_EXTERNES: Record<string, string> = {
   nas_deposer: "Déposer un fichier sur le serveur de l'entreprise",
   nas_deposer_document: "Finaliser un document et le déposer sur le serveur",
-  generer_visuel: "Générer un visuel — cette génération est facturée",
+  generer_visuel: "Générer un visuel (cette génération est facturée)",
   rediger_email: "Envoyer un message",
   redaction_email: "Envoyer un message",
 }
@@ -229,13 +229,13 @@ export default function FileAttente({ taches, accords, accordEnCours, erreurAcco
               // REFUSEE porte « refusée — rien n'a été fait ». Annoncer
               // « Terminée » dans ce cas ferait passer un refus pour un succes.
               <div className="sym-carte-etat ok">
-                {(t.activite && t.activite !== "terminée" ? `${t.activite} — ` : "")
+                {(t.activite && t.activite !== "terminée" ? `${t.activite}, ` : "")
                  + "cliquez pour afficher le résultat"}
               </div>
             )}
             {(t.etat === "echec" || t.etat === "interrompue") && (
               <div className="sym-carte-etat ko">
-                {ETAT_LIBELLE[t.etat]}{t.erreur ? ` — ${t.erreur}` : ""}
+                {ETAT_LIBELLE[t.etat]}{t.erreur ? ` : ${t.erreur}` : ""}
               </div>
             )}
           </div>

@@ -150,7 +150,7 @@ async def consigne_style(mailbox: str) -> str:
     if not profil and not exemples:
         return ""
 
-    morceaux = ["STYLE DE L'EXPÉDITEUR — reproduis-le fidèlement."]
+    morceaux = ["STYLE DE L'EXPÉDITEUR : reproduis-le fidèlement."]
     if profil:
         morceaux.append(profil)
     if exemples:

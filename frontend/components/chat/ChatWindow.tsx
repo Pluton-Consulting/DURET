@@ -286,7 +286,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             poserReponse(active.id, d.response || "La tâche s'est terminée sans réponse.")
             await apiRequest(`/api/file/taches/${active.id}/vu`, { method: "POST", token })
           } catch {
-            if (monteRef.current) pushAssistant("La tâche est terminée — sa carte reste dans la colonne de droite.")
+            if (monteRef.current) pushAssistant("La tâche est terminée. Sa carte reste dans la colonne de droite.")
           }
         } else if (active.status === "echec" || active.status === "interrompue") {
           setTacheActive(null)
@@ -303,7 +303,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           setTacheActive(null)
           setLoading(false)
           setThinkingNode(null)
-          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.", true)
+          pushAssistant("⏳ Une action attend votre accord : voir « En arrière-plan », à droite.", true)
         }
       }
     } catch { /* un sondage rate n'affiche rien : le suivant corrigera */ }
@@ -360,7 +360,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       const liee = tachesFile.find((t) => t.validationId === id)
         || tachesLocales.find((t) => t.validationId === id)
       const texte = res.response
-        || (accorde ? "Action approuvée." : "Action refusée — rien n'a été fait.")
+        || (accorde ? "Action approuvée." : "Action refusée : rien n'a été fait.")
       if (liee) poserReponse(liee.id, texte)
       else pushAssistant(texte)
       if (liee && liee.source === "file") {
@@ -432,7 +432,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       await apiRequest(`/api/file/taches/${t.id}/vu`, { method: "POST", token })
       await rafraichirEtat()
     } catch {
-      pushAssistant("Le résultat n'a pas pu être relu — réessayez depuis la carte.")
+      pushAssistant("Le résultat n'a pas pu être relu. Réessayez depuis la carte.")
     }
   }
 
@@ -442,7 +442,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     // plus a cet endroit.
     poserReponse(t.id, t.etat === "echec" || t.etat === "interrompue"
       ? `La tâche n'a pas abouti${t.erreur ? ` : ${t.erreur}` : "."}`
-      : "Résultat mis de côté — la tâche reste consultable dans l'historique.")
+      : "Résultat mis de côté. La tâche reste consultable dans l'historique.")
     if (t.source === "ws") {
       setTachesLocales((prev) => prev.filter((x) => x.id !== t.id))
       return
@@ -698,7 +698,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       } else {
         setThinkingNode(null)
         setLoading(false)
-        pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.", true)
+        pushAssistant("⏳ Une action attend votre accord : voir « En arrière-plan », à droite.", true)
       }
       // Le fil principal reste PRIS : c'est ce qui envoie les messages suivants
       // en file au lieu de les lancer sur un fil suspendu. On note quel accord
@@ -743,7 +743,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             : { etat: "terminee", reponse: res.response ?? "", activite: "terminée" })
           if (attend) rafraichirEtat()
         } else if (attend) {
-          pushAssistant("⏳ Une action attend votre accord — voir « En arrière-plan », à droite.", true)
+          pushAssistant("⏳ Une action attend votre accord : voir « En arrière-plan », à droite.", true)
           rafraichirEtat()
         } else {
           pushAssistant(res.response ?? "")
@@ -842,20 +842,39 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
                      apiUrl={process.env.NEXT_PUBLIC_API_URL || ""} backendToken={token} />
 
         <style>{`
-          @keyframes symOrb { 0%,100%{transform:scale(.8);opacity:.55} 50%{transform:scale(1.15);opacity:1} }
+          @keyframes symPoint { 0%,68%,100%{opacity:.22;transform:scale(.68)} 34%{opacity:1;transform:scale(1)} }
           @keyframes symStepIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
           .sym-think{display:flex;gap:12px;align-items:center;padding:10px 32px}
-          .sym-orb{width:12px;height:12px;border-radius:50%;flex-shrink:0;
-            background:radial-gradient(circle at 35% 35%, var(--marque-primary-mid), var(--marque-primary));
-            box-shadow:0 0 0 4px var(--marque-primary-subtle);animation:symOrb 1.3s ease-in-out infinite}
+          /* GRILLE 3x3, la forme d'attente de la bibliotheque d'icones.
+             Neuf points plutot qu'une icone figee : une icone ne peut pas
+             animer ses points un par un, or c'est la vague en diagonale qui
+             fait lire « ca travaille » plutot que « c'est decoratif ».
+             La couleur vient de la charte : verte ici, bleue chez l'autre
+             client, sans toucher a ce fichier. */
+          .sym-grille{display:grid;grid-template-columns:repeat(3,3.5px);gap:2.5px;
+            flex-shrink:0;align-content:center}
+          .sym-grille i{width:3.5px;height:3.5px;border-radius:1px;
+            background:var(--marque-primary-mid);
+            animation:symPoint 1.45s ease-in-out infinite}
+          /* Vague en diagonale : le retard croit avec la somme ligne + colonne. */
+          .sym-grille i:nth-child(1){animation-delay:0s}
+          .sym-grille i:nth-child(2),.sym-grille i:nth-child(4){animation-delay:.1s}
+          .sym-grille i:nth-child(3),.sym-grille i:nth-child(5),
+          .sym-grille i:nth-child(7){animation-delay:.2s}
+          .sym-grille i:nth-child(6),.sym-grille i:nth-child(8){animation-delay:.3s}
+          .sym-grille i:nth-child(9){animation-delay:.4s}
           .sym-step{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;
             color:var(--marque-text-primary);animation:symStepIn .35s ease}
-          @media (prefers-reduced-motion: reduce){ .sym-orb,.sym-step{animation:none} }
+          @media (prefers-reduced-motion: reduce){
+            .sym-grille i,.sym-step{animation:none}
+            .sym-grille i{opacity:.75;transform:none} }
         `}</style>
 
         {loading && (
           <div className="sym-think" role="status" aria-live="polite">
-            <span className="sym-orb" aria-hidden="true" />
+            <span className="sym-grille" aria-hidden="true">
+              <i /><i /><i /><i /><i /><i /><i /><i /><i />
+            </span>
             {/* La `key` remonte l'element a chaque changement d'etape et
                 rejoue l'apparition : sans elle, le texte se remplacerait sur
                 place, et rien ne signalerait que l'agent a avance. */}

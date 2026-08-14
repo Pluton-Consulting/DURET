@@ -70,7 +70,7 @@ def _detail(quoi: str, e: Exception) -> str:
     logger.warning("NAS — %s : %s (%s)", quoi, nom, e or "sans message", exc_info=True)
     cause = _CAUSES.get(nom)
     texte = str(e).strip()
-    return (f"{quoi} — {nom}"
+    return (f"{quoi} ({nom})"
             + (f" : {texte}" if texte else "")
             + (f". Probablement : {cause}." if cause else "."))
 

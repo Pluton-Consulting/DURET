@@ -31,7 +31,7 @@ async def get_current_user(
             if revoked:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session révoquée — reconnectez-vous",
+                    detail="Session révoquée : reconnectez-vous",
                 )
 
         row = await conn.fetchrow(

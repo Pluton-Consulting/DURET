@@ -168,7 +168,7 @@ async def lire_boite(boite: str, dossier: str = "recus",
             "Cette action est BORNÉE à 25 messages d'UNE boîte. Pour analyser "
             "l'ensemble du courrier de l'entreprise, la seule voie est "
             "`lancer_enrichissement`."),
-        "portee": (f"Les {len(messages)} derniers messages de {boite} ({cle}) — "
+        "portee": (f"Les {len(messages)} derniers messages de {boite} ({cle}) : "
                    "un échantillon récent, pas un inventaire de l'entreprise. "
                    "Une adresse dont expediteur_interne vaut false n'appartient "
                    "PAS à l'entreprise."),

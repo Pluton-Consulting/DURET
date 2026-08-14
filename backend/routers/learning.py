@@ -131,7 +131,7 @@ async def enregistrer(body: EnregistrerBody, current_user: User = Depends(get_cu
     entree = _ANALYSES.get(body.token)
     if not entree:
         raise HTTPException(status_code=http.HTTP_410_GONE,
-                            detail="Analyse expirée ou inconnue — relancez le débrief.")
+                            detail="Analyse expirée ou inconnue. Relancez le débrief.")
     if entree["user_id"] != str(current_user.id):
         raise HTTPException(status_code=http.HTTP_403_FORBIDDEN,
                             detail="Cette analyse ne vous appartient pas")

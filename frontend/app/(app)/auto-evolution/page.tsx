@@ -87,7 +87,7 @@ export default async function AutoEvolutionPage() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>{s.name}</div>
                   <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3 }}>
-                    {s.description || "—"} · v{s.version ?? 1} · par {s.created_by || "agent3"}
+                    {s.description || "Sans description"} · v{s.version ?? 1} · par {s.created_by || "agent3"}
                   </div>
                 </div>
                 {conf != null && (

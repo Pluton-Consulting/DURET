@@ -125,12 +125,12 @@ async def produire(titre: str, blocs: list, proprietaire: str,
         # Le début RÉEL du fichier, pour l'aperçu dans le chat.
         "extrait": fiche.get("extrait") or "",
         "note": (f"Le document est TERMINÉ : {pages or '?'} page(s) estimées, "
-                 f"{retenus} bloc(s). Il ne peut plus être rallongé — ce geste "
-                 "finalise. ANNONCE-LE MAINTENANT avec DEUX blocs ```ui : un "
-                 "`doc_apercu` portant `titre`, `format`, `pages` et `extrait` "
-                 "(recopie l'extrait fourni TEL QUEL), puis un `fichier` "
-                 "portant `url`, `nom`, `format` et `octets`. N'en produis pas "
-                 "un second : s'il est plus court que demandé, dis-le "
+                 f"{retenus} bloc(s). Il ne peut plus être rallongé : ce geste "
+                 "finalise. ANNONCE-LE MAINTENANT avec UN SEUL bloc ```ui : un "
+                 "`fichier` portant `url`, `nom`, `format` et `octets`. "
+                 "N'ajoute PAS de `doc_apercu` : la carte `fichier` affiche déjà "
+                 "le document lui-même sous le bouton. Ne produis pas un second "
+                 "DOCUMENT : s'il est plus court que demandé, dis-le "
                  "franchement plutôt que de recommencer. "
                  + (f"{ignores} bloc(s) écarté(s) : type inconnu ou vide."
                     if ignores else "")),

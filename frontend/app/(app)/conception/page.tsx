@@ -14,7 +14,7 @@ export default async function ConceptionPage() {
           Conception / Visuels
         </h1>
         <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--marque-text-muted)" }}>
-          Agent 2 — Vision multimodale, extraction de plans, pré-chiffrage automatique
+          Agent 2 : vision multimodale, extraction de plans, pré-chiffrage automatique
         </p>
       </div>
 
@@ -30,7 +30,7 @@ export default async function ConceptionPage() {
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
               {kpi.label}
             </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>—</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>n/d</div>
           </div>
         ))}
       </div>

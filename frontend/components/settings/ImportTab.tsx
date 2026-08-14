@@ -156,7 +156,7 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
             {enCours === "analyse" ? "Analyse du fichier…" : "Déposez un fichier ou cliquez pour le choisir"}
           </div>
           <div style={{ fontSize: 13, color: "var(--marque-text-muted)" }}>
-            Excel, CSV, Word, PDF, photo ou scan — l'IA reconnaît le contenu et vous propose un découpage avant tout enregistrement.
+            Excel, CSV, Word, PDF, photo ou scan : l'IA reconnaît le contenu et vous propose un découpage avant tout enregistrement.
             <br />Les documents scannés passent par une reconnaissance de caractères (comptez quelques secondes par page).
           </div>
         </div>
@@ -178,7 +178,7 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
               ? `${etat.traites} / ${etat.total} ligne${etat.total > 1 ? "s" : ""} traitée${etat.total > 1 ? "s" : ""}…`
               : `${etat.documents} document${etat.documents > 1 ? "s" : ""} enregistré${etat.documents > 1 ? "s" : ""}`}
             {!etat.en_cours && ` (${etat.chunks} extraits indexés)`}
-            {etat.echecs > 0 && <span style={{ color: "var(--marque-error-text)" }}> — {etat.echecs} en échec</span>}
+            {etat.echecs > 0 && <span style={{ color: "var(--marque-error-text)" }}> et {etat.echecs} en échec</span>}
             .
           </div>
           {etat.erreur && (
@@ -222,7 +222,7 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
               <label style={label}>Type de données</label>
               <select value={type} onChange={(e) => setType(e.target.value)} style={champ}>
                 {analyse.types_possibles.map((t) => (
-                  <option key={t.cle} value={t.cle}>{t.cle} — {t.libelle}</option>
+                  <option key={t.cle} value={t.cle}>{t.cle} : {t.libelle}</option>
                 ))}
               </select>
             </div>

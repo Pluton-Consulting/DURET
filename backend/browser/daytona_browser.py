@@ -67,7 +67,7 @@ class DaytonaBrowserClient:
         if not self.enabled:
             return False, "Browser agent désactivé (BROWSER_ENABLED=false)"
         if not self._available:
-            return False, "Daytona non configuré — DAYTONA_API_KEY requis pour le browser"
+            return False, "Daytona non configuré : DAYTONA_API_KEY requis pour le browser"
         return True, ""
 
     async def run_search(self, query: str, max_results: int = 3) -> BrowserResult:
@@ -143,7 +143,7 @@ class DaytonaBrowserClient:
             except json.JSONDecodeError as e:
                 return BrowserResult(
                     success=False, results=[],
-                    error=f"JSON parse error: {e} — output: {result.result[:100]}",
+                    error=f"JSON parse error: {e}. Output: {result.result[:100]}",
                     execution_time_ms=elapsed,
                 )
 

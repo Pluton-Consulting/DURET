@@ -114,7 +114,7 @@ export default function GestionPage() {
           Gestion
         </h1>
         <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--marque-text-muted)" }}>
-          Supervision — logs, coûts, prompts. ⚠ Certaines sections (prompts, cartographie) affichent encore des données de démonstration ; les métriques réelles sont dans l'onglet Développeur.
+          Supervision : logs, coûts, prompts. ⚠ Certaines sections (prompts, cartographie) affichent encore des données de démonstration ; les métriques réelles sont dans l'onglet Développeur.
         </p>
       </div>
 
@@ -129,7 +129,7 @@ export default function GestionPage() {
         ].map((kpi, i) => (
           <div key={i} className={`sym-in sym-in-${i + 1} sym-card`} style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card-sm, 14px)", padding: "16px 18px", boxShadow: "var(--marque-shadow-card)" }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{kpi.label}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>—</div>
+            <div style={{ fontSize: 26, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>n/d</div>
           </div>
         ))}
       </div>
@@ -173,7 +173,7 @@ export default function GestionPage() {
         <div className="sym-in sym-card" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", padding: 24, boxShadow: "var(--marque-shadow-card)" }}>
           <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>Coûts par utilisateur</h3>
           <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--marque-text-muted)" }}>
-            Agrégation par rôle disponible via <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "2px 6px", borderRadius: 4 }}>/api/dashboard/global</code> — détail par utilisateur non implémenté.
+            Agrégation par rôle disponible via <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "2px 6px", borderRadius: 4 }}>/api/dashboard/global</code>. Le détail par utilisateur n'est pas implémenté.
           </p>
           <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--marque-text-muted)", fontSize: 13, border: "1.5px dashed var(--marque-border)", borderRadius: 12 }}>
             Route <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "2px 6px", borderRadius: 4 }}>/api/costs/breakdown</code> non implémentée
@@ -199,7 +199,7 @@ export default function GestionPage() {
           {/* Architecture diagram */}
           <div className="sym-in sym-card" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", padding: 32, boxShadow: "var(--marque-shadow-card)" }}>
             <h3 style={{ margin: "0 0 24px", fontSize: 16, fontWeight: 700, color: "var(--marque-text-primary)" }}>
-              Architecture — Flux d'une requête Duret & Sols
+              Architecture : flux d'une requête Duret & Sols
             </h3>
             <div style={{ display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap", rowGap: 32 }}>
               {[
@@ -237,9 +237,9 @@ export default function GestionPage() {
 
               <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
                 {[
-                  { label: "Agent 1 — NER → RAG → LLM STANDARD", color: "var(--marque-progress-text)", bg: "var(--marque-progress-bg)", pipeline: "NER (TODO) → 250ms · RAG (TODO) → 200ms · Haiku → 2s" },
-                  { label: "Agent 2 — Vision → RAG → LLM COMPLEX", color: "var(--marque-primary)", bg: "var(--marque-primary-subtle)", pipeline: "Vision (TODO) → 500ms · RAG (TODO) → 300ms · Sonnet → 4s" },
-                  { label: "Agent 3 — Gap → Generate → Sandbox", color: "var(--marque-paid-text)", bg: "var(--marque-paid-bg)", pipeline: "Gap (TODO) → LLM → Daytona → 1s" },
+                  { label: "Agent 1 : NER → RAG → LLM STANDARD", color: "var(--marque-progress-text)", bg: "var(--marque-progress-bg)", pipeline: "NER (TODO) → 250ms · RAG (TODO) → 200ms · Haiku → 2s" },
+                  { label: "Agent 2 : Vision → RAG → LLM COMPLEX", color: "var(--marque-primary)", bg: "var(--marque-primary-subtle)", pipeline: "Vision (TODO) → 500ms · RAG (TODO) → 300ms · Sonnet → 4s" },
+                  { label: "Agent 3 : Gap → Generate → Sandbox", color: "var(--marque-paid-text)", bg: "var(--marque-paid-bg)", pipeline: "Gap (TODO) → LLM → Daytona → 1s" },
                 ].map((a, i) => (
                   <div key={i} className={`sym-in sym-in-${i + 1} sym-card`} style={{ background: a.bg, border: "2px solid var(--marque-border)", borderRadius: 12, padding: 16 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: a.color, marginBottom: 6 }}>{a.label}</div>
@@ -264,7 +264,7 @@ export default function GestionPage() {
               Drill-down par requête
             </h3>
             <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--marque-text-muted)", fontSize: 13, border: "1.5px dashed var(--marque-border)", borderRadius: 12 }}>
-              Disponible une fois <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "2px 6px", borderRadius: 4 }}>/api/logs</code> implémentée — les traces par étape (NER, RAG, LLM) seront visibles ici
+              Disponible une fois <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "2px 6px", borderRadius: 4 }}>/api/logs</code> implémentée : les traces par étape (NER, RAG, LLM) seront visibles ici
             </div>
           </div>
         </div>

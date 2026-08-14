@@ -187,6 +187,6 @@ async def texte_injecte(user_id: str | None, role: str | None) -> str:
 
     if not retenues:
         return ""
-    return ("\n\nCONSIGNES DE L'ENTREPRISE — apprises par les utilisateurs, elles "
+    return ("\n\nCONSIGNES DE L'ENTREPRISE (apprises par les utilisateurs). Elles "
             "priment sur tes habitudes générales et s'appliquent à CHAQUE échange :\n"
             + "\n".join(f"- {t}" for t in retenues))

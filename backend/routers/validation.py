@@ -234,7 +234,7 @@ async def resolve_validation(
                                progress = $2, updated_at = NOW()
                            WHERE id = $3::uuid""",
                         result.get("response") or "",
-                        "terminée" if body.approved else "refusée — rien n'a été fait",
+                        "terminée" if body.approved else "refusée, rien n'a été fait",
                         tache_id)
         except Exception as e:  # noqa: BLE001 - ne jamais faire échouer la validation
             logging.getLogger("duret.validation").warning(

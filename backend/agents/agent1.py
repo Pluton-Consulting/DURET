@@ -19,7 +19,7 @@ Tu disposes d'une mémoire d'entreprise (appels d'offres, CCTP, CCAP, DPGF, plan
 RÈGLE DE RECHERCHE : la mémoire a DÉJÀ été consultée pour toi quand la demande le justifiait. Si des documents te sont fournis, réponds à partir d'eux. Si aucun ne l'est, c'est que la demande n'en nécessitait pas, ou que la mémoire ne contient rien : ne relance l'action `rechercher_documents` que si la réponse dépend manifestement d'une donnée interne qui te manque, avec des termes DIFFÉRENTS. Pour une salutation, un remerciement ou une question générale, réponds directement, SANS aucune action et SANS parler de la mémoire d'entreprise. Cette dispense ne concerne QUE la recherche documentaire. Elle ne vaut JAMAIS pour les actions qui PRODUISENT ou qui AGISSENT : creer_document, ajouter_document, terminer_document, la lecture ou le dépôt sur le serveur de fichiers, la lecture de mails, la génération de visuels. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système, il FAUT émettre les actions correspondantes : aucune rédaction directe ne produit un document téléchargeable.
 Ne liste JAMAIS de contenu imaginaire et ne prétends pas avoir des dossiers que la recherche ne t'a pas rendus.
 Réponds toujours en français, de façon précise, professionnelle et concise. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur.
-Certaines valeurs des documents peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. — conserve-les telles quelles. Ne CRÉE jamais toi-même de balise entre crochets.
+Certaines valeurs des documents peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. Conserve-les telles quelles. Ne CRÉE jamais toi-même de balise entre crochets.
 Salutation : commence par « Bonjour » UNIQUEMENT si le message de l'utilisateur est lui-même une salutation (bonjour, salut, bonsoir...) ; sinon, pour une question de travail, réponds DIRECTEMENT, sans « Bonjour » ni formule d'accueil, et sans jamais répéter une salutation déjà faite dans la conversation. Ne dis JAMAIS « je suis Duret & Sols » ni « je m'appelle Duret & Sols » (c'est le nom de l'entreprise, pas ton identité à énoncer) et ne te présente pas. Pour une question de travail, réponds directement.
 N'invente JAMAIS de donnée (montant, nom, date, nombre, référence de dossier). Tout chiffre que tu avances doit provenir d'un document que la recherche t'a rendu, ou de ce que l'utilisateur vient de te dire. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
 QUI EST DE L'ENTREPRISE : une adresse n'est un collègue que si elle appartient au domaine de l'entreprise. Les résultats de lecture de mails portent `expediteur_interne` : quand il vaut false, la personne est EXTERNE (client, fournisseur, prestataire) et tu ne dois jamais la présenter comme appartenant à l'entreprise. `expediteur_automatique` signale un envoi sans auteur humain (bulletin, notification) : n'en tire aucune conclusion sur les gens ni sur les métiers.
@@ -28,7 +28,7 @@ CONSULTER UNE BOÎTE MAIL : utilise l'action `lire_mails`, qui va chercher les m
 NE CONCLUS JAMAIS que la mémoire d'entreprise est vide à partir d'une recherche infructueuse. Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien ». Dis ce que tu as cherché, dis que tu n'as rien trouvé là-dessus, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système : tu ne peux la faire que si un inventaire te l'a explicitement indiqué.
 DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un récapitulatif ou un modèle et qu'une information ne figure nulle part, écris exactement [À COMPLÉTER] à sa place. Ne l'omets pas en silence, ne la devine pas, ne la remplace pas par une valeur plausible. Cette règle vaut pour chaque champ pris séparément : une fiche à moitié renseignée est utile, une fiche à moitié inventée est dangereuse.
 Ne recopie jamais la demande de l'utilisateur dans ta réponse, et ne répète pas une information que tu viens de donner : réponds, puis arrête-toi.
-Typographie : n'utilise JAMAIS de tiret cadratin (—) ni de tiret demi-cadratin (–) ; emploie plutôt une virgule, un deux-points, une parenthèse ou un tiret simple « - »."""
+Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt une virgule, un deux-points, une parenthèse ou un point."""
 
 
 # Nombre maximal d'actions exécutées dans un même tour. Chaque action coûte un
@@ -102,7 +102,7 @@ async def rag_node(state: AgentState) -> dict:
     if not texte_joint:
         return {"raw_chunks": []}
     nom = state.get("attachment_name") or "document"
-    return {"raw_chunks": [f"[FICHIER JOINT PAR L'UTILISATEUR — {nom}]\n{texte_joint}"]}
+    return {"raw_chunks": [f"[FICHIER JOINT PAR L'UTILISATEUR : {nom}]\n{texte_joint}"]}
 
 
 async def anonymize_node(state: AgentState) -> dict:
@@ -246,7 +246,7 @@ async def browser_node(state: AgentState) -> dict:
     existing = list(state.get("raw_chunks") or [])
     if result["success"]:
         existing.append(
-            "[SOURCE WEB — information externe, à mentionner et valider]\n" + result["content"]
+            "[SOURCE WEB : information externe, à mentionner et valider]\n" + result["content"]
         )
     return {
         "raw_chunks": existing,
@@ -398,7 +398,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
                   "titre EST le document demandé.\n")
         if finis:
             etat_docs += (
-                "- TERMINÉS, fichier PRÊT et téléchargeable — mais PAS déposé "
+                "- TERMINÉS, fichier PRÊT et téléchargeable, mais PAS déposé "
                 "sur le serveur :\n"
                 + _json_docs.dumps(finis, ensure_ascii=False)
                 + "\n  Ces documents ne se trouvent PAS en cherchant sur le "
@@ -431,7 +431,7 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"quote","id":"...","client":"...","status":"draft|sent|accepted","total":"...","lines":[{"label":"...","qty":"...","price":"..."}]}
 - {"type":"invoice","number":"...","client":"...","amount":"...","issued":"...","due":"...","status":"paid|pending|late"}
 - {"type":"doc","name":"...","kind":"PDF|XLSX|DOCX","meta":"..."}
-- {"type":"doc_apercu","titre":"...","format":"docx|pdf|xlsx","extrait":"..."} — l'APERÇU d'un document. OBLIGATOIRE dès qu'un document est produit, déposé ou LU : `extrait` reprend TEL QUEL le champ `extrait` (document produit) ou le début du `contenu`/`texte` rendu par la lecture. Jamais un résumé réécrit : l'aperçu montre le VRAI contenu.
+- {"type":"doc_apercu","titre":"...","format":"docx|pdf|xlsx","extrait":"..."} pour l'aperçu d'un document QU'ON A LU et qui n'est pas téléchargeable. Un document que TU viens de produire ou de déposer s'annonce par un bloc `fichier` et par lui seul : sa carte montre déjà le document. Ici : `extrait` reprend TEL QUEL le champ `extrait` (document produit) ou le début du `contenu`/`texte` rendu par la lecture. Jamais un résumé réécrit : l'aperçu montre le VRAI contenu.
 - {"type":"contact","name":"...","role":"...","phone":"...","email":"..."}
 - {"type":"project","name":"...","client":"...","progress":62,"status":"..."}
 - {"type":"table","columns":["...","..."],"rows":[["...","..."]]}
@@ -646,7 +646,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
         # document dont le modèle avait besoin. On lui reprenait l'information au
         # moment précis où il la redemandait.
         resultats.append({**deja[0], "resultat_masque":
-                          "(déjà exécuté à ce tour — son résultat, inchangé)\n"
+                          "(déjà exécuté à ce tour, son résultat est inchangé)\n"
                           + str(deja[0].get("resultat_masque") or "")})
         return {"tool_results": resultats, "tool_iterations": iteration}
 
@@ -945,7 +945,7 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
     if manquante:
         demande += (
             f"\n\nATTENTION : un document est OUVERT et n'a pas été fermé. Tant "
-            f"que `{manquante}` n'a pas été appelé, AUCUN fichier n'existe — il "
+            f"que `{manquante}` n'a pas été appelé, AUCUN fichier n'existe, il "
             f"n'y a donc rien à télécharger ni à déposer. C'est l'action "
             f"attendue, avec le `document_id` déjà rendu. N'en ouvre pas un "
             f"nouveau : le travail déjà versé serait perdu.")
@@ -975,7 +975,7 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
             "\n\nDocument(s) TERMINÉS (fichier prêt, pas déposé) :\n"
             + _json.dumps(finis, ensure_ascii=False)
             + "\nSi l'intention est de DÉPOSER ou de montrer un de ces "
-              "documents, utilise SON `document_id` — pas celui d'un document "
+              "documents, utilise SON `document_id`, pas celui d'un document "
               "vide.")
 
     llm = get_llm(LLMTier(state.get("llm_tier", "standard")))

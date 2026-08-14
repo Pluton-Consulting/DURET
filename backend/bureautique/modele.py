@@ -48,8 +48,8 @@ BLOCS = {
     "liste":       "items[], ordonnee (bool)",
     "tableau":     "entetes[], lignes[[]], legende",
     "saut_page":   "(aucun champ)",
-    "feuille":     "nom, entetes[], lignes[[]] — .xlsx : nouvel onglet ; "
-                   "ailleurs : un tableau précédé de son nom",
+    "feuille":     "nom, entetes[], lignes[[]] (.xlsx : nouvel onglet ; "
+                   "ailleurs : un tableau précédé de son nom)",
     "separateur":  "(aucun champ)",
 }
 

@@ -461,7 +461,7 @@ async def confirmer_import(body: ImportConfirm, current_user: User = Depends(get
     entree = _IMPORTS.get(body.token)
     if not entree:
         raise HTTPException(status_code=status.HTTP_410_GONE,
-                            detail="Analyse expirée ou inconnue — relancez l'import du fichier.")
+                            detail="Analyse expirée ou inconnue. Relancez l'import du fichier.")
     if entree["user_id"] != str(current_user.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cette analyse ne vous appartient pas")
 

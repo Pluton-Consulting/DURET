@@ -1,7 +1,7 @@
 # Serveur de fichiers (NAS Synology)
 
 Mode d'emploi complet. À lire quand aucune fonction de la bibliothèque ne
-couvre le besoin — pour les cas courants, les fonctions sont plus rapides et ne
+couvre le besoin. Pour les cas courants, les fonctions sont plus rapides et ne
 peuvent pas se tromper d'enchaînement.
 
 ## Comment on l'appelle ici
@@ -54,7 +54,7 @@ par reconnaissance de caractères. Un tableur est rendu comme un tableau
 ## Écrire
 
 Le dépôt est la SEULE écriture possible. Pas de suppression, pas de
-déplacement, pas de renommage — volontairement. Un dépôt n'écrase jamais un
+déplacement, pas de renommage : c'est volontaire. Un dépôt n'écrase jamais un
 fichier existant, et il passe par une validation humaine avant d'être exécuté.
 
 ## Quand ça tombe en panne

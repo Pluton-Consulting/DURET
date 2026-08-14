@@ -38,10 +38,10 @@ _ERREURS = {
     400: "identifiant ou mot de passe incorrect",
     401: "compte désactivé",
     402: "permission refusée",
-    403: "double authentification (2FA) exigée — renseignez SYNOLOGY_OTP_CODE, "
+    403: "double authentification (2FA) exigée. Renseignez SYNOLOGY_OTP_CODE, "
          "ou créez un compte de service sans 2FA",
     404: "code de double authentification invalide",
-    407: "adresse bloquée par le NAS (Auto Block) — débloquez l'IP dans DSM",
+    407: "adresse bloquée par le NAS (Auto Block). Débloquez l'IP dans DSM",
     408: "mot de passe expiré",
     409: "mot de passe expiré, changement obligatoire",
     410: "mot de passe doit être changé",

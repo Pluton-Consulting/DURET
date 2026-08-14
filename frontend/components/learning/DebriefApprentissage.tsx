@@ -224,7 +224,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
           </div>
 
           {section("connaissances", "Connaissances",
-            "Faits durables sur l'entreprise — rangés dans la mémoire, retrouvables par le chat.",
+            "Faits durables sur l'entreprise, rangés dans la mémoire et retrouvables par le chat.",
             analyse.connaissances, (c: Connaissance) => (
               <>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{c.titre}</div>
@@ -236,7 +236,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
             ))}
 
           {section("procedures", "Manières de faire",
-            "Consignes de présentation ou de méthode — mémorisées pour les prochains échanges.",
+            "Consignes de présentation ou de méthode, mémorisées pour les prochains échanges.",
             analyse.procedures, (p: Procedure) => (
               <>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{p.titre}</div>
@@ -245,7 +245,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
             ))}
 
           {section("competences", "Compétences à créer",
-            "Calculs reproductibles — créés en brouillon, inactifs tant qu'un humain n'a pas relu le code.",
+            "Calculs reproductibles, créés en brouillon et inactifs tant qu'un humain n'a pas relu le code.",
             analyse.competences, (c: Competence) => (
               <>
                 <div style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{c.nom}</div>

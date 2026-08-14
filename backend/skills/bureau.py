@@ -96,7 +96,7 @@ async def creer_document(data: dict, user) -> dict:
                 "deja_ouvert": True,
                 "elements": nb,
                 "note": (f"C'est BIEN le document demandé : il est déjà ouvert "
-                         f"sous ce titre et contient {nb} élément(s) — il n'y "
+                         f"sous ce titre et contient {nb} élément(s), il n'y "
                          "avait donc rien à créer, et c'est normal. Poursuis-le "
                          "avec `ajouter_document` en repartant de la SUITE (ne "
                          "réécris pas ce qui est déjà versé), puis termine-le. "
@@ -112,8 +112,8 @@ async def creer_document(data: dict, user) -> dict:
         "formats_possibles": list(FORMATS),
         "blocs_possibles": BLOCS,
         "note": ("Document OUVERT, encore vide et sans fichier. Verse le contenu "
-                 "avec `ajouter_document` — en plusieurs appels si le document est "
-                 "long, il n'y a pas de limite au nombre d'appels — puis appelle "
+                 "avec `ajouter_document` (en plusieurs appels si le document est "
+                 "long, il n'y a pas de limite au nombre d'appels), puis appelle "
                  "`terminer_document` pour obtenir le lien de téléchargement."),
     }
 
@@ -231,11 +231,11 @@ async def terminer_document(data: dict, user) -> dict:
         # l'aperçu dans le chat. Sans lui, le modèle « montrait » un contenu
         # recomposé de mémoire, qui divergeait du fichier téléchargé.
         "extrait": f.get("extrait") or "",
-        "note": ("Le fichier est prêt. Annonce-le avec DEUX blocs ```ui : un "
-                 "`doc_apercu` portant `titre`, `format`, `pages` (= "
-                 "pages_estimees) et `extrait` (recopie l'extrait fourni TEL "
-                 "QUEL), puis un `fichier` portant `url`, `nom`, `format` et "
-                 "`octets` pour le téléchargement. Le lien vaut 24 h et n'est "
+        "note": ("Le fichier est prêt. Annonce-le avec UN SEUL bloc ```ui : un "
+                 "`fichier` portant `url`, `nom`, `format` et `octets`. "
+                 "N'ajoute PAS de `doc_apercu` : la carte `fichier` affiche "
+                 "déjà le document lui-même sous le bouton, et les deux "
+                 "ensemble feraient deux cartes pour un seul fichier. Le lien vaut 24 h et n'est "
                  "utilisable que par la personne. "
                  # CE FICHIER N'EST PAS SUR LE SERVEUR, et c'est le moment de
                  # le dire : la fermeture était vécue comme la fin du travail,

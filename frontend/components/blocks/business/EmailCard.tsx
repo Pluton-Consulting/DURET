@@ -1,6 +1,6 @@
 /** Aperçu d'un EMAIL (barre d'accent + sujet + expéditeur + extrait). */
 export function EmailCard({
-  subject = "RE : Situation n°3 — Chantier Les Tilleuls",
+  subject = "RE : Situation n°3, chantier Les Tilleuls",
   from = "compta@scidupont.fr", date = "aujourd'hui 09:14",
   preview = "Bonjour, merci de nous transmettre la situation n°3 avant vendredi pour validation par la maîtrise d'ouvrage…",
 }: { subject?: string; from?: string; date?: string; preview?: string }) {

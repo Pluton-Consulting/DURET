@@ -55,6 +55,21 @@ const PDFViewer = dynamic(
   () => import("@/components/extend/pdf-viewer").then((m) => m.PDFViewer),
   { ssr: false, loading: chargement })
 
+/** NI TÉLÉCHARGER, NI REMPLACER : LA VISIONNEUSE MONTRE, C'EST TOUT.
+ *
+ *  Chaque visionneuse arrive avec son propre menu « Download » et « Upload ».
+ *
+ *  Le téléchargement faisait DOUBLON : la carte au-dessus en porte déjà un,
+ *  et c'est celui-là qu'il faut, parce qu'il passe par le jeton et rend le
+ *  fichier sous son vrai nom. Deux boutons pour un seul geste, dans un cadre
+ *  de quelques centimètres, se lisent comme une erreur d'affichage.
+ *
+ *  « Upload » était pire que redondant : il remplace le document affiché par
+ *  un fichier pris sur le poste. L'aperçu cesserait alors de montrer ce que
+ *  l'assistant a réellement produit, sans que rien ne le signale, dans un
+ *  cadre où l'on vient justement vérifier le travail rendu. */
+const SANS_FICHIER = { showDownload: false, showUpload: false } as const
+
 /** Formats que l'on sait afficher, et rien d'autre. */
 export type FormatApercu = "docx" | "xlsx" | "csv" | "pdf"
 
@@ -195,6 +210,7 @@ export function ApercuDocument({
           fileName={nomFichier}
           isDark={sombre}
           onIsDarkChange={setSombre}
+          {...SANS_FICHIER}
           className="h-full w-full"
         />
       </div>
@@ -204,7 +220,8 @@ export function ApercuDocument({
   if (format === "pdf") {
     return (
       <div className={cadre} style={{ height: hauteur }}>
-        <PDFViewer src={objectUrl} fileName={nomFichier} className="h-full w-full" />
+        <PDFViewer src={objectUrl} fileName={nomFichier} {...SANS_FICHIER}
+                   className="h-full w-full" />
       </div>
     )
   }
@@ -216,6 +233,7 @@ export function ApercuDocument({
         fileName={nomFichier}
         isDark={sombre}
         onIsDarkChange={setSombre}
+        {...SANS_FICHIER}
         className="h-full w-full"
       />
     </div>

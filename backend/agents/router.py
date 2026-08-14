@@ -90,7 +90,7 @@ async def check_schedule_node(state: AgentState) -> dict:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"Accès refusé — {now.hour}h{now.minute:02d}. "
+                f"Accès refusé à {now.hour}h{now.minute:02d}. "
                 f"Plage autorisée : {start_hour}h00–{end_hour}h00."
             ),
         )

@@ -108,7 +108,7 @@ async def _check_schedule(current_user: User) -> None:
     if not (start_hour <= now.hour < end_hour):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Accès refusé — {now.hour}h{now.minute:02d}. Plage autorisée : {start_hour}h00–{end_hour}h00.",
+            detail=f"Accès refusé à {now.hour}h{now.minute:02d}. Plage autorisée : {start_hour}h00–{end_hour}h00.",
         )
 
 
@@ -264,7 +264,7 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
         error_msg = str(e)
         result = {
             "status": "error", "thread_id": thread_id,
-            "response": "Une erreur est survenue — veuillez réessayer.",
+            "response": "Une erreur est survenue, veuillez réessayer.",
             "agent_used": "agent1", "tokens_in": 0, "tokens_out": 0,
             "cost_eur": 0.0, "model_used": None, "validation_id": None,
         }

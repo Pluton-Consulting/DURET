@@ -244,7 +244,7 @@ async def _lire_lot(boite: str, messages: list[str],
         raise RuntimeError("Anonymisation indisponible : campagne interrompue.")
 
     masques, carte = await asyncio.to_thread(anonymizer.anonymize_chunks, messages, {})
-    corpus = "\n\n———\n\n".join(masques)
+    corpus = "\n\n=====\n\n".join(masques)
 
     # Palier STANDARD : sa cascade commence par le modèle principal. On garde la
     # même instance pour lire `last_model_used` — en redemander une au routeur

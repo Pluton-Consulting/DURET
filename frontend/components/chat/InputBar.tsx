@@ -2,11 +2,8 @@
 import { useState } from "react"
 import {
   PromptInput,
-  PromptInputBody,
   PromptInputTextarea,
   PromptInputHeader,
-  PromptInputFooter,
-  PromptInputTools,
   PromptInputButton,
   PromptInputSubmit,
   usePromptInputAttachments,
@@ -57,9 +54,15 @@ const TAILLE_MAX_MO = 10
  *  du formulaire, seul endroit d'où le contexte est lisible. */
 function PieceJointeJointe({ desactive }: { desactive?: boolean }) {
   const fichiers = usePromptInputAttachments()
+  // L'ENTETE N'EXISTE QUE S'IL Y A QUELQUE CHOSE DEDANS.
+  //
+  // Un encart « en bloc » fait basculer toute la barre en colonne et lui donne
+  // une hauteur libre. Le rendre en permanence, meme vide, suffisait a doubler
+  // la hauteur du champ de saisie alors qu'aucun fichier n'etait joint. Il
+  // n'apparait donc qu'avec une piece, exactement comme avant.
   if (!fichiers.files.length) return null
   return (
-    <>
+    <PromptInputHeader>
       {fichiers.files.map((f) => (
         <span key={f.id} data-testid="piece-jointe" style={{
           display: "inline-flex", alignItems: "center", gap: 8,
@@ -81,7 +84,7 @@ function PieceJointeJointe({ desactive }: { desactive?: boolean }) {
           </button>
         </span>
       ))}
-    </>
+    </PromptInputHeader>
   )
 }
 
@@ -203,13 +206,24 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
         // message et qu'on veut y répondre avec un document.
         globalDrop
       >
-        <PromptInputHeader>
-          <PieceJointeJointe desactive={disabled} />
-        </PromptInputHeader>
+        {/* La pièce jointe, au-dessus, et SEULEMENT quand il y en a une. */}
+        <PieceJointeJointe desactive={disabled} />
 
-        <PromptInputBody>
+        {/* UNE SEULE RANGÉE, comme avant : trombone à gauche, champ au milieu,
+            arrêt et envoi à droite.
+
+            La disposition d'origine d'AI Elements empile le champ puis une
+            barre d'outils en dessous, et impose au champ une hauteur minimale
+            de 64 px : la saisie occupait plus du double de sa hauteur
+            precedente pour écrire une seule ligne. Ici la rangée est explicite,
+            et le champ retrouve sa hauteur d'avant tout en continuant de
+            grandir quand le texte le demande. */}
+        <div className="flex w-full items-end gap-1 px-1 py-1">
+          <BoutonJoindre desactive={disabled} />
+
           <PromptInputTextarea
             data-testid="saisie-message"
+            className="min-h-9 py-2"
             value={texte}
             onChange={(e) => setTexte(e.target.value)}
             disabled={disabled}
@@ -217,16 +231,10 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
               ? "Écrivez pour mettre une autre tâche dans la file d'attente"
               : "Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"}
           />
-        </PromptInputBody>
-
-        <PromptInputFooter>
-          <PromptInputTools>
-            <BoutonJoindre desactive={disabled} />
-          </PromptInputTools>
 
           {/* L'ARRÊT VIT À CÔTÉ DE L'ENVOI, pas à sa place.
               `PromptInputSubmit` sait se changer en bouton d'arrêt quand on lui
-              passe `onStop` — mais il devient alors `type="button"`, et le
+              passe `onStop`, mais il devient alors `type="button"`, et le
               formulaire se retrouve SANS bouton de soumission : le clic
               n'envoie plus rien (la touche Entrée, elle, continue de marcher,
               ce qui rend la panne d'autant plus déroutante). Or ici l'envoi
@@ -240,6 +248,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
               onClick={onStop}
               title="Arrêter le traitement en cours"
               aria-label="Arrêter le traitement en cours"
+              className="shrink-0"
               style={{
                 border: "1px solid var(--marque-error-text)",
                 color: "var(--marque-error-text)",
@@ -250,7 +259,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
           )}
 
           <BoutonEnvoyer texte={texte} desactive={disabled} modeFile={modeFile} />
-        </PromptInputFooter>
+        </div>
       </PromptInput>
     </div>
   )

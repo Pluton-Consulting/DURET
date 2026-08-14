@@ -9,14 +9,14 @@ export interface StatsCardsData {
 }
 
 function fmtNumber(v: number | string | null | undefined): string {
-  if (v === null || v === undefined || v === "") return "—"
+  if (v === null || v === undefined || v === "") return "n.c."
   return String(v)
 }
 
 function fmtEuro(v: number | string | null | undefined): string {
-  if (v === null || v === undefined || v === "") return "—"
+  if (v === null || v === undefined || v === "") return "n.c."
   const n = Number(v)
-  if (Number.isNaN(n)) return "—"
+  if (Number.isNaN(n)) return "n.c."
   return `${n.toFixed(2)} €`
 }
 

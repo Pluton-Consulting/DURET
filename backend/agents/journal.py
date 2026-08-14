@@ -127,14 +127,14 @@ def libelle(node: str, update: dict | None = None) -> str:
         nom = dernier.get("skill") or ""
         texte = _acte(nom) or (f"j'exécute {nom}" if nom else "j'exécute une action")
         if dernier.get("ok") is False:
-            texte += " — sans succès"
+            texte += ", sans succès"
         return texte[:MAX_LIBELLE]
 
     if node == "tools" and update.get("pending_action"):
         action = update["pending_action"]
         action = action if isinstance(action, dict) else {}
         nom = action.get("skill") or ""
-        return f"{_acte(nom) or nom} — en attente de votre validation".strip()[:MAX_LIBELLE]
+        return f"{_acte(nom) or nom} (en attente de votre validation)".strip()[:MAX_LIBELLE]
 
     return LIBELLES.get(node, "")
 

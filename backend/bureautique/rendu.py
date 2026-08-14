@@ -60,7 +60,7 @@ def _docx(entete: dict, elements, sortie: str) -> str:
         p = section.footer.paragraphs[0]
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         if entete.get("pied"):
-            p.add_run(entete["pied"] + ("   —   " if entete.get("numeroter") else ""))
+            p.add_run(entete["pied"] + ("   ·   " if entete.get("numeroter") else ""))
         if entete.get("numeroter"):
             # Champ Word : Word calcule la pagination à l'ouverture. Écrire un
             # numéro en dur donnerait « page 1 » sur toutes les pages.
@@ -176,7 +176,7 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
         if entete.get("numeroter"):
             bas.append(f"page {canvas.getPageNumber()}")
         if bas:
-            canvas.drawCentredString(largeur / 2, 1.2 * cm, "   —   ".join(bas))
+            canvas.drawCentredString(largeur / 2, 1.2 * cm, "   ·   ".join(bas))
         canvas.restoreState()
 
     doc = SimpleDocTemplate(sortie, pagesize=format_page,
@@ -337,7 +337,7 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
             bas = [entete.get("pied") or ""]
             if entete.get("numeroter"):
                 bas.append("page &P / &N")
-            feuille.oddFooter.center.text = "   —   ".join(x for x in bas if x)
+            feuille.oddFooter.center.text = "   ·   ".join(x for x in bas if x)
         ligne_courante = 1
         return feuille
 

@@ -200,7 +200,7 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
     if not allow_draft:
         if status not in RUNNABLE_STATUSES:
             raise SkillError(
-                f"skill '{name}' non exécutable (statut '{status}') — validation requise"
+                f"skill '{name}' non exécutable (statut '{status}') : validation requise"
             )
         if not row["enabled"]:
             raise SkillError(f"skill '{name}' désactivé")

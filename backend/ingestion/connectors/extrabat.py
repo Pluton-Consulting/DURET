@@ -30,7 +30,7 @@ async def sync() -> dict:
     if not (settings.extrabat_api_login and settings.extrabat_api_password):
         raise NotImplementedError(
             "Extrabat API non configurée : génère les identifiants API dans Extrabat "
-            "(Paramètres > Magasin > Coordonnées) — activation par le support Extrabat requise. "
+            "(Paramètres > Magasin > Coordonnées). L'activation par le support Extrabat est requise. "
             "En attendant, ingère les exports CSV/Excel via extrabat.import_export(path, source_type).")
 
     import httpx

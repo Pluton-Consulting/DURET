@@ -90,7 +90,7 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
             <p style="margin:0 0 32px;font-size:15px;color:#2E3742;line-height:1.6">
               Bonjour,<br><br>
               Vous avez demandé à vous connecter à <strong>Duret & Sols</strong>.<br>
-              Cliquez sur le bouton ci-dessous — ce lien est à usage unique et expire dans <strong>{MAGIC_LINK_EXPIRE_MINUTES}&nbsp;minutes</strong>.
+              Cliquez sur le bouton ci-dessous. Ce lien est à usage unique et expire dans <strong>{MAGIC_LINK_EXPIRE_MINUTES}&nbsp;minutes</strong>.
             </p>
 
             <!-- CTA -->
@@ -126,7 +126,7 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
           <td style="padding:20px 40px;background:#F4F6F8">
             <p style="margin:0;font-size:12px;color:#606B78;line-height:1.6">
               Si vous n'avez pas demandé ce lien, ignorez simplement cet email.<br>
-              Ce message est envoyé automatiquement — ne pas y répondre.
+              Ce message est envoyé automatiquement, merci de ne pas y répondre.
             </p>
             <p style="margin:12px 0 0;font-size:11px;color:#606B78">
               Duret & Sols · Assistant IA interne

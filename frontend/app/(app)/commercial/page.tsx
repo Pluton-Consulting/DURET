@@ -12,7 +12,7 @@ export default async function CommercialPage() {
             Commercial / Admin
           </h1>
           <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--marque-text-muted)" }}>
-            Agent 1 — RAG, NER, LLM · Requêtes commerciales et administratives
+            Agent 1 : RAG, NER, LLM · Requêtes commerciales et administratives
           </p>
         </div>
         <a href="/chat" className="sym-tap" style={{
@@ -26,10 +26,10 @@ export default async function CommercialPage() {
       {/* KPI row */}
       <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
         {[
-          { label: "Requêtes aujourd'hui", value: "—" },
-          { label: "Docs indexés", value: "—" },
-          { label: "Taux de succès", value: "—" },
-          { label: "Temps moyen", value: "—" },
+          { label: "Requêtes aujourd'hui", value: "n/a" },
+          { label: "Docs indexés", value: "n/a" },
+          { label: "Taux de succès", value: "n/a" },
+          { label: "Temps moyen", value: "n/a" },
         ].map((kpi, i) => (
           <div key={i} className={`sym-in sym-in-${i + 1} sym-card`} style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card-sm, 14px)", padding: 20, boxShadow: "var(--marque-shadow-card)" }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
@@ -62,11 +62,11 @@ export default async function CommercialPage() {
             <h3 style={{ margin: "0 0 18px", fontSize: 16, fontWeight: 700, color: "var(--marque-text-on-dark)" }}>Pipeline Agent 1</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {[
-                { step: "1. Anonymisation NER", status: "stub", desc: "spaCy fr_core_news_lg — nœud TODO" },
-                { step: "2. Recherche RAG", status: "stub", desc: "pgvector + TRGM — nœud TODO" },
-                { step: "3. LLM (Claude Haiku)", status: "partial", desc: "Router implémenté — invocation TODO" },
-                { step: "4. Réhydratation PII", status: "stub", desc: "Remplacement entity_map — TODO" },
-                { step: "5. Vérification devis", status: "stub", desc: "Human-in-the-loop — TODO" },
+                { step: "1. Anonymisation NER", status: "stub", desc: "spaCy fr_core_news_lg (nœud TODO)" },
+                { step: "2. Recherche RAG", status: "stub", desc: "pgvector + TRGM (nœud TODO)" },
+                { step: "3. LLM (Claude Haiku)", status: "partial", desc: "Router implémenté, invocation TODO" },
+                { step: "4. Réhydratation PII", status: "stub", desc: "Remplacement entity_map (TODO)" },
+                { step: "5. Vérification devis", status: "stub", desc: "Human-in-the-loop (TODO)" },
               ].map((item, i) => (
                 <div key={i} className={`sym-in sym-in-${i + 1}`} style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: item.status === "partial" ? "var(--marque-primary-light)" : "#ffffff44" }} />

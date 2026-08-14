@@ -119,7 +119,7 @@ export default function NavigateurClient({ token }: { token: string; role: strin
         />
         <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "var(--marque-text-body)", marginBottom: 10, cursor: "pointer" }}>
           <input type="checkbox" checked={writeMode} onChange={(e) => setWriteMode(e.target.checked)} style={{ marginTop: 3 }} />
-          <span><b>Mode écriture</b> pour cette tâche — autorise la saisie, le clic et la soumission de formulaires (login…). ⚠️ à surveiller.</span>
+          <span><b>Mode écriture</b> pour cette tâche : autorise la saisie, le clic et la soumission de formulaires (login…). ⚠️ à surveiller.</span>
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--marque-text-body)", marginBottom: 16, cursor: "pointer" }}>
           <input type="checkbox" checked={ingest} onChange={(e) => setIngest(e.target.checked)} />
@@ -219,7 +219,7 @@ export default function NavigateurClient({ token }: { token: string; role: strin
                                 {t.result.step_log.map((s, i) => (
                                   <div key={s.n} className={`sym-in sym-in-${Math.min(i + 1, 6)}`} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 12, padding: "6px 10px", background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-icon)" }}>
                                     <span style={{ fontWeight: 700, color: "var(--marque-primary-mid)", minWidth: 24, flexShrink: 0 }}>#{s.n}</span>
-                                    <span style={{ fontWeight: 600, color: "var(--marque-text-primary)", minWidth: 130, flexShrink: 0 }}>{s.action || "—"}</span>
+                                    <span style={{ fontWeight: 600, color: "var(--marque-text-primary)", minWidth: 130, flexShrink: 0 }}>{s.action || "action inconnue"}</span>
                                     <span style={{ color: "var(--marque-text-muted)", wordBreak: "break-all" }}>{s.url || ""}</span>
                                   </div>
                                 ))}

@@ -396,7 +396,7 @@ def instruction_actions(role: str | None = None) -> str:
     lignes = []
     for nom, (desc, requis, optionnels) in catalogue(role).items():
         params = ", ".join([f"{p}*" for p in requis] + list(optionnels)) or "aucun"
-        lignes.append(f'- {nom} : {desc}. Paramètres ({params}) — * = obligatoire.')
+        lignes.append(f'- {nom} : {desc}. Paramètres ({params}), * = obligatoire.')
     return (
         # LE CONTRAT EST UNE BOUCLE, PAS UN ALLER-RETOUR.
         #
@@ -481,7 +481,7 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
             return None, reste, (
                 "ton bloc action a été COUPÉ avant la fin : il dépasse ce que "
                 "tu peux écrire en une seule réponse. Recommence en versant "
-                "MOINS de contenu d'un coup — 10 à 15 blocs par appel — puis "
+                "MOINS de contenu d'un coup (10 à 15 blocs par appel), puis "
                 "rappelle la même action autant de fois qu'il le faut. Le "
                 "contenu déjà versé lors des appels précédents est conservé, "
                 "ne le réécris pas.")
@@ -493,7 +493,7 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
     try:
         data = json.loads(trouve.group(1).strip())
     except json.JSONDecodeError as e:
-        return None, reste, f"bloc action illisible ({e}) — réécris un JSON valide"
+        return None, reste, f"bloc action illisible ({e}) : réécris un JSON valide"
 
     if not isinstance(data, dict):
         return None, reste, "le bloc action doit contenir un objet JSON"

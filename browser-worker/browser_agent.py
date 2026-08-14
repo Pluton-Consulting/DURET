@@ -127,10 +127,10 @@ def build_tools(job_id: str, user_id: str, readonly: bool = True):
 
         if decision == "approved":
             return ActionResult(
-                extracted_content="APPROVED — l'humain a validé. Tu peux exécuter l'action maintenant."
+                extracted_content="APPROVED : l'humain a validé. Tu peux exécuter l'action maintenant."
             )
         return ActionResult(
-            extracted_content=(f"REJECTED ({decision}) — NE PAS exécuter l'action. "
+            extracted_content=(f"REJECTED ({decision}) : NE PAS exécuter l'action. "
                                "Termine la tâche proprement sans la réaliser.")
         )
 

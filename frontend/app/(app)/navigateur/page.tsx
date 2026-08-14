@@ -20,7 +20,7 @@ export default async function NavigateurPage() {
       <p style={{ margin: "0 0 28px", fontSize: 15, color: "var(--marque-text-body)", maxWidth: "70ch", lineHeight: 1.55 }}>
         L'agent pilote un vrai navigateur pour chercher, se connecter, remplir des formulaires et extraire des données.
         Par défaut il est en <b>lecture seule</b> (navigation + extraction, sans remplir de formulaire). En mode écriture,
-        les actions sensibles s'arrêtent pour <b>approbation</b> ci-dessous, capture à l'appui — un garde-fou à surveiller.
+        les actions sensibles s'arrêtent pour <b>approbation</b> ci-dessous, capture à l'appui. Un garde-fou à surveiller.
       </p>
       <NavigateurClient token={token} role={role} />
     </div>

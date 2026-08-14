@@ -80,8 +80,8 @@ _CONSIGNE_COMMUNE = (
     "écris [À COMPLÉTER] et signale-la dans elements_a_verifier.\n"
     "- Certaines valeurs peuvent apparaître masquées ([PER_1], [MONTANT_2]...) : conserve-les "
     "telles quelles, ne crée jamais de balise toi-même.\n"
-    "- N'utilise JAMAIS de tiret cadratin ni demi-cadratin ; emploie une virgule, un "
-    "deux-points, une parenthèse ou un tiret simple.\n"
+    "- N'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt "
+    "une virgule, un deux-points, une parenthèse ou un point.\n"
     "- Tu ne peux pas envoyer de message : tu produis uniquement un brouillon."
 )
 

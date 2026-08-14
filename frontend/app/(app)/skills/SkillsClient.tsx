@@ -239,7 +239,7 @@ export default function SkillsClient({ apiUrl, token }: Props) {
                       {s.agent} · {s.category}
                     </span>
                   </div>
-                  <div style={{ fontSize: 12.5, color: "var(--marque-text-muted)", marginTop: 3 }}>{s.description || "—"}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--marque-text-muted)", marginTop: 3 }}>{s.description || "Sans description"}</div>
                 </div>
 
                 <span style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>{s.usage_count}× util.</span>
@@ -272,7 +272,7 @@ export default function SkillsClient({ apiUrl, token }: Props) {
                   {detail?.detail && (
                     <>
                       <div style={{ fontSize: 12, color: "var(--marque-text-muted)", margin: "6px 0 4px", fontWeight: 600 }}>prompt_template</div>
-                      <pre style={preStyle}>{detail.detail.prompt_template || "—"}</pre>
+                      <pre style={preStyle}>{detail.detail.prompt_template || "Aucun prompt défini"}</pre>
                       <div style={{ fontSize: 12, color: "var(--marque-text-muted)", margin: "10px 0 4px", fontWeight: 600 }}>code</div>
                       <pre style={preStyle}>{detail.detail.code}</pre>
                     </>

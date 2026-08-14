@@ -178,7 +178,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
               return (
                 <tr key={user.id} style={{ borderBottom: "1px solid var(--marque-border)", opacity: user.actif ? 1 : 0.45 }}>
                   <td style={{ padding: "14px 16px" }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--marque-text-primary)" }}>{user.name || "—"}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--marque-text-primary)" }}>{user.name || "Sans nom"}</div>
                     <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 1 }}>{user.email}</div>
                   </td>
                   <td style={{ padding: "14px 16px" }}>
@@ -240,7 +240,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
             })}
             {users.length === 0 && (
               <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "var(--marque-text-muted)", fontSize: 14 }}>
-                Aucun utilisateur — vérifiez la connexion au backend
+                Aucun utilisateur. Vérifiez la connexion au backend.
               </td></tr>
             )}
           </tbody>
@@ -344,7 +344,7 @@ function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: strin
       {/* Réglages par utilisateur */}
       <div className="sym-card sym-in sym-in-1" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
         <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--marque-border)", fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>
-          Réglages individuels <span style={{ fontWeight: 400, fontSize: 12, color: "var(--marque-text-muted)" }}>— vide = plage globale</span>
+          Réglages individuels <span style={{ fontWeight: 400, fontSize: 12, color: "var(--marque-text-muted)" }}>(vide = plage globale)</span>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -361,17 +361,17 @@ function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: strin
                 return (
                   <tr key={u.id} style={{ borderTop: "1px solid var(--marque-border)", opacity: editable ? 1 : 0.55 }}>
                     <td style={{ padding: "12px 16px" }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--marque-text-primary)" }}>{u.name || "—"}</div>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--marque-text-primary)" }}>{u.name || "Sans nom"}</div>
                       <div style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>{u.email}</div>
                     </td>
                     <td style={{ padding: "12px 16px" }}>
                       <span style={{ background: (ROLE_COLORS[u.role] || "#666") + "18", color: ROLE_COLORS[u.role] || "#666", padding: "3px 10px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600 }}>{ROLE_LABELS[u.role]}</span>
                     </td>
                     <td style={{ padding: "12px 16px" }}>
-                      <input type="number" min={0} max={23} placeholder="—" value={u.schedule_start_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_start_hour: e.target.value })} style={inp} />
+                      <input type="number" min={0} max={23} value={u.schedule_start_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_start_hour: e.target.value })} style={inp} />
                     </td>
                     <td style={{ padding: "12px 16px" }}>
-                      <input type="number" min={1} max={24} placeholder="—" value={u.schedule_end_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_end_hour: e.target.value })} style={inp} />
+                      <input type="number" min={1} max={24} value={u.schedule_end_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_end_hour: e.target.value })} style={inp} />
                     </td>
                     <td style={{ padding: "12px 16px" }}>
                       <button onClick={() => editable && patch(u.id, { bypass_schedule: !u.bypass_schedule })} disabled={!editable} className="sym-tap" style={{ width: 40, height: 22, borderRadius: 11, border: "none", background: u.bypass_schedule ? "var(--marque-primary-mid)" : "var(--marque-border)", cursor: editable ? "pointer" : "default", position: "relative", transition: "background 0.25s ease" }}>
@@ -435,7 +435,7 @@ function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: strin
           <div>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>Matrice de permissions par rôle</div>
             <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
-              {canEdit ? "Cliquez sur une case pour activer/désactiver. Le super admin n'est pas modifiable." : "Lecture seule — édition réservée au super admin."}
+              {canEdit ? "Cliquez sur une case pour activer/désactiver. Le super admin n'est pas modifiable." : "Lecture seule : édition réservée au super admin."}
             </div>
           </div>
           <span className="sym-pop" style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", color: canEdit ? "var(--marque-paid-text)" : "var(--marque-pending-text)", background: canEdit ? "var(--marque-paid-bg)" : "var(--marque-pending-bg)" }}>
@@ -500,9 +500,9 @@ function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: strin
 /* ---------- AGENTS TAB (métriques réelles) ---------- */
 function AgentsTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
   const AGENTS = [
-    { key: "agent1", name: "Agent 1 — Commercial / Admin", desc: "RAG, anonymisation NER, LLM. Requêtes commerciales et administratives.", tier: "Palier LIGHT / STANDARD" },
-    { key: "agent2", name: "Agent 2 — Conception / Visuels", desc: "Vision multimodale, extraction de plans, pré-chiffrage.", tier: "Palier COMPLEX (vision)" },
-    { key: "agent3", name: "Agent 3 — Auto-Évolution", desc: "Génération de skills, sandbox Daytona, auto-apprentissage.", tier: "Palier COMPLEX" },
+    { key: "agent1", name: "Agent 1 : Commercial / Admin", desc: "RAG, anonymisation NER, LLM. Requêtes commerciales et administratives.", tier: "Palier LIGHT / STANDARD" },
+    { key: "agent2", name: "Agent 2 : Conception / Visuels", desc: "Vision multimodale, extraction de plans, pré-chiffrage.", tier: "Palier COMPLEX (vision)" },
+    { key: "agent3", name: "Agent 3 : Auto-Évolution", desc: "Génération de skills, sandbox Daytona, auto-apprentissage.", tier: "Palier COMPLEX" },
   ]
   const [stats, setStats] = useState<Record<string, any>>({})
   const [loaded, setLoaded] = useState(false)
@@ -529,11 +529,11 @@ function AgentsTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: str
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="sym-in" style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>
-        Métriques réelles du jour — source <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "1px 5px", borderRadius: 4 }}>audit_log</code>.
+        Métriques réelles du jour, source <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "1px 5px", borderRadius: 4 }}>audit_log</code>.
       </div>
       {AGENTS.map((agent, i) => {
         const s = stats[agent.key] || {}
-        const dur = s.avg_duration_ms != null ? `${s.avg_duration_ms} ms` : "—"
+        const dur = s.avg_duration_ms != null ? `${s.avg_duration_ms} ms` : "n/a"
         return (
           <div key={agent.key} className={`sym-card sym-in sym-in-${i + 1}`} style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", padding: 24, boxShadow: "var(--marque-shadow-card)", border: "1.5px solid var(--marque-border)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
@@ -666,7 +666,7 @@ function QuotasTab({ backendToken, apiUrl }: { backendToken: string; apiUrl: str
                       </div>
                     ) : (
                       <span style={{ fontSize: 13, color: "var(--marque-text-muted)", fontStyle: "italic" }}>
-                        ∞ — aucune restriction
+                        ∞ (aucune restriction)
                       </span>
                     )}
                   </div>
@@ -696,14 +696,14 @@ function ServicesTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: s
   const p = sys?.providers || {}
   const db = sys?.db || {}
   const services = [
-    { name: "PostgreSQL + pgvector", desc: "Base de données + checkpointer LangGraph", up: sys?.checkpointer === "AsyncPostgresSaver", detail: sys ? `${sys.checkpointer} · ${db.threads ?? 0} threads · ${db.users_actifs ?? 0} users` : "—" },
-    { name: "Langfuse", desc: "Observabilité LLM (traces)", up: !!sys?.observability?.langfuse_enabled, detail: sys?.observability?.host || "—" },
-    { name: "Groq", desc: "LLM gratuit — paliers LIGHT/STANDARD", up: !!p.groq, detail: p.groq ? "clé configurée" : "clé absente" },
+    { name: "PostgreSQL + pgvector", desc: "Base de données + checkpointer LangGraph", up: sys?.checkpointer === "AsyncPostgresSaver", detail: sys ? `${sys.checkpointer} · ${db.threads ?? 0} threads · ${db.users_actifs ?? 0} users` : "non disponible" },
+    { name: "Langfuse", desc: "Observabilité LLM (traces)", up: !!sys?.observability?.langfuse_enabled, detail: sys?.observability?.host || "non configuré" },
+    { name: "Groq", desc: "LLM gratuit (paliers LIGHT/STANDARD)", up: !!p.groq, detail: p.groq ? "clé configurée" : "clé absente" },
     { name: "OpenRouter", desc: "LongCat / DeepSeek / modèles free", up: !!p.openrouter, detail: p.openrouter ? "clé configurée" : "clé absente" },
-    { name: "DeepSeek (API directe)", desc: "deepseek-v4-pro — fallback qualité", up: !!p.deepseek, detail: p.deepseek ? "clé configurée" : "clé absente" },
+    { name: "DeepSeek (API directe)", desc: "deepseek-v4-pro (fallback qualité)", up: !!p.deepseek, detail: p.deepseek ? "clé configurée" : "clé absente" },
     { name: "LongCat (API directe)", desc: "modèle principal", up: !!p.longcat, detail: p.longcat ? "clé configurée" : "clé absente" },
     { name: "Anthropic", desc: "vision agent 2 (palier COMPLEX)", up: !!p.anthropic, detail: p.anthropic ? "clé configurée" : "placeholder / absente" },
-    { name: "Ollama (local)", desc: "LLM local — dernier recours", up: !!p.ollama, detail: "local" },
+    { name: "Ollama (local)", desc: "LLM local (dernier recours)", up: !!p.ollama, detail: "local" },
   ]
 
   return (
@@ -755,7 +755,7 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
         Paramètres
       </h1>
       <p className="sym-in sym-in-2" style={{ margin: "0 0 28px", fontSize: 14, color: "var(--marque-text-muted)" }}>
-        Configuration du système Duret & Sols — accès {ROLE_LABELS[currentRole] || currentRole}
+        Configuration du système Duret & Sols, accès {ROLE_LABELS[currentRole] || currentRole}
       </p>
 
       <div className="sym-in sym-in-3" style={{ display: "flex", gap: 2, marginBottom: 28, background: "var(--marque-surface)", padding: 6, borderRadius: "var(--marque-radius-card-sm)", width: "fit-content", boxShadow: "var(--marque-shadow-card)" }}>

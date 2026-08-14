@@ -67,7 +67,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
   const kpi = (label: string, value: any, color = C.text) => (
     <div className="sym-fade sym-card" style={{ background: `linear-gradient(180deg, ${C.panel}, ${C.panel2})`, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card-sm)", padding: "10px 12px" }}>
       <div style={{ fontSize: 10, color: C.dim, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</div>
-      <div style={{ fontFamily: C.mono, fontSize: 16, fontWeight: 600, color, marginTop: 3 }}>{value ?? "—"}</div>
+      <div style={{ fontFamily: C.mono, fontSize: 16, fontWeight: 600, color, marginTop: 3 }}>{value ?? "n/d"}</div>
     </div>
   )
 
@@ -103,7 +103,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
       {/* System KPIs */}
       <div className="sym-grid-auto" style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 14 }}>
         {kpi("environnement", system?.environment, C.blue)}
-        {kpi("debug", String(system?.debug ?? "—"), system?.debug ? C.amber : C.dim)}
+        {kpi("debug", String(system?.debug ?? "n/d"), system?.debug ? C.amber : C.dim)}
         {kpi("checkpointer", system?.checkpointer, C.green)}
         {kpi("langfuse", system?.observability?.langfuse_enabled ? "ON" : "off", system?.observability?.langfuse_enabled ? C.green : C.dim)}
         {kpi("plage horaire", system?.schedule)}
@@ -127,7 +127,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
             <span>maj #{tick}</span>
           </div>
           <div ref={logBoxRef} style={{ maxHeight: 520, overflowY: "auto", padding: "6px 0" }}>
-            {logs.length === 0 && <div style={{ padding: 20, color: C.dim, fontSize: 12 }}>— aucun événement —</div>}
+            {logs.length === 0 && <div style={{ padding: 20, color: C.dim, fontSize: 12 }}>aucun événement</div>}
             {logs.map((l: any) => {
               const ok = l.success !== false
               const entries = metaEntries(l.metadata)
@@ -206,7 +206,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
               <div key={tier} style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 11, color: C.amber, textTransform: "uppercase" }}>{tier}</div>
                 <div style={{ fontSize: 11, color: C.text, lineHeight: 1.5, wordBreak: "break-all" }}>
-                  {(list as string[]).join(" → ") || "—"}
+                  {(list as string[]).join(" → ") || "aucun modèle"}
                 </div>
               </div>
             ))}
@@ -214,7 +214,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
 
           <div className="sym-card sym-in sym-in-3" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 14 }}>
             <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>agents (aujourd'hui)</div>
-            {agents.length === 0 && <div style={{ fontSize: 11, color: C.dim }}>— aucune requête —</div>}
+            {agents.length === 0 && <div style={{ fontSize: 11, color: C.dim }}>aucune requête</div>}
             {agents.map((a: any) => (
               <div key={a.agent_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
                 <span style={{ color: C.blue }}>{a.agent_id}</span>

@@ -23,7 +23,7 @@ def scaffold(name: str, requis: list[str], resultat: list[str]) -> str:
     resultat_lines = "\n".join(f'            {k!r}: "[À COMPLÉTER]",' for k in resultat)
     return (
         "def run(data: dict) -> dict:\n"
-        f'    """Skill Duret & Sols « {name} » — squelette générique.\n'
+        f'    """Skill Duret & Sols « {name} » : squelette générique.\n'
         f"    Entrées attendues : {requis}.\n"
         '    Règle: ne JAMAIS inventer. Toute donnée absente => "[À COMPLÉTER]".\n'
         '    La logique métier réelle est décrite dans prompt_template."""\n'
@@ -36,7 +36,7 @@ def scaffold(name: str, requis: list[str], resultat: list[str]) -> str:
         "        \"resultat\": {\n"
         f"{resultat_lines}\n"
         "        },\n"
-        '        "note": "Squelette générique — implémenter la logique métier (voir prompt_template).",\n'
+        '        "note": "Squelette générique : implémenter la logique métier (voir prompt_template).",\n'
         "    }\n"
     )
 
@@ -182,7 +182,7 @@ CATALOGUE = [
      "Estime les coûts SOGED selon les typologies et quantités de déchets.",
      ["dechets"], ["typologies", "quantites", "cout_estime", "hypotheses"],
      "Prépare une estimation SOGED (gestion des déchets) selon typologies et quantités. Estimation "
-     "indicative, à valider — n'invente pas de tonnage."),
+     "indicative, à valider. N'invente pas de tonnage."),
 
     ("obligations_reemploi_reinsertion", "agent2", "appels_offres",
      "Repère les obligations de réemploi et de réinsertion professionnelle dans un dossier.",
@@ -195,7 +195,7 @@ CATALOGUE = [
      "Recherche RAG de dossiers comparables (mêmes prestations/typologies) pour aider Benoît à chiffrer plus vite."),
 
     ("base_prechiffrage", "agent2", "chiffrage",
-     "Prépare une base de PRÉ-DEVIS (jamais un chiffrage final — validation obligatoire de Benoît).",
+     "Prépare une base de PRÉ-DEVIS (jamais un chiffrage final, validation obligatoire de Benoît).",
      ["postes"], ["lignes_prechiffrage", "hypotheses", "a_valider"],
      "Assemble une base de pré-chiffrage à partir des postes (DPGF/métrés) + prix de référence + règles "
      "internes. ⚠⚠ NE VALIDE JAMAIS un chiffrage : la décision finale et les prix restent 100% humains (Benoît)."),

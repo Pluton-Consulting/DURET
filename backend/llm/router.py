@@ -225,7 +225,7 @@ class ResilientLLM:
         chain = _tier_chain(self.tier)
         if not chain:
             raise RuntimeError(
-                "Aucun fournisseur LLM configuré — renseignez au moins GROQ_API_KEY "
+                "Aucun fournisseur LLM configuré : renseignez au moins GROQ_API_KEY "
                 "ou OPENROUTER_API_KEY dans le .env."
             )
 

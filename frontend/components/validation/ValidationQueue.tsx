@@ -89,7 +89,7 @@ export default function ValidationQueue({ token }: { token: string }) {
           {items.map((v, i) => {
             const p = v.payload || {}
             const isBrowser = v.agent === "browser"
-            const summary = p.summary || v.draft || "—"
+            const summary = p.summary || v.draft || "Sans description"
             return (
               <div key={v.id} className={`sym-in sym-in-${Math.min(i + 1, 6)} sym-card`} style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", padding: 18, boxShadow: "var(--marque-shadow-card)", border: "1px solid var(--marque-border)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>

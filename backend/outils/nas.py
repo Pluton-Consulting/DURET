@@ -225,7 +225,7 @@ async def apercu(chemin: Optional[str] = None) -> dict:
                           for t in tronques if t.get("total_reel"))
         note = (f"Compte PARTIEL : {total_dossiers} dossier(s) et "
                 f"{total_fichiers} fichier(s) sur la première page seulement. "
-                f"Le serveur en annonce davantage — {reels}. "
+                f"Le serveur en annonce davantage : {reels}. "
                 "Ne présente PAS ces nombres comme le total : descends dans un "
                 "sous-dossier pour compter précisément.")
     else:
@@ -409,7 +409,7 @@ async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dic
     if sortie["complet"]:
         sortie["note"] = (
             "ARBORESCENCE COMPLÈTE : tous les dossiers y sont, comptes exacts. "
-            "Recopie le `schema` TEL QUEL dans un bloc ``` — ne relance PAS "
+            "Recopie le `schema` TEL QUEL dans un bloc ```. Ne relance PAS "
             "l'exploration, il n'y a rien de plus à trouver.")
     else:
         morceaux = []
@@ -421,7 +421,7 @@ async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dic
             morceaux.append("certains dossiers dépassent la page lue, leurs "
                             "comptes sont partiels")
         sortie["note"] = ("Arborescence rendue, mais " + " ; ".join(morceaux)
-                          + ". Dis-le tel quel — ne présente pas ces nombres "
+                          + ". Dis-le tel quel : ne présente pas ces nombres "
                             "comme exhaustifs.")
     return sortie
 

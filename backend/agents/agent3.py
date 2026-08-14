@@ -50,7 +50,7 @@ async def browser_node(state: AgentState) -> dict:
     existing = list(state.get("raw_chunks") or [])
     if result["success"]:
         existing.append(
-            "[SOURCE WEB — documentation externe pour génération du skill]\n"
+            "[SOURCE WEB : documentation externe pour génération du skill]\n"
             + result["content"]
         )
 

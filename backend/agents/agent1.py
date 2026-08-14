@@ -527,6 +527,24 @@ async def tools_node(state: AgentState, config=None) -> dict:
     empreinte = hash_payload(action["skill"], args)
     deja = [r for r in resultats if r.get("payload_hash") == empreinte]
     if deja:
+        # UNE ACTION QUI A ÉCHOUÉ NE RÉUSSIRA PAS EN LA REDEMANDANT TELLE QUELLE.
+        #
+        # Relevé sur les deux projets, le même jour : « il y a combien de
+        # fichiers dans le dossier ? » → l'outil refuse (aucun périmètre
+        # configuré) → le modèle redemande à l'identique → le garde-fou
+        # s'arme, et l'utilisateur reçoit « l'action a été redemandée à
+        # l'identique sans que la demande avance ». Une note technique sur la
+        # MÉCANIQUE, à la place de la seule chose qui l'intéressait : POURQUOI
+        # ça n'a pas marché.
+        #
+        # On sort donc dès la première répétition quand l'original a échoué, et
+        # on remonte SA raison. Le modèle la met en mots ; l'utilisateur
+        # apprend qu'il manque une configuration, au lieu de croire que
+        # l'assistant tourne en rond.
+        if not deja[0].get("ok"):
+            raison = str(deja[0].get("resultat_masque") or "").strip()
+            return _sortir(f"l'action « {action['skill']} » a échoué et redonnerait "
+                           f"le même résultat : {raison[:400]}")
         # DEUXIÈME REDEMANDE IDENTIQUE : le tour n'avance plus. Insister ne peut
         # rien produire de neuf — la réponse serait la même — et chaque passe
         # coûte un appel de modèle. On arrête et on dit pourquoi.

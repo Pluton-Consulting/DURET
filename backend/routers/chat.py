@@ -361,12 +361,105 @@ async def _ws_authenticate(websocket: WebSocket) -> Optional[User]:
     return User(**dict(row)) if row else None
 
 
+async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
+                         data: dict) -> None:
+    """Un tour complet, dans une tâche À PART pour rester ANNULABLE.
+
+    Ce corps vivait dans la boucle de réception. Tant qu'il tournait, plus
+    personne ne lisait la socket : un « stop » envoyé par l'utilisateur
+    attendait sagement dans le tampon que le tour finisse — c'est-à-dire
+    exactement le moment où il ne servait plus à rien. Le sortir en tâche rend
+    la boucle libre d'écouter, donc l'arrêt possible.
+    """
+    try:
+        await _check_schedule(user)
+        await _check_quota(user)
+    except HTTPException as e:
+        await websocket.send_json({"type": "error", "detail": e.detail})
+        return
+
+    start = time.monotonic()
+    tokens = 0
+    agent_used = "agent1"
+    # Réservation + contrôle d'appartenance AVANT le tour : le thread_id vient
+    # de l'URL du WebSocket, et stream_turn charge le checkpoint (historique).
+    try:
+        thread_pk = await _claim_thread(user, thread_id, data.get("query", ""))
+    except HTTPException as e:
+        await websocket.send_json({"type": "error", "detail": e.detail})
+        return
+
+    texte_joint = await _texte_piece_jointe(
+        data.get("attachment_name"), data.get("attachment_b64"), data.get("attachment_mime")
+    )
+
+    final_response = ""
+    try:
+        async for event in runtime.stream_turn(
+            query=data.get("query", ""),
+            user_id=str(user.id),
+            user_role=user.role,
+            has_attachment=data.get("has_attachment", False) or bool(data.get("attachment_b64")),
+            thread_id=thread_id,
+            attachment_b64=data.get("attachment_b64"),
+            attachment_mime=data.get("attachment_mime"),
+            attachment_name=data.get("attachment_name"),
+            attachment_text=texte_joint,
+        ):
+            if event.get("node") == "classify":
+                agent_used = (event.get("data") or {}).get("target_agent", agent_used)
+            if event.get("type") == "final":
+                final_response = event.get("response") or ""
+            await websocket.send_json(event)
+    except asyncio.CancelledError:
+        # ARRÊT DEMANDÉ — pas une panne. Le verrou de fil se libère de lui-même
+        # (`_Verrou.__exit__` s'exécute au passage de l'annulation), donc la
+        # conversation reste utilisable tout de suite après.
+        #
+        # On l'ANNONCE, et on garde une trace : un tour interrompu qui
+        # disparaîtrait sans laisser de message donnerait à l'écran l'aspect
+        # d'un plantage. Ce qui a déjà été produit est écrit tel quel.
+        logger.info("Tour interrompu à la demande (fil %s)", thread_id)
+        # LE MÊME TEXTE À L'ÉCRAN ET EN BASE : au rechargement, la conversation
+        # doit dire exactement ce qu'elle disait avant.
+        mot = final_response or "Traitement interrompu à votre demande."
+        try:
+            await websocket.send_json({"type": "arrete", "detail": mot})
+            await _persist_messages(user, thread_pk, data.get("query", ""), mot)
+        except Exception:  # noqa: BLE001 - la socket peut déjà être fermée
+            pass
+        await log_action(action="chat_interrompu", user_id=str(user.id),
+                         agent_id=agent_used, success=True,
+                         duration_ms=int((time.monotonic() - start) * 1000))
+        raise
+    except runtime.FilOccupe as e:
+        # Refus délibéré, pas une panne : le client ne doit PAS se
+        # rabattre sur le POST, qui retomberait sur le même fil occupé.
+        # Un type distinct le lui dit.
+        await websocket.send_json({"type": "fil_occupe", "detail": str(e)})
+        return
+    except Exception as e:  # noqa: BLE001
+        await websocket.send_json({"type": "error", "detail": str(e)})
+        return
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+    await _persist_messages(user, thread_pk, data.get("query", ""), final_response)
+    await _increment_usage(user, tokens=tokens, cost=0.0)
+    await log_action(
+        action="chat_request", user_id=str(user.id), agent_id=agent_used,
+        success=True, duration_ms=duration_ms,
+    )
+
+
 @router.websocket("/ws/{thread_id}")
 async def chat_ws(websocket: WebSocket, thread_id: str):
     """
     Streaming temps réel : le client envoie une requête JSON {query, has_attachment},
     le serveur pousse les événements nœud-par-nœud puis la réponse finale.
     Auth via ?ticket=<ticket éphémère> (obtenu par POST /api/chat/ws-ticket).
+
+    Le tour tourne dans une tâche séparée pour que cette boucle reste
+    disponible : c'est elle qui reçoit le « stop » et annule.
     """
     await websocket.accept()
     user = await _ws_authenticate(websocket)
@@ -380,69 +473,46 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
         await websocket.close(code=1008)
         return
 
+    en_cours: Optional[asyncio.Task] = None
     try:
         while True:
             data = await websocket.receive_json()
+
+            # L'ARRÊT PASSE AVANT TOUT. C'est le seul message qui compte quand
+            # un tour est en route, et il doit être traité sans rien attendre.
+            if (data.get("type") or "") == "stop":
+                if en_cours is not None and not en_cours.done():
+                    en_cours.cancel()
+                else:
+                    # Rien à arrêter : on le dit plutôt que de laisser un bouton
+                    # sans effet. L'écran remet la saisie à disposition.
+                    await websocket.send_json(
+                        {"type": "arrete", "detail": "Aucun traitement en cours."})
+                continue
+
             query = data.get("query", "")
             if not query:
                 continue
 
-            try:
-                await _check_schedule(user)
-                await _check_quota(user)
-            except HTTPException as e:
-                await websocket.send_json({"type": "error", "detail": e.detail})
+            # UN TOUR À LA FOIS SUR CE FIL. Le verrou du runtime dirait la même
+            # chose, mais plus tard et en ayant déjà réservé des ressources ;
+            # ici la réponse est immédiate et l'écran bascule en file d'attente.
+            if en_cours is not None and not en_cours.done():
+                await websocket.send_json({
+                    "type": "fil_occupe",
+                    "detail": "Un traitement est déjà en cours sur cette "
+                              "conversation. Attendez qu'il se termine, "
+                              "arrêtez-le, ou lancez votre demande en file "
+                              "d'attente."})
                 continue
 
-            start = time.monotonic()
-            tokens = 0
-            agent_used = "agent1"
-            # Réservation + contrôle d'appartenance AVANT le tour : le thread_id vient
-            # de l'URL du WebSocket, et stream_turn charge le checkpoint (historique).
-            try:
-                thread_pk = await _claim_thread(user, thread_id, query)
-            except HTTPException as e:
-                await websocket.send_json({"type": "error", "detail": e.detail})
-                continue
-
-            texte_joint = await _texte_piece_jointe(
-                data.get("attachment_name"), data.get("attachment_b64"), data.get("attachment_mime")
-            )
-
-            final_response = ""
-            try:
-                async for event in runtime.stream_turn(
-                    query=query,
-                    user_id=str(user.id),
-                    user_role=user.role,
-                    has_attachment=data.get("has_attachment", False) or bool(data.get("attachment_b64")),
-                    thread_id=thread_id,
-                    attachment_b64=data.get("attachment_b64"),
-                    attachment_mime=data.get("attachment_mime"),
-                    attachment_name=data.get("attachment_name"),
-                    attachment_text=texte_joint,
-                ):
-                    if event.get("node") == "classify":
-                        agent_used = (event.get("data") or {}).get("target_agent", agent_used)
-                    if event.get("type") == "final":
-                        final_response = event.get("response") or ""
-                    await websocket.send_json(event)
-            except runtime.FilOccupe as e:
-                # Refus délibéré, pas une panne : le client ne doit PAS se
-                # rabattre sur le POST, qui retomberait sur le même fil occupé.
-                # Un type distinct le lui dit.
-                await websocket.send_json({"type": "fil_occupe", "detail": str(e)})
-                continue
-            except Exception as e:
-                await websocket.send_json({"type": "error", "detail": str(e)})
-                continue
-
-            duration_ms = int((time.monotonic() - start) * 1000)
-            await _persist_messages(user, thread_pk, query, final_response)
-            await _increment_usage(user, tokens=tokens, cost=0.0)
-            await log_action(
-                action="chat_request", user_id=str(user.id), agent_id=agent_used,
-                success=True, duration_ms=duration_ms,
-            )
+            en_cours = asyncio.create_task(
+                _derouler_tour(websocket, user, thread_id, data))
     except WebSocketDisconnect:
         pass
+    finally:
+        # LA FERMETURE DE L'ONGLET ARRÊTE LE TOUR. Sans cela, un graphe
+        # continuait de tourner — et d'appeler des modèles payants — pour une
+        # socket que plus personne n'écoute.
+        if en_cours is not None and not en_cours.done():
+            en_cours.cancel()

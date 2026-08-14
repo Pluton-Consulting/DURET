@@ -71,6 +71,7 @@ interface Props {
   peutDecider: boolean
   onAfficher: (t: TacheFond) => void      // clic sur une carte terminee
   onFermer: (t: TacheFond) => void        // croix d'une carte close
+  onArreter?: (t: TacheFond) => void      // arrêt d'une tâche en cours
   onResoudre: (id: string, approuve: boolean) => void
 }
 
@@ -80,7 +81,8 @@ const ETAT_LIBELLE: Record<string, string> = {
 }
 
 export default function FileAttente({ taches, accords, accordEnCours, erreurAccord,
-                                      peutDecider, onAfficher, onFermer, onResoudre }: Props) {
+                                      peutDecider, onAfficher, onFermer, onArreter,
+                                      onResoudre }: Props) {
   if (!taches.length && !accords.length) return null
 
   return (
@@ -107,6 +109,11 @@ export default function FileAttente({ taches, accords, accordEnCours, erreurAcco
           overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
           padding-right:18px; }
         .sym-carte-etat{ font-size:11.5px; color:var(--color-text-muted); margin-top:5px; }
+        .sym-carte-stop{ margin-top:8px; font-size:11.5px; font-weight:600;
+          color:var(--color-error); background:transparent; cursor:pointer;
+          border:1px solid var(--color-error); border-radius:var(--radius-pill);
+          padding:3px 12px; }
+        .sym-carte-stop:hover{ background:var(--color-error); color:#fff; }
         .sym-carte-etat.ok{ color:var(--color-paid-text); font-weight:600; }
         .sym-carte-etat.ko{ color:var(--color-error-text); }
         .sym-piste{ position:relative; height:3px; margin-top:8px; border-radius:2px;
@@ -186,6 +193,16 @@ export default function FileAttente({ taches, accords, accordEnCours, erreurAcco
                     tache de la file exactement comme la tache principale. */}
                 <div className="sym-carte-etat">{t.activite || "en file d'attente"}</div>
                 <div className="sym-piste" aria-label="Tâche en cours"><i /></div>
+                {/* L'ARRÊT VIT SUR LA CARTE, là où la tâche est visible. Une
+                    tâche de fond n'a pas de barre de saisie : sans ce bouton,
+                    la seule issue était d'attendre. */}
+                {onArreter && (
+                  <button className="sym-carte-stop" data-testid="arreter-tache"
+                          aria-label="Arrêter cette tâche"
+                          onClick={(e) => { e.stopPropagation(); onArreter(t) }}>
+                    Arrêter
+                  </button>
+                )}
               </>
             )}
             {t.etat === "attente_validation" && (

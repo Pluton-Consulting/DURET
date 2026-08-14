@@ -86,3 +86,15 @@ export function sendQuery(
     ws.send(JSON.stringify({ query, has_attachment: has_attachment || Boolean(attachment), ...(attachment || {}) }))
   }
 }
+
+/** Demande l'arrêt du tour en cours. Rend `false` si la socket n'est plus là.
+ *
+ * Le retour compte : quand le tour est parti par le repli POST, il n'y a plus
+ * de socket, donc plus de moyen d'interrompre le serveur. Prétendre le
+ * contraire laisserait l'utilisateur croire à un arrêt qui n'a pas lieu.
+ */
+export function sendStop(ws: WebSocket | null): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false
+  ws.send(JSON.stringify({ type: "stop" }))
+  return true
+}

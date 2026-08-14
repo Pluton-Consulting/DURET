@@ -6,7 +6,7 @@ import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { apiRequest } from "@/lib/api"
-import { openChatSocket, sendQuery, ChatEvent } from "@/lib/ws"
+import { openChatSocket, sendQuery, sendStop, ChatEvent } from "@/lib/ws"
 
 interface Message {
   id: string
@@ -450,6 +450,22 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     try { await apiRequest(`/api/file/taches/${t.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
   }
 
+  /** Arrête une tâche de fond. Sa carte reste : c'est le sondage d'état qui la
+   *  fera passer en « interrompue », comme pour tout autre aboutissement.
+   *
+   *  Une tâche affichée en carte mais pilotée par le WebSocket (`source: "ws"`)
+   *  n'a pas de ligne en base : c'est le tour principal déplacé, on l'arrête
+   *  par la socket.
+   */
+  const arreterTache = async (t: TacheFond) => {
+    if (t.source === "ws") { stopper(); return }
+    try {
+      await apiRequest(`/api/file/taches/${t.id}/arreter`, { method: "POST", token })
+    } catch {
+      majCarteLocale(t.id, { activite: "l'arrêt n'a pas pu être demandé" })
+    }
+  }
+
   // Restaure la conversation au montage : thread passé en prop, sinon dernier thread
   // mémorisé en localStorage → recharge son historique depuis le backend.
   // Relit le fil mémorisé. Replie sur la clé NON préfixée : au tout premier
@@ -555,6 +571,25 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     } catch (e: any) {
       pushAssistant(`Erreur : ${e?.message ?? "la mise en file a échoué"}`)
     }
+  }
+
+  /** Arrête le tour en cours. Le serveur confirme par un événement `arrete`.
+   *
+   * On ne coupe RIEN à l'écran d'ici : c'est la confirmation du serveur qui
+   * clôt le tour. Nettoyer localement d'abord donnerait un chat rendu à
+   * l'utilisateur pendant qu'un graphe continue de tourner derrière — et
+   * d'appeler des modèles payants.
+   */
+  const stopper = () => {
+    if (sendStop(wsRef.current)) {
+      setActivite("arrêt demandé…")
+      return
+    }
+    // Pas de socket : le tour est parti par le repli POST, qu'on ne sait pas
+    // interrompre côté serveur. On le dit plutôt que de laisser croire à un
+    // arrêt qui n'aura pas lieu.
+    pushAssistant("Ce traitement ne peut plus être interrompu (il ne passe pas "
+                  + "par la connexion temps réel). Il se terminera de lui-même.")
   }
 
   const sendMessage = (text: string, piece?: PieceJointe) => {
@@ -744,6 +779,12 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           } else if (t === "validation_required") {
             // Emis PENDANT le parcours ; c'est `pending_validation`, qui suit
             // avec l'identifiant persiste, qui fait foi. Rien a faire ici.
+          } else if (t === "arrete") {
+            // ARRÊT CONFIRMÉ PAR LE SERVEUR. `finish` pose `settled`, ce qui
+            // est essentiel : sans lui, la fermeture de la socket qui suit
+            // déclencherait le repli POST, et la demande qu'on vient
+            // d'interrompre repartirait de zéro.
+            finish(String(event.detail ?? "Traitement interrompu."))
           } else if (t === "fil_occupe") {
             // Refus delibere du backend (un tour tourne deja sur ce fil, ou il
             // attend une decision). Le repli POST retomberait sur le meme fil :
@@ -829,7 +870,9 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           </div>
         )}
 
-        <InputBar onSend={sendMessage} disabled={false} modeFile={loading || principalOccupe} />
+        <InputBar onSend={sendMessage} disabled={false}
+                  modeFile={loading || principalOccupe}
+                  enCours={loading} onStop={stopper} />
       </div>
 
       <ReasoningPath
@@ -844,6 +887,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             peutDecider={peutDecider}
             onAfficher={afficherTache}
             onFermer={fermerTache}
+            onArreter={arreterTache}
             onResoudre={resoudreAccord}
           />
         }

@@ -157,6 +157,14 @@ async def _executer(tache_id: str, user_id: str, query: str) -> None:
     """
     try:
         await _derouler_tache(tache_id, user_id, query)
+    except asyncio.CancelledError:
+        # ARRÊT DEMANDÉ. Une tâche annulée doit sortir de « en cours », sinon
+        # sa carte tourne pour toujours et son créneau de quota reste pris —
+        # exactement la panne que `_terminer` existe pour éviter.
+        logger.info("Tâche différée %s interrompue à la demande", tache_id)
+        await _terminer(tache_id, "interrompue", progress="arrêtée",
+                        erreur="arrêtée à votre demande")
+        raise
     finally:
         _VIVANTES.pop(tache_id, None)
 
@@ -505,6 +513,44 @@ async def detail_tache(tache_id: UUID, current_user: User = Depends(get_current_
     return {"id": str(t["id"]), "query": t["query"], "status": t["status"],
             "response": t["response"], "error": t["error"],
             "created_at": t["created_at"].isoformat() if t["created_at"] else None}
+
+
+@router.post("/taches/{tache_id}/arreter")
+async def arreter(tache_id: UUID, current_user: User = Depends(get_current_user)):
+    """Interrompt une tâche en cours. L'APPARTENANCE FAIT PARTIE DU FILTRE.
+
+    Sans elle, un identifiant deviné arrêterait le travail de quelqu'un
+    d'autre : c'est la même règle que la lecture d'une tâche, et elle vaut
+    d'autant plus ici que le geste détruit du travail en cours.
+
+    Une tâche déjà finie n'est pas une erreur — l'utilisateur clique sur ce
+    qu'il voit, et ce qu'il voit peut avoir une seconde de retard.
+    """
+    async with get_db() as conn:
+        ligne = await conn.fetchrow(
+            "SELECT status FROM taches_differees WHERE id = $1 AND user_id = $2",
+            tache_id, current_user.id)
+    if not ligne:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Tâche introuvable")
+
+    execution = _TACHES_ASYNCIO.get(str(tache_id))
+    if execution is not None and not execution.done():
+        execution.cancel()
+        await log_action(action="tache_differee_arretee",
+                         user_id=str(current_user.id),
+                         metadata={"tache_id": str(tache_id)})
+        return {"arretee": True}
+
+    # Rien ne tourne ici : soit c'est déjà fini, soit la tâche appartient à un
+    # AUTRE processus (redémarrage entre-temps). On sort la ligne de « en
+    # cours » pour ne pas laisser une carte tourner sans fin, mais on ne
+    # prétend pas avoir interrompu quoi que ce soit.
+    if ligne["status"] == "en_cours":
+        await _terminer(str(tache_id), "interrompue", progress="arrêtée",
+                        erreur="arrêtée à votre demande")
+        return {"arretee": True, "note": "état remis à jour"}
+    return {"arretee": False, "note": f"tâche déjà « {ligne['status']} »"}
 
 
 @router.post("/taches/{tache_id}/vu")

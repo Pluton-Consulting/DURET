@@ -14,6 +14,20 @@ interface InputBarProps {
   // d'interrompre. Le champ et le bouton le disent, sinon l'utilisateur croit
   // interrompre la tache en cours.
   modeFile?: boolean
+  // Un tour tourne EN CE MOMENT sur cette conversation : le bouton d'arret
+  // apparait. Sans lui, la seule sortie d'un tour parti de travers etait
+  // d'attendre, ou de fermer l'onglet.
+  enCours?: boolean
+  onStop?: () => void
+}
+
+/** Un carré plein : le symbole d'arrêt, universel et sans ambiguïté. */
+function IconeStop() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <rect x="0" y="0" width="12" height="12" rx="2.5" fill="currentColor" />
+    </svg>
+  )
 }
 
 /** Trois barres indentées : la file d'attente, dessinée plutôt que dite. */
@@ -45,7 +59,7 @@ function lireBase64(fichier: File): Promise<string> {
   })
 }
 
-export default function InputBar({ onSend, disabled, modeFile }: InputBarProps) {
+export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }: InputBarProps) {
   const [value, setValue] = useState("")
   const [piece, setPiece] = useState<PieceJointe | null>(null)
   const [erreur, setErreur] = useState("")
@@ -172,6 +186,30 @@ export default function InputBar({ onSend, disabled, modeFile }: InputBarProps) 
             transition: "border-color .2s ease, box-shadow .2s ease",
           }}
         />
+
+        {/* L'ARRÊT VIT À CÔTÉ DE L'ENVOI, pas à sa place : on doit pouvoir
+            arrêter le tour en cours ET préparer la demande suivante. Le
+            remplacer masquerait la file d'attente, qui est un autre geste. */}
+        {enCours && onStop && (
+          <button
+            className="sym-tap"
+            data-testid="stopper-ia"
+            onClick={onStop}
+            title="Arrêter le traitement en cours"
+            aria-label="Arrêter le traitement en cours"
+            style={{
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-error)",
+              color: "var(--color-error)",
+              borderRadius: "var(--radius-pill)", padding: "10px 16px",
+              fontSize: 14, fontWeight: 600, cursor: "pointer",
+              whiteSpace: "nowrap", flexShrink: 0,
+              display: "flex", alignItems: "center", gap: 8,
+            }}
+          >
+            <IconeStop /> Arrêter
+          </button>
+        )}
 
         <button
           className="sym-tap"

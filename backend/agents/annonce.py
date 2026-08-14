@@ -72,10 +72,17 @@ _FUTUR = (rf"je {_PRON}(?:vais|commence|m['’]y mets|me mets|procede|prepare"
 _PRODUCTION = (rf"je {_PRON}(?:cree|redige|genere|produis|finalise|termine"
                r"|depose|ajoute|complete|remplis|enregistre|envoie|ouvre"
                r"|recupere|telecharge|sauvegarde|lance|consulte|calcule"
-               r"|liste|poursuis|transmets|extrais|inscris)\b"
+               r"|liste|poursuis|transmets|extrais|inscris"
+               # Les verbes de REPRISE, relevés en production le 14/08 : « Je
+               # continue à verser le contenu dans le document déjà ouvert » a
+               # terminé le tour tel quel — « je poursuis » était couvert,
+               # « je continue » non. C'est exactement la faille de liste que
+               # le module documente ; on la rebouche sans se raconter qu'elle
+               # ne se rouvrira pas ailleurs.
+               r"|continue|reprends|verse|insere)\b"
                # Élision, avec ou sans pronom intercalé : « j'y ajoute ».
                r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais"
-               r"|inscris)")
+               r"|inscris|insere)")
 
 # VERBES DE LECTURE au présent : « je compte 18 dossiers », « d'après ce que je
 # lis dans le CCTP ». Ce sont les tournures NORMALES d'un résultat d'observation

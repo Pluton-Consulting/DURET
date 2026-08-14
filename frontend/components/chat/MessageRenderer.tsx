@@ -2,7 +2,7 @@
 import type { ReactNode } from "react"
 import { RichText } from "./RichText"
 import {
-  QuoteCard, InvoiceCard, EmailCard, DocCard, FileCard, ContactCard, ProjectCard,
+  QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, FileCard, ContactCard, ProjectCard,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
   Callout, StatTile, Badge, QuickReplies, BulletList,
@@ -52,6 +52,9 @@ const REQUIRED: Record<string, string[]> = {
   invoice: ["number", "client", "amount"],
   email: ["subject", "from"],
   doc: ["name"],
+  // L'aperçu vit ou meurt avec son extrait : sans contenu réel à montrer, la
+  // carte `doc` classique suffit — un cadre d'aperçu vide serait pire que rien.
+  doc_apercu: ["extrait"],
   fichier: ["url"],
   contact: ["name"],
   project: ["name", "client"],
@@ -90,6 +93,7 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "invoice":       return <InvoiceCard {...p} />
     case "email":         return <EmailCard {...p} />
     case "doc":           return <DocCard {...p} />
+    case "doc_apercu":    return <DocApercu {...p} />
     // Le telechargement est controle cote serveur : le composant a besoin
     // du jeton, un lien nu partirait sans en-tete et serait refuse.
     case "fichier":       return <FileCard {...p} {...acces} />

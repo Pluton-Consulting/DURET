@@ -4,10 +4,10 @@ Routeur LLM — cascade multi-fournisseurs avec retry, backoff et fallback.
 Trois paliers, trois compromis assumés entre coût et intelligence :
   LIGHT    — gros volume, faible enjeu (orientation, classification, résumé court)
              DeepSeek Flash → Groq 8B → OpenRouter free → Ollama
-  STANDARD — rédaction courante
-             LongCat 2.0 → DeepSeek Flash → passerelle → Groq 70B → free → Ollama
+  STANDARD — rédaction courante : la LATENCE d'abord
+             DeepSeek Flash → passerelle → Groq 70B → LongCat → free → Ollama
   COMPLEX  — analyse, synthèse, jugement : le raisonnement fait la qualité
-             DeepSeek V4 Pro → passerelle → Anthropic → LongCat → Groq 70B → free
+             DeepSeek V4 Pro → passerelle → Anthropic → Groq 70B → LongCat → free
 
 Le palier n'est pas choisi au hasard : le nœud d'orientation tranche, en un
 appel LIGHT, si la demande relève d'une rédaction courante ou d'un vrai travail
@@ -106,15 +106,24 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
             ("ollama", None),
         ]
     elif tier == LLMTier.STANDARD:
-        # Rédaction courante : LongCat reste le modèle principal, DeepSeek Flash
-        # prend le relais avant les modèles gratuits — un repli qui écrit moins
-        # bien coûte plus cher en reprises qu'il n'économise en jetons.
+        # Rédaction courante : la LATENCE passe devant. LongCat était en tête,
+        # et l'export Langfuse du 14/08 a donné la mesure : 61,8 s de MOYENNE
+        # par appel (37 appels), des pointes à 190 s. Or un tour n'est pas un
+        # appel : produire un document long en enchaîne quinze — un quart
+        # d'heure de rédaction pure, qui crevait le plafond des tâches de fond,
+        # et l'utilisateur lisait « délai dépassé » après avoir tout attendu.
+        #
+        # DeepSeek Flash écrit un français propre en quelques secondes ; Groq
+        # 70B répond encore plus vite. LongCat n'apporte son surcroît de style
+        # qu'au prix de la minute par appel : il devient le SECOURS, plus le
+        # principal. La qualité d'un assistant qui répond est supérieure à
+        # celle d'un assistant qui rédige mieux mais n'aboutit pas.
         chain = [
-            ("longcat", s.model_longcat),
             ("deepseek", s.model_deepseek_flash),
-            ("openrouter", s.model_primary),               # LongCat via la passerelle
             ("openrouter", s.model_or_deepseek_flash),
             ("groq", s.model_groq_large),
+            ("longcat", s.model_longcat),
+            ("openrouter", s.model_primary),               # LongCat via la passerelle
             ("openrouter", s.model_or_free_a),
             ("ollama", None),
         ]
@@ -123,12 +132,16 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         # décide de la qualité. DeepSeek Pro EN TÊTE, avant LongCat — c'est le
         # seul endroit où l'on accepte de payer davantage, et il ne représente
         # qu'une fraction des tours grâce à l'orientation.
+        #
+        # Groq passe DEVANT LongCat dans les replis, pour la même raison de
+        # latence qu'au palier STANDARD : un secours à 60-190 s l'appel
+        # transforme la panne du principal en gel de l'application.
         chain = [
             ("deepseek", s.model_deepseek),                # V4 Pro — raisonnement
             ("openrouter", s.model_or_deepseek_pro),
             ("anthropic", s.model_anthropic_vision),
-            ("longcat", s.model_longcat),
             ("groq", s.model_groq_large),
+            ("longcat", s.model_longcat),
             ("openrouter", s.model_or_free_b),
             ("ollama", None),
         ]

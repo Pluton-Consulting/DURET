@@ -41,14 +41,12 @@ async def nas_apercu(data: dict, user) -> dict:
 
 
 async def nas_arborescence(data: dict, user) -> dict:
-    """L'arbre d'un dossier sur plusieurs niveaux, en un appel."""
+    """L'arbre du serveur — complet si aucun chemin n'est précisé — en un appel."""
     from outils.nas import arborescence
     await _garde_nas(user)
-    chemin = (data.get("chemin") or "").strip()
-    if not chemin:
-        _echec("Donne le `chemin` du dossier dont tu veux l'arborescence.")
     try:
-        return await arborescence(chemin, data.get("profondeur") or 2)
+        return await arborescence((data.get("chemin") or "").strip() or None,
+                                  data.get("profondeur") or 0)
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
 
@@ -164,8 +162,11 @@ SKILLS = {
         libelle="je regarde ce que contient le dossier"),
     "nas_arborescence": Declaration(
         fonction=nas_arborescence,
-        description="ARBRE d'un dossier du serveur sur plusieurs niveaux, en une fois",
-        requis=["chemin"], optionnels=["profondeur"],
+        description=("ARBRE COMPLET du serveur en UNE action : sans `chemin`, "
+                     "TOUS les partages ouverts y passent, avec les comptes. "
+                     "Rend `schema` : recopie-le TEL QUEL dans un bloc ```. "
+                     "`chemin` limite a un sous-arbre"),
+        optionnels=["chemin", "profondeur"],
         effet="lecture",
         libelle="je parcours les dossiers du serveur"),
     "nas_ouvrir": Declaration(

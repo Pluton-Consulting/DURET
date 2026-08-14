@@ -135,8 +135,13 @@ async def terminer_document(data: dict, user) -> dict:
         "elements": f["elements"],
         "octets": f["octets"],
         "url": f"/api/documents/{jeton}",
-        "note": ("Le fichier est prêt. Annonce-le avec un bloc ```ui de type "
-                 "`fichier` portant `url`, `nom`, `format` et `octets`, pour que "
-                 "la personne puisse le télécharger d'un clic. Le lien vaut 24 h "
-                 "et n'est utilisable que par elle."),
+        # L'extrait est le DÉBUT RÉEL du fichier rendu : c'est lui qui alimente
+        # l'aperçu dans le chat. Sans lui, le modèle « montrait » un contenu
+        # recomposé de mémoire, qui divergeait du fichier téléchargé.
+        "extrait": f.get("extrait") or "",
+        "note": ("Le fichier est prêt. Annonce-le avec DEUX blocs ```ui : un "
+                 "`doc_apercu` portant `titre`, `format` et `extrait` (recopie "
+                 "l'extrait fourni TEL QUEL), puis un `fichier` portant `url`, "
+                 "`nom`, `format` et `octets` pour le téléchargement. Le lien "
+                 "vaut 24 h et n'est utilisable que par la personne."),
     }

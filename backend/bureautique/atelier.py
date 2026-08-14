@@ -107,6 +107,27 @@ def _ouverts_de(proprietaire: str) -> list[str]:
     return out
 
 
+def ouverts(proprietaire: str) -> list[dict]:
+    """Les documents encore ouverts de cette personne, identifiants compris.
+
+    CE QUE LE MODÈLE DOIT SAVOIR D'UN TOUR À L'AUTRE. Relevé en production :
+    « Je continue à verser le contenu dans le document déjà ouvert » — et le
+    tour s'est terminé sur cette phrase. Le document était bien ouvert, au tour
+    D'AVANT : ce tour-ci ne portait aucun résultat d'action, donc ni le rappel
+    de clôture ni le sélecteur d'actions ne savaient qu'un travail était en
+    cours, ni sous quel identifiant. Sans identifiant à recopier, le modèle ne
+    peut que promettre — ou rouvrir un document et perdre le contenu versé.
+    """
+    sortie = []
+    for jeton in _ouverts_de(proprietaire):
+        f = _lire_fiche(jeton) or {}
+        entete = f.get("entete") or {}
+        sortie.append({"document_id": jeton, "titre": entete.get("titre"),
+                       "format": entete.get("format"),
+                       "elements": int(f.get("elements") or 0)})
+    return sortie
+
+
 def fiche(jeton: str, proprietaire: str) -> dict | None:
     """Fiche du document SI elle appartient à cette personne, sinon None.
 
@@ -158,6 +179,35 @@ def elements(jeton: str):
         return
 
 
+def _extrait(jeton: str, limite: int = 900) -> str:
+    """Le DÉBUT RÉEL du document, pour l'aperçu dans le chat.
+
+    C'est ce qui permet de MONTRER ce qui a été produit sans le réinventer :
+    un aperçu recomposé de mémoire par le modèle finit toujours par diverger
+    du fichier, et c'est le fichier qui fait foi.
+    """
+    bouts: list[str] = []
+    total = 0
+    for e in elements(jeton):
+        bloc = e.get("bloc")
+        t = str(e.get("texte") or "")
+        if bloc == "titre" and t:
+            t = ("#" * max(1, int(e.get("niveau") or 1))) + " " + t
+        elif bloc == "liste":
+            t = "\n".join(f"- {i}" for i in (e.get("items") or [])[:6])
+        elif bloc in ("tableau", "feuille"):
+            t = f"[{bloc} : {len(e.get('lignes') or [])} ligne(s)]"
+        elif bloc in ("saut_page", "separateur"):
+            continue
+        if not t:
+            continue
+        bouts.append(t)
+        total += len(t)
+        if total >= limite:
+            break
+    return "\n\n".join(bouts)[:limite]
+
+
 def terminer(jeton: str, proprietaire: str) -> dict:
     """Rend le fichier et marque le document comme fini."""
     from bureautique.rendu import rendre
@@ -174,7 +224,8 @@ def terminer(jeton: str, proprietaire: str) -> dict:
     rendre(entete, elements(jeton), sortie)
 
     f.update({"fini": True, "fichier": os.path.basename(sortie),
-              "octets": os.path.getsize(sortie), "termine": time.time()})
+              "octets": os.path.getsize(sortie), "termine": time.time(),
+              "extrait": _extrait(jeton)})
     _ecrire_fiche(jeton, f)
     logger.info("Document %s rendu : %s, %d octets, %d éléments",
                 jeton[:8], extension, f["octets"], f["elements"])

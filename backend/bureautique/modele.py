@@ -66,32 +66,85 @@ def _texte(v, limite: int = MAX_TEXTE) -> str:
     return " ".join(str(v if v is not None else "").split())[:limite]
 
 
-def normaliser_element(brut: dict) -> dict | None:
+# LES SYNONYMES OBSERVÉS EN PRODUCTION, pas un dictionnaire imaginaire.
+#
+# L'export Langfuse du 14/08 montre le modèle envoyer {"type":"titre",
+# "text":...}, {"type":"paragraphe","contenu":...} — jamais deux fois la même
+# forme, et jamais la forme canonique {"bloc":...,"texte":...}. Chaque élément
+# était écarté, « Aucun bloc n'a été retenu », et l'aller-retour de correction
+# coûtait une minute de modèle pour reformuler EXACTEMENT le même contenu.
+#
+# Le vocabulaire canonique ne change pas : c'est lui qu'on documente et qu'on
+# rend. Mais un synonyme évident — le mot anglais, le nom du champ voisin — ne
+# détruit plus un versement entier. La philosophie « rien n'est deviné » tient
+# toujours : un type réellement inconnu ou un contenu vide restent écartés ;
+# on traduit ce qui est sans ambiguïté, on ne fabrique rien.
+_TYPES = {
+    "titre": "titre", "heading": "titre", "header": "titre", "title": "titre",
+    "h1": "titre", "h2": "titre", "h3": "titre", "h4": "titre",
+    "paragraphe": "paragraphe", "paragraph": "paragraphe", "p": "paragraphe",
+    "texte": "paragraphe", "text": "paragraphe",
+    "liste": "liste", "list": "liste", "ul": "liste", "ol": "liste",
+    "puces": "liste", "bullet_list": "liste",
+    "tableau": "tableau", "table": "tableau",
+    "saut_page": "saut_page", "pagebreak": "saut_page", "page_break": "saut_page",
+    "saut": "saut_page", "newpage": "saut_page",
+    "feuille": "feuille", "sheet": "feuille", "onglet": "feuille",
+    "separateur": "separateur", "separator": "separateur", "hr": "separateur",
+    "ligne_horizontale": "separateur",
+}
+
+
+def _champ_texte(brut: dict, limite: int = MAX_TEXTE) -> str:
+    """Le texte d'un bloc, sous le nom que le modèle lui a donné ce jour-là."""
+    for cle in ("texte", "text", "contenu", "content", "valeur", "value"):
+        v = _texte(brut.get(cle), limite)
+        if v:
+            return v
+    return ""
+
+
+def normaliser_element(brut) -> dict | None:
     """Ramène un élément à sa forme sûre, ou None s'il est inexploitable.
 
-    Rien n'est deviné : un bloc inconnu ou vide est ÉCARTÉ. Le laisser passer
-    produirait un trou silencieux dans le document, découvert par le lecteur
-    final — c'est-à-dire au pire moment.
+    Rien n'est deviné : un bloc réellement inconnu ou vide est ÉCARTÉ. Le
+    laisser passer produirait un trou silencieux dans le document, découvert
+    par le lecteur final — c'est-à-dire au pire moment. Les synonymes de
+    `_TYPES`, eux, sont TRADUITS : écarter {"type":"heading"} n'a jamais
+    protégé personne, ça faisait juste rater le versement.
     """
+    # Une chaîne nue est un paragraphe qui s'ignore : c'est la forme la plus
+    # simple qu'un modèle puisse produire, il n'y a rien d'ambigu à traduire.
+    if isinstance(brut, str):
+        texte = _texte(brut)
+        return {"bloc": "paragraphe", "texte": texte, "gras": False,
+                "italique": False, "centre": False,
+                "taille": "normal", "couleur": ""} if texte else None
     if not isinstance(brut, dict):
         return None
-    bloc = _texte(brut.get("bloc"), 40).lower()
-    if bloc not in BLOCS:
+    demande = _texte(brut.get("bloc") or brut.get("type") or brut.get("kind"),
+                     40).lower()
+    bloc = _TYPES.get(demande)
+    if bloc is None:
         return None
+    # « h2 » dit le niveau en même temps que le type : on le garde de côté
+    # avant de normaliser, pour que {"type":"h2","text":...} sorte en titre de
+    # niveau 2 et non de niveau 1.
+    niveau_implicite = int(demande[1]) if demande in ("h1", "h2", "h3", "h4") else None
 
     if bloc in ("saut_page", "separateur"):
         return {"bloc": bloc}
 
     if bloc == "titre":
-        texte = _texte(brut.get("texte"), 500)
+        texte = _champ_texte(brut, 500)
         if not texte:
             return None
-        niveau = brut.get("niveau")
+        niveau = brut.get("niveau", brut.get("level", niveau_implicite))
         niveau = niveau if isinstance(niveau, int) and 1 <= niveau <= 4 else 1
         return {"bloc": "titre", "texte": texte, "niveau": niveau}
 
     if bloc == "paragraphe":
-        texte = _texte(brut.get("texte"))
+        texte = _champ_texte(brut)
         if not texte:
             return None
         # Mise en forme facultative, en vocabulaire FERMÉ. On demande « grand »
@@ -109,15 +162,23 @@ def normaliser_element(brut: dict) -> dict | None:
                 "couleur": couleur if couleur in COULEURS else ""}
 
     if bloc == "liste":
-        items = [_texte(i, 2000) for i in (brut.get("items") or [])]
+        source = (brut.get("items") or brut.get("elements")
+                  or brut.get("points") or [])
+        items = [_texte(i, 2000) for i in source]
         items = [i for i in items if i][:1000]
+        # « ol » dit l'ordre en même temps que le type, comme « h2 » le niveau.
+        ordonnee = bool(brut.get("ordonnee", brut.get("ordered"))) or demande == "ol"
         return {"bloc": "liste", "items": items,
-                "ordonnee": bool(brut.get("ordonnee"))} if items else None
+                "ordonnee": ordonnee} if items else None
 
     if bloc in ("tableau", "feuille"):
-        entetes = [_texte(e, 200) for e in (brut.get("entetes") or [])][:MAX_COLONNES]
+        entetes = [_texte(e, 200) for e in
+                   (brut.get("entetes") or brut.get("headers")
+                    or brut.get("colonnes") or brut.get("columns")
+                    or [])][:MAX_COLONNES]
         lignes = []
-        for ligne in (brut.get("lignes") or [])[:MAX_LIGNES_TABLEAU]:
+        for ligne in (brut.get("lignes") or brut.get("rows")
+                      or [])[:MAX_LIGNES_TABLEAU]:
             if isinstance(ligne, dict):     # {colonne: valeur} accepté aussi
                 ligne = [ligne.get(e, "") for e in entetes]
             if not isinstance(ligne, (list, tuple)):

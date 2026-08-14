@@ -65,7 +65,14 @@ MAX_PAR_PERSONNE = 5
 # graphes pendus (fournisseur muet, réseau coupé) gèlent la file entière jusqu'au
 # redémarrage. Le délai est généreux — certains tours légitimes durent plusieurs
 # minutes — mais il existe.
-DELAI_MAX_S = 20 * 60
+#
+# PORTÉ DE 20 À 40 MINUTES. Un document long réel a crevé les 20 : quinze
+# allers-retours de modèle à une minute l'appel (mesuré sur l'export Langfuse
+# du 14/08), et l'utilisateur a lu « délai dépassé » après avoir tout attendu.
+# La vraie réparation est la vitesse (cascade réordonnée, session gardée) ; ce
+# délai reste le FILET contre les tours pendus, pas la limite d'un tour qui
+# avance.
+DELAI_MAX_S = 40 * 60
 
 # La demande exécutée doit être CELLE QUI EST TRACÉE. Tronquer en base et
 # exécuter le texte entier ferait diverger l'audit de la réalité.

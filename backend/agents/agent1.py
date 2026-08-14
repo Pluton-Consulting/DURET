@@ -54,6 +54,18 @@ MAX_ACTIONS_PAR_TOUR = 8
 # bien au-delà de tout document réel.
 MAX_VERSEMENTS_PAR_TOUR = 40
 
+# LE SCHÉMA D'UNE ARBORESCENCE NE TIENT PAS DANS 4000 CARACTÈRES. Le résultat
+# de chaque action est plafonné avant de repartir vers le modèle — et c'est ce
+# plafond, pas l'outil, qui tronquait l'arbre : le modèle relançait alors
+# l'exploration « car le résultat précédent était tronqué », mot pour mot, et
+# le budget d'actions y passait. Ces skills-là, dont la sortie EST le contenu
+# demandé, ont droit à un plafond large ; les autres gardent le plafond serré,
+# un résultat d'action ordinaire n'ayant rien à faire au-delà.
+# (Le nom varie selon le projet — drive_ ou nas_ — la règle est la même.)
+RESULTATS_GENEREUX = {"drive_arborescence", "nas_arborescence"}
+PLAFOND_RESULTAT = 4000
+PLAFOND_RESULTAT_GENEREUX = 12000
+
 
 # ANNONCE SANS ACTE. Le modèle écrit « je crée le PDF », « je commence par
 # compter », et n'émet AUCUN bloc d'action. Le tour se terminait sur cette
@@ -312,10 +324,16 @@ async def llm_node(state: AgentState, config=None) -> dict:
         # milieu d'un travail à peine commencé. Combiné au protocole qui parlait
         # de « ta réponse finale » après UNE action, il n'avait aucune raison de
         # continuer : les deux textes lui disaient de s'arrêter.
+        # Le plafond du bloc suit celui des résultats : tronquer ICI à 6000 un
+        # schéma que `tools_node` a laissé passer à 12000 reviendrait à
+        # déplacer la coupure, pas à la supprimer.
+        plafond_bloc = (16000 if any((r.get("skill") or "") in RESULTATS_GENEREUX
+                                     for r in resultats_outils) else 6000)
         bloc_resultats = (
             "Résultats des actions déjà exécutées pour cette demande (ne les "
             "relance pas à l'identique) :\n"
-            + _json_out.dumps(resultats_outils, ensure_ascii=False, default=str)[:6000]
+            + _json_out.dumps(resultats_outils, ensure_ascii=False,
+                              default=str)[:plafond_bloc]
             + "\n\n")
         # LE TRAVAIL RESTÉ OUVERT SE DIT, il ne se devine pas. `cloture_attendue`
         # lit dans les RÉSULTATS — pas dans la prose — qu'un document a été
@@ -328,6 +346,29 @@ async def llm_node(state: AgentState, config=None) -> dict:
                 f"ATTENTION : le travail n'est PAS terminé. Il reste au minimum "
                 f"`{manque}` à exécuter, et le contenu demandé à verser avant. "
                 "N'écris pas ta réponse finale maintenant : émets l'action suivante.\n\n")
+
+    # UN DOCUMENT RESTÉ OUVERT D'UN TOUR PRÉCÉDENT SE DIT AUSSI.
+    # `cloture_attendue` ne lit que les résultats de CE tour : « je continue à
+    # verser le contenu dans le document déjà ouvert » — ouvert au tour d'avant
+    # — partait donc sans identifiant ni rappel, et le tour s'est terminé sur
+    # la promesse. L'atelier, lui, s'en souvient : on lui demande.
+    try:
+        import asyncio as _aio
+        from bureautique.atelier import ouverts as _docs_ouverts
+        en_cours = await _aio.to_thread(
+            _docs_ouverts, str(state.get("user_id") or ""))
+    except Exception:  # noqa: BLE001 - un aperçu manquant ne casse pas le tour
+        en_cours = []
+    if en_cours:
+        import json as _json_docs
+        bloc_resultats += (
+            "Document(s) que tu as OUVERTS et non terminés (aucun fichier "
+            "n'existe encore) :\n"
+            + _json_docs.dumps(en_cours, ensure_ascii=False)
+            + "\nPour continuer ce travail : `ajouter_document` puis "
+              "`terminer_document` avec CE `document_id`, recopié caractère "
+              "pour caractère. N'en rouvre pas un nouveau : le contenu déjà "
+              "versé serait perdu. Si la demande n'a aucun rapport, ignore-les.\n\n")
 
     # Aucun préambule sur l'absence de documents : c'est le modèle qui décide
     # s'il lui en faut, en appelant l'outil de recherche. Lui annoncer d'office
@@ -353,6 +394,7 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"quote","id":"...","client":"...","status":"draft|sent|accepted","total":"...","lines":[{"label":"...","qty":"...","price":"..."}]}
 - {"type":"invoice","number":"...","client":"...","amount":"...","issued":"...","due":"...","status":"paid|pending|late"}
 - {"type":"doc","name":"...","kind":"PDF|XLSX|DOCX","meta":"..."}
+- {"type":"doc_apercu","titre":"...","format":"docx|pdf|xlsx","extrait":"..."} — l'APERÇU d'un document. OBLIGATOIRE dès qu'un document est produit, déposé ou LU : `extrait` reprend TEL QUEL le champ `extrait` (document produit) ou le début du `contenu`/`texte` rendu par la lecture. Jamais un résumé réécrit : l'aperçu montre le VRAI contenu.
 - {"type":"contact","name":"...","role":"...","phone":"...","email":"..."}
 - {"type":"project","name":"...","client":"...","progress":62,"status":"..."}
 - {"type":"table","columns":["...","..."],"rows":[["...","..."]]}
@@ -598,7 +640,10 @@ async def tools_node(state: AgentState, config=None) -> dict:
             trigger={"type": state.get("trigger_kind") or "chat",
                      "id": state.get("thread_id")},
         )
-        contenu = _json.dumps(brut.get("output"), ensure_ascii=False, default=str)[:4000]
+        plafond = (PLAFOND_RESULTAT_GENEREUX
+                   if action["skill"] in RESULTATS_GENEREUX else PLAFOND_RESULTAT)
+        contenu = _json.dumps(brut.get("output"), ensure_ascii=False,
+                              default=str)[:plafond]
         ok = True
     except SkillError as e:
         contenu, ok = f"ERREUR : {e}", False
@@ -834,6 +879,25 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
             f"n'y a donc rien à télécharger ni à déposer. C'est l'action "
             f"attendue, avec le `document_id` déjà rendu. N'en ouvre pas un "
             f"nouveau : le travail déjà versé serait perdu.")
+
+    # Un document ouvert lors d'un TOUR PRÉCÉDENT n'apparaît pas dans les
+    # résultats de ce tour : l'atelier est le seul à s'en souvenir. Sans
+    # l'identifiant sous les yeux, ce sélecteur en inventerait un plausible —
+    # c'est la boucle documentée plus haut, jouée depuis un autre point d'entrée.
+    try:
+        import asyncio as _aio
+        from bureautique.atelier import ouverts as _docs_ouverts
+        en_cours = await _aio.to_thread(
+            _docs_ouverts, str(state.get("user_id") or ""))
+    except Exception:  # noqa: BLE001
+        en_cours = []
+    if en_cours:
+        demande += (
+            "\n\nDocument(s) encore OUVERTS de tours précédents :\n"
+            + _json.dumps(en_cours, ensure_ascii=False)
+            + "\nSi l'intention annoncée est de CONTINUER ce document, l'action "
+              "attendue est `ajouter_document` (puis `terminer_document`) avec "
+              "ce `document_id`, recopié caractère pour caractère.")
 
     llm = get_llm(LLMTier(state.get("llm_tier", "standard")))
     try:

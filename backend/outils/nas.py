@@ -20,8 +20,21 @@ from typing import Optional
 
 logger = logging.getLogger("duret.outils.nas")
 
-MAX_PROFONDEUR = 3
-MAX_DOSSIERS_PARCOURUS = 40
+# « Parcours tout le serveur et fais-moi le schéma » est une demande légitime,
+# et elle doit aboutir en UN appel. Les anciennes bornes (3 niveaux, 40
+# dossiers) la faisaient échouer : l'arbre revenait tronqué, le modèle
+# relançait avec d'autres paramètres, et le budget d'actions du tour y passait.
+#
+# Le serveur n'a pas d'équivalent du balayage global du Drive : chaque dossier
+# coûte UNE requête. La vitesse vient donc du PARALLÉLISME — six listages de
+# front dans la même session DSM — et le garde-fou est un budget de TEMPS en
+# plus du plafond de dossiers : l'arbre rendu est celui qu'on a pu lire dans le
+# délai, et il le dit.
+MAX_PROFONDEUR = 20
+MAX_DOSSIERS_ARBRE = 400
+MAX_SCHEMA_CARACTERES = 9000
+DELAI_ARBRE_S = 90
+_LISTAGES_DE_FRONT = 6
 MAX_LOT = 5
 
 
@@ -123,65 +136,185 @@ async def apercu(chemin: Optional[str] = None) -> dict:
             "note": note}
 
 
-async def arborescence(chemin: str, profondeur: int = 2) -> dict:
-    """L'arbre d'un dossier sur plusieurs niveaux, en UN appel.
+def _rendre_schema(racines: list[dict], profondeur_max: int) -> tuple[str, int]:
+    """L'arbre en texte, prêt à afficher — et la profondeur réellement rendue.
 
-    Descendre de trois niveaux demandait trois listages, donc trois
-    allers-retours de modèle et trois connexions. Bornée en profondeur ET en
-    nombre de dossiers parcourus : un NAS d'entreprise peut contenir des
-    dizaines de milliers de dossiers, et une exploration sans limite ne
-    reviendrait jamais.
+    UN SCHÉMA, PAS UN JSON. Le résultat repart vers le modèle avec un plafond
+    de caractères : un arbre en JSON verbeux se faisait couper au milieu, et le
+    modèle relançait l'exploration « car le résultat précédent était tronqué »
+    — c'est mot pour mot ce qu'il a répondu. Le texte indenté porte la même
+    information pour un cinquième du poids, et se recopie tel quel dans une
+    réponse.
+
+    Si même le texte déborde, on RÉDUIT LA PROFONDEUR D'AFFICHAGE, jamais la
+    vérité : les niveaux repliés sont comptés et annoncés, pas perdus.
     """
-    from nas.acces import connexion, _lister_ouvert, NasRefuse
+    def _ligne(n: dict) -> str:
+        bouts = []
+        if n.get("sous_dossiers_total"):
+            bouts.append(f"{n['sous_dossiers_total']} dossiers")
+        if n.get("fichiers"):
+            bouts.append(f"{n['fichiers']} fichiers")
+        if n.get("erreur"):
+            bouts.append(n["erreur"])
+        if n.get("tronque"):
+            bouts.append("liste partielle")
+        return (n.get("nom") or "?") + (f"  ({', '.join(bouts)})" if bouts else "")
 
-    profondeur = max(1, min(int(profondeur or 2), MAX_PROFONDEUR))
-    vus = 0
-    arbre: dict = {"chemin": chemin, "enfants": []}
+    def _rendre(noeuds: list[dict], prefixe: str, niveau: int,
+                limite: int, lignes: list[str]) -> int:
+        """Rend un niveau ; renvoie le nombre de dossiers REPLIÉS (non montrés)."""
+        replies = 0
+        for i, n in enumerate(noeuds):
+            dernier = i == len(noeuds) - 1
+            lignes.append(prefixe + ("└─ " if dernier else "├─ ") + _ligne(n))
+            enfants = n.get("enfants") or []
+            if not enfants:
+                continue
+            if niveau + 1 >= limite:
+                replies += n.get("sous_dossiers_total") or len(enfants)
+                continue
+            suite = prefixe + ("   " if dernier else "│  ")
+            replies += _rendre(enfants, suite, niveau + 1, limite, lignes)
+        return replies
+
+    for limite in range(profondeur_max, 0, -1):
+        lignes: list[str] = []
+        replies = 0
+        for r in racines:
+            lignes.append(_ligne(r))
+            replies += _rendre(r.get("enfants") or [], "", 1, limite, lignes)
+        schema = "\n".join(lignes)
+        if len(schema) <= MAX_SCHEMA_CARACTERES or limite == 1:
+            if replies:
+                schema += (f"\n… détail limité à {limite} niveau(x) : "
+                           f"{replies} sous-dossier(s) repliés, comptés ci-dessus.")
+            return schema, limite
+    return "", 0
+
+
+async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dict:
+    """L'arbre — COMPLET si on ne précise rien — en UN appel.
+
+    « Parcours tout le serveur et fais-moi le schéma » doit aboutir ICI, en
+    une action. L'ancienne version exigeait un dossier de départ et s'arrêtait
+    à trois niveaux et quarante dossiers : le modèle relançait avec d'autres
+    paramètres jusqu'à épuiser son budget d'actions, sans jamais rendre le
+    schéma.
+
+    La descente se fait PAR NIVEAUX, six listages de front dans la même
+    session DSM : c'est le parallélisme qui rend l'arbre complet abordable,
+    chaque dossier coûtant une requête au serveur. Les plafonds — dossiers ET
+    temps — rendent un arbre PARTIEL et le disent, jamais un arbre faux.
+
+    Le résultat porte `schema` : l'arbre en texte, à recopier tel quel.
+    """
+    import asyncio
+    import time as _t
+
+    from nas.acces import connexion, _lister_ouvert, dossiers_autorises, NasRefuse
+
+    debut = _t.monotonic()
+    profondeur = min(int(profondeur), MAX_PROFONDEUR) if profondeur else MAX_PROFONDEUR
+    profondeur = max(1, profondeur)
+
+    if chemin:
+        chemins_racines = [chemin]
+    else:
+        chemins_racines = dossiers_autorises()
+        if not chemins_racines:
+            raise NasRefuse(
+                "Aucun dossier du serveur n'est ouvert à l'assistant. Un "
+                "administrateur doit renseigner les partages à ouvrir. Ce n'est "
+                "PAS un serveur vide : dis-le tel quel.")
+
+    racines = [{"nom": c, "chemin": c, "enfants": [], "fichiers": 0, "octets": 0}
+               for c in chemins_racines]
+    par_chemin = {r["chemin"]: r for r in racines}
+    total = len(racines)
+    partiel = False
+    porte = asyncio.Semaphore(_LISTAGES_DE_FRONT)
 
     async with connexion() as (client, base, sid):
-        file_attente = [(chemin, arbre, 0)]
-        while file_attente and vus < MAX_DOSSIERS_PARCOURUS:
-            courant, noeud, niveau = file_attente.pop(0)
-            vus += 1
-            try:
-                brut = await _lister_ouvert(client, base, sid, courant)
-            except NasRefuse:
-                # UN REFUS DE PÉRIMÈTRE N'EST PAS UN ARBRE VIDE. À la racine
-                # demandée, il doit remonter : rendre `{"enfants": []}` faisait
-                # dire au modèle « ce dossier est vide » alors que l'accès était
-                # refusé — un refus de sécurité déguisé en information fausse.
-                if noeud is arbre:
-                    raise
-                noeud["erreur"] = "accès refusé (hors du périmètre autorisé)"
-                noeud["explore"] = False
-                continue
-            except Exception as e:  # noqa: BLE001 - un dossier illisible n'arrête pas l'arbre
-                if noeud is arbre:
-                    raise
-                noeud["erreur"] = str(e)[:120]
-                noeud["explore"] = False
-                continue
-            noeud["explore"] = True
-            for e in brut.get("entrees") or []:
-                enfant = {"nom": e.get("nom"), "chemin": e.get("chemin"),
-                          "dossier": bool(e.get("dossier")), "octets": e.get("octets")}
-                # `explore` DIT LA VÉRITÉ, sur CHAQUE dossier. Un dossier non
-                # ouvert — parce qu'il est au dernier niveau, ou parce que le
-                # budget d'exploration s'est épuisé — n'était pas distinguable
-                # d'un dossier vide : le modèle concluait « il n'y a rien
-                # dedans » sur un dossier qu'on n'avait simplement pas ouvert.
-                if enfant["dossier"]:
-                    enfant["explore"] = False
-                noeud["enfants"].append(enfant)
-                if enfant["dossier"] and niveau + 1 < profondeur:
-                    enfant["enfants"] = []
-                    file_attente.append((enfant["chemin"], enfant, niveau + 1))
+        async def _lire(c: str):
+            async with porte:
+                try:
+                    return c, await _lister_ouvert(client, base, sid, c)
+                except Exception as e:  # noqa: BLE001 - trié par l'appelant
+                    return c, e
 
-    return {"arbre": arbre, "profondeur": profondeur, "dossiers_parcourus": vus,
-            "complet": not file_attente,
-            "note": ("Arbre partiel : trop de dossiers, précise un sous-dossier."
-                     if file_attente else
-                     "Reprends le champ `chemin` d'une entrée pour l'ouvrir.")}
+        niveau_courant = [r["chemin"] for r in racines]
+        for _niveau in range(profondeur):
+            if not niveau_courant:
+                break
+            if total >= MAX_DOSSIERS_ARBRE or _t.monotonic() - debut > DELAI_ARBRE_S:
+                partiel = True
+                break
+            resultats = await asyncio.gather(*[_lire(c) for c in niveau_courant])
+            prochain: list[str] = []
+            for c, brut in resultats:
+                noeud = par_chemin[c]
+                if isinstance(brut, NasRefuse):
+                    # UN REFUS DE PÉRIMÈTRE N'EST PAS UN ARBRE VIDE. Sur la
+                    # racine explicitement demandée, il remonte tel quel ;
+                    # ailleurs il se lit dans le schéma, jamais comme « vide ».
+                    if chemin and noeud in racines:
+                        raise brut
+                    noeud["erreur"] = "accès refusé (hors du périmètre autorisé)"
+                    continue
+                if isinstance(brut, Exception):
+                    if chemin and noeud in racines:
+                        raise brut
+                    noeud["erreur"] = str(brut)[:120]
+                    continue
+                entrees = brut.get("entrees") or []
+                dossiers = [e for e in entrees if e.get("dossier")]
+                fichiers = [e for e in entrees if not e.get("dossier")]
+                noeud["fichiers"] = len(fichiers)
+                noeud["octets"] = sum(int(e.get("octets") or 0) for e in fichiers)
+                noeud["tronque"] = (bool(brut.get("tronque"))
+                                    or int(brut.get("total") or 0) > len(entrees))
+                noeud["sous_dossiers_total"] = len(dossiers)
+                for sd in sorted(dossiers,
+                                 key=lambda d: (d.get("nom") or "").lower()):
+                    enfant = {"nom": sd.get("nom"), "chemin": sd.get("chemin"),
+                              "enfants": [], "fichiers": 0, "octets": 0}
+                    noeud["enfants"].append(enfant)
+                    par_chemin[sd["chemin"]] = enfant
+                    prochain.append(sd["chemin"])
+                    total += 1
+            niveau_courant = prochain
+        if niveau_courant:
+            partiel = True
+
+    schema, rendu = _rendre_schema(racines, profondeur)
+    comptes_partiels = any(n.get("tronque") for n in par_chemin.values())
+    sortie = {
+        "schema": schema,
+        "dossiers_total": total,
+        "fichiers_total": sum(n.get("fichiers") or 0 for n in par_chemin.values()),
+        "profondeur_affichee": rendu,
+        "complet": not partiel and not comptes_partiels,
+        "duree_s": round(_t.monotonic() - debut, 1),
+    }
+    if sortie["complet"]:
+        sortie["note"] = (
+            "ARBORESCENCE COMPLÈTE : tous les dossiers y sont, comptes exacts. "
+            "Recopie le `schema` TEL QUEL dans un bloc ``` — ne relance PAS "
+            "l'exploration, il n'y a rien de plus à trouver.")
+    else:
+        morceaux = []
+        if partiel:
+            morceaux.append(
+                f"plafond atteint ({MAX_DOSSIERS_ARBRE} dossiers ou "
+                f"{DELAI_ARBRE_S} s) : des branches restent fermées")
+        if comptes_partiels:
+            morceaux.append("certains dossiers dépassent la page lue, leurs "
+                            "comptes sont partiels")
+        sortie["note"] = ("Arborescence rendue, mais " + " ; ".join(morceaux)
+                          + ". Dis-le tel quel — ne présente pas ces nombres "
+                            "comme exhaustifs.")
+    return sortie
 
 
 async def ouvrir(nom_ou_chemin: str) -> dict:
@@ -336,4 +469,8 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
     return {"document_id": document_id, "titre": entete["titre"],
             "format": entete["format"], "octets": fiche["octets"],
             "elements": fiche["elements"], **depot,
-            "note": "Document finalisé ET déposé sur le serveur."}
+            # Le début RÉEL du fichier déposé, pour l'aperçu dans le chat.
+            "extrait": fiche.get("extrait") or "",
+            "note": ("Document finalisé ET déposé sur le serveur. Montre-le "
+                     "avec un bloc ```ui `doc_apercu` portant `titre`, "
+                     "`format` et `extrait` (recopié TEL QUEL).")}

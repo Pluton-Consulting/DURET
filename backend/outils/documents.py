@@ -32,7 +32,7 @@ async def produire(titre: str, blocs: list, proprietaire: str,
     vocabulaire que `ajouter_document` — on ne compose que l'enchaînement, pas
     le format.
     """
-    from bureautique.atelier import ouvrir, ajouter, terminer
+    from bureautique.atelier import ouvrir, ajouter, terminer, abandonner
     from bureautique.modele import normaliser_entete
 
     if not isinstance(blocs, list) or not blocs:
@@ -51,16 +51,33 @@ async def produire(titre: str, blocs: list, proprietaire: str,
                                  "numeroter": numeroter})
     jeton = ouvrir(en_tete, proprietaire)
 
-    retenus = ajouter(jeton, blocs, proprietaire)
-    if not retenus:
-        # `terminer` refuserait un document vide ; le dire ici est plus utile,
-        # on sait encore POURQUOI il est vide.
-        raise ValueError(
-            "Aucun bloc n'a été retenu : type de bloc inconnu ou contenu vide. "
-            "Vocabulaire accepté : titre, paragraphe, liste, tableau, "
-            "saut_page, feuille.")
-
-    fiche = terminer(jeton, proprietaire)
+    # UN PRODUIRE QUI ÉCHOUE NE LAISSE PAS DE FANTÔME. `ouvrir` a déjà créé la
+    # fiche : lever sans nettoyer laissait un document ouvert par échec — et au
+    # cinquième, le quota fermait LE PLUS ANCIEN, c'est-à-dire le vrai document
+    # en cours de rédaction ; « ajouter_document » répondait alors « document
+    # inconnu ». Depuis que les documents ouverts sont montrés au modèle d'un
+    # tour à l'autre, un fantôme serait en plus une fausse piste offerte.
+    try:
+        retenus = ajouter(jeton, blocs, proprietaire)
+        if not retenus:
+            # `terminer` refuserait un document vide ; le dire ici est plus
+            # utile, on sait encore POURQUOI il est vide. Et on MONTRE ce qui
+            # est arrivé : « type inconnu » tout court renvoyait le modèle
+            # deviner, à une minute l'aller-retour — avec la forme reçue sous
+            # les yeux, il se corrige en UN coup.
+            premier = blocs[0] if blocs else None
+            recu = (f"type={premier.get('bloc') or premier.get('type')!r}, "
+                    f"champs={sorted(premier.keys())}"
+                    if isinstance(premier, dict) else repr(premier)[:120])
+            raise ValueError(
+                "Aucun bloc n'a été retenu : type de bloc inconnu ou contenu "
+                f"vide. Premier élément reçu : {recu}. Vocabulaire accepté : "
+                "titre, paragraphe (champ `texte`), liste (items[]), tableau "
+                "(entetes[], lignes[[]]), saut_page, feuille.")
+        fiche = terminer(jeton, proprietaire)
+    except BaseException:
+        abandonner(jeton, proprietaire)
+        raise
     ignores = len(blocs) - retenus
     logger.info("Document %s produit en un appel : %s, %d éléments",
                 jeton[:8], en_tete["format"], retenus)
@@ -69,8 +86,12 @@ async def produire(titre: str, blocs: list, proprietaire: str,
         "format": en_tete["format"], "elements": retenus,
         "ignores": ignores, "octets": fiche["octets"],
         "url": f"/api/documents/{jeton}",
-        "note": ("Le fichier est prêt. Annonce-le avec un bloc ```ui de type "
-                 "`fichier` portant `url`, `nom`, `format` et `octets`. "
+        # Le début RÉEL du fichier, pour l'aperçu dans le chat.
+        "extrait": fiche.get("extrait") or "",
+        "note": ("Le fichier est prêt. Annonce-le avec DEUX blocs ```ui : un "
+                 "`doc_apercu` portant `titre`, `format` et `extrait` (recopie "
+                 "l'extrait fourni TEL QUEL), puis un `fichier` portant `url`, "
+                 "`nom`, `format` et `octets`. "
                  + (f"{ignores} bloc(s) écarté(s) : type inconnu ou vide."
                     if ignores else "")),
     }

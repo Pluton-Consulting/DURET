@@ -29,6 +29,7 @@ Fail-closed : aucun dossier configuré, aucun accès.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import posixpath
 from contextlib import asynccontextmanager
@@ -152,31 +153,103 @@ async def _session(client):
     return base, await c._login(client, base)
 
 
+class _SessionNas:
+    """Une session DSM vivante : client HTTP, adresse, jeton, et qui s'en sert."""
+
+    def __init__(self, client, base: str, sid: str, boucle, expire: float):
+        self.client = client
+        self.base = base
+        self.sid = sid
+        self.boucle = boucle
+        self.expire = expire
+        self.usages = 0
+        self.perimee = False
+
+
+# LA SESSION EST GARDÉE, comme le client Drive chez Symbiose — et pour la même
+# raison mesurée : six secondes par geste, dont l'essentiel en résolution
+# d'adresse et login DSM, payées à CHAQUE action. « Aperçu puis ouvre puis
+# dépose » = trois logins pour trois gestes d'une même conversation ; c'est ce
+# qui rendait le serveur « beaucoup trop lent » avant d'avoir rien lu.
+#
+# Durée courte : un jeton DSM vit bien plus longtemps, mais on se reconstruit
+# avant tout doute — et une erreur de TRANSPORT pendant l'usage périme la
+# session, pour que l'appel suivant reparte d'une résolution fraîche.
+_COURANTE: Optional[_SessionNas] = None
+_DUREE_SESSION_S = 900
+
+
+async def _clore(sess: _SessionNas) -> None:
+    """Ferme une session sans jamais lever : c'est du ménage, pas un geste."""
+    from ingestion.connectors import synology as c
+    try:
+        await c._logout(sess.client, sess.base, sess.sid)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await sess.client.aclose()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @asynccontextmanager
 async def connexion():
-    """Une session DSM ouverte, à partager entre plusieurs gestes.
+    """Une session DSM ouverte, PARTAGÉE entre les gestes et entre les tours.
 
-    POURQUOI. Chaque fonction publique de ce module ouvre sa session, agit, puis
-    se déconnecte. C'est juste pour un geste isolé, et coûteux dès qu'il y en a
-    plusieurs : mesuré en production, une seule liste de dossier prend six
-    secondes, dont l'essentiel en résolution d'adresse et connexion — pas en
-    lecture. Enchaîner « cherche puis lis » payait donc deux fois ce prix.
+    POURQUOI. Chaque appel ouvrait sa session puis se déconnectait : correct
+    pour un geste isolé, ruineux en conversation — mesuré en production, une
+    seule liste de dossier prenait six secondes, dont l'essentiel en résolution
+    d'adresse et connexion, pas en lecture.
 
-    Les fonctions composées de `outils/nas.py` ouvrent UNE session et enchaînent
-    dedans. Les fonctions publiques ci-dessous continuent d'en ouvrir une
-    chacune : leur usage isolé reste le cas courant, et rien de leur
-    comportement ne change.
+    LA FERMETURE ATTEND LE DERNIER SORTANT. Une session périmée (durée de vie
+    écoulée, ou transport en erreur) n'est jamais fermée sous les pieds d'un
+    geste qui l'utilise encore : elle est MARQUÉE, les nouveaux venus repartent
+    d'une session neuve, et c'est le dernier usage en cours qui la clôt. Sans
+    ce comptage, une arborescence longue se faisait couper sa connexion par le
+    premier appel arrivé après l'expiration.
+
+    Liée à sa boucle d'événements, comme le sémaphore de la file d'attente :
+    un client HTTP appartient à la boucle qui l'a créé, on repart d'une session
+    neuve si elle a changé.
     """
+    global _COURANTE
+    import time
+
     import httpx
     from config import settings
-    from ingestion.connectors import synology as c
 
-    async with httpx.AsyncClient(verify=settings.synology_verify_tls) as client:
-        base, sid = await _session(client)
+    boucle = asyncio.get_running_loop()
+    sess = _COURANTE
+    if not (sess is not None and not sess.perimee and sess.boucle is boucle
+            and time.monotonic() < sess.expire):
+        if sess is not None:
+            sess.perimee = True
+            if sess.usages == 0:
+                await _clore(sess)
+        client = httpx.AsyncClient(verify=settings.synology_verify_tls)
         try:
-            yield client, base, sid
-        finally:
-            await c._logout(client, base, sid)
+            base, sid = await _session(client)
+        except BaseException:
+            await client.aclose()
+            raise
+        sess = _SessionNas(client, base, sid, boucle,
+                           time.monotonic() + _DUREE_SESSION_S)
+        _COURANTE = sess
+
+    sess.usages += 1
+    try:
+        yield sess.client, sess.base, sess.sid
+    except httpx.HTTPError:
+        # Transport douteux : la session ne ressert pas. L'appel suivant
+        # repartira d'une adresse fraîche (cf. `_session` et QuickConnect).
+        sess.perimee = True
+        raise
+    finally:
+        sess.usages -= 1
+        if sess.perimee and sess.usages == 0:
+            await _clore(sess)
+            if _COURANTE is sess:
+                _COURANTE = None
 
 
 async def _lister_ouvert(client, base, sid, chemin: str) -> dict:
@@ -272,26 +345,43 @@ async def _chercher_ouvert(client, base, sid, motif: str,
     if not racines:
         raise NasRefuse("Aucun dossier NAS n'est ouvert à l'assistant.")
 
-    trouves: list[dict] = []
-    for racine in racines:
+    async def _sur(racine: str) -> list[dict]:
+        """Cherche sous UNE racine. Les racines tournent EN PARALLÈLE :
+        chercher /home puis /Drive en série doublait l'attente, alors que le
+        serveur mène les deux recherches de front sans effort. Et le sondage
+        est resserré (0,4 s) : la recherche DSM rend en une à deux secondes,
+        attendre une seconde pleine entre deux regards doublait le temps perçu.
+        """
         depart = await c._appel(client, base, "SYNO.FileStation.Search", "start", 2,
                                 sid=sid, folder_path=racine, pattern=f"*{motif}*")
         tache = depart.get("taskid")
         if not tache:
-            continue
-        import asyncio
-        for _ in range(10):          # la recherche DSM est asynchrone
-            await asyncio.sleep(1.0)
+            return []
+        res: dict = {}
+        for _ in range(25):          # la recherche DSM est asynchrone
+            await asyncio.sleep(0.4)
             res = await c._appel(client, base, "SYNO.FileStation.Search", "list", 2,
                                  sid=sid, taskid=tache, limit=50,
                                  additional='["size"]')
             if res.get("finished"):
                 break
-        for f in (res.get("files") or [])[:50]:
-            trouves.append({"nom": f.get("name"), "chemin": f.get("path"),
-                            "dossier": bool(f.get("isdir"))})
+        sortie = [{"nom": f.get("name"), "chemin": f.get("path"),
+                   "dossier": bool(f.get("isdir"))}
+                  for f in (res.get("files") or [])[:50]]
         await c._appel(client, base, "SYNO.FileStation.Search", "stop", 2,
                        sid=sid, taskid=tache)
+        return sortie
+
+    groupes = await asyncio.gather(*[_sur(r) for r in racines],
+                                   return_exceptions=True)
+    trouves: list[dict] = []
+    for g in groupes:
+        if isinstance(g, BaseException):
+            # Une racine en panne n'annule pas les trouvailles des autres.
+            logger.warning("NAS : recherche « %s » en échec sur une racine : %s",
+                           motif, g)
+            continue
+        trouves.extend(g)
 
     return {"motif": motif, "nombre": len(trouves), "resultats": trouves[:50],
             "dossiers_explores": racines}
@@ -310,26 +400,23 @@ async def deposer(chemin_dossier: str, nom: str, contenu: bytes) -> dict:
     demandé est une perte de données irrécupérable côté NAS, et personne ne la
     remarque avant d'en avoir besoin.
     """
-    import httpx
-    from config import settings
     from ingestion.connectors import synology as c
 
     vise = verifier(chemin_dossier)
     propre = posixpath.basename((nom or "fichier").replace("\\", "/")) or "fichier"
 
-    async with httpx.AsyncClient(verify=settings.synology_verify_tls) as client:
-        base, sid = await _session(client)
-        try:
-            r = await client.post(
-                f"{base}/webapi/entry.cgi",
-                params={"api": "SYNO.FileStation.Upload", "version": 2,
-                        "method": "upload", "_sid": sid},
-                data={"path": vise, "create_parents": "false", "overwrite": "false"},
-                files={"file": (propre, contenu)}, timeout=180)
-            r.raise_for_status()
-            data = r.json()
-        finally:
-            await c._logout(client, base, sid)
+    # La session PARTAGÉE, comme tous les autres gestes : le dépôt payait sa
+    # propre résolution d'adresse et son propre login alors qu'une session
+    # venait presque toujours d'être ouverte par le geste précédent.
+    async with connexion() as (client, base, sid):
+        r = await client.post(
+            f"{base}/webapi/entry.cgi",
+            params={"api": "SYNO.FileStation.Upload", "version": 2,
+                    "method": "upload", "_sid": sid},
+            data={"path": vise, "create_parents": "false", "overwrite": "false"},
+            files={"file": (propre, contenu)}, timeout=180)
+        r.raise_for_status()
+        data = r.json()
 
     if not data.get("success"):
         code = (data.get("error") or {}).get("code", 0)

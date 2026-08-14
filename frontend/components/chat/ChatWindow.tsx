@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react"
 import MessageList from "./MessageList"
 import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
+import { Shimmer } from "@/components/ai-elements/shimmer"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, sendStop, ChatEvent } from "@/lib/ws"
@@ -842,30 +843,30 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
 
         <style>{`
           @keyframes symOrb { 0%,100%{transform:scale(.8);opacity:.55} 50%{transform:scale(1.15);opacity:1} }
-          @keyframes symDot { 0%,80%,100%{transform:translateY(0);opacity:.35} 40%{transform:translateY(-4px);opacity:1} }
           @keyframes symStepIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
           .sym-think{display:flex;gap:12px;align-items:center;padding:10px 32px}
           .sym-orb{width:12px;height:12px;border-radius:50%;flex-shrink:0;
-            background:radial-gradient(circle at 35% 35%, var(--color-primary-mid), var(--color-primary));
-            box-shadow:0 0 0 4px var(--color-primary-subtle);animation:symOrb 1.3s ease-in-out infinite}
+            background:radial-gradient(circle at 35% 35%, var(--marque-primary-mid), var(--marque-primary));
+            box-shadow:0 0 0 4px var(--marque-primary-subtle);animation:symOrb 1.3s ease-in-out infinite}
           .sym-step{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;
-            color:var(--color-text-primary);animation:symStepIn .35s ease}
-          .sym-dots{display:inline-flex;gap:3px}
-          .sym-dots i{width:4px;height:4px;border-radius:50%;background:var(--color-primary-mid);animation:symDot 1.2s infinite}
-          .sym-dots i:nth-child(2){animation-delay:.18s}
-          .sym-dots i:nth-child(3){animation-delay:.36s}
-          @media (prefers-reduced-motion: reduce){ .sym-orb,.sym-dots i,.sym-step{animation:none} }
+            color:var(--marque-text-primary);animation:symStepIn .35s ease}
+          @media (prefers-reduced-motion: reduce){ .sym-orb,.sym-step{animation:none} }
         `}</style>
 
         {loading && (
           <div className="sym-think" role="status" aria-live="polite">
             <span className="sym-orb" aria-hidden="true" />
+            {/* La `key` remonte l'element a chaque changement d'etape et
+                rejoue l'apparition : sans elle, le texte se remplacerait sur
+                place, et rien ne signalerait que l'agent a avance. */}
             <div className="sym-step" key={activite || thinkingNode || "start"}>
               {/* Le libelle concret prime : « je liste un dossier du serveur »
                   situe le travail, « Execution d'une action » ne dit rien. On
-                  retombe sur le nom d'etape tant qu'aucun libelle n'est arrive. */}
-              {activite || stepLabel(thinkingNode)}
-              <span className="sym-dots" aria-hidden="true"><i /><i /><i /></span>
+                  retombe sur le nom d'etape tant qu'aucun libelle n'est arrive.
+                  Le balayage lumineux remplace les trois points : il dit « ca
+                  travaille » sur toute la largeur du libelle, au lieu de le
+                  reduire a un ornement pose au bout. */}
+              <Shimmer as="span">{activite || stepLabel(thinkingNode)}</Shimmer>
             </div>
           </div>
         )}

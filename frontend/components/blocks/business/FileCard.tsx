@@ -35,7 +35,7 @@ function taille(octets?: number): string {
 export function FileCard({ url, nom, format, octets, apiUrl, backendToken }: Props) {
   const [etat, setEtat] = useState<"" | "en_cours" | "erreur">("")
   const ext = (format || url.split(".").pop() || "").toLowerCase()
-  const couleur = COULEURS[ext] || "var(--color-primary)"
+  const couleur = COULEURS[ext] || "var(--marque-primary)"
   const libelle = nom || `Document.${ext || "fichier"}`
 
   const telecharger = async () => {
@@ -65,8 +65,8 @@ export function FileCard({ url, nom, format, octets, apiUrl, backendToken }: Pro
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 12, padding: 12,
-      border: "1px solid var(--color-border)", borderRadius: 10,
-      background: "var(--color-surface)", margin: "8px 0", maxWidth: 460,
+      border: "1px solid var(--marque-border)", borderRadius: 10,
+      background: "var(--marque-surface)", margin: "8px 0", maxWidth: 460,
     }}>
       <div style={{
         width: 40, height: 40, borderRadius: 8, background: couleur,
@@ -78,10 +78,10 @@ export function FileCard({ url, nom, format, octets, apiUrl, backendToken }: Pro
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 14, fontWeight: 600, color: "var(--color-text-body)",
+          fontSize: 14, fontWeight: 600, color: "var(--marque-text-body)",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>{libelle}</div>
-        <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+        <div style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>
           {[taille(octets), "disponible 24 h"].filter(Boolean).join(" · ")}
         </div>
       </div>
@@ -91,7 +91,7 @@ export function FileCard({ url, nom, format, octets, apiUrl, backendToken }: Pro
         disabled={etat === "en_cours"}
         style={{
           padding: "8px 14px", borderRadius: 8, border: "none", color: "#fff",
-          background: etat === "erreur" ? "var(--color-error)" : couleur,
+          background: etat === "erreur" ? "var(--marque-error-text)" : couleur,
           fontSize: 13, fontWeight: 600,
           cursor: etat === "en_cours" ? "default" : "pointer",
           opacity: etat === "en_cours" ? 0.6 : 1, flexShrink: 0,

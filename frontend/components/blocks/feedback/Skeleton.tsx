@@ -6,7 +6,7 @@ export function Skeleton({ lines = 3, width = 280 }: { lines?: number; width?: n
       {Array.from({ length: lines }).map((_, i) => (
         <span key={i} style={{
           height: 12, borderRadius: 6, width: i === lines - 1 ? "60%" : "100%",
-          background: "linear-gradient(90deg, var(--color-border) 25%, var(--color-primary-subtle) 50%, var(--color-border) 75%)",
+          background: "linear-gradient(90deg, var(--marque-border) 25%, var(--marque-primary-subtle) 50%, var(--marque-border) 75%)",
           backgroundSize: "900px 100%", animation: "blkShim 1.3s infinite linear",
         }} />
       ))}

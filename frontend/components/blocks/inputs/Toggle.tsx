@@ -4,10 +4,10 @@ import { useState } from "react"
 export function Toggle({ label = "Notifications", defaultOn = true }: { label?: string; defaultOn?: boolean }) {
   const [on, setOn] = useState(defaultOn)
   return (
-    <label style={{ display: "inline-flex", alignItems: "center", gap: 11, cursor: "pointer", fontSize: 14, color: "var(--color-text-body)", userSelect: "none" }}>
+    <label style={{ display: "inline-flex", alignItems: "center", gap: 11, cursor: "pointer", fontSize: 14, color: "var(--marque-text-body)", userSelect: "none" }}>
       <span onClick={() => setOn((v) => !v)} style={{
         width: 40, height: 23, borderRadius: 999, padding: 2, flexShrink: 0, transition: "background .18s ease",
-        background: on ? "var(--color-primary)" : "var(--color-border)", display: "flex",
+        background: on ? "var(--marque-primary)" : "var(--marque-border)", display: "flex",
         justifyContent: on ? "flex-end" : "flex-start",
       }}>
         <span style={{ width: 19, height: 19, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.25)" }} />

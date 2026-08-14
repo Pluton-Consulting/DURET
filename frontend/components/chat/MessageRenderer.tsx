@@ -1,6 +1,7 @@
 "use client"
-import type { ReactNode } from "react"
-import { RichText } from "./RichText"
+import { useState, type ReactNode } from "react"
+import { MessageResponse } from "@/components/ai-elements/message"
+import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, FileCard, ContactCard, ProjectCard,
   SimpleTable, StatusTable, KeyValueTable,
@@ -82,6 +83,65 @@ function present(v: any): boolean {
   return true
 }
 
+/** LE FICHIER ANNONCÉ, ET LE DOCUMENT LUI-MÊME.
+ *
+ *  Jusqu'ici un document déposé n'était qu'une ligne à télécharger : pour
+ *  vérifier que le contenu était le bon, il fallait quitter le chat, ouvrir
+ *  le fichier, revenir. Le rendu est maintenant SOUS la carte.
+ *
+ *  Rien de nouveau n'est demandé au modèle : il émet déjà des blocs
+ *  `fichier` avec une URL et un nom. C'est l'extension du nom qui décide de
+ *  la visionneuse — et un format inconnu ne fait rien apparaître, la carte
+ *  reste seule.
+ *
+ *  L'aperçu se monte à l'ouverture, jamais avant : c'est lui qui déclenche
+ *  la récupération du fichier, et pour un PDF le moteur de 4,5 Mo. Une
+ *  conversation qui cite dix fichiers n'en télécharge donc aucun tant que
+ *  personne ne regarde. Il est ouvert par défaut, parce qu'on veut voir le
+ *  document qu'on vient de produire — mais refermable, et l'état ne se
+ *  perd pas au rendu suivant. */
+function FichierAvecApercu({ bloc, acces }: {
+  bloc: any
+  acces?: { apiUrl?: string; backendToken?: string }
+}) {
+  const { url, nom, format } = bloc
+  // Trois sources, de la plus fiable à la plus approximative : le format
+  // déclaré, le nom du fichier, puis l'URL.
+  const detecte: FormatApercu | null =
+    (format ? formatDepuisNom(`x.${String(format).replace(/^\./, "")}`) : null)
+    ?? formatDepuisNom(nom)
+    ?? formatDepuisNom(url)
+  const [ouvert, setOuvert] = useState(true)
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 620, width: "100%" }}>
+      <FileCard {...bloc} {...acces} />
+      {detecte && (
+        <>
+          <button
+            type="button"
+            onClick={() => setOuvert((v) => !v)}
+            className="sym-tap"
+            data-testid="bascule-apercu"
+            aria-expanded={ouvert}
+            style={{
+              alignSelf: "flex-start", border: "1px solid var(--marque-border)",
+              background: "var(--marque-surface)", color: "var(--marque-text-muted)",
+              borderRadius: "var(--marque-radius-pill)", padding: "4px 12px",
+              fontSize: 12.5, cursor: "pointer",
+            }}
+          >
+            {ouvert ? "Masquer l’aperçu" : "Afficher l’aperçu"}
+          </button>
+          {ouvert && (
+            <ApercuDocument url={url} format={detecte} nom={nom} {...acces} />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function renderBlock(block: any, onAction?: (v: string) => void,
                      acces?: { apiUrl?: string; backendToken?: string }): ReactNode {
   if (!block || typeof block !== "object") return null
@@ -95,8 +155,10 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "doc":           return <DocCard {...p} />
     case "doc_apercu":    return <DocApercu {...p} />
     // Le telechargement est controle cote serveur : le composant a besoin
-    // du jeton, un lien nu partirait sans en-tete et serait refuse.
-    case "fichier":       return <FileCard {...p} {...acces} />
+    // du jeton, un lien nu partirait sans en-tete et serait refuse. La
+    // visionneuse a le meme besoin — d'ou le detour par FichierAvecApercu,
+    // qui va chercher le document authentifie avant de l'afficher.
+    case "fichier":       return <FichierAvecApercu bloc={p} acces={acces} />
     case "contact":       return <ContactCard {...p} />
     case "project":       return <ProjectCard {...p} />
     case "table":         return <SimpleTable {...p} />
@@ -127,8 +189,18 @@ export function MessageRenderer({ content, onAction, apiUrl, backendToken }:
           const t = part.text.trim()
           if (!t) return null
           return (
-            <div key={i} className="sym-in" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", padding: "12px 16px", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", fontSize: 14, lineHeight: 1.55, maxWidth: 620 }}>
-              <RichText texte={t} />
+            <div key={i} className="sym-in" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", color: "var(--marque-text-primary)", padding: "12px 16px", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", fontSize: 14, lineHeight: 1.55, maxWidth: 620 }}>
+              {/* Streamdown remplace notre rendu maison : titres, listes,
+                  tableaux, code coloré et formules, et surtout un rendu
+                  correct du markdown ENCORE INCOMPLET pendant que la réponse
+                  s'écrit — une phrase coupée au milieu d'un `**gras**` ne
+                  fait plus clignoter les astérisques.
+
+                  Il est placé APRÈS `parse()`, jamais avant : les blocs
+                  ```ui / ```json ont déjà été retirés du texte à ce stade.
+                  L'ordre inverse les afficherait comme de jolis blocs de
+                  code au lieu de les transformer en composants. */}
+              <MessageResponse className="text-[14px] leading-[1.55]">{t}</MessageResponse>
             </div>
           )
         }

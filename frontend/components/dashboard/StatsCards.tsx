@@ -45,11 +45,11 @@ export default function StatsCards({ data }: { data?: StatsCardsData | null }) {
             className={`sym-in sym-in-${i + 1} sym-card`}
             style={{
               background: isSignature
-                ? "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))"
-                : "var(--color-surface)",
-              borderRadius: "var(--radius-card)",
+                ? "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))"
+                : "var(--marque-surface)",
+              borderRadius: "var(--marque-radius-card)",
               padding: 24,
-              boxShadow: "var(--shadow-card)",
+              boxShadow: "var(--marque-shadow-card)",
             }}
           >
             <div
@@ -57,8 +57,8 @@ export default function StatsCards({ data }: { data?: StatsCardsData | null }) {
                 fontSize: 11,
                 fontWeight: 600,
                 color: isSignature
-                  ? "var(--color-on-dark-accent)"
-                  : "var(--color-text-muted)",
+                  ? "var(--marque-on-dark-accent)"
+                  : "var(--marque-text-muted)",
                 textTransform: "uppercase",
                 letterSpacing: "0.06em",
                 marginBottom: 10,
@@ -71,8 +71,8 @@ export default function StatsCards({ data }: { data?: StatsCardsData | null }) {
                 fontSize: 36,
                 fontWeight: 800,
                 color: isSignature
-                  ? "var(--color-text-on-dark)"
-                  : "var(--color-text-primary)",
+                  ? "var(--marque-text-on-dark)"
+                  : "var(--marque-text-primary)",
                 lineHeight: 1,
                 letterSpacing: "-1px",
               }}

@@ -35,10 +35,10 @@ export default function LoginPage() {
   }
 
   const card: React.CSSProperties = {
-    background: "var(--color-surface)",
-    borderRadius: "var(--radius-card)",
+    background: "var(--marque-surface)",
+    borderRadius: "var(--marque-radius-card)",
     padding: "40px 48px",
-    boxShadow: "var(--shadow-card)",
+    boxShadow: "var(--marque-shadow-card)",
     textAlign: "center",
     maxWidth: 380,
     width: "100%",
@@ -50,7 +50,7 @@ export default function LoginPage() {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      background: "radial-gradient(circle at 50% -10%, var(--color-primary-subtle), transparent 55%), var(--color-canvas)",
+      background: "radial-gradient(circle at 50% -10%, var(--marque-primary-subtle), transparent 55%), var(--marque-canvas)",
     }}>
       <div className="sym-in sym-card" style={card}>
         {/* La marque en grand : c'est le premier écran, et le seul avant
@@ -58,23 +58,23 @@ export default function LoginPage() {
             au-dessus du nom — pour tenir dans la largeur de la carte. */}
         <div className="sym-in sym-in-1" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, margin: "0 auto 32px" }}>
           <MarqueDuret taille={54} />
-          <span style={{ fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.02em", lineHeight: 1 }}>
-            Duret <span style={{ color: "var(--color-brand-blue)" }}>&amp; Sols</span>
+          <span style={{ fontSize: 28, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.02em", lineHeight: 1 }}>
+            Duret <span style={{ color: "var(--marque-brand-blue)" }}>&amp; Sols</span>
           </span>
         </div>
 
         {state === "sent" && (
           <div className="sym-fade">
             <div className="sym-pop" style={{ fontSize: 40, marginBottom: 16 }}>📬</div>
-            <p className="sym-in sym-in-1" style={{ fontWeight: 500, margin: "0 0 8px", color: "var(--color-text-primary)" }}>Vérifiez votre boîte mail</p>
-            <p className="sym-in sym-in-2" style={{ color: "var(--color-text-muted)", fontSize: 13, margin: "0 0 24px" }}>
+            <p className="sym-in sym-in-1" style={{ fontWeight: 500, margin: "0 0 8px", color: "var(--marque-text-primary)" }}>Vérifiez votre boîte mail</p>
+            <p className="sym-in sym-in-2" style={{ color: "var(--marque-text-muted)", fontSize: 13, margin: "0 0 24px" }}>
               Un lien de connexion a été envoyé à<br />
               <strong>{email}</strong>
             </p>
             <button
               onClick={() => { setState("idle"); setEmail("") }}
               className="sym-tap sym-in sym-in-3"
-              style={{ color: "var(--color-primary)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}
+              style={{ color: "var(--marque-primary)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}
             >
               Utiliser un autre email
             </button>
@@ -84,15 +84,15 @@ export default function LoginPage() {
         {state === "refused" && (
           <div className="sym-fade">
             <div className="sym-pop" style={{ fontSize: 40, marginBottom: 16 }}>🔒</div>
-            <p className="sym-in sym-in-1" style={{ fontWeight: 500, margin: "0 0 8px", color: "var(--color-error-text)" }}>Accès non autorisé</p>
-            <p className="sym-in sym-in-2" style={{ color: "var(--color-text-muted)", fontSize: 13, margin: "0 0 24px" }}>
+            <p className="sym-in sym-in-1" style={{ fontWeight: 500, margin: "0 0 8px", color: "var(--marque-error-text)" }}>Accès non autorisé</p>
+            <p className="sym-in sym-in-2" style={{ color: "var(--marque-text-muted)", fontSize: 13, margin: "0 0 24px" }}>
               L'adresse <strong>{email}</strong> n'est pas enregistrée.<br />
               Contactez votre administrateur.
             </p>
             <button
               onClick={() => { setState("idle"); setEmail("") }}
               className="sym-tap sym-in sym-in-3"
-              style={{ color: "var(--color-primary)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}
+              style={{ color: "var(--marque-primary)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}
             >
               Essayer un autre email
             </button>
@@ -111,8 +111,8 @@ export default function LoginPage() {
               style={{
                 width: "100%",
                 padding: "10px 14px",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-pill)",
+                border: "1px solid var(--marque-border)",
+                borderRadius: "var(--marque-radius-pill)",
                 fontSize: 14,
                 marginBottom: 12,
                 boxSizing: "border-box",
@@ -121,7 +121,7 @@ export default function LoginPage() {
               }}
             />
             {error && (
-              <p className="sym-pop" style={{ color: "var(--color-error-text)", fontSize: 13, margin: "0 0 12px" }}>{error}</p>
+              <p className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "0 0 12px" }}>{error}</p>
             )}
             <button
               type="submit"
@@ -130,15 +130,15 @@ export default function LoginPage() {
               style={{
                 width: "100%",
                 padding: "12px 24px",
-                background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
-                color: "var(--color-text-on-dark)",
+                background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+                color: "var(--marque-text-on-dark)",
                 border: "none",
-                borderRadius: "var(--radius-pill)",
+                borderRadius: "var(--marque-radius-pill)",
                 fontSize: 14,
                 fontWeight: 500,
                 cursor: state === "loading" ? "not-allowed" : "pointer",
                 opacity: state === "loading" ? 0.7 : 1,
-                boxShadow: "var(--shadow-card)",
+                boxShadow: "var(--marque-shadow-card)",
               }}
             >
               {state === "loading" ? "Vérification..." : "Recevoir un lien de connexion"}
@@ -146,7 +146,7 @@ export default function LoginPage() {
           </form>
         )}
 
-        <p className="sym-in sym-in-4" style={{ color: "var(--color-text-muted)", fontSize: 11, margin: "24px 0 0", letterSpacing: ".04em" }}>
+        <p className="sym-in sym-in-4" style={{ color: "var(--marque-text-muted)", fontSize: 11, margin: "24px 0 0", letterSpacing: ".04em" }}>
           Accès réservé aux collaborateurs Duret & Sols
         </p>
       </div>

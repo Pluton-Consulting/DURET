@@ -27,9 +27,9 @@ type Analyse = {
 const ACCEPTE = ".csv,.xlsx,.xls,.xlsm,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp"
 
 const COULEUR_CONFIANCE: Record<string, string> = {
-  haute: "var(--color-primary)",
-  moyenne: "var(--color-pending-text)",
-  faible: "var(--color-error)",
+  haute: "var(--marque-primary)",
+  moyenne: "var(--marque-pending-text)",
+  faible: "var(--marque-error-text)",
 }
 
 export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
@@ -123,14 +123,14 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
   }
 
   const carte = {
-    background: "var(--color-surface)", borderRadius: "var(--radius-card)",
-    boxShadow: "var(--shadow-card)", padding: 24, border: "1px solid var(--color-border)",
+    background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)",
+    boxShadow: "var(--marque-shadow-card)", padding: 24, border: "1px solid var(--marque-border)",
   } as const
-  const label = { fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase" as const, letterSpacing: ".05em", marginBottom: 6, display: "block" }
+  const label = { fontSize: 12, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase" as const, letterSpacing: ".05em", marginBottom: 6, display: "block" }
   const champ = {
     width: "100%", padding: "9px 12px", fontSize: 14, fontFamily: "inherit",
-    borderRadius: 10, border: "1.5px solid var(--color-border)",
-    background: "var(--color-canvas)", color: "var(--color-text-primary)",
+    borderRadius: 10, border: "1.5px solid var(--marque-border)",
+    background: "var(--marque-canvas)", color: "var(--marque-text-primary)",
   } as const
 
   return (
@@ -144,18 +144,18 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
           onClick={() => inputRef.current?.click()}
           style={{
             ...carte, cursor: "pointer", textAlign: "center", padding: "44px 24px",
-            border: `2px dashed ${survol ? "var(--color-primary)" : "var(--color-border)"}`,
-            background: survol ? "var(--color-primary-subtle)" : "var(--color-surface)",
+            border: `2px dashed ${survol ? "var(--marque-primary)" : "var(--marque-border)"}`,
+            background: survol ? "var(--marque-primary-subtle)" : "var(--marque-surface)",
             transition: "all .15s ease",
           }}
         >
           <input ref={inputRef} type="file" accept={ACCEPTE} style={{ display: "none" }}
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) analyser(f) }} />
           <div style={{ fontSize: 30, marginBottom: 10 }}>📄</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "var(--color-text-primary)", marginBottom: 6 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "var(--marque-text-primary)", marginBottom: 6 }}>
             {enCours === "analyse" ? "Analyse du fichier…" : "Déposez un fichier ou cliquez pour le choisir"}
           </div>
-          <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+          <div style={{ fontSize: 13, color: "var(--marque-text-muted)" }}>
             Excel, CSV, Word, PDF, photo ou scan — l'IA reconnaît le contenu et vous propose un découpage avant tout enregistrement.
             <br />Les documents scannés passent par une reconnaissance de caractères (comptez quelques secondes par page).
           </div>
@@ -163,28 +163,28 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
       )}
 
       {erreur && (
-        <div style={{ ...carte, borderColor: "var(--color-error)", color: "var(--color-error)", fontSize: 14, padding: 16 }}>
+        <div style={{ ...carte, borderColor: "var(--marque-error-text)", color: "var(--marque-error-text)", fontSize: 14, padding: 16 }}>
           {erreur}
         </div>
       )}
 
       {etat && etat.phase !== "inactif" && (
-        <div style={{ ...carte, borderColor: "var(--color-primary)", padding: 20 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-primary)", marginBottom: 6 }}>
+        <div style={{ ...carte, borderColor: "var(--marque-primary)", padding: 20 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-primary)", marginBottom: 6 }}>
             {etat.en_cours ? "Import en cours" : etat.erreur ? "Import interrompu" : "Import terminé"}
           </div>
-          <div style={{ fontSize: 14, color: "var(--color-text-body)" }}>
+          <div style={{ fontSize: 14, color: "var(--marque-text-body)" }}>
             {etat.en_cours
               ? `${etat.traites} / ${etat.total} ligne${etat.total > 1 ? "s" : ""} traitée${etat.total > 1 ? "s" : ""}…`
               : `${etat.documents} document${etat.documents > 1 ? "s" : ""} enregistré${etat.documents > 1 ? "s" : ""}`}
             {!etat.en_cours && ` (${etat.chunks} extraits indexés)`}
-            {etat.echecs > 0 && <span style={{ color: "var(--color-error)" }}> — {etat.echecs} en échec</span>}
+            {etat.echecs > 0 && <span style={{ color: "var(--marque-error-text)" }}> — {etat.echecs} en échec</span>}
             .
           </div>
           {etat.erreur && (
-            <div style={{ fontSize: 13, color: "var(--color-error)", marginTop: 6 }}>{etat.erreur}</div>
+            <div style={{ fontSize: 13, color: "var(--marque-error-text)", marginTop: 6 }}>{etat.erreur}</div>
           )}
-          <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 8 }}>
+          <div style={{ fontSize: 13, color: "var(--marque-text-muted)", marginTop: 8 }}>
             La vectorisation se termine en tâche de fond : les données seront interrogeables dans le chat d'ici quelques instants.
           </div>
         </div>
@@ -194,24 +194,24 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
       {analyse && (
         <div style={{ ...carte, display: "flex", flexDirection: "column", gap: 18 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--color-text-primary)" }}>{analyse.filename}</div>
-            <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 4 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--marque-text-primary)" }}>{analyse.filename}</div>
+            <div style={{ fontSize: 13, color: "var(--marque-text-muted)", marginTop: 4 }}>
               {analyse.kind === "tabulaire"
                 ? `${analyse.documents} lignes → ${analyse.documents} documents (une ligne = un document)`
                 : "1 document"}
             </div>
           </div>
 
-          <div style={{ background: "var(--color-primary-subtle)", borderRadius: 10, padding: 14, border: "1px solid var(--color-primary-light)" }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-primary)", marginBottom: 6 }}>
+          <div style={{ background: "var(--marque-primary-subtle)", borderRadius: 10, padding: 14, border: "1px solid var(--marque-primary-light)" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--marque-primary)", marginBottom: 6 }}>
               CE QUE L'IA A RECONNU
-              <span style={{ marginLeft: 8, fontWeight: 600, color: COULEUR_CONFIANCE[analyse.detection.confiance] || "var(--color-text-muted)" }}>
+              <span style={{ marginLeft: 8, fontWeight: 600, color: COULEUR_CONFIANCE[analyse.detection.confiance] || "var(--marque-text-muted)" }}>
                 confiance {analyse.detection.confiance}
               </span>
             </div>
-            <div style={{ fontSize: 14, color: "var(--color-text-body)", lineHeight: 1.5 }}>{analyse.detection.resume}</div>
+            <div style={{ fontSize: 14, color: "var(--marque-text-body)", lineHeight: 1.5 }}>{analyse.detection.resume}</div>
             {analyse.detection.confiance !== "haute" && (
-              <div style={{ fontSize: 12.5, color: "var(--color-text-muted)", marginTop: 8 }}>
+              <div style={{ fontSize: 12.5, color: "var(--marque-text-muted)", marginTop: 8 }}>
                 Vérifiez le type ci-dessous avant de valider.
               </div>
             )}
@@ -233,7 +233,7 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
                   <option value="">(numéro de ligne)</option>
                   {analyse.columns.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <div style={{ fontSize: 11.5, color: "var(--color-text-muted)", marginTop: 5 }}>
+                <div style={{ fontSize: 11.5, color: "var(--marque-text-muted)", marginTop: 5 }}>
                   Permet de réimporter le fichier mis à jour sans créer de doublons.
                 </div>
               </div>
@@ -250,9 +250,9 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
                 <option value="direction_only">Direction uniquement</option>
               </select>
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13.5, color: "var(--color-text-body)", cursor: "pointer", paddingBottom: 9 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13.5, color: "var(--marque-text-body)", cursor: "pointer", paddingBottom: 9 }}>
               <input type="checkbox" checked={anonymiser} onChange={(e) => setAnonymiser(e.target.checked)}
-                     style={{ width: 16, height: 16, accentColor: "var(--color-primary)", cursor: "pointer" }} />
+                     style={{ width: 16, height: 16, accentColor: "var(--marque-primary)", cursor: "pointer" }} />
               Masquer les données personnelles
             </label>
           </div>
@@ -260,9 +260,9 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
           <div>
             <label style={label}>Aperçu de ce qui sera enregistré</label>
             <div style={{
-              background: "var(--color-canvas)", border: "1px solid var(--color-border)", borderRadius: 10,
+              background: "var(--marque-canvas)", border: "1px solid var(--marque-border)", borderRadius: 10,
               padding: 14, maxHeight: 220, overflow: "auto", fontSize: 12.5, lineHeight: 1.55,
-              fontFamily: "ui-monospace, Consolas, monospace", color: "var(--color-text-body)", whiteSpace: "pre-wrap",
+              fontFamily: "ui-monospace, Consolas, monospace", color: "var(--marque-text-body)", whiteSpace: "pre-wrap",
             }}>
               {analyse.apercu.join("\n\n───────────────\n\n")}
             </div>
@@ -271,8 +271,8 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={confirmer} disabled={enCours === "import"} className="sym-tap" style={{
               padding: "11px 22px", border: "none", borderRadius: 10, cursor: enCours ? "wait" : "pointer",
-              fontSize: 14, fontWeight: 700, fontFamily: "inherit", color: "var(--color-text-on-dark)",
-              background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
+              fontSize: 14, fontWeight: 700, fontFamily: "inherit", color: "var(--marque-text-on-dark)",
+              background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
               opacity: enCours === "import" ? 0.6 : 1,
             }}>
               {enCours === "import"
@@ -281,8 +281,8 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
             </button>
             <button onClick={reinitialiser} disabled={enCours === "import"} className="sym-tap" style={{
               padding: "11px 20px", borderRadius: 10, cursor: "pointer", fontSize: 14, fontWeight: 600,
-              fontFamily: "inherit", background: "transparent", color: "var(--color-text-muted)",
-              border: "1.5px solid var(--color-border)",
+              fontFamily: "inherit", background: "transparent", color: "var(--marque-text-muted)",
+              border: "1.5px solid var(--marque-border)",
             }}>
               Annuler
             </button>

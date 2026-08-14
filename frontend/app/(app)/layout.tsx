@@ -12,7 +12,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const name: string = user?.name || email.split("@")[0]
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--color-canvas)" }}>
+    <div style={{ minHeight: "100vh", background: "var(--marque-canvas)" }}>
       <TopNav role={role} email={email} name={name} />
       <main className="sym-fade" style={{ paddingTop: 64, minHeight: "calc(100vh - 64px)" }}>
         {children}

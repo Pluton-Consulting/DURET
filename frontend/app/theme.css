@@ -1,0 +1,263 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   LE PONT — IDENTIQUE D'UN PROJET À L'AUTRE. NE PAS LE PERSONNALISER.
+   ═══════════════════════════════════════════════════════════════════════
+
+   `charte.css` porte les couleurs d'un client, sous le préfixe `--marque-`.
+   Ce fichier-ci porte leur TRADUCTION vers les deux vocabulaires que les
+   bibliothèques attendent :
+
+     - Tailwind 4, qui lit ses tokens dans `@theme` sous le préfixe
+       `--color-` et en fabrique les classes (`bg-primary`, `border-border`) ;
+     - shadcn/ui — donc AI Elements et Extend UI, tous deux bâtis dessus —
+       qui exige des noms fixes : --background, --foreground, --primary,
+       --muted, --border, --ring…
+
+   TROIS ESPACES DE NOMS, AUCUN RECOUVREMENT. `--marque-*` appartient à la
+   charte, `--color-*` à Tailwind, les noms nus à shadcn. La traduction va
+   toujours dans le même sens : marque → shadcn → Tailwind. Un nom qui
+   existerait des deux côtés créerait un cycle silencieux ; c'est ce qui
+   s'était produit sur `--color-border` et `--color-error-bg`.
+
+   AUCUNE VALEUR EN DUR ICI. Toute couleur descend de `charte.css` : une
+   valeur écrite en clair dans ce fichier survivrait à la copie et
+   contaminerait le client suivant.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@import "tailwindcss";
+@import "./charte.css";
+
+/* ── Streamdown : sans ces trois lignes, le rendu du chat est NU ──────────
+   Streamdown (le moteur de rendu markdown des réponses) livre ses classes
+   Tailwind déjà écrites dans son code compilé. Or Tailwind 4 n'inspecte
+   PAS `node_modules` : sans `@source`, aucune de ces classes n'est
+   générée, et les réponses s'affichent sans titres, sans listes, sans
+   tableaux — un mur de texte, sans la moindre erreur de compilation pour
+   le signaler.
+
+   `styles.css` apporte en plus les keyframes de `[data-sd-animate]` : sans
+   lui, l'apparition progressive du texte pendant la génération ne produit
+   rien. `katex` habille les formules. */
+@source "../node_modules/streamdown/dist";
+@import "streamdown/styles.css";
+@import "katex/dist/katex.min.css";
+
+/* ── Ce que shadcn/ui, AI Elements et Extend UI vont lire ──────────────
+   Les noms sont imposés par shadcn ; les valeurs viennent de la charte. */
+:root {
+  --background:             var(--marque-canvas);
+  --foreground:             var(--marque-text-primary);
+
+  --card:                   var(--marque-surface);
+  --card-foreground:        var(--marque-text-primary);
+  --popover:                var(--marque-surface);
+  --popover-foreground:     var(--marque-text-primary);
+
+  --primary:                var(--marque-primary);
+  --primary-foreground:     var(--marque-text-on-dark);
+
+  --secondary:              var(--marque-primary-subtle);
+  --secondary-foreground:   var(--marque-primary);
+
+  --muted:                  var(--marque-primary-subtle);
+  --muted-foreground:       var(--marque-text-muted);
+
+  --accent:                 var(--marque-primary-light);
+  --accent-foreground:      var(--marque-primary);
+
+  --destructive:            var(--marque-error-text);
+  --destructive-foreground: var(--marque-text-on-dark);
+
+  --border:                 var(--marque-border);
+  --input:                  var(--marque-border);
+  --ring:                   var(--marque-primary-mid);
+
+  /* Streamdown peint ses panneaux de code et de diagramme avec ces deux
+     noms-là. Absents, le fond retombe sur `transparent` et le texte sur la
+     couleur héritée : un bloc de code illisible sur fond clair. */
+  --sidebar:                var(--marque-surface);
+  --sidebar-foreground:     var(--marque-text-primary);
+  --sidebar-border:         var(--marque-border);
+  --sidebar-accent:         var(--marque-primary-subtle);
+  --sidebar-accent-foreground: var(--marque-primary);
+
+  --radius:                 var(--marque-radius-card-sm);
+}
+
+/* ── Le thème Tailwind : `bg-primary`, `text-muted-foreground`, `rounded-lg`
+      s'adossent aux variables ci-dessus, donc à la charte. ─────────────── */
+@theme inline {
+  --color-background:             var(--background);
+  --color-foreground:             var(--foreground);
+  --color-card:                   var(--card);
+  --color-card-foreground:        var(--card-foreground);
+  --color-popover:                var(--popover);
+  --color-popover-foreground:     var(--popover-foreground);
+  --color-primary:                var(--primary);
+  --color-primary-foreground:     var(--primary-foreground);
+  --color-secondary:              var(--secondary);
+  --color-secondary-foreground:   var(--secondary-foreground);
+  --color-muted:                  var(--muted);
+  --color-muted-foreground:       var(--muted-foreground);
+  --color-accent:                 var(--accent);
+  --color-accent-foreground:      var(--accent-foreground);
+  --color-destructive:            var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border:                 var(--border);
+  --color-input:                  var(--input);
+  --color-ring:                   var(--ring);
+
+  --color-sidebar:                    var(--sidebar);
+  --color-sidebar-foreground:         var(--sidebar-foreground);
+  --color-sidebar-border:             var(--sidebar-border);
+  --color-sidebar-accent:             var(--sidebar-accent);
+  --color-sidebar-accent-foreground:  var(--sidebar-accent-foreground);
+
+  /* ── États sémantiques ───────────────────────────────────────────────
+     Extend UI et AI Elements les réclament (`success`, `warning`, `info`,
+     `error`) ; la charte les possédait déjà sous des noms métier. Les
+     brancher ici, plutôt que d'écrire des couleurs dans les composants,
+     est ce qui fait qu'une révision annotée ou un badge d'état prend
+     automatiquement les teintes du client. */
+  --color-success:    var(--marque-paid-text);
+  --color-success-bg: var(--marque-paid-bg);
+  --color-warning:    var(--marque-pending-text);
+  --color-warning-bg: var(--marque-pending-bg);
+  --color-info:       var(--marque-progress-text);
+  --color-info-bg:    var(--marque-progress-bg);
+  --color-error:      var(--marque-error-text);
+  --color-error-bg:   var(--marque-error-bg);
+
+  --font-sans: var(--marque-font);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ── Les mêmes noms, mais RÉELLEMENT EXISTANTS à l'exécution ────────────
+   `@theme inline` n'écrit aucune variable dans la page : il recopie les
+   valeurs à l'intérieur des classes utilitaires. `bg-primary` fonctionne
+   donc, mais `var(--color-primary)` ne vaut RIEN — vérifié dans le CSS
+   produit, où pas un seul `--color-primary` n'apparaît.
+
+   Or plusieurs composants de registre lisent ces noms en direct, hors de
+   toute classe : `Shimmer` construit son dégradé avec
+   `var(--color-background)` et `var(--color-muted-foreground)`. Sans ce
+   bloc, son texte d'attente s'affiche transparent sur transparent —
+   invisible, sans erreur nulle part.
+
+   On ne peut pas corriger ces composants : une réinstallation depuis le
+   registre écraserait le correctif. On rend donc les noms réels. Aucun
+   cycle n'est possible : la chaîne descend toujours marque → shadcn →
+   Tailwind, jamais l'inverse. */
+:root {
+  --color-background:             var(--background);
+  --color-foreground:             var(--foreground);
+  --color-card:                   var(--card);
+  --color-card-foreground:        var(--card-foreground);
+  --color-popover:                var(--popover);
+  --color-popover-foreground:     var(--popover-foreground);
+  --color-primary:                var(--primary);
+  --color-primary-foreground:     var(--primary-foreground);
+  --color-secondary:              var(--secondary);
+  --color-secondary-foreground:   var(--secondary-foreground);
+  --color-muted:                  var(--muted);
+  --color-muted-foreground:       var(--muted-foreground);
+  --color-accent:                 var(--accent);
+  --color-accent-foreground:      var(--accent-foreground);
+  --color-destructive:            var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border:                 var(--border);
+  --color-input:                  var(--input);
+  --color-ring:                   var(--ring);
+  --color-sidebar:                var(--sidebar);
+  --color-sidebar-foreground:     var(--sidebar-foreground);
+  --color-sidebar-border:         var(--sidebar-border);
+  --color-sidebar-accent:         var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-success:    var(--marque-paid-text);
+  --color-success-bg: var(--marque-paid-bg);
+  --color-warning:    var(--marque-pending-text);
+  --color-warning-bg: var(--marque-pending-bg);
+  --color-info:       var(--marque-progress-text);
+  --color-info-bg:    var(--marque-progress-bg);
+  --color-error:      var(--marque-error-text);
+  --color-error-bg:   var(--marque-error-bg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LE SOCLE D'ÉCRAN, repris INTÉGRALEMENT de l'ancien `layout.tsx`.
+   ═══════════════════════════════════════════════════════════════════════
+   Les 41 composants existants s'appuient sur ces classes (`sym-in`,
+   `sym-tap`, `sym-card`, `sym-skeleton`…) et sur les media queries. Elles
+   restent donc mot pour mot : la bascule vers AI Elements est progressive,
+   et rien de ce qui marche aujourd'hui ne doit s'arrêter en chemin.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--marque-font);
+  color: var(--marque-text-body);
+  background: var(--marque-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+button, input, select, textarea { font-family: var(--marque-font); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--marque-border); border-radius: 3px; }
+
+/* ── Animations & micro-interactions (charte : moins de monotonie) ── */
+@keyframes symFadeUp { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes symFadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes symShimmer { 0% { background-position: -450px 0 } 100% { background-position: 450px 0 } }
+@keyframes symFloat { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
+@keyframes symPop { 0% { transform: scale(.94) } 60% { transform: scale(1.03) } 100% { transform: scale(1) } }
+
+.sym-in   { animation: symFadeUp .5s cubic-bezier(.22,.61,.36,1) both; }
+.sym-in-1 { animation-delay: .05s } .sym-in-2 { animation-delay: .11s }
+.sym-in-3 { animation-delay: .17s } .sym-in-4 { animation-delay: .23s }
+.sym-in-5 { animation-delay: .29s } .sym-in-6 { animation-delay: .35s }
+.sym-fade { animation: symFadeIn .45s ease both; }
+.sym-pop  { animation: symPop .35s cubic-bezier(.22,.61,.36,1) both; }
+
+.sym-card { transition: transform .25s cubic-bezier(.22,.61,.36,1), box-shadow .25s ease, border-color .25s ease; }
+.sym-card:hover { transform: translateY(-3px); box-shadow: var(--marque-shadow-hover); }
+
+button, a, .sym-tap { transition: background-color .2s ease, color .2s ease, transform .12s ease, box-shadow .2s ease, border-color .2s ease; }
+.sym-tap:active { transform: scale(.97); }
+
+.sym-skeleton {
+  background: linear-gradient(90deg, var(--marque-border) 25%, var(--marque-primary-subtle) 50%, var(--marque-border) 75%);
+  background-size: 900px 100%;
+  animation: symShimmer 1.3s infinite linear;
+  border-radius: var(--marque-radius-card-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sym-in, .sym-fade, .sym-pop, .sym-card, .sym-tap, .sym-skeleton { animation: none !important; transition: none !important }
+  .sym-card:hover { transform: none }
+  /* Le `Shimmer` d'AI Elements anime en JavaScript, hors de portée d'une
+     règle CSS : sa garde est posée dans le composant lui-même. */
+}
+
+/* ── Adaptation aux petits écrans ────────────────────────────────────
+   TOUT est enfermé dans cette media query : au-dessus de 900px, aucune de
+   ces règles n'existe, donc la version bureau est inchangée par
+   construction. Le !important est nécessaire (et sans risque ici) parce
+   que les pages posent leurs styles en ligne, qui l'emportent autrement
+   sur une classe. */
+@media (max-width: 900px) {
+  .sym-page { padding-left: 16px !important; padding-right: 16px !important;
+              padding-top: 20px !important; padding-bottom: 24px !important; }
+  .sym-grid-auto { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important; }
+  .sym-grid-1 { grid-template-columns: 1fr !important; }
+  .sym-scroll-x { overflow-x: auto !important; }
+  .sym-fluide { max-width: 100% !important; }
+  .sym-bulle { max-width: 88% !important; }
+}

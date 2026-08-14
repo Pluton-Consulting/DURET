@@ -30,10 +30,10 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
     <div
       className="sym-in sym-card"
       style={{
-        background: "var(--color-surface)",
-        borderRadius: "var(--radius-card)",
+        background: "var(--marque-surface)",
+        borderRadius: "var(--marque-radius-card)",
         padding: 24,
-        boxShadow: "var(--shadow-card)",
+        boxShadow: "var(--marque-shadow-card)",
       }}
     >
       <h3
@@ -41,7 +41,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
           margin: "0 0 16px",
           fontSize: 16,
           fontWeight: 700,
-          color: "var(--color-text-primary)",
+          color: "var(--marque-text-primary)",
         }}
       >
         Activité récente
@@ -53,7 +53,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
           style={{
             padding: "32px 0",
             textAlign: "center",
-            color: "var(--color-text-muted)",
+            color: "var(--marque-text-muted)",
             fontSize: 13,
           }}
         >
@@ -73,7 +73,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
                   gap: 12,
                   padding: "11px 0",
                   borderBottom:
-                    i < list.length - 1 ? "1px solid var(--color-border)" : "none",
+                    i < list.length - 1 ? "1px solid var(--marque-border)" : "none",
                 }}
               >
                 <span
@@ -84,8 +84,8 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
                     marginTop: 5,
                     flexShrink: 0,
                     background: ok
-                      ? "var(--color-paid-text)"
-                      : "var(--color-error-text)",
+                      ? "var(--marque-paid-text)"
+                      : "var(--marque-error-text)",
                   }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -93,7 +93,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
                     style={{
                       fontSize: 13,
                       fontWeight: 500,
-                      color: "var(--color-text-primary)",
+                      color: "var(--marque-text-primary)",
                       lineHeight: 1.4,
                     }}
                   >
@@ -102,7 +102,7 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
                   <div
                     style={{
                       fontSize: 11,
-                      color: "var(--color-text-muted)",
+                      color: "var(--marque-text-muted)",
                       marginTop: 2,
                     }}
                   >
@@ -117,9 +117,9 @@ export default function ActivityFeed({ items }: { items?: ActivityItem[] | null 
                     fontWeight: 700,
                     flexShrink: 0,
                     padding: "3px 10px",
-                    borderRadius: "var(--radius-pill)",
-                    color: ok ? "var(--color-paid-text)" : "var(--color-error-text)",
-                    background: ok ? "var(--color-paid-bg)" : "var(--color-error-bg)",
+                    borderRadius: "var(--marque-radius-pill)",
+                    color: ok ? "var(--marque-paid-text)" : "var(--marque-error-text)",
+                    background: ok ? "var(--marque-paid-bg)" : "var(--marque-error-bg)",
                   }}
                 >
                   {ok ? "Succès" : "Échec"}

@@ -15,15 +15,15 @@ export function PrimaryButton({ children = "Valider", size = "md", onClick, disa
       onClick={onClick}
       disabled={disabled}
       style={{
-        fontFamily: "var(--font)", fontSize: fs, fontWeight: 600,
+        fontFamily: "var(--marque-font)", fontSize: fs, fontWeight: 600,
         cursor: disabled ? "not-allowed" : "pointer", border: "none",
-        color: "var(--color-text-on-dark)", padding: pad, borderRadius: "var(--radius-pill)",
-        background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
-        boxShadow: "var(--shadow-card)", transition: "transform .12s ease, box-shadow .2s ease",
+        color: "var(--marque-text-on-dark)", padding: pad, borderRadius: "var(--marque-radius-pill)",
+        background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+        boxShadow: "var(--marque-shadow-card)", transition: "transform .12s ease, box-shadow .2s ease",
         opacity: disabled ? 0.55 : 1,
       }}
-      onMouseEnter={(e) => { if (disabled) return; e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = "var(--shadow-hover)" }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "var(--shadow-card)" }}
+      onMouseEnter={(e) => { if (disabled) return; e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = "var(--marque-shadow-hover)" }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "var(--marque-shadow-card)" }}
     >
       {children}
     </button>

@@ -1,8 +1,8 @@
 type Row = { cells: string[]; status: "ok" | "wait" | "late" }
 const PILL = {
-  ok:   { label: "Livrée",     bg: "var(--color-paid-bg)",    fg: "var(--color-paid-text)" },
-  wait: { label: "En attente", bg: "var(--color-pending-bg)", fg: "var(--color-pending-text)" },
-  late: { label: "En retard",  bg: "var(--color-error-bg)",   fg: "var(--color-error-text)" },
+  ok:   { label: "Livrée",     bg: "var(--marque-paid-bg)",    fg: "var(--marque-paid-text)" },
+  wait: { label: "En attente", bg: "var(--marque-pending-bg)", fg: "var(--marque-pending-text)" },
+  late: { label: "En retard",  bg: "var(--marque-error-bg)",   fg: "var(--marque-error-text)" },
 }
 
 /** Tableau avec colonne de STATUT en pastille colorée. */
@@ -15,10 +15,10 @@ export function StatusTable({
   ] as Row[],
 }: { columns?: string[]; rows?: Row[] }) {
   return (
-    <div className="sym-fluide" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", overflow: "auto", maxWidth: 440 }}>
+    <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: 440 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>{columns.map((c, i) => (
-          <th key={i} style={{ textAlign: "left", padding: "10px 14px", background: "var(--color-primary-subtle)", color: "var(--color-text-muted)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 700 }}>{c}</th>
+          <th key={i} style={{ textAlign: "left", padding: "10px 14px", background: "var(--marque-primary-subtle)", color: "var(--marque-text-muted)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 700 }}>{c}</th>
         ))}</tr></thead>
         <tbody>
           {rows.map((r, ri) => {
@@ -26,10 +26,10 @@ export function StatusTable({
             return (
               <tr key={ri}>
                 {r.cells.map((cell, ci) => (
-                  <td key={ci} style={{ padding: "10px 14px", borderTop: "1px solid var(--color-border)", color: ci === 0 ? "var(--color-text-primary)" : "var(--color-text-body)", fontWeight: ci === 0 ? 600 : 400 }}>{cell}</td>
+                  <td key={ci} style={{ padding: "10px 14px", borderTop: "1px solid var(--marque-border)", color: ci === 0 ? "var(--marque-text-primary)" : "var(--marque-text-body)", fontWeight: ci === 0 ? 600 : 400 }}>{cell}</td>
                 ))}
-                <td style={{ padding: "10px 14px", borderTop: "1px solid var(--color-border)" }}>
-                  <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 9px", borderRadius: "var(--radius-pill)", background: p.bg, color: p.fg }}>{p.label}</span>
+                <td style={{ padding: "10px 14px", borderTop: "1px solid var(--marque-border)" }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 9px", borderRadius: "var(--marque-radius-pill)", background: p.bg, color: p.fg }}>{p.label}</span>
                 </td>
               </tr>
             )

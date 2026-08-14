@@ -7,11 +7,11 @@ const KIND: Record<string, string> = { PDF: "#C0392B", XLSX: "#1E7D46", DWG: "#0
 /** Chip DOCUMENT (badge type de fichier + nom + méta). */
 export function DocCard({ name = "CCTP_lot_revetements.pdf", kind = "PDF", meta = "1,4 Mo · 24 p." }: { name?: string; kind?: string; meta?: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-card-sm)", padding: "9px 12px", boxShadow: "var(--shadow-card)", maxWidth: 320 }}>
-      <span style={{ width: 34, height: 34, borderRadius: 8, display: "grid", placeItems: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0, background: KIND[kind] ?? "var(--color-text-muted)" }}>{kind}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", padding: "9px 12px", boxShadow: "var(--marque-shadow-card)", maxWidth: 320 }}>
+      <span style={{ width: 34, height: 34, borderRadius: 8, display: "grid", placeItems: "center", fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0, background: KIND[kind] ?? "var(--marque-text-muted)" }}>{kind}</span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>
-        <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{meta}</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--marque-text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</div>
+        <div style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>{meta}</div>
       </div>
     </div>
   )

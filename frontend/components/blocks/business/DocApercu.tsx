@@ -21,47 +21,47 @@ function Ligne({ texte }: { texte: string }) {
     return (
       <div style={{
         fontSize: niveau === 1 ? 15 : 13.5, fontWeight: 700,
-        color: "var(--color-text-primary)",
+        color: "var(--marque-text-primary)",
         margin: niveau === 1 ? "2px 0 6px" : "8px 0 3px",
       }}>{titre[2]}</div>
     )
   }
   if (texte.startsWith("- ")) {
     return (
-      <div style={{ display: "flex", gap: 7, paddingLeft: 6, fontSize: 12.5, lineHeight: 1.55, color: "var(--color-text-body)" }}>
-        <span aria-hidden style={{ color: "var(--color-text-muted)" }}>•</span>
+      <div style={{ display: "flex", gap: 7, paddingLeft: 6, fontSize: 12.5, lineHeight: 1.55, color: "var(--marque-text-body)" }}>
+        <span aria-hidden style={{ color: "var(--marque-text-muted)" }}>•</span>
         <span>{texte.slice(2)}</span>
       </div>
     )
   }
   if (!texte.trim()) return <div style={{ height: 7 }} />
   return (
-    <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--color-text-body)" }}>{texte}</div>
+    <div style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--marque-text-body)" }}>{texte}</div>
   )
 }
 
 export function DocApercu({ titre, format = "docx", extrait = "", pages }:
   { titre?: string; format?: string; extrait?: string; pages?: number }) {
   const ext = (format || "").toLowerCase()
-  const couleur = COULEURS[ext] || "var(--color-primary)"
+  const couleur = COULEURS[ext] || "var(--marque-primary)"
   return (
     <div style={{
-      background: "var(--color-surface)", border: "1px solid var(--color-border)",
-      borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)",
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)",
       maxWidth: 460, width: "100%", overflow: "hidden",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid var(--color-border)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid var(--marque-border)" }}>
         <span style={{
           padding: "3px 8px", borderRadius: 6, background: couleur, color: "#fff",
           fontSize: 10, fontWeight: 800, letterSpacing: 0.4, flexShrink: 0,
         }}>{(ext || "?").toUpperCase()}</span>
         <div style={{ minWidth: 0 }}>
           <div style={{
-            fontSize: 13, fontWeight: 700, color: "var(--color-text-primary)",
+            fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>{titre || "Document"}</div>
           {pages ? (
-            <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{pages} page{pages > 1 ? "s" : ""}</div>
+            <div style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>{pages} page{pages > 1 ? "s" : ""}</div>
           ) : null}
         </div>
       </div>
@@ -71,7 +71,7 @@ export function DocApercu({ titre, format = "docx", extrait = "", pages }:
             comme un document qui s'arrête là. */}
         <div aria-hidden style={{
           position: "absolute", left: 0, right: 0, bottom: 0, height: 34,
-          background: "linear-gradient(transparent, var(--color-surface))",
+          background: "linear-gradient(transparent, var(--marque-surface))",
           pointerEvents: "none",
         }} />
       </div>

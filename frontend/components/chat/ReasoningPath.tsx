@@ -2,6 +2,26 @@
 
 // Colonne latérale : le "chemin de réflexion" de Duret & Sols, façon timeline verticale.
 // Les étapes s'allument au fur et à mesure que l'agent progresse (événements WS nœud-par-nœud).
+//
+// POURQUOI CETTE COLONNE N'EST PAS PASSÉE SUR `ChainOfThought` (AI Elements).
+//
+// Ce n'est pas un oubli : `ChainOfThoughtStep` ne connaît que trois états
+// (terminé, en cours, à venir) là où cette frise en distingue cinq. Les deux
+// manquants sont précisément ceux qui portent une information :
+//
+//   « sauté »  — l'agent est passé PAR-DESSUS cette étape (pas de recherche
+//                web, pas de validation humaine). Le trait pointillé le dit.
+//                Le rabattre sur « à venir » ferait croire qu'elle va encore
+//                arriver, et l'utilisateur l'attendrait pour rien.
+//   « inerte » — rien ne tourne. Distinct de « à venir », qui suppose un
+//                traitement en cours.
+//
+// La mise en page non plus n'a pas d'équivalent : la colonne se partage en
+// deux zones (frise en haut, cartes en bas plafonnées à 52 %) pour que CE QUI
+// ATTEND UNE DÉCISION reste visible sans défiler, et disparaît sous 900 px.
+//
+// Une frise qui ment sur l'état d'une étape coûte plus cher que la cohérence
+// de bibliothèque qu'on gagnerait à l'échanger.
 
 const STAGES: { label: string; desc: string; nodes: string[] }[] = [
   { label: "Analyse", desc: "Nature de la demande", nodes: ["classify", "check_schedule"] },
@@ -40,34 +60,34 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
   return (
     <aside className="sym-path sym-fade">
       <style>{`
-        @keyframes symNodePulse { 0%,100%{ box-shadow:0 0 0 4px var(--color-primary-subtle);} 50%{ box-shadow:0 0 0 9px rgba(0,0,0,0);} }
+        @keyframes symNodePulse { 0%,100%{ box-shadow:0 0 0 4px var(--marque-primary-subtle);} 50%{ box-shadow:0 0 0 9px rgba(0,0,0,0);} }
         /* Colonne en deux zones : la frise CONDENSEE en haut (elle defile si la
            place manque), les cartes ancrees en bas. C'est le bas qui porte ce
            qui attend une decision — il doit rester visible sans defilement. */
         .sym-path{ width:26%; min-width:242px; max-width:340px; flex-shrink:0;
           display:flex; flex-direction:column; overflow:hidden;
-          border-left:1px solid var(--color-border); background:var(--color-surface); padding:16px 18px; }
+          border-left:1px solid var(--marque-border); background:var(--marque-surface); padding:16px 18px; }
         .sym-path-haut{ flex:1 1 auto; min-height:0; overflow-y:auto; }
         .sym-path-bas{ flex-shrink:0; max-height:52%; overflow-y:auto; }
         .sym-path-eyebrow{ font-size:11px; letter-spacing:.14em; text-transform:uppercase;
-          color:var(--color-primary-mid); font-weight:700; margin-bottom:3px; }
-        .sym-path-title{ font-size:14px; font-weight:700; color:var(--color-text-primary); margin-bottom:12px; }
+          color:var(--marque-primary-mid); font-weight:700; margin-bottom:3px; }
+        .sym-path-title{ font-size:14px; font-weight:700; color:var(--marque-text-primary); margin-bottom:12px; }
         .sym-node{ position:relative; display:grid; grid-template-columns:20px 1fr; gap:10px; padding-bottom:12px; }
         .sym-node:last-child{ padding-bottom:0; }
-        .sym-line{ position:absolute; left:9px; top:-12px; width:2px; height:12px; background:var(--color-border); transition:background .3s; }
-        .sym-node.done .sym-line, .sym-node.active .sym-line{ background:var(--color-primary-mid); }
-        .sym-dot{ width:20px; height:20px; border-radius:50%; border:2px solid var(--color-border);
-          background:var(--color-surface); display:flex; align-items:center; justify-content:center;
-          font-size:10px; font-weight:700; color:var(--color-text-on-dark); z-index:1; transition:all .3s; }
-        .sym-node.done .sym-dot{ background:var(--color-primary); border-color:var(--color-primary); }
-        .sym-node.active .sym-dot{ border-color:var(--color-primary); animation:symNodePulse 1.4s ease-in-out infinite; }
+        .sym-line{ position:absolute; left:9px; top:-12px; width:2px; height:12px; background:var(--marque-border); transition:background .3s; }
+        .sym-node.done .sym-line, .sym-node.active .sym-line{ background:var(--marque-primary-mid); }
+        .sym-dot{ width:20px; height:20px; border-radius:50%; border:2px solid var(--marque-border);
+          background:var(--marque-surface); display:flex; align-items:center; justify-content:center;
+          font-size:10px; font-weight:700; color:var(--marque-text-on-dark); z-index:1; transition:all .3s; }
+        .sym-node.done .sym-dot{ background:var(--marque-primary); border-color:var(--marque-primary); }
+        .sym-node.active .sym-dot{ border-color:var(--marque-primary); animation:symNodePulse 1.4s ease-in-out infinite; }
         .sym-node.pending .sym-dot, .sym-node.idle .sym-dot{ opacity:.55; }
         .sym-node.skipped .sym-dot{ border-style:dashed; opacity:.4; }
-        .sym-node-label{ font-size:12.5px; font-weight:600; color:var(--color-text-primary); }
-        .sym-node.active .sym-node-label{ color:var(--color-primary); }
+        .sym-node-label{ font-size:12.5px; font-weight:600; color:var(--marque-text-primary); }
+        .sym-node.active .sym-node-label{ color:var(--marque-primary); }
         .sym-node.pending .sym-node-label, .sym-node.idle .sym-node-label, .sym-node.skipped .sym-node-label{
-          color:var(--color-text-muted); font-weight:500; }
-        .sym-node-desc{ font-size:11px; color:var(--color-text-muted); margin-top:1px; }
+          color:var(--marque-text-muted); font-weight:500; }
+        .sym-node-desc{ font-size:11px; color:var(--marque-text-muted); margin-top:1px; }
         @media (max-width: 900px){ .sym-path{ display:none; } }
         @media (prefers-reduced-motion: reduce){ .sym-node.active .sym-dot{ animation:none; } }
       `}</style>

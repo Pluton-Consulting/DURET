@@ -40,20 +40,20 @@ const ACCES_LABEL: Record<string, string> = {
 }
 
 const carte: CSSProperties = {
-  background: "var(--color-surface)",
-  borderRadius: "var(--radius-card-sm)",
-  border: "1px solid var(--color-border)",
-  boxShadow: "var(--shadow-card)",
+  background: "var(--marque-surface)",
+  borderRadius: "var(--marque-radius-card-sm)",
+  border: "1px solid var(--marque-border)",
+  boxShadow: "var(--marque-shadow-card)",
 }
 
 const bouton = (principal: boolean): CSSProperties => ({
   padding: "10px 18px",
-  borderRadius: "var(--radius-pill)",
-  border: principal ? "none" : "1px solid var(--color-border)",
+  borderRadius: "var(--marque-radius-pill)",
+  border: principal ? "none" : "1px solid var(--marque-border)",
   background: principal
-    ? "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))"
-    : "var(--color-surface)",
-  color: principal ? "var(--color-text-on-dark)" : "var(--color-text-body)",
+    ? "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))"
+    : "var(--marque-surface)",
+  color: principal ? "var(--marque-text-on-dark)" : "var(--marque-text-body)",
   fontSize: 14,
   fontWeight: 600,
   cursor: "pointer",
@@ -143,8 +143,8 @@ export default function DebriefApprentissage({ token }: { token: string }) {
     if (!items.length) return null
     return (
       <div style={{ marginTop: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>{titre}</div>
-        <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 10 }}>{aide}</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>{titre}</div>
+        <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginBottom: 10 }}>{aide}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {items.map((item, i) => (
             <label key={i} style={{ ...carte, padding: "12px 14px", display: "flex", gap: 12,
@@ -164,7 +164,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
                     marginBottom: 6, gap: 16, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--color-text-primary)" }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--marque-text-primary)" }}>
           Débrief de conversation
         </h2>
         <button onClick={lancer} disabled={enCours !== null || dernier?.disponible === false}
@@ -173,7 +173,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
         </button>
       </div>
 
-      <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--color-text-body)",
+      <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--marque-text-body)",
                   maxWidth: "70ch", lineHeight: 1.55 }}>
         L'assistant relit l'échange, en extrait ce qui mérite d'être retenu, et vous le
         soumet. <b>Rien n'est enregistré sans votre accord</b> : vous décochez ce que vous
@@ -181,13 +181,13 @@ export default function DebriefApprentissage({ token }: { token: string }) {
       </p>
 
       {dernier && !dernier.disponible && (
-        <div style={{ ...carte, padding: "16px 18px", fontSize: 13, color: "var(--color-text-muted)" }}>
+        <div style={{ ...carte, padding: "16px 18px", fontSize: 13, color: "var(--marque-text-muted)" }}>
           {dernier.message}
         </div>
       )}
 
       {dernier?.disponible && !analyse && (
-        <div style={{ ...carte, padding: "14px 18px", fontSize: 13, color: "var(--color-text-body)" }}>
+        <div style={{ ...carte, padding: "14px 18px", fontSize: 13, color: "var(--marque-text-body)" }}>
           Dernière conversation : <b>{dernier.titre}</b> · {dernier.messages} message(s) ·{" "}
           {dernier.date ? new Date(dernier.date).toLocaleString("fr-FR") : ""}
         </div>
@@ -195,7 +195,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
 
       {erreur && (
         <div style={{ ...carte, padding: "14px 18px", marginTop: 12, fontSize: 13,
-                      background: "var(--color-late-bg)", color: "var(--color-late-text)",
+                      background: "var(--marque-late-bg)", color: "var(--marque-late-text)",
                       border: "none" }}>
           {erreur}
         </div>
@@ -203,7 +203,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
 
       {bilan && (
         <div style={{ ...carte, padding: "14px 18px", marginTop: 12, fontSize: 13,
-                      background: "var(--color-paid-bg)", color: "var(--color-paid-text)",
+                      background: "var(--marque-paid-bg)", color: "var(--marque-paid-text)",
                       border: "none" }}>
           Enregistré : {bilan}
         </div>
@@ -211,7 +211,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
 
       {analyse && analyse.total === 0 && (
         <div style={{ ...carte, padding: "24px 18px", marginTop: 12, fontSize: 13,
-                      color: "var(--color-text-muted)", textAlign: "center" }}>
+                      color: "var(--marque-text-muted)", textAlign: "center" }}>
           Rien à retenir dans « {analyse.titre} ». C'est un résultat normal : une conversation
           courante n'apporte pas toujours de connaissance durable.
         </div>
@@ -219,7 +219,7 @@ export default function DebriefApprentissage({ token }: { token: string }) {
 
       {analyse && analyse.total > 0 && (
         <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 12, color: "var(--color-text-muted)", fontFamily: "monospace" }}>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", fontFamily: "monospace" }}>
             {analyse.titre} · {analyse.messages} message(s) relus · {analyse.total} proposition(s)
           </div>
 
@@ -227,9 +227,9 @@ export default function DebriefApprentissage({ token }: { token: string }) {
             "Faits durables sur l'entreprise — rangés dans la mémoire, retrouvables par le chat.",
             analyse.connaissances, (c: Connaissance) => (
               <>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-text-primary)" }}>{c.titre}</div>
-                <div style={{ fontSize: 13, color: "var(--color-text-body)", marginTop: 3, lineHeight: 1.5 }}>{c.contenu}</div>
-                <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{c.titre}</div>
+                <div style={{ fontSize: 13, color: "var(--marque-text-body)", marginTop: 3, lineHeight: 1.5 }}>{c.contenu}</div>
+                <div style={{ fontSize: 11, color: "var(--marque-text-muted)", marginTop: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                   Visible par : {ACCES_LABEL[c.acces] || c.acces}
                 </div>
               </>
@@ -239,8 +239,8 @@ export default function DebriefApprentissage({ token }: { token: string }) {
             "Consignes de présentation ou de méthode — mémorisées pour les prochains échanges.",
             analyse.procedures, (p: Procedure) => (
               <>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-text-primary)" }}>{p.titre}</div>
-                <div style={{ fontSize: 13, color: "var(--color-text-body)", marginTop: 3, lineHeight: 1.5 }}>{p.contenu}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{p.titre}</div>
+                <div style={{ fontSize: 13, color: "var(--marque-text-body)", marginTop: 3, lineHeight: 1.5 }}>{p.contenu}</div>
               </>
             ))}
 
@@ -248,10 +248,10 @@ export default function DebriefApprentissage({ token }: { token: string }) {
             "Calculs reproductibles — créés en brouillon, inactifs tant qu'un humain n'a pas relu le code.",
             analyse.competences, (c: Competence) => (
               <>
-                <div style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "var(--color-text-primary)" }}>{c.nom}</div>
-                <div style={{ fontSize: 13, color: "var(--color-text-body)", marginTop: 3, lineHeight: 1.5 }}>{c.description}</div>
+                <div style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{c.nom}</div>
+                <div style={{ fontSize: 13, color: "var(--marque-text-body)", marginTop: 3, lineHeight: 1.5 }}>{c.description}</div>
                 {c.entrees && (
-                  <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>Entrées : {c.entrees}</div>
+                  <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 4 }}>Entrées : {c.entrees}</div>
                 )}
               </>
             ))}

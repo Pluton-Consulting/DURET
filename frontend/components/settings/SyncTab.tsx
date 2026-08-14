@@ -55,15 +55,15 @@ function duree(debut?: string | number | null, fin?: string | number | null): st
 }
 
 const ETIQUETTE: Record<string, { texte: string; bg: string; fg: string }> = {
-  jamais: { texte: "Jamais lancée", bg: "var(--color-canvas)", fg: "var(--color-text-muted)" },
-  en_cours: { texte: "En cours…", bg: "var(--color-progress-bg)", fg: "var(--color-progress-text)" },
-  terminee: { texte: "Terminée", bg: "var(--color-paid-bg)", fg: "var(--color-paid-text)" },
-  echec: { texte: "Échec", bg: "var(--color-error-bg)", fg: "var(--color-error-text)" },
-  non_configure: { texte: "Non configuré", bg: "var(--color-pending-bg)", fg: "var(--color-pending-text)" },
+  jamais: { texte: "Jamais lancée", bg: "var(--marque-canvas)", fg: "var(--marque-text-muted)" },
+  en_cours: { texte: "En cours…", bg: "var(--marque-progress-bg)", fg: "var(--marque-progress-text)" },
+  terminee: { texte: "Terminée", bg: "var(--marque-paid-bg)", fg: "var(--marque-paid-text)" },
+  echec: { texte: "Échec", bg: "var(--marque-error-bg)", fg: "var(--marque-error-text)" },
+  non_configure: { texte: "Non configuré", bg: "var(--marque-pending-bg)", fg: "var(--marque-pending-text)" },
   // « Interrompue » est un état HONNÊTE : le serveur a redémarré pendant la
   // synchronisation. Le laisser en « en cours » afficherait une barre figée
   // pour toujours ; le passer en « échec » accuserait le connecteur à tort.
-  interrompue: { texte: "Interrompue", bg: "var(--color-pending-bg)", fg: "var(--color-pending-text)" },
+  interrompue: { texte: "Interrompue", bg: "var(--marque-pending-bg)", fg: "var(--marque-pending-text)" },
 }
 
 export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
@@ -176,7 +176,7 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
 
   return (
     <div>
-      <p style={{ margin: "0 0 18px", fontSize: 14, color: "var(--color-text-body)",
+      <p style={{ margin: "0 0 18px", fontSize: 14, color: "var(--marque-text-body)",
                   maxWidth: "72ch", lineHeight: 1.55 }}>
         Chaque synchronisation va chercher les données à la source et les range dans la
         mémoire d'entreprise. Elle tourne <b>en tâche de fond</b> : vous pouvez quitter
@@ -185,21 +185,21 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
       </p>
 
       {erreur && (
-        <div className="sym-pop" style={{ color: "var(--color-error-text)", fontSize: 13,
+        <div className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13,
                                           marginBottom: 12 }}>⚠ {erreur}</div>
       )}
 
       {/* Enrichissement complet — un seul geste, des paramètres fixes */}
       <div className="sym-card" style={{
-        background: "var(--color-surface)", border: "2px solid var(--color-primary)",
-        borderRadius: "var(--radius-card-sm)", padding: "16px 18px", marginBottom: 18,
+        background: "var(--marque-surface)", border: "2px solid var(--marque-primary)",
+        borderRadius: "var(--marque-radius-card-sm)", padding: "16px 18px", marginBottom: 18,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
               Tout enrichir
             </div>
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 3,
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3,
                           lineHeight: 1.5 }}>
               Synchronise les boîtes, extrait tout le courrier, construit un profil
               d'écriture par personne, puis en tire connaissances, manières de faire et
@@ -207,18 +207,18 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
             </div>
           </div>
           <span style={{
-            background: enrich?.en_cours ? "var(--color-progress-bg)" : "var(--color-canvas)",
-            color: enrich?.en_cours ? "var(--color-progress-text)" : "var(--color-text-muted)",
-            padding: "5px 12px", borderRadius: "var(--radius-pill)", fontSize: 12,
+            background: enrich?.en_cours ? "var(--marque-progress-bg)" : "var(--marque-canvas)",
+            color: enrich?.en_cours ? "var(--marque-progress-text)" : "var(--marque-text-muted)",
+            padding: "5px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
             fontWeight: 600, whiteSpace: "nowrap",
           }}>
             {enrich?.en_cours ? "En cours…" : (enrich?.phase || "Jamais lancée")}
           </span>
           <button onClick={lancerEnrich} disabled={!!enrich?.en_cours || busy === "enrichir"}
             className="sym-tap" style={{
-              padding: "9px 18px", borderRadius: "var(--radius-pill)", border: "none",
-              background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
-              color: "var(--color-text-on-dark)", fontSize: 13, fontWeight: 700,
+              padding: "9px 18px", borderRadius: "var(--marque-radius-pill)", border: "none",
+              background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+              color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 700,
               cursor: enrich?.en_cours ? "not-allowed" : "pointer",
               opacity: enrich?.en_cours || busy === "enrichir" ? 0.6 : 1,
             }}>
@@ -226,8 +226,8 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
           </button>
         </div>
         {enrich && (enrich.messages_extraits || enrich.appels_analyse) ? (
-          <div style={{ fontSize: 12, color: "var(--color-text-body)", marginTop: 10,
-                        paddingTop: 10, borderTop: "1px solid var(--color-border)" }}>
+          <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 10,
+                        paddingTop: 10, borderTop: "1px solid var(--marque-border)" }}>
             {enrich.messages_extraits} message(s) extrait(s) · {enrich.appels_analyse} appel(s)
             d'analyse · {enrich.connaissances} connaissance(s) · {enrich.procedures} manière(s)
             de faire · {(enrich.skills || []).length} skill(s)
@@ -243,14 +243,14 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
           const enCours = e.etat === "en_cours"
           return (
             <div key={e.source} className="sym-card" style={{
-              background: "var(--color-surface)", border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-card-sm)", padding: "14px 18px",
+              background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+              borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px",
               display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
             }}>
               <div style={{ flex: 1, minWidth: 200 }}>
                 <div style={{ fontSize: 14, fontWeight: 700,
-                              color: "var(--color-text-primary)" }}>{e.libelle}</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 3 }}>
+                              color: "var(--marque-text-primary)" }}>{e.libelle}</div>
+                <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3 }}>
                   {enCours
                     ? `${e.etape || "en cours"} · depuis ${duree(e.debut)}`
                     : (resume(e) || "Aucune donnée pour l'instant")}
@@ -261,7 +261,7 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
                     gérant veut savoir : « quand ai-je eu des données à jour ? »
                     Un échec d'aujourd'hui ne doit pas effacer cette réponse. */}
                 {!enCours && e.derniere_reussite && e.etat !== "terminee" ? (
-                  <div style={{ fontSize: 11, color: "var(--color-text-muted)",
+                  <div style={{ fontSize: 11, color: "var(--marque-text-muted)",
                                 marginTop: 2, opacity: 0.85 }}>
                     Dernière réussite {quand(e.derniere_reussite)}
                   </div>
@@ -273,17 +273,17 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
                         afficher « 40 % » sans le savoir serait un mensonge que
                         personne ne peut vérifier. */}
                     <div style={{ height: 4, borderRadius: 999, overflow: "hidden",
-                                  background: "var(--color-canvas)" }}>
+                                  background: "var(--marque-canvas)" }}>
                       <div style={{
                         height: "100%", borderRadius: 999,
-                        background: "var(--color-primary)",
+                        background: "var(--marque-primary)",
                         width: e.pourcentage != null ? `${e.pourcentage}%` : "35%",
                         transition: "width .4s ease",
                         animation: e.pourcentage == null
                           ? "sym-sync-glisse 1.4s ease-in-out infinite" : undefined,
                       }} />
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-muted)",
+                    <div style={{ fontSize: 11, color: "var(--marque-text-muted)",
                                   marginTop: 4 }}>
                       {e.pourcentage != null
                         ? `${e.traites} sur ${e.total} · ${e.pourcentage} %`
@@ -293,13 +293,13 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
                 ) : null}
               </div>
               <span style={{ background: et.bg, color: et.fg, padding: "5px 12px",
-                             borderRadius: "var(--radius-pill)", fontSize: 12,
+                             borderRadius: "var(--marque-radius-pill)", fontSize: 12,
                              fontWeight: 600, whiteSpace: "nowrap" }}>{et.texte}</span>
               <button onClick={() => lancer(e.source)} disabled={enCours || busy === e.source}
                 className="sym-tap" style={{
-                  padding: "8px 16px", borderRadius: "var(--radius-pill)", border: "none",
-                  background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
-                  color: "var(--color-text-on-dark)", fontSize: 13, fontWeight: 600,
+                  padding: "8px 16px", borderRadius: "var(--marque-radius-pill)", border: "none",
+                  background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+                  color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 600,
                   cursor: enCours ? "not-allowed" : "pointer",
                   opacity: enCours || busy === e.source ? 0.6 : 1,
                 }}>

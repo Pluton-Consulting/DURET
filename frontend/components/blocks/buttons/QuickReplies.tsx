@@ -10,13 +10,13 @@ export function QuickReplies({
           key={o}
           onClick={() => onPick?.(o)}
           style={{
-            fontFamily: "var(--font)", fontSize: 13, fontWeight: 600, cursor: "pointer",
-            color: "var(--color-primary)", background: "var(--color-surface)",
-            border: "1.5px solid var(--color-primary-light)", borderRadius: "var(--radius-pill)",
+            fontFamily: "var(--marque-font)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            color: "var(--marque-primary)", background: "var(--marque-surface)",
+            border: "1.5px solid var(--marque-primary-light)", borderRadius: "var(--marque-radius-pill)",
             padding: "7px 15px", transition: "background .15s ease, border-color .15s ease",
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--color-primary-subtle)"; e.currentTarget.style.borderColor = "var(--color-primary-mid)" }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--color-surface)"; e.currentTarget.style.borderColor = "var(--color-primary-light)" }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--marque-primary-subtle)"; e.currentTarget.style.borderColor = "var(--marque-primary-mid)" }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--marque-surface)"; e.currentTarget.style.borderColor = "var(--marque-primary-light)" }}
         >
           <span style={{ opacity: .5 }}>↳ </span>{o}
         </button>

@@ -15,11 +15,11 @@ interface Skill {
 }
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
-  draft: { bg: "var(--color-pending-bg)", fg: "var(--color-pending-text)", label: "Brouillon" },
-  testing: { bg: "var(--color-progress-bg)", fg: "var(--color-progress-text)", label: "En test" },
-  validated: { bg: "var(--color-paid-bg)", fg: "var(--color-paid-text)", label: "Validé" },
-  stable: { bg: "var(--color-paid-bg)", fg: "var(--color-paid-text)", label: "Stable" },
-  deprecated: { bg: "var(--color-error-bg)", fg: "var(--color-error-text)", label: "Déprécié" },
+  draft: { bg: "var(--marque-pending-bg)", fg: "var(--marque-pending-text)", label: "Brouillon" },
+  testing: { bg: "var(--marque-progress-bg)", fg: "var(--marque-progress-text)", label: "En test" },
+  validated: { bg: "var(--marque-paid-bg)", fg: "var(--marque-paid-text)", label: "Validé" },
+  stable: { bg: "var(--marque-paid-bg)", fg: "var(--marque-paid-text)", label: "Stable" },
+  deprecated: { bg: "var(--marque-error-bg)", fg: "var(--marque-error-text)", label: "Déprécié" },
 }
 
 // Cycle de validation proposé par le bouton principal.
@@ -172,43 +172,43 @@ export default function SkillsClient({ apiUrl, token }: Props) {
 
   return (
     <div className="sym-page" style={{ padding: 32, maxWidth: 1180, margin: "0 auto" }}>
-      <div className="sym-in sym-in-1" style={{ fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--color-primary-mid)", fontWeight: 600, marginBottom: 8 }}>
+      <div className="sym-in sym-in-1" style={{ fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--marque-primary-mid)", fontWeight: 600, marginBottom: 8 }}>
         Gouvernance · Capacités des agents
       </div>
-      <h1 className="sym-in sym-in-2" style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
+      <h1 className="sym-in sym-in-2" style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>
         Configuration des skills
       </h1>
-      <p className="sym-in sym-in-3" style={{ margin: "0 0 24px", fontSize: 15, color: "var(--color-text-body)", maxWidth: "72ch", lineHeight: 1.55 }}>
+      <p className="sym-in sym-in-3" style={{ margin: "0 0 24px", fontSize: 15, color: "var(--marque-text-body)", maxWidth: "72ch", lineHeight: 1.55 }}>
         Catalogue des capacités métier des agents. Vous validez, activez/désactivez et testez chaque skill.
         Une skill n'est exécutable par les agents qu'une fois <b>validée/stable</b> ET <b>active</b>.
       </p>
 
       {/* KPIs + filtre agent */}
       <div className="sym-in sym-in-4" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
-        <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
+        <span style={{ fontSize: 13, color: "var(--marque-text-muted)" }}>
           {counts.total} skills · {counts.valides} validées · {counts.actifs} actives
         </span>
         <div style={{ flex: 1 }} />
         {agents.map((a) => (
           <button key={a} onClick={() => setAgentFilter(a)} className="sym-tap"
             style={{
-              fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer",
-              border: `1px solid ${agentFilter === a ? "var(--color-primary)" : "var(--color-border)"}`,
-              background: agentFilter === a ? "var(--color-primary-subtle)" : "var(--color-surface)",
-              color: agentFilter === a ? "var(--color-primary)" : "var(--color-text-body)",
+              fontSize: 13, padding: "6px 12px", borderRadius: "var(--marque-radius-pill)", cursor: "pointer",
+              border: `1px solid ${agentFilter === a ? "var(--marque-primary)" : "var(--marque-border)"}`,
+              background: agentFilter === a ? "var(--marque-primary-subtle)" : "var(--marque-surface)",
+              color: agentFilter === a ? "var(--marque-primary)" : "var(--marque-text-body)",
               fontWeight: agentFilter === a ? 700 : 500,
-              boxShadow: agentFilter === a ? "var(--shadow-card)" : "none",
+              boxShadow: agentFilter === a ? "var(--marque-shadow-card)" : "none",
             }}>
             {a === "all" ? "Tous" : a === "agent1" ? "Agent 1" : a === "agent2" ? "Agent 2" : "Agent 3"}
           </button>
         ))}
         <button onClick={() => telecharger("/export", "skills.md")} disabled={busy === "/export"}
           className="sym-tap" title="Télécharger tout le catalogue en Markdown"
-          style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
+          style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--marque-radius-pill)", cursor: "pointer", border: "1px solid var(--marque-border)", background: "var(--marque-surface)" }}>
           {busy === "/export" ? "Export…" : "Exporter .md"}
         </button>
         <label className="sym-tap" title="Importer un ou plusieurs skills depuis un fichier Markdown"
-          style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>
+          style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--marque-radius-pill)", cursor: "pointer", border: "1px solid var(--marque-border)", background: "var(--marque-surface)" }}>
           {busy === "import" ? "Import…" : "Importer .md"}
           <input type="file" accept=".md,text/markdown" style={{ display: "none" }}
             onChange={(e) => {
@@ -219,51 +219,51 @@ export default function SkillsClient({ apiUrl, token }: Props) {
               if (f) importer(f)
             }} />
         </label>
-        <button onClick={load} className="sym-tap" style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--radius-pill)", cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)" }}>↻</button>
+        <button onClick={load} className="sym-tap" style={{ fontSize: 13, padding: "6px 12px", borderRadius: "var(--marque-radius-pill)", cursor: "pointer", border: "1px solid var(--marque-border)", background: "var(--marque-surface)" }}>↻</button>
       </div>
 
-      {err && <div className="sym-pop" style={{ color: "var(--color-error-text)", fontSize: 13, marginBottom: 12 }}>⚠ {err}</div>}
-      {loading && <div className="sym-fade" style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Chargement…</div>}
+      {err && <div className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13, marginBottom: 12 }}>⚠ {err}</div>}
+      {loading && <div className="sym-fade" style={{ color: "var(--marque-text-muted)", fontSize: 14 }}>Chargement…</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {filtered.map((s, i) => {
-          const st = STATUS_STYLE[s.status] || { bg: "var(--color-canvas)", fg: "var(--color-text-muted)", label: s.status }
+          const st = STATUS_STYLE[s.status] || { bg: "var(--marque-canvas)", fg: "var(--marque-text-muted)", label: s.status }
           const detail = open[s.name]
           return (
-            <div key={s.name} className={`sym-card sym-in sym-in-${(i % 6) + 1}`} style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", overflow: "hidden", opacity: s.enabled ? 1 : 0.62 }}>
+            <div key={s.name} className={`sym-card sym-in sym-in-${(i % 6) + 1}`} style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden", opacity: s.enabled ? 1 : 0.62 }}>
               <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 220 }}>
-                  <div style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>
+                  <div style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
                     {s.name}
-                    <span style={{ marginLeft: 8, fontFamily: "var(--font)", fontSize: 11, color: "var(--color-text-muted)", fontWeight: 500 }}>
+                    <span style={{ marginLeft: 8, fontFamily: "var(--marque-font)", fontSize: 11, color: "var(--marque-text-muted)", fontWeight: 500 }}>
                       {s.agent} · {s.category}
                     </span>
                   </div>
-                  <div style={{ fontSize: 12.5, color: "var(--color-text-muted)", marginTop: 3 }}>{s.description || "—"}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--marque-text-muted)", marginTop: 3 }}>{s.description || "—"}</div>
                 </div>
 
-                <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{s.usage_count}× util.</span>
-                <span className="sym-pop" style={{ background: st.bg, color: st.fg, padding: "5px 12px", borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 600 }}>{st.label}</span>
+                <span style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>{s.usage_count}× util.</span>
+                <span className="sym-pop" style={{ background: st.bg, color: st.fg, padding: "5px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600 }}>{st.label}</span>
 
                 {/* Actions */}
                 <button onClick={() => runTest(s)} disabled={busy === s.name + "/run"} className="sym-tap"
-                  style={btn("var(--color-progress-text)")}>Tester</button>
+                  style={btn("var(--marque-progress-text)")}>Tester</button>
                 <button onClick={() => validate(s)} disabled={busy === s.name + "/validate"} className="sym-tap"
-                  style={btn("var(--color-paid-text)")}>→ {STATUS_STYLE[NEXT_STATUS[s.status]]?.label || "Valider"}</button>
+                  style={btn("var(--marque-paid-text)")}>→ {STATUS_STYLE[NEXT_STATUS[s.status]]?.label || "Valider"}</button>
                 <button onClick={() => toggleEnabled(s)} disabled={busy === s.name + "/enabled"} className="sym-tap"
-                  style={btn(s.enabled ? "var(--color-error-text)" : "var(--color-paid-text)")}>
+                  style={btn(s.enabled ? "var(--marque-error-text)" : "var(--marque-paid-text)")}>
                   {s.enabled ? "Désactiver" : "Activer"}
                 </button>
                 <button onClick={() => telecharger(`/${s.name}/export`, `${s.name}.md`)}
                   disabled={busy === `/${s.name}/export`} className="sym-tap"
-                  title="Exporter ce skill en Markdown" style={btn("var(--color-text-body)")}>.md</button>
-                <button onClick={() => viewDetail(s)} className="sym-tap" style={btn("var(--color-text-body)")}>
+                  title="Exporter ce skill en Markdown" style={btn("var(--marque-text-body)")}>.md</button>
+                <button onClick={() => viewDetail(s)} className="sym-tap" style={btn("var(--marque-text-body)")}>
                   {detail?.detail ? "▾ Code" : "▸ Code"}
                 </button>
               </div>
 
               {(detail?.detail || detail?.run) && (
-                <div className="sym-fade" style={{ borderTop: "1px solid var(--color-border)", padding: "12px 18px", background: "var(--color-canvas)" }}>
+                <div className="sym-fade" style={{ borderTop: "1px solid var(--marque-border)", padding: "12px 18px", background: "var(--marque-canvas)" }}>
                   {detail?.run && (
                     <pre style={preStyle}>
                       {"▶ Test : " + JSON.stringify(detail.run.output ?? detail.run.error ?? detail.run, null, 2)}
@@ -271,9 +271,9 @@ export default function SkillsClient({ apiUrl, token }: Props) {
                   )}
                   {detail?.detail && (
                     <>
-                      <div style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "6px 0 4px", fontWeight: 600 }}>prompt_template</div>
+                      <div style={{ fontSize: 12, color: "var(--marque-text-muted)", margin: "6px 0 4px", fontWeight: 600 }}>prompt_template</div>
                       <pre style={preStyle}>{detail.detail.prompt_template || "—"}</pre>
-                      <div style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "10px 0 4px", fontWeight: 600 }}>code</div>
+                      <div style={{ fontSize: 12, color: "var(--marque-text-muted)", margin: "10px 0 4px", fontWeight: 600 }}>code</div>
                       <pre style={preStyle}>{detail.detail.code}</pre>
                     </>
                   )}
@@ -283,7 +283,7 @@ export default function SkillsClient({ apiUrl, token }: Props) {
           )
         })}
         {!loading && filtered.length === 0 && (
-          <div className="sym-fade" style={{ color: "var(--color-text-muted)", fontSize: 14, padding: 24 }}>Aucune skill pour ce filtre.</div>
+          <div className="sym-fade" style={{ color: "var(--marque-text-muted)", fontSize: 14, padding: 24 }}>Aucune skill pour ce filtre.</div>
         )}
       </div>
     </div>
@@ -292,13 +292,13 @@ export default function SkillsClient({ apiUrl, token }: Props) {
 
 function btn(color: string): React.CSSProperties {
   return {
-    fontSize: 12.5, fontWeight: 600, padding: "6px 11px", borderRadius: "var(--radius-pill)", cursor: "pointer",
-    border: "1px solid var(--color-border)", background: "var(--color-surface)", color, whiteSpace: "nowrap",
+    fontSize: 12.5, fontWeight: 600, padding: "6px 11px", borderRadius: "var(--marque-radius-pill)", cursor: "pointer",
+    border: "1px solid var(--marque-border)", background: "var(--marque-surface)", color, whiteSpace: "nowrap",
   }
 }
 
 const preStyle: React.CSSProperties = {
-  margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--color-text-primary)",
-  background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-icon)",
+  margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--marque-text-primary)",
+  background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-icon)",
   padding: "8px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 320, overflow: "auto",
 }

@@ -3,6 +3,22 @@
 // en attente. C'est ce qui permet de lancer plusieurs demandes de front, de
 // fermer l'onglet, et de valider une action plusieurs jours apres — tout ce
 // qui s'affiche ici vit en base, rien ne depend de la page ouverte.
+//
+// POURQUOI CES CARTES NE SONT PAS PASSÉES SUR `Tool` OU `Task` (AI Elements).
+//
+// `Tool` affiche l'état par un libellé figé, écrit en dur dans le composant,
+// en anglais, et non surchargeable : « Completed » pour tout ce qui se
+// termine. Or ici le texte d'une tâche achevée vient du BACKEND, et une
+// action refusée revient avec « refusée — rien n'a été fait ». La remplacer
+// par « Completed » ferait passer un refus pour un succès — sur l'écran même
+// où l'on valide des actions engageantes. C'est le seul endroit de
+// l'application où un libellé approximatif a une conséquence réelle.
+//
+// `Task`, lui, n'a aucun état : ni prop `status`, ni `state`. C'est un
+// dépliant décoratif. Il ne peut pas porter les cinq états d'une tâche
+// (en cours, attente d'accord, terminée, échec, interrompue).
+//
+// Les boutons viennent en revanche du même jeu de primitives que le reste.
 
 import { Callout, KeyValueTable, PrimaryButton, GhostButton } from "@/components/blocks"
 
@@ -96,33 +112,33 @@ export default function FileAttente({ taches, accords, accordEnCours, erreurAcco
            de modele, une fausse progression chiffree serait un mensonge. */
         @keyframes symBarre { 0% { left: -34% } 100% { left: 104% } }
         .sym-file{ display:flex; flex-direction:column; gap:10px; padding-top:14px;
-          border-top:1px solid var(--color-border); }
+          border-top:1px solid var(--marque-border); }
         .sym-file-titre{ font-size:11px; letter-spacing:.14em; text-transform:uppercase;
-          color:var(--color-primary-mid); font-weight:700; }
-        .sym-carte{ position:relative; background:var(--color-surface);
-          border:1px solid var(--color-border); border-radius:var(--radius-card-sm);
-          padding:10px 12px; box-shadow:var(--shadow-card);
+          color:var(--marque-primary-mid); font-weight:700; }
+        .sym-carte{ position:relative; background:var(--marque-surface);
+          border:1px solid var(--marque-border); border-radius:var(--marque-radius-card-sm);
+          padding:10px 12px; box-shadow:var(--marque-shadow-card);
           animation: symGlisse .35s cubic-bezier(.22,.61,.36,1) both; }
         .sym-carte.cliquable{ cursor:pointer; transition:border-color .2s ease, box-shadow .2s ease; }
-        .sym-carte.cliquable:hover{ border-color:var(--color-primary-light); box-shadow:var(--shadow-hover); }
-        .sym-carte-q{ font-size:12.5px; font-weight:600; color:var(--color-text-primary);
+        .sym-carte.cliquable:hover{ border-color:var(--marque-primary-light); box-shadow:var(--marque-shadow-hover); }
+        .sym-carte-q{ font-size:12.5px; font-weight:600; color:var(--marque-text-primary);
           overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
           padding-right:18px; }
-        .sym-carte-etat{ font-size:11.5px; color:var(--color-text-muted); margin-top:5px; }
+        .sym-carte-etat{ font-size:11.5px; color:var(--marque-text-muted); margin-top:5px; }
         .sym-carte-stop{ margin-top:8px; font-size:11.5px; font-weight:600;
-          color:var(--color-error); background:transparent; cursor:pointer;
-          border:1px solid var(--color-error); border-radius:var(--radius-pill);
+          color:var(--marque-error-text); background:transparent; cursor:pointer;
+          border:1px solid var(--marque-error-text); border-radius:var(--marque-radius-pill);
           padding:3px 12px; }
-        .sym-carte-stop:hover{ background:var(--color-error); color:#fff; }
-        .sym-carte-etat.ok{ color:var(--color-paid-text); font-weight:600; }
-        .sym-carte-etat.ko{ color:var(--color-error-text); }
+        .sym-carte-stop:hover{ background:var(--marque-error-text); color:#fff; }
+        .sym-carte-etat.ok{ color:var(--marque-paid-text); font-weight:600; }
+        .sym-carte-etat.ko{ color:var(--marque-error-text); }
         .sym-piste{ position:relative; height:3px; margin-top:8px; border-radius:2px;
-          overflow:hidden; background:var(--color-primary-subtle); }
+          overflow:hidden; background:var(--marque-primary-subtle); }
         .sym-piste i{ position:absolute; top:0; width:30%; height:100%; border-radius:2px;
-          background:linear-gradient(90deg, var(--color-primary-light), var(--color-primary-mid));
+          background:linear-gradient(90deg, var(--marque-primary-light), var(--marque-primary-mid));
           animation: symBarre 1.3s ease-in-out infinite; }
         .sym-croix{ position:absolute; top:6px; right:8px; border:none; background:none;
-          color:var(--color-text-muted); font-size:14px; line-height:1; cursor:pointer;
+          color:var(--marque-text-muted); font-size:14px; line-height:1; cursor:pointer;
           padding:2px 4px; font-weight:700; }
         @media (prefers-reduced-motion: reduce){ .sym-carte{ animation:none }
           .sym-piste i{ animation:none; width:100% } }
@@ -138,7 +154,7 @@ export default function FileAttente({ taches, accords, accordEnCours, erreurAcco
         return (
           <div key={v.id} className="sym-carte" data-testid="carte-accord"
                role="group" aria-label="Action en attente de votre décision"
-               style={{ borderColor: "var(--color-pending-text)" }}>
+               style={{ borderColor: "var(--marque-pending-text)" }}>
             <Callout tone="warning" title="Votre accord est nécessaire">{titre}</Callout>
             {lignes.length > 0 && <div style={{ marginTop: 8 }}><KeyValueTable rows={lignes} /></div>}
             {erreur && (

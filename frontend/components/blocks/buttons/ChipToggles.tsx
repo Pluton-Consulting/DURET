@@ -14,11 +14,11 @@ export function ChipToggles({ options = ["Devis", "Factures", "Chantiers", "Four
             key={o}
             onClick={() => toggle(o)}
             style={{
-              fontFamily: "var(--font)", fontSize: 13, fontWeight: 600, cursor: "pointer",
-              borderRadius: "var(--radius-pill)", padding: "6px 14px", transition: "all .15s ease",
-              color: on ? "var(--color-text-on-dark)" : "var(--color-text-body)",
-              background: on ? "var(--color-primary)" : "var(--color-surface)",
-              border: `1.5px solid ${on ? "var(--color-primary)" : "var(--color-border)"}`,
+              fontFamily: "var(--marque-font)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              borderRadius: "var(--marque-radius-pill)", padding: "6px 14px", transition: "all .15s ease",
+              color: on ? "var(--marque-text-on-dark)" : "var(--marque-text-body)",
+              background: on ? "var(--marque-primary)" : "var(--marque-surface)",
+              border: `1.5px solid ${on ? "var(--marque-primary)" : "var(--marque-border)"}`,
             }}
           >
             {on ? "✓ " : ""}{o}

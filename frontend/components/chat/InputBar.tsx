@@ -1,5 +1,18 @@
 "use client"
-import { useRef, useState, KeyboardEvent } from "react"
+import { useState } from "react"
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputTextarea,
+  PromptInputHeader,
+  PromptInputFooter,
+  PromptInputTools,
+  PromptInputButton,
+  PromptInputSubmit,
+  usePromptInputAttachments,
+  type PromptInputMessage,
+} from "@/components/ai-elements/prompt-input"
+import { PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
 
 export interface PieceJointe {
   name: string
@@ -21,15 +34,6 @@ interface InputBarProps {
   onStop?: () => void
 }
 
-/** Un carré plein : le symbole d'arrêt, universel et sans ambiguïté. */
-function IconeStop() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-      <rect x="0" y="0" width="12" height="12" rx="2.5" fill="currentColor" />
-    </svg>
-  )
-}
-
 /** Trois barres indentées : la file d'attente, dessinée plutôt que dite. */
 function IconeFile() {
   return (
@@ -45,191 +49,209 @@ function IconeFile() {
 // avec un message clair que de laisser partir un envoi qui sera rejeté.
 const TAILLE_MAX_MO = 10
 
-/** Lit le fichier en base64 (sans le préfixe « data:...;base64, »). */
-function lireBase64(fichier: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const r = String(reader.result || "")
-      const i = r.indexOf(",")
-      resolve(i >= 0 ? r.slice(i + 1) : r)
-    }
-    reader.onerror = () => reject(new Error("Lecture du fichier impossible"))
-    reader.readAsDataURL(fichier)
-  })
+/** LA PIÈCE JOINTE, ET LE BOUTON QUI L'AJOUTE.
+ *
+ *  `PromptInput` tient la liste des fichiers dans son contexte, mais n'en
+ *  dessine aucun : sans ce composant, on choisit un fichier et RIEN
+ *  n'apparaît — on ne sait plus s'il est joint. Il doit vivre à l'intérieur
+ *  du formulaire, seul endroit d'où le contexte est lisible. */
+function PieceJointeJointe({ desactive }: { desactive?: boolean }) {
+  const fichiers = usePromptInputAttachments()
+  if (!fichiers.files.length) return null
+  return (
+    <>
+      {fichiers.files.map((f) => (
+        <span key={f.id} data-testid="piece-jointe" style={{
+          display: "inline-flex", alignItems: "center", gap: 8,
+          background: "var(--marque-primary-subtle)", border: "1px solid var(--marque-primary-light)",
+          borderRadius: "var(--marque-radius-pill)", padding: "5px 6px 5px 13px", maxWidth: "100%",
+        }}>
+          <span style={{
+            fontSize: 13, fontWeight: 600, color: "var(--marque-primary)",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {f.filename || "fichier"}
+          </span>
+          <button type="button" onClick={() => fichiers.remove(f.id)} disabled={desactive}
+                  aria-label={`Retirer ${f.filename || "le fichier"}`} style={{
+            border: "none", background: "transparent", cursor: "pointer",
+            color: "var(--marque-primary)", display: "flex", padding: "0 2px",
+          }}>
+            <XIcon className="size-3.5" />
+          </button>
+        </span>
+      ))}
+    </>
+  )
+}
+
+/** LE BOUTON D'ENVOI, INERTE QUAND IL N'Y A RIEN À ENVOYER.
+ *
+ *  L'état dépend de DEUX choses : le texte saisi, et la présence d'une pièce
+ *  jointe — un document seul suffit à partir. Or la liste des pièces n'est
+ *  lisible que depuis l'intérieur du formulaire, d'où ce composant.
+ *
+ *  Le `status` reste sur « prêt » en toutes circonstances : passé à
+ *  « streaming », le bouton se changerait en bouton d'arrêt et cesserait de
+ *  soumettre, alors qu'ici envoyer PENDANT un tour est justement ce qui met
+ *  la demande en file. */
+function BoutonEnvoyer({ texte, desactive, modeFile }: {
+  texte: string
+  desactive?: boolean
+  modeFile?: boolean
+}) {
+  const fichiers = usePromptInputAttachments()
+  const peutEnvoyer = !desactive && (Boolean(texte.trim()) || fichiers.files.length > 0)
+  return (
+    <PromptInputSubmit
+      status="ready"
+      data-testid="envoyer-message"
+      disabled={!peutEnvoyer}
+      size={modeFile ? "sm" : "icon-sm"}
+      title={modeFile ? "Mettre en file d'attente" : "Envoyer"}
+      aria-label={modeFile ? "Mettre en file d'attente" : "Envoyer"}
+    >
+      {modeFile ? <><IconeFile /> En file</> : undefined}
+    </PromptInputSubmit>
+  )
+}
+
+function BoutonJoindre({ desactive }: { desactive?: boolean }) {
+  const fichiers = usePromptInputAttachments()
+  return (
+    <PromptInputButton
+      type="button"
+      variant="ghost"
+      disabled={desactive}
+      onClick={() => fichiers.openFileDialog()}
+      title="Joindre un fichier (Excel, Word, PDF, image, texte…)"
+      aria-label="Joindre un fichier"
+    >
+      <PaperclipIcon className="size-4" />
+    </PromptInputButton>
+  )
 }
 
 export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }: InputBarProps) {
-  const [value, setValue] = useState("")
-  const [piece, setPiece] = useState<PieceJointe | null>(null)
+  // LE TEXTE RESTE À NOUS. `PromptInput` vide son formulaire dès la soumission,
+  // AVANT même que l'envoi ait abouti : une question perdue en cas d'échec est
+  // une question à retaper. En le gardant ici, on ne l'efface qu'une fois
+  // l'envoi réellement passé.
+  const [texte, setTexte] = useState("")
   const [erreur, setErreur] = useState("")
-  const [survol, setSurvol] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
 
-  const attacher = async (fichier: File) => {
-    setErreur("")
-    if (fichier.size > TAILLE_MAX_MO * 1024 * 1024) {
-      setErreur(`Fichier trop volumineux (${(fichier.size / 1024 / 1024).toFixed(1)} Mo, maximum ${TAILLE_MAX_MO} Mo).`)
-      return
-    }
-    try {
-      setPiece({
-        name: fichier.name,
+  const surEnvoi = (message: PromptInputMessage) => {
+    if (disabled) return
+    const contenu = texte.trim()
+    const f = message.files?.[0]
+
+    let piece: PieceJointe | undefined
+    if (f) {
+      // Le fichier n'est exploitable qu'une fois converti en « data: ». Si la
+      // conversion a échoué, l'URL reste un « blob: » — en découper la fin
+      // enverrait au backend un identifiant local en guise de contenu, et
+      // produirait un fichier corrompu sans le moindre message d'erreur.
+      const virgule = f.url?.indexOf(",") ?? -1
+      if (!f.url?.startsWith("data:") || virgule < 0) {
+        setErreur("Le fichier n'a pas pu être lu. Réessayez de le joindre.")
+        return
+      }
+      piece = {
+        name: f.filename || "fichier",
         // Certains navigateurs ne renseignent pas le type pour les formats rares :
         // le backend se rabat alors sur l'extension du nom.
-        mime: fichier.type || "application/octet-stream",
-        b64: await lireBase64(fichier),
-      })
-    } catch {
-      setErreur("Lecture du fichier impossible.")
+        mime: f.mediaType || "application/octet-stream",
+        b64: f.url.slice(virgule + 1),
+      }
     }
-  }
 
-  const envoyer = () => {
-    if (disabled) return
-    if (!value.trim() && !piece) return
+    if (!contenu && !piece) return
     // Un fichier envoyé sans question : on formule l'intention par défaut.
-    onSend(value.trim() || `Analyse ce fichier : ${piece?.name}`, piece || undefined)
-    setValue("")
-    setPiece(null)
+    onSend(contenu || `Analyse ce fichier : ${piece?.name}`, piece)
+    setTexte("")
     setErreur("")
-    if (inputRef.current) inputRef.current.value = ""
   }
-
-  const surTouche = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      envoyer()
-    }
-  }
-
-  const peutEnvoyer = !disabled && (Boolean(value.trim()) || Boolean(piece))
 
   return (
-    <div
-      className="sym-in"
-      onDragOver={(e) => { e.preventDefault(); if (!disabled) setSurvol(true) }}
-      onDragLeave={() => setSurvol(false)}
-      onDrop={(e) => {
-        e.preventDefault(); setSurvol(false)
-        const f = e.dataTransfer.files?.[0]
-        if (f && !disabled) attacher(f)
-      }}
-      style={{
-        padding: "16px 32px",
-        background: survol ? "var(--color-primary-subtle)" : "var(--color-surface)",
-        borderTop: `1px solid ${survol ? "var(--color-primary)" : "var(--color-border)"}`,
-        transition: "background .15s ease, border-color .15s ease",
-      }}
-    >
-      {survol && (
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-primary)", marginBottom: 10 }}>
-          Déposez le fichier pour le joindre
-        </div>
-      )}
-
-      {piece && (
-        <div style={{
-          display: "inline-flex", alignItems: "center", gap: 10, marginBottom: 10,
-          background: "var(--color-primary-subtle)", border: "1px solid var(--color-primary-light)",
-          borderRadius: "var(--radius-pill)", padding: "6px 8px 6px 14px", maxWidth: "100%",
-        }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {piece.name}
-          </span>
-          <button onClick={() => setPiece(null)} aria-label="Retirer le fichier" style={{
-            border: "none", background: "transparent", cursor: "pointer", color: "var(--color-primary)",
-            fontSize: 17, lineHeight: 1, padding: "0 4px", fontWeight: 700,
-          }}>×</button>
-        </div>
-      )}
-
+    <div style={{ padding: "16px 32px", background: "var(--marque-surface)",
+                  borderTop: "1px solid var(--marque-border)" }}>
       {erreur && (
-        <div style={{ fontSize: 13, color: "var(--color-error)", marginBottom: 10 }}>{erreur}</div>
+        <div role="alert" style={{ fontSize: 13, color: "var(--marque-error-text)", marginBottom: 10 }}>
+          {erreur}
+        </div>
       )}
 
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-        <input ref={inputRef} type="file" style={{ display: "none" }}
-               onChange={(e) => { const f = e.target.files?.[0]; if (f) attacher(f) }} />
+      <PromptInput
+        className="sym-in"
+        onSubmit={surEnvoi}
+        // Une question porte UN document. Sans ces deux bornes, un dépôt
+        // multiple est accepté en silence puis tronqué à l'envoi.
+        multiple={false}
+        maxFiles={1}
+        maxFileSize={TAILLE_MAX_MO * 1024 * 1024}
+        // Sans ce rappel, un fichier trop lourd est écarté sans un mot :
+        // l'utilisateur voit son geste ne rien produire.
+        onError={(e) =>
+          setErreur(e.code === "max_file_size"
+            ? `Fichier trop volumineux (maximum ${TAILLE_MAX_MO} Mo).`
+            : e.code === "max_files"
+            ? "Un seul fichier à la fois."
+            : e.message)
+        }
+        // Le dépôt fonctionne sur toute la zone de conversation, pas seulement
+        // sur le champ : c'est le geste naturel quand on vient de lire un
+        // message et qu'on veut y répondre avec un document.
+        globalDrop
+      >
+        <PromptInputHeader>
+          <PieceJointeJointe desactive={disabled} />
+        </PromptInputHeader>
 
-        <button
-          className="sym-tap"
-          onClick={() => inputRef.current?.click()}
-          disabled={disabled}
-          title="Joindre un fichier (Excel, Word, PDF, image, texte…)"
-          aria-label="Joindre un fichier"
-          style={{
-            background: "transparent", border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-pill)", width: 40, height: 40, flexShrink: 0,
-            cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
-            color: "var(--color-text-muted)", fontSize: 17, display: "flex",
-            alignItems: "center", justifyContent: "center",
-          }}
-        >
-          📎
-        </button>
+        <PromptInputBody>
+          <PromptInputTextarea
+            data-testid="saisie-message"
+            value={texte}
+            onChange={(e) => setTexte(e.target.value)}
+            disabled={disabled}
+            placeholder={modeFile
+              ? "Écrivez pour mettre une autre tâche dans la file d'attente"
+              : "Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"}
+          />
+        </PromptInputBody>
 
-        <textarea
-          data-testid="saisie-message"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={surTouche}
-          placeholder={modeFile
-            ? "Écrivez pour mettre une autre tâche dans la file d'attente"
-            : "Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"}
-          disabled={disabled}
-          rows={1}
-          style={{
-            flex: 1, resize: "none", border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-pill)", padding: "10px 16px", fontSize: 14,
-            fontFamily: "var(--font)", color: "var(--color-text-body)", outline: "none",
-            transition: "border-color .2s ease, box-shadow .2s ease",
-          }}
-        />
+        <PromptInputFooter>
+          <PromptInputTools>
+            <BoutonJoindre desactive={disabled} />
+          </PromptInputTools>
 
-        {/* L'ARRÊT VIT À CÔTÉ DE L'ENVOI, pas à sa place : on doit pouvoir
-            arrêter le tour en cours ET préparer la demande suivante. Le
-            remplacer masquerait la file d'attente, qui est un autre geste. */}
-        {enCours && onStop && (
-          <button
-            className="sym-tap"
-            data-testid="stopper-ia"
-            onClick={onStop}
-            title="Arrêter le traitement en cours"
-            aria-label="Arrêter le traitement en cours"
-            style={{
-              background: "var(--color-surface)",
-              border: "1px solid var(--color-error)",
-              color: "var(--color-error)",
-              borderRadius: "var(--radius-pill)", padding: "10px 16px",
-              fontSize: 14, fontWeight: 600, cursor: "pointer",
-              whiteSpace: "nowrap", flexShrink: 0,
-              display: "flex", alignItems: "center", gap: 8,
-            }}
-          >
-            <IconeStop /> Arrêter
-          </button>
-        )}
+          {/* L'ARRÊT VIT À CÔTÉ DE L'ENVOI, pas à sa place.
+              `PromptInputSubmit` sait se changer en bouton d'arrêt quand on lui
+              passe `onStop` — mais il devient alors `type="button"`, et le
+              formulaire se retrouve SANS bouton de soumission : le clic
+              n'envoie plus rien (la touche Entrée, elle, continue de marcher,
+              ce qui rend la panne d'autant plus déroutante). Or ici l'envoi
+              doit rester possible PENDANT un tour : il met en file. Deux
+              boutons distincts, donc, et un `status` laissé sur « prêt » pour
+              que la soumission ne bascule jamais. */}
+          {enCours && onStop && (
+            <PromptInputButton
+              type="button"
+              data-testid="stopper-ia"
+              onClick={onStop}
+              title="Arrêter le traitement en cours"
+              aria-label="Arrêter le traitement en cours"
+              style={{
+                border: "1px solid var(--marque-error-text)",
+                color: "var(--marque-error-text)",
+              }}
+            >
+              <SquareIcon className="size-3.5 fill-current" /> Arrêter
+            </PromptInputButton>
+          )}
 
-        <button
-          className="sym-tap"
-          data-testid="envoyer-message"
-          onClick={envoyer}
-          disabled={!peutEnvoyer}
-          title={modeFile ? "Mettre en file d'attente" : "Envoyer"}
-          aria-label={modeFile ? "Mettre en file d'attente" : "Envoyer"}
-          style={{
-            background: "linear-gradient(180deg, var(--color-primary-hover), var(--color-primary))",
-            color: "var(--color-text-on-dark)", border: "none",
-            borderRadius: "var(--radius-pill)", padding: "10px 20px", fontSize: 14,
-            fontWeight: 500, cursor: peutEnvoyer ? "pointer" : "not-allowed",
-            opacity: peutEnvoyer ? 1 : 0.6, whiteSpace: "nowrap", boxShadow: "var(--shadow-card)",
-            display: "flex", alignItems: "center", gap: 8,
-          }}
-        >
-          {modeFile ? <><IconeFile /> En file</> : "Envoyer"}
-        </button>
-      </div>
+          <BoutonEnvoyer texte={texte} desactive={disabled} modeFile={modeFile} />
+        </PromptInputFooter>
+      </PromptInput>
     </div>
   )
 }

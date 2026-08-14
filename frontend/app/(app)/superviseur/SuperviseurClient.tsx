@@ -8,9 +8,9 @@ const POLL_MS = 3000
 // Palette console (bandeau sombre) — charte Duret & Sols (bleu), variables CSS uniquement.
 // Monospace conservé : fonction terminal (alignement des logs).
 const C = {
-  bg: "var(--color-text-primary)", panel: "var(--color-primary)", panel2: "var(--color-text-primary)", border: "var(--color-primary-hover)",
-  text: "var(--color-text-on-dark)", dim: "var(--color-text-muted)", green: "var(--color-paid-text)", amber: "var(--color-pending-text)",
-  red: "var(--color-error-text)", blue: "var(--color-progress-text)", mono: "ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace",
+  bg: "var(--marque-text-primary)", panel: "var(--marque-primary)", panel2: "var(--marque-text-primary)", border: "var(--marque-primary-hover)",
+  text: "var(--marque-text-on-dark)", dim: "var(--marque-text-muted)", green: "var(--marque-paid-text)", amber: "var(--marque-pending-text)",
+  red: "var(--marque-error-text)", blue: "var(--marque-progress-text)", mono: "ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace",
 }
 
 async function getJSON(apiUrl: string, path: string, token: string) {
@@ -65,7 +65,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
   }, [refresh, live])
 
   const kpi = (label: string, value: any, color = C.text) => (
-    <div className="sym-fade sym-card" style={{ background: `linear-gradient(180deg, ${C.panel}, ${C.panel2})`, border: `1px solid ${C.border}`, borderRadius: "var(--radius-card-sm)", padding: "10px 12px" }}>
+    <div className="sym-fade sym-card" style={{ background: `linear-gradient(180deg, ${C.panel}, ${C.panel2})`, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card-sm)", padding: "10px 12px" }}>
       <div style={{ fontSize: 10, color: C.dim, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</div>
       <div style={{ fontFamily: C.mono, fontSize: 16, fontWeight: 600, color, marginTop: 3 }}>{value ?? "—"}</div>
     </div>
@@ -77,7 +77,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
     <div style={{ minHeight: "calc(100vh - 64px)", background: C.bg, color: C.text, fontFamily: C.mono, padding: "20px 24px" }}>
       <style>{`
         @keyframes symFadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes symLivePulse { 0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--color-paid-text) 55%, transparent)} 50%{box-shadow:0 0 0 7px transparent} }
+        @keyframes symLivePulse { 0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--marque-paid-text) 55%, transparent)} 50%{box-shadow:0 0 0 7px transparent} }
         .sym-fade{animation:symFadeUp .45s ease both}
         .sym-live{animation:symLivePulse 1.7s ease-in-out infinite}
         .sym-logrow{transition:background-color .15s ease}
@@ -90,10 +90,10 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
         <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.3px" }}>Console développeur</div>
         <div style={{ fontSize: 12, color: C.dim }}>super_admin · flux temps réel</div>
         <div style={{ flex: 1 }} />
-        <button onClick={() => setLive((v) => !v)} className="sym-tap" style={{ fontFamily: C.mono, fontSize: 12, background: live ? C.panel : C.panel2, color: live ? C.green : C.dim, border: `1px solid ${C.border}`, borderRadius: "var(--radius-pill)", padding: "6px 12px", cursor: "pointer" }}>
+        <button onClick={() => setLive((v) => !v)} className="sym-tap" style={{ fontFamily: C.mono, fontSize: 12, background: live ? C.panel : C.panel2, color: live ? C.green : C.dim, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-pill)", padding: "6px 12px", cursor: "pointer" }}>
           {live ? "● LIVE (pause)" : "○ figé (reprendre)"}
         </button>
-        <button onClick={refresh} className="sym-tap" style={{ fontFamily: C.mono, fontSize: 12, background: C.panel2, color: C.text, border: `1px solid ${C.border}`, borderRadius: "var(--radius-pill)", padding: "6px 12px", cursor: "pointer" }}>
+        <button onClick={refresh} className="sym-tap" style={{ fontFamily: C.mono, fontSize: 12, background: C.panel2, color: C.text, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-pill)", padding: "6px 12px", cursor: "pointer" }}>
           ↻ refresh
         </button>
       </div>
@@ -121,7 +121,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
         {/* Live log stream */}
-        <div className="sym-in" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+        <div className="sym-in" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.dim, display: "flex", justifyContent: "space-between" }}>
             <span>audit_log · {logs.length} événements · cliquer une ligne pour le détail</span>
             <span>maj #{tick}</span>
@@ -170,7 +170,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
                     <div style={{ padding: "2px 14px 10px 88px", fontSize: 11.5 }}>
                       {l.error_message && <div style={{ color: C.red, marginBottom: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>⚠ {l.error_message}</div>}
                       {entries.length > 0 && (
-                        <pre style={{ margin: 0, color: C.text, background: C.panel2, border: `1px solid ${C.border}`, borderRadius: "var(--radius-icon)", padding: "8px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>
+                        <pre style={{ margin: 0, color: C.text, background: C.panel2, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-icon)", padding: "8px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>
                           {entries.map(([k, v]) => `${k}: ${v}`).join("\n")}
                         </pre>
                       )}
@@ -189,18 +189,18 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
 
         {/* Side: providers + chains + agents */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div className="sym-card sym-in sym-in-1" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", padding: 14 }}>
+          <div className="sym-card sym-in sym-in-1" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 14 }}>
             <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>fournisseurs LLM</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {system?.providers && Object.entries(system.providers).map(([p, up]: any) => (
-                <span key={p} style={{ fontSize: 11, padding: "3px 8px", borderRadius: "var(--radius-pill)", background: up ? "var(--color-paid-bg)" : C.panel2, color: up ? C.green : C.dim, border: `1px solid ${up ? "var(--color-paid-text)" : C.border}` }}>
+                <span key={p} style={{ fontSize: 11, padding: "3px 8px", borderRadius: "var(--marque-radius-pill)", background: up ? "var(--marque-paid-bg)" : C.panel2, color: up ? C.green : C.dim, border: `1px solid ${up ? "var(--marque-paid-text)" : C.border}` }}>
                   {up ? "●" : "○"} {p}
                 </span>
               ))}
             </div>
           </div>
 
-          <div className="sym-card sym-in sym-in-2" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", padding: 14 }}>
+          <div className="sym-card sym-in sym-in-2" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 14 }}>
             <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>cascade (par palier)</div>
             {system?.chains && Object.entries(system.chains).map(([tier, list]: any) => (
               <div key={tier} style={{ marginBottom: 8 }}>
@@ -212,7 +212,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
             ))}
           </div>
 
-          <div className="sym-card sym-in sym-in-3" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", padding: 14 }}>
+          <div className="sym-card sym-in sym-in-3" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 14 }}>
             <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>agents (aujourd'hui)</div>
             {agents.length === 0 && <div style={{ fontSize: 11, color: C.dim }}>— aucune requête —</div>}
             {agents.map((a: any) => (

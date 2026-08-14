@@ -47,13 +47,13 @@ export default function Logo({ taille = 20 }: { taille?: number }) {
         style={{
           fontSize: taille,
           fontWeight: 800,
-          color: "var(--color-text-primary)",
+          color: "var(--marque-text-primary)",
           letterSpacing: "-0.02em",
           whiteSpace: "nowrap",
           lineHeight: 1,
         }}
       >
-        Duret <span style={{ color: "var(--color-brand-blue)" }}>&amp; Sols</span>
+        Duret <span style={{ color: "var(--marque-brand-blue)" }}>&amp; Sols</span>
       </span>
     </span>
   )

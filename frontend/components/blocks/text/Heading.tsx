@@ -6,11 +6,11 @@ export function Heading({ level = 1, eyebrow, children }: { level?: 1 | 2 | 3; e
   return (
     <div>
       {eyebrow && (
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--color-primary-mid)", marginBottom: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--marque-primary-mid)", marginBottom: 6 }}>
           {eyebrow}
         </div>
       )}
-      <div style={{ fontSize: size, fontWeight: level === 1 ? 800 : 700, letterSpacing: "-.02em", color: "var(--color-text-primary)", lineHeight: 1.2 }}>
+      <div style={{ fontSize: size, fontWeight: level === 1 ? 800 : 700, letterSpacing: "-.02em", color: "var(--marque-text-primary)", lineHeight: 1.2 }}>
         {children}
       </div>
     </div>

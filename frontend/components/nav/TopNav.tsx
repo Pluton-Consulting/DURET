@@ -45,8 +45,8 @@ export default function TopNav({ role, email, name }: Props) {
         left: 0,
         right: 0,
         height: 64,
-        background: "var(--color-surface)",
-        borderBottom: "1px solid var(--color-border)",
+        background: "var(--marque-surface)",
+        borderBottom: "1px solid var(--marque-border)",
         boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
         display: "flex",
         alignItems: "center",
@@ -88,13 +88,13 @@ export default function TopNav({ role, email, name }: Props) {
                 fontSize: 14,
                 fontWeight: isActive ? 600 : 500,
                 color: isActive
-                  ? "var(--color-primary)"
-                  : "var(--color-text-body)",
+                  ? "var(--marque-primary)"
+                  : "var(--marque-text-body)",
                 borderRadius: 9,
                 background: isActive
-                  ? "var(--color-primary-subtle)"
+                  ? "var(--marque-primary-subtle)"
                   : "transparent",
-                boxShadow: isActive ? "inset 0 0 0 1px var(--color-primary-subtle)" : "none",
+                boxShadow: isActive ? "inset 0 0 0 1px var(--marque-primary-subtle)" : "none",
                 transition: "background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease",
                 whiteSpace: "nowrap",
                 flexShrink: 0,
@@ -126,8 +126,8 @@ export default function TopNav({ role, email, name }: Props) {
               height: 36,
               borderRadius: "50%",
               background:
-                "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
-              color: "var(--color-text-on-dark)",
+                "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+              color: "var(--marque-text-on-dark)",
               border: "none",
               cursor: "pointer",
               fontSize: 13,
@@ -149,10 +149,10 @@ export default function TopNav({ role, email, name }: Props) {
                 position: "absolute",
                 top: 46,
                 right: 0,
-                background: "var(--color-surface)",
-                borderRadius: "var(--radius-card)",
-                boxShadow: "var(--shadow-card-hover)",
-                border: "1px solid var(--color-border)",
+                background: "var(--marque-surface)",
+                borderRadius: "var(--marque-radius-card)",
+                boxShadow: "var(--marque-shadow-hover)",
+                border: "1px solid var(--marque-border)",
                 minWidth: 220,
                 zIndex: 200,
                 overflow: "hidden",
@@ -162,14 +162,14 @@ export default function TopNav({ role, email, name }: Props) {
               <div
                 style={{
                   padding: "16px 18px",
-                  borderBottom: "1px solid var(--color-border)",
+                  borderBottom: "1px solid var(--marque-border)",
                 }}
               >
                 <div
                   style={{
                     fontSize: 14,
                     fontWeight: 700,
-                    color: "var(--color-text-primary)",
+                    color: "var(--marque-text-primary)",
                   }}
                 >
                   {name}
@@ -177,7 +177,7 @@ export default function TopNav({ role, email, name }: Props) {
                 <div
                   style={{
                     fontSize: 12,
-                    color: "var(--color-text-muted)",
+                    color: "var(--marque-text-muted)",
                     marginTop: 2,
                   }}
                 >
@@ -191,10 +191,10 @@ export default function TopNav({ role, email, name }: Props) {
                     fontSize: 11,
                     fontWeight: 600,
                     background:
-                      "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))",
-                    color: "var(--color-text-on-dark)",
+                      "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+                    color: "var(--marque-text-on-dark)",
                     padding: "3px 10px",
-                    borderRadius: "var(--radius-pill)",
+                    borderRadius: "var(--marque-radius-pill)",
                   }}
                 >
                   {role}
@@ -212,7 +212,7 @@ export default function TopNav({ role, email, name }: Props) {
                     border: "none",
                     cursor: "pointer",
                     fontSize: 14,
-                    color: "var(--color-error-text)",
+                    color: "var(--marque-error-text)",
                     borderRadius: 8,
                     fontWeight: 500,
                     transition: "background 0.15s ease",

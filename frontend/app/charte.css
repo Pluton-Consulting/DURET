@@ -1,0 +1,84 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   LA CHARTE — LE SEUL FICHIER À CHANGER QUAND ON COPIE LE PROJET.
+   ═══════════════════════════════════════════════════════════════════════
+
+   Tout ce qui distingue visuellement un client d'un autre est ICI, et
+   nulle part ailleurs. Dupliquer l'application pour une nouvelle
+   entreprise se réduit donc à réécrire les valeurs de ce fichier.
+
+   POURQUOI LE PRÉFIXE « --marque- ».
+   Tailwind 4 s'approprie l'espace de noms `--color-*` : tout token de ce
+   nom déclaré dans `@theme` sert à fabriquer des classes utilitaires
+   (`bg-primary`, `border-border`). Nommer AUSSI les couleurs de marque
+   `--color-primary` ou `--color-border` les faisait exister DEUX fois,
+   avec un cycle (`--border` → `--color-border` → `--border`) et une
+   auto-référence sur `--color-error-bg`. Cela ne tenait que par l'ordre
+   de la cascade : une mise en couche, un import déplacé, et `bg-primary`
+   comme `border-border` devenaient invalides d'un coup, sur TOUS les
+   composants à la fois.
+
+   Un préfixe distinct rend la collision impossible par construction.
+   `theme.css` traduit ensuite ces valeurs vers les deux vocabulaires
+   attendus — celui de shadcn et celui de Tailwind — et il est RIGOUREUSEMENT
+   IDENTIQUE à celui de l'autre projet : ne jamais le personnaliser.
+
+   Charte Duret & Sols — bleu, rouge et jaune.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Couleurs d'enseigne ──────────────────────────────────────────────
+     Les trois teintes du logo, employées telles quelles sur les éléments
+     qui portent la marque. Elles ne servent PAS de couleurs d'interface :
+     le rouge et le jaune purs sont trop saturés pour du texte ou des
+     fonds — l'interface descend du bleu, assagi juste en dessous. */
+  --marque-brand-blue:     #0687DA;
+  --marque-brand-red:      #F41122;
+  --marque-brand-yellow:   #FFE202;
+  --marque-brand-ink:      #0B0E11;
+
+  /* ── Identité ─────────────────────────────────────────────────────── */
+  --marque-primary:        #0A6FB4;
+  --marque-primary-hover:  #0B5F9B;
+  --marque-primary-mid:    #0687DA;
+  --marque-primary-light:  #9DD1F2;
+  --marque-primary-subtle: #E5F2FB;
+  --marque-leaf:           #0687DA;
+
+  /* ── Fonds et bordures ────────────────────────────────────────────── */
+  --marque-canvas:         #F4F6F8;
+  --marque-surface:        #FFFFFF;
+  --marque-border:         #DFE4EA;
+
+  /* ── Textes ───────────────────────────────────────────────────────── */
+  --marque-text-primary:   #0B0E11;
+  --marque-text-body:      #2E3742;
+  --marque-text-muted:     #606B78;
+  --marque-text-on-dark:   #FFFFFF;
+  --marque-on-dark-accent: #9DD1F2;
+
+  /* ── États métier ─────────────────────────────────────────────────── */
+  --marque-paid-bg:        #E5F2FB;
+  --marque-paid-text:      #0B66A6;
+  --marque-pending-bg:     #FFF8CC;
+  --marque-pending-text:   #7A6B00;
+  --marque-progress-bg:    #E5F2FB;
+  --marque-progress-text:  #0A6FB4;
+  --marque-error-bg:       #FDE7E9;
+  --marque-error-text:     #CC0E1B;
+  /* « En retard » : entre l'attente et l'erreur. Ambré soutenu, pour se
+     détacher du jaune d'enseigne sans crier comme le rouge. */
+  --marque-late-bg:        #FFE8CC;
+  --marque-late-text:      #A85A00;
+
+  /* ── Formes ───────────────────────────────────────────────────────── */
+  --marque-radius-card:    20px;
+  --marque-radius-card-sm: 14px;
+  --marque-radius-pill:    9999px;
+  --marque-radius-icon:    10px;
+  --marque-shadow-card:    0 2px 12px rgba(11, 14, 17, 0.07);
+  --marque-shadow-hover:   0 4px 20px rgba(11, 14, 17, 0.13);
+
+  /* ── Typographie ──────────────────────────────────────────────────
+     La police fait partie de l'identité au même titre que les couleurs. */
+  --marque-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}

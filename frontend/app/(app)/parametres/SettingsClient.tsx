@@ -102,26 +102,26 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   }
 
   const inp: React.CSSProperties = {
-    padding: "10px 14px", border: "1.5px solid var(--color-border)",
+    padding: "10px 14px", border: "1.5px solid var(--marque-border)",
     borderRadius: 10, fontSize: 14, outline: "none", width: "100%",
-    color: "var(--color-text-primary)", background: "var(--color-surface)",
+    color: "var(--marque-text-primary)", background: "var(--marque-surface)",
   }
 
   return (
     <div>
       <div className="sym-in" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
             Total
           </div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: "var(--color-text-primary)" }}>
-            {users.length} <span style={{ fontSize: 14, fontWeight: 500, color: "var(--color-text-muted)" }}>utilisateurs</span>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "var(--marque-text-primary)" }}>
+            {users.length} <span style={{ fontSize: 14, fontWeight: 500, color: "var(--marque-text-muted)" }}>utilisateurs</span>
           </div>
         </div>
         <button onClick={() => setShowForm(!showForm)} className="sym-tap" style={{
-          background: "var(--color-primary)", color: "var(--color-text-on-dark)", border: "none",
-          borderRadius: "var(--radius-pill)", padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer",
-          boxShadow: "var(--shadow-card)",
+          background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none",
+          borderRadius: "var(--marque-radius-pill)", padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer",
+          boxShadow: "var(--marque-shadow-card)",
         }}>
           + Ajouter un utilisateur
         </button>
@@ -129,10 +129,10 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
 
       {showForm && (
         <form onSubmit={addUser} className="sym-fade" style={{
-          background: "var(--color-primary-subtle)", borderRadius: "var(--radius-card)", padding: 20,
-          marginBottom: 20, border: "1px solid var(--color-primary-light)",
+          background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)", padding: 20,
+          marginBottom: 20, border: "1px solid var(--marque-primary-light)",
         }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-primary)", marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-primary)", marginBottom: 14 }}>
             Nouvel utilisateur
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
@@ -144,18 +144,18 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
               {creatableRoles.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
             </select>
           </div>
-          {formError && <p style={{ color: "var(--color-error-text)", fontSize: 13, margin: "0 0 10px" }}>{formError}</p>}
+          {formError && <p style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "0 0 10px" }}>{formError}</p>}
           <div style={{ display: "flex", gap: 8 }}>
             <button type="submit" disabled={adding} className="sym-tap" style={{
-              background: "var(--color-primary)", color: "var(--color-text-on-dark)", border: "none",
-              borderRadius: "var(--radius-pill)", padding: "9px 20px", fontSize: 13, fontWeight: 600,
+              background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none",
+              borderRadius: "var(--marque-radius-pill)", padding: "9px 20px", fontSize: 13, fontWeight: 600,
               cursor: adding ? "not-allowed" : "pointer", opacity: adding ? 0.7 : 1,
             }}>
               {adding ? "Ajout..." : "Ajouter"}
             </button>
             <button type="button" onClick={() => setShowForm(false)} className="sym-tap" style={{
-              background: "var(--color-surface)", color: "var(--color-text-body)", border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-pill)", padding: "9px 20px", fontSize: 13, cursor: "pointer",
+              background: "var(--marque-surface)", color: "var(--marque-text-body)", border: "1px solid var(--marque-border)",
+              borderRadius: "var(--marque-radius-pill)", padding: "9px 20px", fontSize: 13, cursor: "pointer",
             }}>
               Annuler
             </button>
@@ -163,12 +163,12 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
         </form>
       )}
 
-      <div className="sym-card sym-in sym-in-1" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
+      <div className="sym-card sym-in sym-in-1" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
-            <tr style={{ borderBottom: "1px solid var(--color-border)", background: "var(--color-canvas)" }}>
+            <tr style={{ borderBottom: "1px solid var(--marque-border)", background: "var(--marque-canvas)" }}>
               {["Utilisateur", "Rôle", ...visibleAgents.map((a) => a.replace("agent", "Agent ")), "Statut", ""].map((h, i) => (
-                <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -176,13 +176,13 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
             {users.map((user) => {
               const color = ROLE_COLORS[user.role] || "#666"
               return (
-                <tr key={user.id} style={{ borderBottom: "1px solid var(--color-border)", opacity: user.actif ? 1 : 0.45 }}>
+                <tr key={user.id} style={{ borderBottom: "1px solid var(--marque-border)", opacity: user.actif ? 1 : 0.45 }}>
                   <td style={{ padding: "14px 16px" }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--color-text-primary)" }}>{user.name || "—"}</div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 1 }}>{user.email}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "var(--marque-text-primary)" }}>{user.name || "—"}</div>
+                    <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 1 }}>{user.email}</div>
                   </td>
                   <td style={{ padding: "14px 16px" }}>
-                    <span style={{ background: color + "18", color, padding: "3px 10px", borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 600 }}>
+                    <span style={{ background: color + "18", color, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600 }}>
                       {ROLE_LABELS[user.role]}
                     </span>
                   </td>
@@ -199,7 +199,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                           className="sym-tap"
                           style={{
                             width: 40, height: 22, borderRadius: 11, border: "none",
-                            background: has ? "var(--color-primary-mid)" : "var(--color-border)",
+                            background: has ? "var(--marque-primary-mid)" : "var(--marque-border)",
                             cursor: canToggle ? "pointer" : "default",
                             position: "relative", transition: "background 0.25s ease",
                             opacity: loading ? 0.5 : 1,
@@ -208,7 +208,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                           <span style={{
                             position: "absolute", top: 3,
                             left: has ? 21 : 3, width: 16, height: 16,
-                            borderRadius: "50%", background: "var(--color-surface)",
+                            borderRadius: "50%", background: "var(--marque-surface)",
                             transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
                           }} />
                         </button>
@@ -217,9 +217,9 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                   })}
                   <td style={{ padding: "14px 16px" }}>
                     <span style={{
-                      fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: "var(--radius-pill)",
-                      color: user.actif ? "var(--color-paid-text)" : "var(--color-text-muted)",
-                      background: user.actif ? "var(--color-paid-bg)" : "var(--color-canvas)",
+                      fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)",
+                      color: user.actif ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+                      background: user.actif ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
                     }}>
                       {user.actif ? "● Actif" : "○ Inactif"}
                     </span>
@@ -227,9 +227,9 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                   <td style={{ padding: "14px 16px", textAlign: "right" }}>
                     {(currentRole === "super_admin" || currentRole === "direction" || METIER_ROLES.includes(user.role)) && (
                       <button onClick={() => toggleActive(user.id, user.actif, user.role)} className="sym-tap" style={{
-                        background: "none", border: "1px solid var(--color-border)",
-                        borderRadius: "var(--radius-pill)", padding: "5px 14px", fontSize: 12, cursor: "pointer",
-                        color: "var(--color-text-body)", fontWeight: 500,
+                        background: "none", border: "1px solid var(--marque-border)",
+                        borderRadius: "var(--marque-radius-pill)", padding: "5px 14px", fontSize: 12, cursor: "pointer",
+                        color: "var(--marque-text-body)", fontWeight: 500,
                       }}>
                         {user.actif ? "Désactiver" : "Réactiver"}
                       </button>
@@ -239,7 +239,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
               )
             })}
             {users.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "var(--color-text-muted)", fontSize: 14 }}>
+              <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "var(--marque-text-muted)", fontSize: 14 }}>
                 Aucun utilisateur — vérifiez la connexion au backend
               </td></tr>
             )}
@@ -300,31 +300,31 @@ function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: strin
     } catch { setMsgU((m) => ({ ...m, [u.id]: "Erreur" })) } finally { setSavingU(null) }
   }
 
-  const inp: React.CSSProperties = { width: 56, padding: "6px 8px", border: "1.5px solid var(--color-border)", borderRadius: 8, fontSize: 13, outline: "none", background: "var(--color-surface)", color: "var(--color-text-primary)" }
+  const inp: React.CSSProperties = { width: 56, padding: "6px 8px", border: "1.5px solid var(--marque-border)", borderRadius: 8, fontSize: 13, outline: "none", background: "var(--marque-surface)", color: "var(--marque-text-primary)" }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {/* Plage globale */}
-      <div className="sym-card sym-in" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", padding: 20, boxShadow: "var(--shadow-card)" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Horaires</div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)", marginBottom: 4 }}>Plage horaire globale</div>
-        <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 14 }}>
+      <div className="sym-card sym-in" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", padding: 20, boxShadow: "var(--marque-shadow-card)" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Horaires</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)", marginBottom: 4 }}>Plage horaire globale</div>
+        <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginBottom: 14 }}>
           Appliquée à tout utilisateur sans réglage individuel. super_admin et direction sont exemptés.
         </div>
         {glob ? (
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            <label style={{ fontSize: 13, color: "var(--color-text-body)", display: "flex", alignItems: "center", gap: 8 }}>
+            <label style={{ fontSize: 13, color: "var(--marque-text-body)", display: "flex", alignItems: "center", gap: 8 }}>
               Début <input type="number" min={0} max={23} value={glob.start_hour} onChange={(e) => setGlob({ ...glob, start_hour: parseInt(e.target.value) || 0 })} style={inp} /> h
             </label>
-            <label style={{ fontSize: 13, color: "var(--color-text-body)", display: "flex", alignItems: "center", gap: 8 }}>
+            <label style={{ fontSize: 13, color: "var(--marque-text-body)", display: "flex", alignItems: "center", gap: 8 }}>
               Fin <input type="number" min={1} max={24} value={glob.end_hour} onChange={(e) => setGlob({ ...glob, end_hour: parseInt(e.target.value) || 1 })} style={inp} /> h
             </label>
-            <button onClick={saveGlobal} disabled={savingG} className="sym-tap" style={{ background: "var(--color-primary)", color: "var(--color-text-on-dark)", border: "none", borderRadius: "var(--radius-pill)", padding: "8px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            <button onClick={saveGlobal} disabled={savingG} className="sym-tap" style={{ background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none", borderRadius: "var(--marque-radius-pill)", padding: "8px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
               {savingG ? "..." : "Enregistrer"}
             </button>
-            {msgG && <span className="sym-pop" style={{ fontSize: 13, fontWeight: 600, color: msgG.startsWith("✓") ? "var(--color-paid-text)" : "var(--color-error-text)" }}>{msgG}</span>}
+            {msgG && <span className="sym-pop" style={{ fontSize: 13, fontWeight: 600, color: msgG.startsWith("✓") ? "var(--marque-paid-text)" : "var(--marque-error-text)" }}>{msgG}</span>}
           </div>
-        ) : <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>Chargement…</div>}
+        ) : <div style={{ color: "var(--marque-text-muted)", fontSize: 13 }}>Chargement…</div>}
 
         {glob && (
           <div style={{ marginTop: 16, display: "flex", gap: 3, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -332,8 +332,8 @@ function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: strin
               const active = h >= glob.start_hour && h < glob.end_hour
               return (
                 <div key={h} style={{ textAlign: "center" }}>
-                  <div style={{ width: 20, height: 26, borderRadius: 4, background: active ? "var(--color-primary-mid)" : "var(--color-border)", opacity: active ? 0.9 : 0.4, transition: "background 0.25s ease, opacity 0.25s ease" }} />
-                  <div style={{ fontSize: 9, color: "var(--color-text-muted)", marginTop: 2 }}>{h}</div>
+                  <div style={{ width: 20, height: 26, borderRadius: 4, background: active ? "var(--marque-primary-mid)" : "var(--marque-border)", opacity: active ? 0.9 : 0.4, transition: "background 0.25s ease, opacity 0.25s ease" }} />
+                  <div style={{ fontSize: 9, color: "var(--marque-text-muted)", marginTop: 2 }}>{h}</div>
                 </div>
               )
             })}
@@ -342,16 +342,16 @@ function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: strin
       </div>
 
       {/* Réglages par utilisateur */}
-      <div className="sym-card sym-in sym-in-1" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--color-border)", fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>
-          Réglages individuels <span style={{ fontWeight: 400, fontSize: 12, color: "var(--color-text-muted)" }}>— vide = plage globale</span>
+      <div className="sym-card sym-in sym-in-1" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--marque-border)", fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+          Réglages individuels <span style={{ fontWeight: 400, fontSize: 12, color: "var(--marque-text-muted)" }}>— vide = plage globale</span>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ background: "var(--color-canvas)" }}>
+              <tr style={{ background: "var(--marque-canvas)" }}>
                 {["Utilisateur", "Rôle", "Début", "Fin", "24/7", ""].map((h, i) => (
-                  <th key={i} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                  <th key={i} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -359,13 +359,13 @@ function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: strin
               {rows.map((u) => {
                 const editable = canEditUser(u.role)
                 return (
-                  <tr key={u.id} style={{ borderTop: "1px solid var(--color-border)", opacity: editable ? 1 : 0.55 }}>
+                  <tr key={u.id} style={{ borderTop: "1px solid var(--marque-border)", opacity: editable ? 1 : 0.55 }}>
                     <td style={{ padding: "12px 16px" }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--color-text-primary)" }}>{u.name || "—"}</div>
-                      <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{u.email}</div>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--marque-text-primary)" }}>{u.name || "—"}</div>
+                      <div style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>{u.email}</div>
                     </td>
                     <td style={{ padding: "12px 16px" }}>
-                      <span style={{ background: (ROLE_COLORS[u.role] || "#666") + "18", color: ROLE_COLORS[u.role] || "#666", padding: "3px 10px", borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 600 }}>{ROLE_LABELS[u.role]}</span>
+                      <span style={{ background: (ROLE_COLORS[u.role] || "#666") + "18", color: ROLE_COLORS[u.role] || "#666", padding: "3px 10px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600 }}>{ROLE_LABELS[u.role]}</span>
                     </td>
                     <td style={{ padding: "12px 16px" }}>
                       <input type="number" min={0} max={23} placeholder="—" value={u.schedule_start_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_start_hour: e.target.value })} style={inp} />
@@ -374,22 +374,22 @@ function PlagesTab({ apiUrl, backendToken, users, currentRole }: { apiUrl: strin
                       <input type="number" min={1} max={24} placeholder="—" value={u.schedule_end_hour ?? ""} disabled={!editable || u.bypass_schedule} onChange={(e) => patch(u.id, { schedule_end_hour: e.target.value })} style={inp} />
                     </td>
                     <td style={{ padding: "12px 16px" }}>
-                      <button onClick={() => editable && patch(u.id, { bypass_schedule: !u.bypass_schedule })} disabled={!editable} className="sym-tap" style={{ width: 40, height: 22, borderRadius: 11, border: "none", background: u.bypass_schedule ? "var(--color-primary-mid)" : "var(--color-border)", cursor: editable ? "pointer" : "default", position: "relative", transition: "background 0.25s ease" }}>
-                        <span style={{ position: "absolute", top: 3, left: u.bypass_schedule ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "var(--color-surface)", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+                      <button onClick={() => editable && patch(u.id, { bypass_schedule: !u.bypass_schedule })} disabled={!editable} className="sym-tap" style={{ width: 40, height: 22, borderRadius: 11, border: "none", background: u.bypass_schedule ? "var(--marque-primary-mid)" : "var(--marque-border)", cursor: editable ? "pointer" : "default", position: "relative", transition: "background 0.25s ease" }}>
+                        <span style={{ position: "absolute", top: 3, left: u.bypass_schedule ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "var(--marque-surface)", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
                       </button>
                     </td>
                     <td style={{ padding: "12px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                       {editable && (
-                        <button onClick={() => saveUser(u)} disabled={savingU === u.id} className="sym-tap" style={{ background: "none", border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", padding: "5px 14px", fontSize: 12, cursor: "pointer", color: "var(--color-text-body)", fontWeight: 500 }}>
+                        <button onClick={() => saveUser(u)} disabled={savingU === u.id} className="sym-tap" style={{ background: "none", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)", padding: "5px 14px", fontSize: 12, cursor: "pointer", color: "var(--marque-text-body)", fontWeight: 500 }}>
                           {savingU === u.id ? "..." : "Enregistrer"}
                         </button>
                       )}
-                      {msgU[u.id] && <span className="sym-pop" style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: msgU[u.id] === "✓" ? "var(--color-paid-text)" : "var(--color-error-text)" }}>{msgU[u.id]}</span>}
+                      {msgU[u.id] && <span className="sym-pop" style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: msgU[u.id] === "✓" ? "var(--marque-paid-text)" : "var(--marque-error-text)" }}>{msgU[u.id]}</span>}
                     </td>
                   </tr>
                 )
               })}
-              {rows.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "var(--color-text-muted)", fontSize: 13 }}>Aucun utilisateur</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "var(--marque-text-muted)", fontSize: 13 }}>Aucun utilisateur</td></tr>}
             </tbody>
           </table>
         </div>
@@ -424,31 +424,31 @@ function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: strin
     } catch { set(current) } finally { setBusy(null) }
   }
 
-  if (err) return <div className="sym-fade" style={{ color: "var(--color-error-text)", fontSize: 14, padding: 20 }}>{err}</div>
-  if (!data) return <div className="sym-skeleton" style={{ height: 200, borderRadius: "var(--radius-card)" }} />
+  if (err) return <div className="sym-fade" style={{ color: "var(--marque-error-text)", fontSize: 14, padding: 20 }}>{err}</div>
+  if (!data) return <div className="sym-skeleton" style={{ height: 200, borderRadius: "var(--marque-radius-card)" }} />
   const canEdit = !!data.can_edit
 
   return (
     <div>
-      <div className="sym-card sym-in" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
-        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--color-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div className="sym-card sym-in" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--marque-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>Matrice de permissions par rôle</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>Matrice de permissions par rôle</div>
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
               {canEdit ? "Cliquez sur une case pour activer/désactiver. Le super admin n'est pas modifiable." : "Lecture seule — édition réservée au super admin."}
             </div>
           </div>
-          <span className="sym-pop" style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: "var(--radius-pill)", color: canEdit ? "var(--color-paid-text)" : "var(--color-pending-text)", background: canEdit ? "var(--color-paid-bg)" : "var(--color-pending-bg)" }}>
+          <span className="sym-pop" style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", color: canEdit ? "var(--marque-paid-text)" : "var(--marque-pending-text)", background: canEdit ? "var(--marque-paid-bg)" : "var(--marque-pending-bg)" }}>
             {canEdit ? "Éditable" : "Lecture seule"}
           </span>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", minWidth: 900 }}>
             <thead>
-              <tr style={{ background: "var(--color-canvas)" }}>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", textTransform: "uppercase", position: "sticky", left: 0, background: "var(--color-canvas)" }}>Rôle</th>
+              <tr style={{ background: "var(--marque-canvas)" }}>
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase", position: "sticky", left: 0, background: "var(--marque-canvas)" }}>Rôle</th>
                 {data.features.map((f: string) => (
-                  <th key={f} style={{ padding: "10px 10px", textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>{data.labels[f] || f}</th>
+                  <th key={f} style={{ padding: "10px 10px", textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--marque-text-muted)", whiteSpace: "nowrap" }}>{data.labels[f] || f}</th>
                 ))}
               </tr>
             </thead>
@@ -457,9 +457,9 @@ function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: strin
                 const color = ROLE_COLORS[role] || "#666"
                 const locked = role === data.protected_role
                 return (
-                  <tr key={role} style={{ borderTop: "1px solid var(--color-border)" }}>
-                    <td style={{ padding: "10px 16px", position: "sticky", left: 0, background: "var(--color-surface)" }}>
-                      <span style={{ background: color + "18", color, padding: "4px 12px", borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 700 }}>{ROLE_LABELS[role]}</span>
+                  <tr key={role} style={{ borderTop: "1px solid var(--marque-border)" }}>
+                    <td style={{ padding: "10px 16px", position: "sticky", left: 0, background: "var(--marque-surface)" }}>
+                      <span style={{ background: color + "18", color, padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 700 }}>{ROLE_LABELS[role]}</span>
                     </td>
                     {data.features.map((f: string) => {
                       const has = !!data.matrix[role]?.[f]
@@ -475,8 +475,8 @@ function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: strin
                             style={{
                               width: 26, height: 26, borderRadius: 7, border: "none", fontSize: 14,
                               cursor: editable ? "pointer" : "default",
-                              background: has ? "var(--color-paid-bg)" : "var(--color-canvas)",
-                              color: has ? "var(--color-paid-text)" : "var(--color-text-muted)",
+                              background: has ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+                              color: has ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
                               opacity: busy === key ? 0.5 : 1,
                               transition: "background 0.2s ease, color 0.2s ease",
                             }}
@@ -521,29 +521,29 @@ function AgentsTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: str
 
   const metric = (label: string, value: any) => (
     <div>
-      <div style={{ fontSize: 11, color: "var(--color-text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-text-primary)" }}>{value}</div>
+      <div style={{ fontSize: 11, color: "var(--marque-text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: "var(--marque-text-primary)" }}>{value}</div>
     </div>
   )
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div className="sym-in" style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-        Métriques réelles du jour — source <code style={{ fontFamily: "monospace", background: "var(--color-canvas)", padding: "1px 5px", borderRadius: 4 }}>audit_log</code>.
+      <div className="sym-in" style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>
+        Métriques réelles du jour — source <code style={{ fontFamily: "monospace", background: "var(--marque-canvas)", padding: "1px 5px", borderRadius: 4 }}>audit_log</code>.
       </div>
       {AGENTS.map((agent, i) => {
         const s = stats[agent.key] || {}
         const dur = s.avg_duration_ms != null ? `${s.avg_duration_ms} ms` : "—"
         return (
-          <div key={agent.key} className={`sym-card sym-in sym-in-${i + 1}`} style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", padding: 24, boxShadow: "var(--shadow-card)", border: "1.5px solid var(--color-border)" }}>
+          <div key={agent.key} className={`sym-card sym-in sym-in-${i + 1}`} style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", padding: 24, boxShadow: "var(--marque-shadow-card)", border: "1.5px solid var(--marque-border)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
-              <div style={{ width: 40, height: 40, borderRadius: "var(--radius-icon)", background: "linear-gradient(180deg, var(--color-primary), var(--color-primary-hover))", boxShadow: "var(--shadow-card)" }} />
+              <div style={{ width: 40, height: 40, borderRadius: "var(--marque-radius-icon)", background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))", boxShadow: "var(--marque-shadow-card)" }} />
               <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>{agent.name}</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 1 }}>{agent.tier} · cascade multi-fournisseurs</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>{agent.name}</div>
+                <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 1 }}>{agent.tier} · cascade multi-fournisseurs</div>
               </div>
             </div>
-            <p style={{ margin: "0 0 14px 52px", fontSize: 13, color: "var(--color-text-body)", lineHeight: 1.5 }}>{agent.desc}</p>
+            <p style={{ margin: "0 0 14px 52px", fontSize: 13, color: "var(--marque-text-body)", lineHeight: 1.5 }}>{agent.desc}</p>
             <div style={{ display: "flex", gap: 28, marginLeft: 52 }}>
               {metric("Req. aujourd'hui", loaded ? (s.request_count ?? 0) : "…")}
               {metric("Succès", loaded ? (s.success_count ?? 0) : "…")}
@@ -595,19 +595,19 @@ function QuotasTab({ backendToken, apiUrl }: { backendToken: string; apiUrl: str
 
   return (
     <div>
-      <div className="sym-card sym-in" style={{ background: "var(--color-surface)", borderRadius: "var(--radius-card)", boxShadow: "var(--shadow-card)", overflow: "hidden" }}>
-        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--color-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div className="sym-card sym-in" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--marque-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Facturation</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--color-text-primary)" }}>Quotas mensuels par rôle</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Facturation</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>Quotas mensuels par rôle</div>
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
               Nombre max de requêtes / mois. Illimité = aucune restriction.
             </div>
           </div>
           <button onClick={save} disabled={saving || loading} className="sym-tap" style={{
-            background: success ? "var(--color-paid-text)" : "var(--color-primary)",
-            color: "var(--color-text-on-dark)", border: "none",
-            borderRadius: "var(--radius-pill)", padding: "9px 22px", fontSize: 13, fontWeight: 600,
+            background: success ? "var(--marque-paid-text)" : "var(--marque-primary)",
+            color: "var(--marque-text-on-dark)", border: "none",
+            borderRadius: "var(--marque-radius-pill)", padding: "9px 22px", fontSize: 13, fontWeight: 600,
             cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1,
             transition: "background 0.3s",
           }}>
@@ -621,7 +621,7 @@ function QuotasTab({ backendToken, apiUrl }: { backendToken: string; apiUrl: str
           </div>
         ) : (
           <div style={{ padding: 24 }}>
-            {error && <p style={{ color: "var(--color-error-text)", fontSize: 13, marginBottom: 16 }}>{error}</p>}
+            {error && <p style={{ color: "var(--marque-error-text)", fontSize: 13, marginBottom: 16 }}>{error}</p>}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {ROLE_ORDER.filter((r) => r in quotas).map((role, i) => {
                 const limit = quotas[role]
@@ -631,22 +631,22 @@ function QuotasTab({ backendToken, apiUrl }: { backendToken: string; apiUrl: str
                   <div key={role} className={`sym-in sym-in-${Math.min(i + 1, 6)}`} style={{
                     display: "flex", alignItems: "center", gap: 16,
                     padding: "14px 18px", borderRadius: 12,
-                    border: "1px solid var(--color-border)", background: "var(--color-canvas)",
+                    border: "1px solid var(--marque-border)", background: "var(--marque-canvas)",
                     transition: "border-color 0.2s ease, box-shadow 0.2s ease",
                   }}>
                     <span style={{
                       background: color + "18", color, padding: "4px 12px",
-                      borderRadius: "var(--radius-pill)", fontSize: 12, fontWeight: 700,
+                      borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 700,
                       minWidth: 130, textAlign: "center", display: "inline-block",
                     }}>
                       {ROLE_LABELS[role]}
                     </span>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--color-text-body)", cursor: "pointer", userSelect: "none" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--marque-text-body)", cursor: "pointer", userSelect: "none" }}>
                       <input
                         type="checkbox"
                         checked={isUnlimited}
                         onChange={(e) => setQuotas((q) => ({ ...q, [role]: e.target.checked ? null : 100 }))}
-                        style={{ width: 16, height: 16, accentColor: "var(--color-primary)" }}
+                        style={{ width: 16, height: 16, accentColor: "var(--marque-primary)" }}
                       />
                       Illimité
                     </label>
@@ -657,15 +657,15 @@ function QuotasTab({ backendToken, apiUrl }: { backendToken: string; apiUrl: str
                           value={limit ?? ""}
                           onChange={(e) => setQuotas((q) => ({ ...q, [role]: parseInt(e.target.value) || 1 }))}
                           style={{
-                            padding: "8px 12px", border: "1.5px solid var(--color-border)",
+                            padding: "8px 12px", border: "1.5px solid var(--marque-border)",
                             borderRadius: 10, fontSize: 14, width: 110,
-                            color: "var(--color-text-primary)", background: "var(--color-surface)", outline: "none",
+                            color: "var(--marque-text-primary)", background: "var(--marque-surface)", outline: "none",
                           }}
                         />
-                        <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>req / mois</span>
+                        <span style={{ fontSize: 13, color: "var(--marque-text-muted)" }}>req / mois</span>
                       </div>
                     ) : (
-                      <span style={{ fontSize: 13, color: "var(--color-text-muted)", fontStyle: "italic" }}>
+                      <span style={{ fontSize: 13, color: "var(--marque-text-muted)", fontStyle: "italic" }}>
                         ∞ — aucune restriction
                       </span>
                     )}
@@ -709,28 +709,28 @@ function ServicesTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: s
   return (
     <div>
       {loaded && !sys && (
-        <div style={{ color: "var(--color-error-text)", fontSize: 13, marginBottom: 12 }}>
+        <div style={{ color: "var(--marque-error-text)", fontSize: 13, marginBottom: 12 }}>
           État système indisponible (réservé au super admin).
         </div>
       )}
       <div className="sym-grid-1" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
         {services.map((s, i) => (
           <div key={i} className={`sym-card sym-in sym-in-${Math.min(i + 1, 6)}`} style={{
-            background: "var(--color-surface)", borderRadius: "var(--radius-card-sm)", padding: 18, boxShadow: "var(--shadow-card)",
-            borderLeft: `3px solid ${s.up ? "var(--color-primary-mid)" : "var(--color-pending-text)"}`,
+            background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card-sm)", padding: 18, boxShadow: "var(--marque-shadow-card)",
+            borderLeft: `3px solid ${s.up ? "var(--marque-primary-mid)" : "var(--marque-pending-text)"}`,
           }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>{s.name}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>{s.name}</div>
               <span className={loaded ? "sym-pop" : ""} style={{
-                fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: "var(--radius-pill)",
-                color: s.up ? "var(--color-paid-text)" : "var(--color-pending-text)",
-                background: s.up ? "var(--color-paid-bg)" : "var(--color-pending-bg)",
+                fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)",
+                color: s.up ? "var(--marque-paid-text)" : "var(--marque-pending-text)",
+                background: s.up ? "var(--marque-paid-bg)" : "var(--marque-pending-bg)",
               }}>
                 {!loaded ? "…" : s.up ? "✓ Actif" : "! Inactif"}
               </span>
             </div>
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>{s.desc}</div>
-            <div style={{ fontSize: 11, color: "var(--color-text-body)", fontFamily: "monospace", background: "var(--color-canvas)", padding: "4px 8px", borderRadius: 6, display: "inline-block" }}>
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginBottom: 6 }}>{s.desc}</div>
+            <div style={{ fontSize: 11, color: "var(--marque-text-body)", fontFamily: "monospace", background: "var(--marque-canvas)", padding: "4px 8px", borderRadius: 6, display: "inline-block" }}>
               {s.detail}
             </div>
           </div>
@@ -748,26 +748,26 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
 
   return (
     <div className="sym-page" style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }} className="sym-in">
+      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }} className="sym-in">
         Duret & Sols · Administration
       </div>
-      <h1 className="sym-in sym-in-1" style={{ margin: "0 0 6px", fontSize: 26, fontWeight: 800, color: "var(--color-text-primary)", letterSpacing: "-0.5px" }}>
+      <h1 className="sym-in sym-in-1" style={{ margin: "0 0 6px", fontSize: 26, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>
         Paramètres
       </h1>
-      <p className="sym-in sym-in-2" style={{ margin: "0 0 28px", fontSize: 14, color: "var(--color-text-muted)" }}>
+      <p className="sym-in sym-in-2" style={{ margin: "0 0 28px", fontSize: 14, color: "var(--marque-text-muted)" }}>
         Configuration du système Duret & Sols — accès {ROLE_LABELS[currentRole] || currentRole}
       </p>
 
-      <div className="sym-in sym-in-3" style={{ display: "flex", gap: 2, marginBottom: 28, background: "var(--color-surface)", padding: 6, borderRadius: "var(--radius-card-sm)", width: "fit-content", boxShadow: "var(--shadow-card)" }}>
+      <div className="sym-in sym-in-3" style={{ display: "flex", gap: 2, marginBottom: 28, background: "var(--marque-surface)", padding: 6, borderRadius: "var(--marque-radius-card-sm)", width: "fit-content", boxShadow: "var(--marque-shadow-card)" }}>
         {subTabs.map((t) => {
           const active = activeTab === t.key
           return (
             <button key={t.key} onClick={() => setActiveTab(t.key)} className="sym-tap" style={{
               padding: "8px 18px", border: "none", cursor: "pointer",
               borderRadius: 10, fontSize: 14, fontWeight: active ? 700 : 500,
-              color: active ? "var(--color-primary)" : "var(--color-text-muted)",
-              background: active ? "var(--color-primary-subtle)" : "transparent",
-              boxShadow: active ? "inset 0 0 0 1px var(--color-primary-light)" : "none",
+              color: active ? "var(--marque-primary)" : "var(--marque-text-muted)",
+              background: active ? "var(--marque-primary-subtle)" : "transparent",
+              boxShadow: active ? "inset 0 0 0 1px var(--marque-primary-light)" : "none",
               transition: "all 0.15s", display: "flex", alignItems: "center", gap: 6,
             }}>
               {t.label}

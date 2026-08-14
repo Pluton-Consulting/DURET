@@ -14,17 +14,17 @@ export function LineChart({
   const area = `${line} L${pad + w},${pad + h} L${pad},${pad + h} Z`
   const last = pts[pts.length - 1]
   return (
-    <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-card-sm)", boxShadow: "var(--shadow-card)", padding: 16, maxWidth: width + 34 }}>
+    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", padding: 16, maxWidth: width + 34 }}>
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ display: "block" }}>
         <defs>
           <linearGradient id="lc-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" style={{ stopColor: "var(--color-primary-mid)", stopOpacity: 0.28 }} />
-            <stop offset="100%" style={{ stopColor: "var(--color-primary-mid)", stopOpacity: 0 }} />
+            <stop offset="0%" style={{ stopColor: "var(--marque-primary-mid)", stopOpacity: 0.28 }} />
+            <stop offset="100%" style={{ stopColor: "var(--marque-primary-mid)", stopOpacity: 0 }} />
           </linearGradient>
         </defs>
         <path d={area} fill="url(#lc-fill)" />
-        <path d={line} fill="none" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ stroke: "var(--color-primary)" }} />
-        <circle cx={last[0]} cy={last[1]} r={4} strokeWidth={2} style={{ fill: "var(--color-primary)", stroke: "var(--color-surface)" }} />
+        <path d={line} fill="none" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ stroke: "var(--marque-primary)" }} />
+        <circle cx={last[0]} cy={last[1]} r={4} strokeWidth={2} style={{ fill: "var(--marque-primary)", stroke: "var(--marque-surface)" }} />
       </svg>
     </div>
   )

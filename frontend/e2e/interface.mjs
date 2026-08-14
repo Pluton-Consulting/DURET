@@ -86,9 +86,30 @@ function boutonEnvoyer(page) {
     .or(page.locator("button").filter({ hasText: /^Envoyer$/ })).first()
 }
 
-/** Dans la page : retrouve le conteneur défilant et les bulles. */
+/** Dans la page : retrouve le conteneur défilant et les bulles.
+ *
+ *  LE REPÈRE ET LE CONTENEUR QUI DÉFILE NE SONT PLUS LE MÊME ÉLÉMENT.
+ *  Depuis que le fil est rendu par `Conversation`, la balise porte l'élément
+ *  extérieur — qui ne défile pas — et le défilement a lieu sur un div
+ *  intermédiaire posé par la bibliothèque. Mesurer `scrollTop` sur
+ *  l'extérieur donnerait toujours 0, donc `enBas` toujours vrai : le test
+ *  ne pourrait PLUS JAMAIS échouer, ce qui est pire qu'une panne visible.
+ *  On descend donc jusqu'à l'élément réellement défilant. */
 const SONDE = () => {
-  const zone = document.querySelector('[data-testid="liste-messages"]')
+  const defilant = (d) => {
+    if (!d) return null
+    const s = getComputedStyle(d)
+    if (s.overflowY === "auto" || s.overflowY === "scroll") return d
+    for (const enfant of d.querySelectorAll("div")) {
+      const se = getComputedStyle(enfant)
+      if ((se.overflowY === "auto" || se.overflowY === "scroll") && enfant.clientHeight > 100) {
+        return enfant
+      }
+    }
+    return null
+  }
+  const repere = document.querySelector('[data-testid="liste-messages"]')
+  const zone = defilant(repere)
     || [...document.querySelectorAll("div")].find((d) => {
       const s = getComputedStyle(d)
       return s.overflowY === "auto" && d.scrollHeight > 0

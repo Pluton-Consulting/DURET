@@ -6,12 +6,16 @@ Le backend appelle POST /run (non bloquant) ; la tâche s'exécute en fond
 directement en base ; /jobs/{id} et /health sont fournis pour debug/monitoring.
 """
 import asyncio
+import logging
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 import db
+import wconfig
 from browser_agent import run_task
+
+logger = logging.getLogger("browser-worker")
 
 app = FastAPI(title="Duret & Sols Browser Worker")
 
@@ -44,12 +48,32 @@ async def health():
 
 
 @app.post("/run")
+def _readonly_effectif(demande: bool) -> bool:
+    """Le reglage du DEPLOIEMENT est un plafond, pas une valeur par defaut.
+
+    BROWSER_READONLY etait lu (wconfig.py) puis jamais consulte : le worker
+    suivait la requete, et la requete vient d'une case a cocher de l'ecran.
+    Un administrateur qui posait BROWSER_READONLY=true croyait avoir verrouille
+    l'ecriture ; n'importe quel utilisateur la rouvrait d'un clic. Un garde-fou
+    qui ne garde rien est pire qu'un garde-fou absent, parce qu'on cesse de
+    surveiller ce qu'il est cense proteger.
+
+    Desormais : si le deploiement dit lecture seule, il l'emporte. S'il ne le
+    dit pas, la requete decide, comme avant.
+    """
+    if wconfig.READONLY and not demande:
+        logger.warning("Mode ecriture DEMANDE mais refuse : BROWSER_READONLY est actif "
+                       "sur ce deploiement. Poser BROWSER_READONLY=false pour l'autoriser.")
+        return True
+    return demande
+
+
 async def run(req: RunRequest):
     async def _job():
         try:
             await run_task(
                 req.job_id, req.task_prompt, req.allowed_domains,
-                req.user_id, ingest=req.ingest, readonly=req.readonly,
+                req.user_id, ingest=req.ingest, readonly=_readonly_effectif(req.readonly),
                 output_schema=req.output_schema,
             )
         except asyncio.CancelledError:

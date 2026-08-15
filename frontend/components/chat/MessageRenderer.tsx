@@ -2,12 +2,13 @@
 import { useState, type ReactNode } from "react"
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { MessageActions, MessageAction, MessageResponse } from "@/components/ai-elements/message"
+import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
 import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, FileCard, ContactCard, ProjectCard,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
-  Callout, StatTile, Badge, QuickReplies, BulletList,
+  Callout, StatTile, Badge, BulletList,
 } from "@/components/blocks"
 
 // Une réponse de l'IA = du texte, avec éventuellement des composants intercalés
@@ -175,7 +176,18 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "list":          return <BulletList {...p} />
     case "badge":         return <Badge tone={p.tone}>{p.text}</Badge>
     case "callout":       return <Callout tone={p.tone} title={p.title}>{p.text}</Callout>
-    case "quick_replies": return <QuickReplies options={p.options} onPick={onAction} />
+    // LES PROPOSITIONS PASSENT PAR AI ELEMENTS. Le bouton maison faisait le
+    // travail, mais la version du registre apporte ce qui manquait vraiment :
+    // une rangee qui DEFILE horizontalement au lieu de se replier sur trois
+    // lignes des que les libelles s'allongent, ce qui arrivait vite avec des
+    // propositions ecrites par le modele.
+    case "quick_replies": return (
+      <Suggestions>
+        {(p.options as string[]).map((o) => (
+          <Suggestion key={o} suggestion={o} onClick={onAction} />
+        ))}
+      </Suggestions>
+    )
     default:              return null
   }
 }

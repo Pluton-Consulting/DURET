@@ -54,6 +54,9 @@ const CsvViewer = dynamic(
 const PDFViewer = dynamic(
   () => import("@/components/extend/pdf-viewer").then((m) => m.PDFViewer),
   { ssr: false, loading: chargement })
+const PptxViewerPreview = dynamic(
+  () => import("@/components/extend/pptx-viewer").then((m) => m.PptxViewerPreview),
+  { ssr: false, loading: chargement })
 
 /** NI TÉLÉCHARGER, NI REMPLACER : LA VISIONNEUSE MONTRE, C'EST TOUT.
  *
@@ -71,13 +74,14 @@ const PDFViewer = dynamic(
 const SANS_FICHIER = { showDownload: false, showUpload: false } as const
 
 /** Formats que l'on sait afficher, et rien d'autre. */
-export type FormatApercu = "docx" | "xlsx" | "csv" | "pdf"
+export type FormatApercu = "docx" | "xlsx" | "csv" | "pdf" | "pptx"
 
 const EXTENSIONS: Record<FormatApercu, string> = {
   docx: ".docx",
   xlsx: ".xlsx",
   csv: ".csv",
   pdf: ".pdf",
+  pptx: ".pptx",
 }
 
 /** Le nom que la bibliothèque doit voir : elle valide l'extension, pas le type
@@ -94,6 +98,7 @@ export function formatDepuisNom(nom: string | undefined): FormatApercu | null {
   if (n.endsWith(".xlsx") || n.endsWith(".xls")) return "xlsx"
   if (n.endsWith(".csv") || n.endsWith(".tsv")) return "csv"
   if (n.endsWith(".pdf")) return "pdf"
+  if (n.endsWith(".pptx") || n.endsWith(".ppt")) return "pptx"
   return null
 }
 
@@ -213,6 +218,15 @@ export function ApercuDocument({
           {...SANS_FICHIER}
           className="h-full w-full"
         />
+      </div>
+    )
+  }
+
+  if (format === "pptx") {
+    return (
+      <div className={cadre} style={{ height: hauteur }}>
+        <PptxViewerPreview src={objectUrl} fileName={nomFichier} {...SANS_FICHIER}
+                           className="h-full w-full" />
       </div>
     )
   }

@@ -254,5 +254,100 @@ sudo headscale preauthkeys create --user <ID> --reusable --expiration 8760h
 - **Onglets vides / 502** = backend joignable ? `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=60 backend`.
 - **Frontend « clientModules » au build** = bug Next 14.2 standalone + groupes de routes → le `Dockerfile` recopie `.next/server` (déjà géré).
 
-> **Besoin du HTTPS un jour ?** En VPN, le HTTP suffit (tunnel chiffré). Pour un vrai cadenas,
-> voir l'historique git (Caddy + challenge DNS-01) — plus lourd, réservé si tu exposes hors VPN.
+> **Besoin du HTTPS ?** Voir « Étape 11 » ci-dessous. Le tunnel VPN chiffre déjà tout, donc
+> le HTTP suffit pour la confidentialité, mais Google et Microsoft **refusent une URL de
+> redirection en `http://`** : le HTTPS devient obligatoire dès qu'on veut une connexion
+> par compte Google ou Microsoft.
+
+---
+
+## Étape 11 — Passer en HTTPS (optionnel)
+
+**Ce que ça change :** un vrai cadenas, un certificat public valide, et la possibilité
+d'utiliser OAuth (Google, Microsoft). **Ce que ça ne change pas :** l'application reste sur
+l'IP privée du VPN, injoignable depuis internet. Caddy ne fait que des connexions
+**sortantes** (Let's Encrypt et l'API DNS) ; aucun port n'est ouvert en plus côté public.
+
+Le certificat est obtenu par **challenge DNS-01**, seule méthode possible ici : l'enregistrement
+A de l'application pointe vers une IP privée (`100.64.x.x`), que Let's Encrypt ne peut pas
+joindre. Les challenges HTTP-01 et TLS-ALPN-01 sont donc exclus, pas seulement déconseillés.
+
+### 11.1 — Choisir le nom, et vérifier son DNS
+
+L'image Caddy est compilée avec le module **Gandi** (`caddy/Dockerfile`). Le nom choisi doit
+donc être dans une zone hébergée chez Gandi. Vérifier avant tout :
+
+```bash
+nslookup -type=NS <DOMAINE>
+```
+
+- serveurs `*.gandi.net` → rien à faire ;
+- serveurs `*.ovh.net` ou autres → remplacer `caddy-dns/gandi` par le module correspondant
+  dans `caddy/Dockerfile` (`caddy-dns/ovh`, `caddy-dns/cloudflare`…) et adapter la directive
+  `dns …` du `Caddyfile`.
+
+### 11.2 — Enregistrement DNS
+
+Un A supplémentaire : **`<APP>`** → **IP VPN** (`tailscale ip -4`, ex. `100.64.0.1`).
+C'est le même que celui de l'étape « Architecture » ; s'il existe déjà, rien à faire.
+
+### 11.3 — Jeton Gandi
+
+Un **Personal Access Token** créé sur `admin.gandi.net`, avec le droit de gérer le DNS du
+domaine. **Pas** une clé API LiveDNS : le module `caddy-dns/gandi` ne l'accepte plus.
+
+### 11.4 — Compléter `.env`
+
+```ini
+# Les trois URL passent en https (identiques)
+APP_URL=https://<APP>.<DOMAINE>
+NEXTAUTH_URL=https://<APP>.<DOMAINE>
+NEXT_PUBLIC_API_URL=https://<APP>.<DOMAINE>
+
+# nginx repasse en INTERNE : sinon lui et Caddy se disputent le port 80 et rien ne démarre
+HEADSCALE_IP=127.0.0.1
+
+# Caddy
+VPN_IP=<IP VPN>                       # tailscale ip -4
+APP_HOSTNAME=<APP>.<DOMAINE>
+ACME_EMAIL=<adresse>
+GANDI_API_TOKEN=<PAT>
+```
+
+> ⚠ `NEXT_PUBLIC_API_URL` est un **argument de construction** : il est figé dans le paquet
+> JavaScript envoyé au navigateur. Un simple redémarrage ne suffit pas, il faut **reconstruire**
+> l'image du frontend. `deploy.sh` le fait (`--build`), mais un `restart` manuel ne le ferait pas :
+> le chat continuerait d'appeler l'ancienne adresse en clair, et le navigateur bloquerait
+> l'appel comme contenu mixte.
+
+### 11.5 — Déployer
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.https.yml up -d --build
+```
+
+### 11.6 — Vérifier
+
+```bash
+docker compose ... logs --tail=40 caddy      # doit montrer « certificate obtained successfully »
+curl -I https://<APP>.<DOMAINE>              # depuis un poste du VPN : HTTP/2 200
+```
+
+Puis, dans un navigateur du VPN : cadenas fermé, connexion par lien magique, et **le chat qui
+streame** (c'est lui qui prouve que le WebSocket est bien passé en `wss://`).
+
+> ⚠ **HSTS.** Le `Caddyfile` pose `Strict-Transport-Security: max-age=31536000`. Une fois
+> reçu, le navigateur **refuse de redescendre en clair pendant un an**, et le retour arrière
+> devient impossible côté poste. Ne l'active qu'après avoir vérifié que tout répond en HTTPS.
+> Pour tester sans s'engager, commenter cette ligne, valider, puis la remettre.
+
+### 11.7 — Revenir en arrière
+
+Relancer sans le troisième fichier, et remettre les trois URL en `http://` plus
+`HEADSCALE_IP=<IP VPN>` :
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Sous réserve du HSTS ci-dessus : les postes qui ont déjà reçu l'en-tête refuseront le HTTP.

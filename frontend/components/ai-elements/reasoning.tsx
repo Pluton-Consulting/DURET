@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import {
@@ -204,7 +203,12 @@ export type ReasoningContentProps = ComponentProps<
   children: string;
 };
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+// PAS DE MERMAID ICI NON PLUS. Ce dépliant n'affiche qu'une liste de phrases
+// d'activité produites par le serveur : jamais un diagramme, jamais une formule.
+// L'import statique du greffon entraînait pourtant 164 Ko dans le paquet du
+// chat, mesurés (516 Ko avant, 680 Ko après). Le même piège que dans
+// message.tsx, à un autre endroit du registre.
+const streamdownPlugins = { cjk, code, math };
 
 export const ReasoningContent = memo(
   ({ className, children, ...props }: ReasoningContentProps) => (

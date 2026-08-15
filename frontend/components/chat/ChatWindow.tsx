@@ -4,7 +4,7 @@ import { useSession } from "next-auth/react"
 import MessageList from "./MessageList"
 import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
-import { Shimmer } from "@/components/ai-elements/shimmer"
+import { ReflexionEnCours } from "./ReflexionEnCours"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, sendStop, ChatEvent } from "@/lib/ws"
@@ -97,6 +97,11 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // SEULE ligne qui se remplace : un journal qui s'allonge oblige a lire
   // pour retrouver l'etat courant, alors qu'on veut le voir d'un coup d'oeil.
   const [activite, setActivite] = useState<string>("")
+  // TOUTES les phrases franchies, dans l'ordre, et pas seulement la derniere.
+  // `thinkingSteps` collecte les noms techniques des noeuds pour la frise de
+  // droite ; ici on garde le RAISONNEMENT en francais, celui qu'on relit quand
+  // on veut savoir par ou l'assistant est passe, ou bien ou il a coince.
+  const [traceReflexion, setTraceReflexion] = useState<string[]>([])
 
   // ── La file d'attente ────────────────────────────────────────────────
   // Trois populations dans la colonne de droite :
@@ -560,7 +565,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       setTacheActive(res.tache_id)
       setLoading(true)
       setThinkingNode(null)
-      setThinkingSteps([])
+      setThinkingSteps([]); setTraceReflexion([])
       setActivite("je prends la demande")
       // Sondage RAPPROCHE le temps qu'elle demarre : la cadence de croisiere
       // (4 s) laissait la banniere sur son texte d'attente plusieurs secondes,
@@ -631,7 +636,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     ])
     setLoading(true)
     setThinkingNode(null)
-    setThinkingSteps([])
+    setThinkingSteps([]); setTraceReflexion([])
     setActivite("")
     queryEnCoursRef.current = text
 
@@ -813,7 +818,14 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             }
             // Un noeud sans libelle laisse la ligne PRECEDENTE en place :
             // l'effacer ferait clignoter le bandeau a chaque etape muette.
-            if (libelle) setActivite(libelle)
+            if (libelle) {
+              setActivite(libelle)
+              // On empile, en ecartant la repetition immediate : un meme noeud
+              // traverse deux fois de suite n'apprend rien, et allongerait la
+              // trace sans rien y ajouter.
+              setTraceReflexion((prev) =>
+                prev[prev.length - 1] === libelle ? prev : [...prev, libelle])
+            }
           }
         },
         onError: () => fallbackPost(),
@@ -870,25 +882,18 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             .sym-grille i{opacity:.75;transform:none} }
         `}</style>
 
-        {loading && (
-          <div className="sym-think" role="status" aria-live="polite">
-            <span className="sym-grille" aria-hidden="true">
-              <i /><i /><i /><i /><i /><i /><i /><i /><i />
-            </span>
-            {/* La `key` remonte l'element a chaque changement d'etape et
-                rejoue l'apparition : sans elle, le texte se remplacerait sur
-                place, et rien ne signalerait que l'agent a avance. */}
-            <div className="sym-step" key={activite || thinkingNode || "start"}>
-              {/* Le libelle concret prime : « je liste un dossier du serveur »
-                  situe le travail, « Execution d'une action » ne dit rien. On
-                  retombe sur le nom d'etape tant qu'aucun libelle n'est arrive.
-                  Le balayage lumineux remplace les trois points : il dit « ca
-                  travaille » sur toute la largeur du libelle, au lieu de le
-                  reduire a un ornement pose au bout. */}
-              <Shimmer as="span">{activite || stepLabel(thinkingNode)}</Shimmer>
-            </div>
-          </div>
-        )}
+        {/* LE RAISONNEMENT, PAS SEULEMENT L'ETAPE EN COURS.
+            L'etape du moment reste en tete, et les precedentes s'empilent en
+            dessous : au bout de quarante secondes, on peut enfin dire par ou
+            l'assistant est passe, et surtout ou il a coince. Le repli se
+            referme seul une seconde apres la fin, pour ne pas encombrer le
+            fil une fois la reponse arrivee. Aucun jeton depense : chaque
+            phrase vient d'un evenement que le serveur emettait deja. */}
+        <ReflexionEnCours
+          activite={activite || stepLabel(thinkingNode)}
+          trace={traceReflexion}
+          enCours={loading}
+        />
 
         <InputBar onSend={sendMessage} disabled={false}
                   modeFile={loading || principalOccupe}

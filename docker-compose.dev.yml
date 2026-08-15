@@ -18,5 +18,7 @@ services:
       - ./frontend:/app
       - /app/node_modules
       - /app/.next
-    ports:
-      - "0.0.0.0:3000:3000"
+    # Le port est déjà publié par le fichier de base, sur la boucle
+    # locale. Le redéclarer ici le republierait sur 0.0.0.0 : Compose
+    # AJOUTE les listes de ports au lieu de les remplacer, et les deux
+    # liaisons se disputeraient le port 3000 de l'hôte.

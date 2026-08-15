@@ -26,8 +26,18 @@ services:
     environment:
       # Bind mount Windows : inotify ne remonte pas → uvicorn --reload doit sonder les fichiers.
       WATCHFILES_FORCE_POLLING: "true"
+    # LIÉ À LA BOUCLE LOCALE, PAS À TOUTES LES INTERFACES.
+    #
+    # Docker publie ses ports en insérant ses propres règles iptables, EN AMONT
+    # d'UFW : un port publié sur 0.0.0.0 est joignable depuis internet même
+    # quand le pare-feu prétend le contraire. Le backend répondait donc en clair
+    # sur l'IP publique du VPS, hors VPN et hors HTTPS, sur le port 8000.
+    #
+    # Rien n'en avait besoin : en production, nginx joint le conteneur par le
+    # réseau interne de Docker (`upstream backend { server backend:8000 }`), pas
+    # par un port de l'hôte. En développement, la boucle locale suffit.
     ports:
-      - "0.0.0.0:8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
     # Rend Ollama (LLM local, palier LIGHT) accessible sur l'hôte Windows/WSL
@@ -77,8 +87,11 @@ services:
     # → navigation instantanée entre onglets + faible empreinte RAM (bonus sur PC 7 Go).
     # Pour développer le front avec hot-reload : ajouter le fichier dev en surcouche —
     #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d frontend
+    # Même raison que pour le backend : publié sur 0.0.0.0, l'écran Next.js
+    # était servi en clair depuis l'IP publique du VPS. nginx l'atteint par le
+    # réseau interne.
     ports:
-      - "0.0.0.0:3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - noa_network
 

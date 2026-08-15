@@ -198,8 +198,26 @@ export const WebPreviewBody = ({
     <div className="flex-1">
       <iframe
         className={cn("size-full", className)}
+        // BAC À SABLE RESSERRÉ, ET DEUX AJOUTS.
+        //
+        // L'original combinait `allow-scripts` et `allow-same-origin`. C'est la
+        // paire que la spécification déconseille explicitement : ensemble, elles
+        // permettent au document encadré de retirer son propre bac à sable. On
+        // affiche ici des pages TIERCES, consultées par l'agent, sur lesquelles
+        // nous n'avons aucune maîtrise : il n'y a aucune raison de leur accorder
+        // une origine, ni le droit de soumettre des formulaires depuis l'intérieur
+        // de l'application. On garde les scripts, sans quoi la plupart des pages
+        // s'affichent vides, et rien d'autre.
+        //
+        // `referrerPolicy` : sans elle, chaque site visité apprend l'adresse
+        // interne de l'application, transmise dans l'en-tête Referer. Ce nom
+        // vit sur un réseau privé et n'a pas à sortir.
+        //
+        // `loading` : un aperçu replié ne charge rien tant qu'on ne le déplie pas.
         // oxlint-disable-next-line eslint-plugin-react(iframe-missing-sandbox)
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
+        loading="lazy"
         src={(src ?? url) || undefined}
         title="Preview"
         {...props}

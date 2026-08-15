@@ -14,7 +14,9 @@
  * serveur produisait déjà et jetait à la porte.
  */
 
+import { useState } from "react"
 import { Sources, SourcesTrigger, SourcesContent, Source } from "@/components/ai-elements/sources"
+import { WebPreview, WebPreviewNavigation, WebPreviewUrl, WebPreviewBody } from "@/components/ai-elements/web-preview"
 
 type Props = {
   /** Documents de la mémoire d'entreprise ayant nourri la réponse. */
@@ -27,6 +29,55 @@ type Props = {
   jetons?: { entree: number; sortie: number }
   /** Le modèle qui a répondu, ou « cache » quand le tour n'a rien coûté. */
   modele?: string
+}
+
+/** LA PAGE CONSULTÉE, MONTRÉE SUR PLACE.
+ *
+ *  L'agent lit des pages web pour répondre. Jusqu'ici on n'en voyait que
+ *  l'adresse : pour vérifier ce qu'il y avait dessus, il fallait ouvrir un
+ *  onglet et perdre le fil.
+ *
+ *  TROIS PRÉCAUTIONS, parce qu'on fait entrer une page étrangère dans l'écran :
+ *
+ *  1. Rien ne se charge tant que personne ne déplie. Un aperçu replié ne va
+ *     chercher aucune page, et n'annonce donc rien au site visité.
+ *  2. Seules les adresses en `https` sont proposées. L'application étant
+ *     servie en HTTPS, une page en clair serait bloquée par le navigateur, et
+ *     l'utilisateur verrait un cadre vide sans explication.
+ *  3. Le lien vers l'onglet reste TOUJOURS offert. Beaucoup de sites refusent
+ *     d'être encadrés (en-tête `X-Frame-Options`), et cela ne se détecte pas
+ *     depuis la page : le cadre reste alors blanc. Sans porte de sortie, cet
+ *     échec-là se lit comme une panne de l'application.
+ */
+function ApercuPage({ url }: { url: string }) {
+  const [ouvert, setOuvert] = useState(false)
+  const encadrable = url.startsWith("https://")
+
+  return (
+    <div className="flex w-full flex-col gap-2">
+      <div className="flex items-center gap-2">
+        {encadrable && (
+          <button type="button" onClick={() => setOuvert((v) => !v)}
+                  className="sym-tap shrink-0 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground"
+                  aria-expanded={ouvert}>
+            {ouvert ? "Masquer la page" : "Voir la page"}
+          </button>
+        )}
+        <a href={url} target="_blank" rel="noopener noreferrer"
+           className="min-w-0 flex-1 truncate text-xs text-muted-foreground underline-offset-2 hover:underline">
+          {url}
+        </a>
+      </div>
+      {ouvert && encadrable && (
+        <WebPreview defaultUrl={url} className="h-80 overflow-hidden rounded-lg border border-border">
+          <WebPreviewNavigation>
+            <WebPreviewUrl readOnly />
+          </WebPreviewNavigation>
+          <WebPreviewBody title={`Aperçu de ${url}`} />
+        </WebPreview>
+      )}
+    </div>
+  )
 }
 
 /** Un nom de fichier lisible : « devis_2026_martin.pdf » se lit mal en un coup. */
@@ -54,7 +105,7 @@ export function SourcesReponse({ documents, web, webFiltre, jetons, modele }: Pr
               </Source>
             ))}
             {web.map((u) => (
-              <Source key={`w-${u}`} href={u} title={u} target="_blank" rel="noopener noreferrer" />
+              <ApercuPage key={`w-${u}`} url={u} />
             ))}
           </SourcesContent>
         </Sources>

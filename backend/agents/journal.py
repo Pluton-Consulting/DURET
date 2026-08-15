@@ -39,6 +39,19 @@ LIBELLES = {
     "extraction": "j'extrais les éléments du document",
     "prechiffrage": "je prépare le pré-chiffrage",
     "similar_projects": "je cherche des projets comparables",
+    # LES NŒUDS QUI RESTAIENT MUETS.
+    #
+    # Sans entrée ici, `libelle()` rend une chaîne vide, l'écran garde le texte
+    # précédent, et l'utilisateur voit la même phrase pendant plusieurs secondes
+    # alors que le traitement a changé d'étape. Le silence ne se lit pas comme
+    # « rien à dire », il se lit comme « c'est bloqué ».
+    "agent1": "je traite votre demande",
+    "agent2": "j'étudie le document ou le plan",
+    "agent3": "j'apprends une nouvelle compétence",
+    "preprocess": "je prépare le document",
+    "generate_skill": "j'écris la compétence",
+    "test_skill": "j'essaie la compétence",
+    "submit_validation": "j'envoie la demande de validation",
 }
 
 # Nom d'un skill -> ce qu'il fait, à la première personne. Le nom technique
@@ -74,6 +87,49 @@ MAX_DETAIL = 80
 # Le libellé COMPLET est borné lui aussi : un nom de skill venu du registre en
 # base peut être long, et la ligne d'activité tient sur une seule ligne d'écran.
 MAX_LIBELLE = 140
+# Le motif d'un échec tient en une incise, pas en un paragraphe.
+MAX_MOTIF = 70
+
+# Repli si le budget réel n'est pas lisible. Il doit rester aligné sur
+# MAX_ACTIONS_PAR_TOUR (agents/agent1.py), mais on ne le CODE pas en dur ici :
+# un compteur qui annonce « 6/8 » alors que le budget est passé à 12 ment à
+# l'utilisateur, et c'est le genre d'écart qui survit des mois.
+_BUDGET_REPLI = 8
+
+
+def _budget_actions() -> int:
+    """Le plafond d'actions par tour, lu chez celui qui le décide.
+
+    Import RETARDÉ à dessein : `agent1` importe ce module au chargement, donc
+    l'inverse au niveau module fermerait la boucle. Ici l'appel a lieu pendant
+    un tour, quand tout est déjà en mémoire.
+    """
+    try:
+        from agents.agent1 import MAX_ACTIONS_PAR_TOUR
+        return int(MAX_ACTIONS_PAR_TOUR)
+    except Exception:   # noqa: BLE001 - le journal ne casse jamais un tour
+        return _BUDGET_REPLI
+
+
+def _motif(resultat: dict) -> str:
+    """POURQUOI ça a échoué, et pas seulement QUE ça a échoué.
+
+    L'écran disait « je dépose le fichier, sans succès ». La personne devant
+    lui ne peut alors rien faire : ni comprendre, ni corriger, ni décider s'il
+    faut réessayer. Or le motif exact est déjà là, en mémoire du serveur, dans
+    `resultat_masque` (« ERREUR : le dossier Chantiers n'existe pas. »), et il
+    est DÉJÀ passé par l'anonymiseur, donc affichable sans risque.
+
+    On ne garde que la première phrase : le reste est de la trace technique.
+    """
+    brut = str(resultat.get("resultat_masque") or "").strip()
+    if not brut.upper().startswith("ERREUR"):
+        return ""
+    # « ERREUR : le dossier n'existe pas. Vérifiez le chemin. » -> la 1re phrase
+    motif = brut.split(":", 1)[-1].strip()
+    motif = motif.split(". ")[0].strip().rstrip(".")
+    return motif[:MAX_MOTIF]
+
 
 
 def _detail(args: dict) -> str:
@@ -126,8 +182,28 @@ def libelle(node: str, update: dict | None = None) -> str:
         dernier = dernier if isinstance(dernier, dict) else {}
         nom = dernier.get("skill") or ""
         texte = _acte(nom) or (f"j'exécute {nom}" if nom else "j'exécute une action")
+
+        # SUR QUOI porte l'action. `libelle_action` savait déjà le dire, mais
+        # n'était appelée nulle part : le « sur quoi » existait en code mort
+        # depuis son écriture. « je regarde le dossier » et « je regarde le
+        # dossier : Chantiers/2026 » ne renseignent pas de la même façon quand
+        # on attend et qu'on se demande si l'assistant cherche au bon endroit.
+        detail = _detail(dernier.get("args") or {})
+        if detail:
+            texte += f" : {detail}"
+
         if dernier.get("ok") is False:
-            texte += ", sans succès"
+            motif = _motif(dernier)
+            texte += f", sans succès ({motif})" if motif else ", sans succès"
+
+        # OÙ ON EN EST DANS LE BUDGET. Le compteur est déjà tenu et déjà transmis
+        # dans le même lot. L'afficher change la nature de l'attente : « action 6
+        # sur 8 » dit qu'on approche de la fin, là où une phrase seule laisse
+        # croire que ça peut durer indéfiniment.
+        rang = update.get("tool_iterations")
+        if isinstance(rang, int) and rang > 0:
+            texte += f" [{rang}/{_budget_actions()}]"
+
         return texte[:MAX_LIBELLE]
 
     if node == "tools" and update.get("pending_action"):

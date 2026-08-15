@@ -334,10 +334,17 @@ async def llm_node(state: AgentState, config=None) -> dict:
         # déplacer la coupure, pas à la supprimer.
         plafond_bloc = (16000 if any((r.get("skill") or "") in RESULTATS_GENEREUX
                                      for r in resultats_outils) else 6000)
+        # `args` ne PART PAS vers le modèle. Il accompagne le résultat pour que
+        # l'écran puisse dire sur quoi portait l'action, mais le modèle, lui, a
+        # déjà écrit ces arguments : les lui renvoyer serait les payer deux fois,
+        # à chaque passage de la boucle. Ce filtre est ce qui rend le « sur quoi »
+        # affiché réellement gratuit.
+        pour_le_modele = [{c: v for c, v in r.items() if c != "args"}
+                          for r in resultats_outils]
         bloc_resultats = (
             "Résultats des actions déjà exécutées pour cette demande (ne les "
             "relance pas à l'identique) :\n"
-            + _json_out.dumps(resultats_outils, ensure_ascii=False,
+            + _json_out.dumps(pour_le_modele, ensure_ascii=False,
                               default=str)[:plafond_bloc]
             + "\n\n")
         # LE TRAVAIL RESTÉ OUVERT SE DIT, il ne se devine pas. `cloture_attendue`
@@ -717,7 +724,13 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # cumulative du fil pour que les jetons restent cohérents.
     masques, carte_maj = await asyncio.to_thread(
         anonymizer.anonymize_chunks, [contenu], state.get("entity_map") or {})
+    # `args` accompagne le resultat POUR L'ECRAN, pas pour le modele : c'est ce
+    # qui permet au journal d'activite de dire « je regarde le dossier :
+    # Chantiers/2026 » au lieu de « je regarde le dossier ». Seuls des reperes
+    # de LOCALISATION en sont extraits (journal._detail), jamais du contenu, et
+    # ce champ n'est pas reinjecte dans le prompt : il ne coute aucun jeton.
     resultats.append({"skill": action["skill"], "ok": ok, "payload_hash": empreinte,
+                      "args": action.get("args") or {},
                       "resultat_masque": masques[0]})
     # UNE ACTION A ABOUTI : le drapeau de relance retombe, pour que le modele
     # puisse etre repris s'il cale de nouveau plus loin.

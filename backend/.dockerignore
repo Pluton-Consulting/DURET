@@ -4,3 +4,10 @@ __pycache__
 .git
 *.md
 .env
+
+# LES SECRETS NE PARTENT PAS DANS L'IMAGE.
+# `.env` était exclu, pas `secrets/` : le `COPY . .` du Dockerfile embarquait
+# donc google_token.json et site_credentials.json dans les couches de l'image.
+# L'effet est masqué à l'exécution par le montage de ./backend, mais l'image,
+# elle, les contient — et une image se pousse, se copie et se conserve.
+secrets/

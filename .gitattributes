@@ -1,0 +1,26 @@
+# LES FINS DE LIGNE, NORMALISÉES UNE FOIS POUR TOUTES.
+#
+# Sans ce fichier, le même fichier vivait en CRLF d'un côté et en LF de l'autre.
+# Conséquence mesurée : un diff de ChatWindow.tsx annonçait 917 lignes changées
+# quand 4 l'étaient réellement. Reporter un correctif d'un projet à l'autre
+# devenait impraticable, la seule méthode restante étant de recopier le fichier
+# entier, ce qui détruit au passage les corrections locales.
+#
+# `text=auto eol=lf` : dépôt en LF, poste de travail libre. Les scripts shell
+# sont forcés en LF sans exception : un shebang suivi d'un retour chariot
+# échoue sur Linux, et le déploiement ne tenait que si git normalisait au
+# checkout, ce qui n'est pas garanti.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.mjs  text eol=lf
+*.py   text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.svg  text eol=lf
+*.wasm binary
+*.ico  binary
+*.docx binary
+*.xlsx binary
+*.pdf  binary

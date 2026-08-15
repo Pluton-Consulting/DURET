@@ -25,18 +25,18 @@ import logging
 import re
 from typing import Optional
 
-logger = logging.getLogger("duret.skills.protocol")
+logger = logging.getLogger("symbiose.skills.protocol")
 
 # Un bloc ```action ... ``` n'importe où dans la réponse.
 BLOC_ACTION_RE = re.compile(r"```action\s*(.*?)```", re.S)
 
 # UN BLOC OUVERT QUI NE SE REFERME JAMAIS : la signature d'une sortie COUPÉE.
 #
-# Relevé en production le 14/08 : le modèle a tenté de verser dix pages en un
-# seul `ajouter_document`, et la sortie s'est arrêtée net à 3072 jetons — le
-# plafond exact du palier. Sans les trois accents graves de clôture, le bloc
-# n'est plus reconnu par `BLOC_ACTION_RE`, avec deux conséquences qui se
-# cumulent au pire moment :
+# Relevé en production le 14/08 (projet jumeau) : le modèle a tenté de verser
+# dix pages en un seul `ajouter_document`, et la sortie s'est arrêtée net à
+# 3072 jetons — le plafond exact du palier. Sans les trois accents graves de
+# clôture, le bloc n'est plus reconnu par `BLOC_ACTION_RE`, avec deux
+# conséquences qui se cumulent au pire moment :
 #   1. l'action n'est pas exécutée — rien n'est versé ;
 #   2. le filtre d'affichage ne la masque pas — le JSON brut, sur des milliers
 #      de caractères, part à l'écran de l'utilisateur.
@@ -104,6 +104,43 @@ def _objet_equilibre(texte: str, debut: int) -> str | None:
     return None
 
 
+# ── Le JSON du modèle, réparé sur place plutôt que redemandé ─────────────
+#
+# Un bloc d'action mal formé coûtait un ALLER-RETOUR COMPLET au modèle : on lui
+# renvoyait « réécris un JSON valide », il refaisait sa passe, et le tour
+# consommait deux appels au lieu d'un. Sur une cascade où un appel dépasse la
+# minute, c'est la panne la plus chère du protocole.
+#
+# Or les défauts observés sont TOUJOURS syntaxiques, jamais sémantiques : une
+# accolade oubliée, une virgule finale, des guillemets simples, un commentaire
+# glissé dans l'objet, un guillemet non échappé. `json_repair` les corrige
+# localement, sans appel réseau et sans modèle.
+#
+# CE QUE ÇA NE PEUT PAS CASSER. La réparation ne touche qu'à la FORME. Tout ce
+# qui suit reste inchangé : le skill doit exister au catalogue du rôle, les
+# paramètres obligatoires doivent être présents, l'effet doit être déclaré. Une
+# réparation qui produirait un objet absurde est donc rejetée juste après, comme
+# l'aurait été l'original.
+def _charger_json(brut: str):
+    """`json.loads`, puis réparation si la forme est fautive. Lève si rien n'y fait."""
+    try:
+        return json.loads(brut)
+    except json.JSONDecodeError:
+        pass
+    try:
+        from json_repair import loads as _reparer
+    except ImportError:
+        # La dépendance manque : on se comporte exactement comme avant.
+        raise
+    repare = _reparer(brut)
+    if repare in ({}, [], "", None):
+        # Rien d'exploitable : on relance l'erreur d'origine, pour que le
+        # message rendu au modèle reste celui du vrai problème.
+        raise json.JSONDecodeError("illisible même après réparation", brut, 0)
+    logger.info("Bloc JSON réparé localement (aucun appel au modèle épargné)")
+    return repare
+
+
 def _action_json_nu(texte: str, role: str | None = None):
     """Reconnaît un appel d'outil rendu en JSON nu, sans aucune balise."""
     for amorce in _DEBUT_JSON_NU_RE.finditer(texte or ""):
@@ -111,7 +148,7 @@ def _action_json_nu(texte: str, role: str | None = None):
         if not brut:
             continue
         try:
-            data = json.loads(brut)
+            data = _charger_json(brut)
         except json.JSONDecodeError:
             continue
         if not isinstance(data, dict):
@@ -122,7 +159,7 @@ def _action_json_nu(texte: str, role: str | None = None):
         args = data.get("args") or data.get("arguments") or data.get("parameters") or {}
         if isinstance(args, str):
             try:
-                args = json.loads(args)
+                args = _charger_json(args)
             except json.JSONDecodeError:
                 continue
         if not isinstance(args, dict):
@@ -181,11 +218,6 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "as-tu ». C'est un INVENTAIRE, pas une recherche : il rend ce qui existe, sans "
         "seuil de pertinence. sujet : mot-clé optionnel pour filtrer",
         [], ["sujet"]),
-    # Les skills PROPRES AU PROJET (NAS, bibliothèque d'outils, mode d'emploi)
-    # ne se déclarent plus ici : chaque module de `skills/` porte les siens dans
-    # un dictionnaire `SKILLS`, que `catalogue()` fusionne via le registre.
-    # C'est ce qui rend le projet dupliquable — remplacer `skills/` et `outils/`
-    # suffit, ce fichier appartient au socle et ne bouge pas.
     "retenir": (
         "RETIENT DEFINITIVEMENT une consigne, une regle ou un mot de vocabulaire "
         "maison. A utiliser des que l'utilisateur dit « retiens que », « souviens-toi "
@@ -216,6 +248,7 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "contenu depasse ce qui tient dans UNE reponse (environ 30 blocs de "
         "texte redige) : au-dela, verse par `ajouter_document` successifs, "
         "autant qu il faut, puis `terminer_document`. Ne produit aucun fichier",
+
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter"]),
     "ajouter_document": (
         # LA TAILLE PAR APPEL MANQUAIT ICI. Le catalogue disait « autant de
@@ -243,6 +276,9 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "pour « repartir de zero » : un document deja ouvert sous le bon titre "
         "se POURSUIT avec `ajouter_document`",
         ["document_id"], ["confirme"]),
+    # Les visuels (propres a Symbiose) se declarent dans skills/visuels.py
+    # (dictionnaire SKILLS, lu par le registre) : le socle ne bouge pas quand
+    # on duplique le projet.
     "mes_droits": (
         "Explique les DROITS D'ACCES : ce que la personne connectee peut consulter, "
         "ce qui lui est ferme, quelles boites mail elle peut lire, et comment le "
@@ -341,15 +377,13 @@ def catalogue(role: str | None = None) -> dict[str, tuple[str, list[str], list[s
     visibles = _niveaux_visibles(role)
     externes = {nom: valeur[:3] for nom, valeur in _EXTERNES.items()
                 if valeur[3] in visibles}
-    # Le REGISTRE porte les skills propres au projet (NAS, bibliothèque
+    # Le REGISTRE porte les skills propres au projet (visuels, bibliothèque
     # d'outils…) : un module déposé dans skills/ suffit à les faire apparaître
     # ici, sans toucher ce fichier — c'est ce qui rend le projet dupliquable.
     # Même rang que les natifs : du code livré, non filtré par rôle, ses propres
     # gardes s'appliquant au moment d'agir.
     from skills.registre import catalogue_declare
     return {**externes, **catalogue_declare(), **CATALOGUE_AGENT1}
-
-
 
 
 async def rafraichir_catalogue(force: bool = False) -> int:
@@ -391,8 +425,11 @@ async def rafraichir_catalogue(force: bool = False) -> int:
 
 
 def instruction_actions(role: str | None = None) -> str:
-    """Bloc à ajouter au prompt système. Constant : le préfixe reste stable, donc
-    le cache de prompt du fournisseur continue de s'appliquer."""
+    """Bloc à ajouter au prompt système.
+
+    Le préfixe reste stable tant que le registre ne change pas, donc le cache de
+    prompt du fournisseur continue de s'appliquer entre deux tours.
+    """
     lignes = []
     for nom, (desc, requis, optionnels) in catalogue(role).items():
         params = ", ".join([f"{p}*" for p in requis] + list(optionnels)) or "aucun"
@@ -491,7 +528,7 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
     reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
 
     try:
-        data = json.loads(trouve.group(1).strip())
+        data = _charger_json(trouve.group(1).strip())
     except json.JSONDecodeError as e:
         return None, reste, f"bloc action illisible ({e}) : réécris un JSON valide"
 

@@ -38,3 +38,8 @@ pypdfium2>=4.30.0                   # rendu des pages PDF en image pour l'OCR
 python-docx>=1.1.0                   # lecture des .docx (import de documents)
 reportlab>=4.2.0                    # rendu PDF : en-tetes, pieds numerotes, tableaux paginés
 python-multipart>=0.0.9             # upload de fichiers (FastAPI UploadFile)
+# Repare localement un JSON mal forme par le modele, au lieu de lui redemander
+# une passe entiere. Les defauts observes sont toujours syntaxiques (accolade
+# oubliee, virgule finale, guillemets simples) : la validation metier qui suit
+# reste inchangee, donc une reparation absurde est rejetee comme l original.
+json-repair>=0.30

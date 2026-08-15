@@ -30,6 +30,10 @@ class AgentState(TypedDict):
     # Traitement RAG
     raw_chunks: Optional[List[str]]
     anonymized_chunks: Optional[List[str]]
+    # Les NOMS des documents d'où provient le contexte, pour l'écran seul. Ils
+    # ne repartent jamais vers le modèle : celui-ci les a déjà en tête de chaque
+    # extrait. Sans eux, l'assistant cite un montant et rien ne dit d'où il sort.
+    sources_memoire: Optional[List[str]]
     anonymized_query: Optional[str]  # requête masquée (PII retirée) envoyée au LLM
     entity_map: Optional[dict]      # Correspondances pour réhydratation (CUMULATIF sur le fil)
     turn_placeholders: Optional[List[str]]  # jetons envoyés au LLM ce tour-ci (borne la réhydratation)

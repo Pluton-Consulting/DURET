@@ -7,6 +7,7 @@ import {
 } from "@/components/ai-elements/conversation"
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import { MessageRenderer } from "./MessageRenderer"
+import { SourcesReponse } from "./SourcesReponse"
 
 interface Message_ {
   id: string
@@ -21,6 +22,15 @@ interface Message_ {
   // Sans elle, la reponse d'une tache de fond apparaitrait bien plus bas,
   // apres les echanges qui l'ont doublee, detachee de sa question.
   placeholder?: boolean
+  // D'OU vient la reponse, et ce qu'elle a coute. Attache au MESSAGE et non au
+  // tour : la provenance doit rester lisible trois questions plus tard.
+  provenance?: {
+    documents: string[]
+    web: string[]
+    webFiltre?: boolean
+    jetons?: { entree: number; sortie: number }
+    modele?: string
+  }
 }
 
 /** LE DÉFILEMENT EST DÉLÉGUÉ, PLUS BRICOLÉ.
@@ -127,6 +137,17 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
               <MessageContent data-testid="message-assistant" className="max-w-full">
                 <MessageRenderer content={msg.content} onAction={onAction}
                                  apiUrl={apiUrl} backendToken={backendToken} />
+                {/* D'ou vient cette reponse, sous elle et non ailleurs : une
+                    provenance rangee dans un panneau lateral n'est jamais lue. */}
+                {msg.provenance && (
+                  <SourcesReponse
+                    documents={msg.provenance.documents}
+                    web={msg.provenance.web}
+                    webFiltre={msg.provenance.webFiltre}
+                    jetons={msg.provenance.jetons}
+                    modele={msg.provenance.modele}
+                  />
+                )}
               </MessageContent>
             </Message>
           )

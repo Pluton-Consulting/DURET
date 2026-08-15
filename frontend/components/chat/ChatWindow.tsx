@@ -19,6 +19,16 @@ interface Message {
   // doublee. Une reponse detachee de sa question ne se lit pas.
   tacheId?: string
   placeholder?: boolean
+  // D'OU vient la reponse, et ce qu'elle a coute. Attache AU MESSAGE et non au
+  // tour : la provenance doit rester lisible trois questions plus tard, sinon
+  // elle ne sert qu'a l'instant ou personne ne la lit.
+  provenance?: {
+    documents: string[]
+    web: string[]
+    webFiltre?: boolean
+    jetons?: { entree: number; sortie: number }
+    modele?: string
+  }
 }
 
 interface ChatWindowProps {
@@ -102,6 +112,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // droite ; ici on garde le RAISONNEMENT en francais, celui qu'on relit quand
   // on veut savoir par ou l'assistant est passe, ou bien ou il a coince.
   const [traceReflexion, setTraceReflexion] = useState<string[]>([])
+  // La provenance du tour EN COURS. Une ref et non un etat : elle est lue au
+  // moment ou la reponse arrive, pas affichee pendant qu'elle se remplit, donc
+  // un rendu par document trouve ne servirait a rien.
+  const provenanceRef = useRef<{
+    documents: string[]; web: string[]; webFiltre: boolean
+    entree: number; sortie: number; modele?: string
+  }>({ documents: [], web: [], webFiltre: false, entree: 0, sortie: 0 })
 
   // ── La file d'attente ────────────────────────────────────────────────
   // Trois populations dans la colonne de droite :
@@ -170,6 +187,18 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     } catch { /* no-op */ }
   }
 
+  /** Fige la provenance du tour et repart de zero pour le suivant. */
+  const instantane = () => {
+    const p = provenanceRef.current
+    const gele = {
+      documents: [...p.documents], web: [...p.web], webFiltre: p.webFiltre,
+      jetons: (p.entree || p.sortie) ? { entree: p.entree, sortie: p.sortie } : undefined,
+      modele: p.modele,
+    }
+    provenanceRef.current = { documents: [], web: [], webFiltre: false, entree: 0, sortie: 0 }
+    return gele
+  }
+
   const pushAssistant = (content: string, vivant = false) =>
     // `vivant` : la bulle N'EST PAS une fin de tour. Elle prend alors le
     // traitement d'attente — contour pointillé animé — au lieu de l'aspect
@@ -182,6 +211,8 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     setMessages((prev) => [...prev, {
       id: newId(), role: "assistant", content,
       ...(vivant ? { placeholder: true } : {}),
+      // Une bulle d'ATTENTE n'a pas de provenance : le tour n'est pas fini.
+      ...(vivant ? {} : { provenance: instantane() }),
     }])
 
   const majCarteLocale = (id: string, patch: Partial<TacheFond>) =>
@@ -818,6 +849,22 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             }
             // Un noeud sans libelle laisse la ligne PRECEDENTE en place :
             // l'effacer ferait clignoter le bandeau a chaque etape muette.
+            // LA PROVENANCE S'ACCUMULE AU FIL DES NOEUDS. Chaque valeur est
+            // deja dans `data` : le serveur les produisait et l'ecran les
+            // jetait. Rien n'est demande au modele, rien n'est calcule ici.
+            const d: any = (event as any).data || {}
+            const p = provenanceRef.current
+            for (const nom of (d.sources_memoire || [])) {
+              if (!p.documents.includes(nom)) p.documents.push(nom)
+            }
+            for (const u of (d.browser_sources || [])) {
+              if (!p.web.includes(u)) p.web.push(u)
+            }
+            if (d.browser_was_filtered) p.webFiltre = true
+            if (typeof d.tokens_in === "number") p.entree += d.tokens_in
+            if (typeof d.tokens_out === "number") p.sortie += d.tokens_out
+            if (d.model_used) p.modele = d.model_used
+
             if (libelle) {
               setActivite(libelle)
               // On empile, en ecartant la repetition immediate : un meme noeud

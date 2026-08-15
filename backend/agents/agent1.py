@@ -227,11 +227,33 @@ async def recherche_node(state: AgentState) -> dict:
     if not trouves:
         return {"anonymized_chunks": deja}
 
+    # D'OÙ VIENT CE QUE L'ASSISTANT VA DIRE.
+    #
+    # Chaque extrait porte sa provenance en tête, sous la forme « [nom] »
+    # (vectorstore/rag.py:201). Elle servait au modèle et à lui seul : l'écran
+    # n'en voyait rien. Or quand l'assistant annonce un montant ou une
+    # référence, la première question est « tu as vu ça où ». Sans réponse,
+    # il faut le croire sur parole.
+    #
+    # Le nom de fichier ne divulgue rien : la recherche a DÉJÀ filtré sur le
+    # niveau d'accès de la personne (`user_role` plus haut), donc elle avait
+    # de toute façon le droit d'ouvrir ces documents. Et cela ne coûte aucun
+    # jeton : on n'ajoute rien au prompt, on transmet ce qu'on avait déjà.
+    sources: list[str] = []
+    for extrait in trouves:
+        texte = str(extrait or "")
+        if texte.startswith("["):
+            nom = texte[1:texte.find("]")] if "]" in texte else ""
+            nom = nom.strip()
+            if nom and nom not in sources:
+                sources.append(nom)
+
     # Les documents partent vers le modèle : ils doivent être masqués, avec la
     # carte cumulative du fil pour que les jetons restent cohérents.
     masques, carte = await asyncio.to_thread(
         anonymizer.anonymize_chunks, list(trouves), state.get("entity_map") or {})
-    return {"anonymized_chunks": deja + masques, "entity_map": carte}
+    return {"anonymized_chunks": deja + masques, "entity_map": carte,
+            "sources_memoire": sources}
 
 
 async def browser_node(state: AgentState) -> dict:

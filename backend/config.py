@@ -238,6 +238,15 @@ class Settings(BaseSettings):
     ms_client_id: Optional[str] = None
     ms_client_secret: Optional[str] = None
     ms_mailbox: Optional[str] = None    # boîte à lire (ex. contact@duret-sols.fr)
+    # LE GARDE-FOU DE DOMAINE. Il refuse toute boîte hors du domaine de
+    # l'entreprise. Les permissions Microsoft accordées à l'application portent
+    # sur TOUT le tenant : ce filtre est ce qui empêche d'ouvrir une boîte qu'on
+    # n'a pas à lire, y compris par une simple erreur de saisie.
+    #
+    # Il est lu par `mail/lecture.py` et `ingestion/connectors/outlook.py`. Non
+    # déclaré, il ne rend pas None : il lève une AttributeError au premier accès,
+    # loin de la configuration, et l'erreur ne désigne pas sa cause.
+    ms_domain: Optional[str] = None     # ex. mon-entreprise.fr
 
     # Extrabat (API REST partenaire — activation + identifiants API par l'éditeur).
     extrabat_base_url: str = "https://api.extrabat.com/v1"

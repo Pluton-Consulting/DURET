@@ -22,7 +22,13 @@ ROLE_PERMISSIONS: dict[str, List[str]] = {
         "view_dashboard_global", "view_own_stats",
         "validate_skills", "manage_users", "configure_agents",
         "view_costs_global", "view_own_costs", "view_audit_log",
-        "manage_agent3", "run_browser_agent", "import_documents",
+        # ⚠ CE FICHIER N'EST PAS LA SOURCE DE VÉRITÉ EN PRODUCTION. Cette matrice
+        # est semée en base au premier démarrage, puis lue depuis la table
+        # `roles_permissions`. Corriger une ligne ici ne change donc RIEN sur une
+        # base déjà semée : il faut une migration qui insère les permissions
+        # manquantes. La ligne et la base peuvent diverger sans que rien ne le
+        # signale, et c'est la base qui gagne.
+        "manage_agent3", "run_browser_agent", "import_documents", "manage_mailboxes",
     ],
     "commercial": [
         "chat_agent1", "view_own_stats", "view_own_costs",

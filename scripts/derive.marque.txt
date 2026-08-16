@@ -1,0 +1,91 @@
+# ---------------------------------------------------------------------------
+# TABLE DE MARQUE - ce qui, entre les deux depots, n'est QUE de l'habillage
+# ---------------------------------------------------------------------------
+#
+# Une regle par ligne :   <expression reguliere Python>  =>  <jeton neutre>
+# Les sections [nom] servent au rapport : il dit quelle facette de la marque
+# recouvre un fichier encore divergent.
+#
+# Chaque regle est appliquee aux DEUX depots. Il n'y a donc pas de « cote
+# Symbiose » et de « cote Duret » ici, seulement des motifs qui se replient sur
+# un meme jeton neutre. Un troisieme client s'ajouterait en allongeant la liste,
+# sans toucher au moteur.
+#
+# L'ORDRE COMPTE : les regles s'appliquent de haut en bas. Le nom long doit
+# passer avant le nom court, sinon « Symbiose Paysage » devient « @MARQUE@
+# Paysage » quand « Duret & Sols » devient « @MARQUE@ & Sols », et deux
+# fichiers pourtant jumeaux resteraient marques divergents.
+#
+# Une ligne dont le motif commence par « # » doit l'echapper en « \# » : une
+# ligne qui debute par un croisillon est lue comme un commentaire.
+#
+# Ce fichier est le seul endroit ou l'on decide qu'une difference est
+# cosmetique. L'elargir a la legere, c'est faire baisser le compteur sans que
+# les depots aient converge d'un pouce. Chaque ligne ajoutee doit pouvoir se
+# justifier par un diff reel.
+# ---------------------------------------------------------------------------
+
+
+[domaine]
+# Avant [entreprise] : « symbiose-paysage.fr » contient « symbiose », et la
+# regle courte l'avalerait en laissant « @MARQUE@-paysage.fr » d'un cote et
+# « @MARQUE@-sols.fr » de l'autre.
+(?i)symbiose[-_]paysage\.fr              => @DOMAINE@
+(?i)duret[-_]sols\.fr                    => @DOMAINE@
+
+
+[entreprise]
+# Toutes les formes du nom se replient sur UN seul jeton, quelle que soit leur
+# longueur : c'est bien le meme emplacement de variable. « Symbiose-Agent »
+# (backend/browser/scripts.py:48) et « Duret & Sols-Agent » deviennent ainsi
+# tous deux « @MARQUE@-Agent ».
+(?i)symbiose\s+paysage                   => @MARQUE@
+(?i)duret\s*&(?:amp;)?\s*sols            => @MARQUE@
+(?i)duret\s+et\s+sols                    => @MARQUE@
+# Le nom suivi de son qualificatif, dans les identifiants techniques : nom de
+# depot (`symbiose-noa`, `duret-sols`) et nom de base de donnees
+# (`symbiose_noa`, `duret_noa`, `duret_sols`). Une seule regle les absorbe, sinon
+# `@MARQUE@-noa-frontend` resterait different de `@MARQUE@-sols-frontend`
+# dans frontend/package.json:2.
+(?i)(?:symbiose|duret)[-_](?:noa|sols|paysage)  => @MARQUE@
+# Bornes maison plutot que \b. \b prend l'underscore pour une lettre : le
+# prefixe de stockage `symbiose_thread_id` (frontend/components/chat/
+# ChatWindow.tsx:62) ne se serait jamais aligne sur `duret_thread_id`.
+# `[^\W_]` designe « lettre ou chiffre, accents compris » : `duret_` passe,
+# `durete` non.
+(?i)(?<![^\W_])symbiose(?![^\W_])        => @MARQUE@
+(?i)(?<![^\W_])duret(?![^\W_])           => @MARQUE@
+
+
+[couleur]
+# La charte est par definition propre a chaque client (vert foret contre bleu
+# d'enseigne, frontend/app/charte.css:30). Toute valeur hexadecimale est donc
+# neutralisee.
+# Limite assumee : une teinte changee pour une raison NON esthetique - un
+# contraste corrige, un etat d'erreur - disparait aussi du compteur. Les
+# pastilles de role de frontend/lib/permissions.ts:25 en sont l'exemple : elles
+# portent des ratios de contraste calcules, que ce compteur ne verifie pas.
+\#[0-9a-fA-F]{8}\b                       => @COULEUR@
+\#[0-9a-fA-F]{6}\b                       => @COULEUR@
+\#[0-9a-fA-F]{3}\b                       => @COULEUR@
+
+
+[stockage]
+# Le socle documentaire du client : Google Drive chez l'un, NAS Synology chez
+# l'autre. On ne neutralise que les NOMS du systeme, jamais les identifiants de
+# code (`drive_folder`, `nas_chemin`) : derriere eux il y a deux
+# implementations differentes, et les confondre masquerait de la vraie
+# divergence. Les connecteurs eux-memes sont declares, pas neutralises.
+(?i)NAS\s+Synology                       => @STOCKAGE@
+(?i)Google\s+Drive                       => @STOCKAGE@
+(?i)\bSynology\b                         => @STOCKAGE@
+\bNAS\b                                  => @STOCKAGE@
+
+
+[metier]
+# Le metier du client, quand il n'apparait que comme un mot dans une phrase.
+# Table volontairement courte : les vraies differences de metier sont des
+# reecritures entieres de prompt, qu'aucune substitution mot a mot ne
+# rapprochera - elles relevent de derive.declaration.txt, pas d'ici.
+(?i)paysag(?:istes?|[eè]res?|ers?|es?)\b => @METIER@
+\bBTP\b                                  => @METIER@

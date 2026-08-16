@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------
+# DIVERGENCES DECLAREES - ce qui a le DROIT de differer entre les deux depots
+# ---------------------------------------------------------------------------
+#
+# Une entree par ligne :   <chemin ou motif>   # <raison>
+# `*` ne traverse pas les `/`, `**` les traverse, un motif fini par `/` couvre
+# tout le sous-arbre. Les sections [nom] sont pour la lecture humaine.
+#
+# LA REGLE D'ADMISSION, et elle est stricte :
+#   on declare le fichier qui PORTE LA MARQUE PAR DESTINATION - la charte, le
+#   logo, le prompt d'identite, le connecteur du socle documentaire d'un client,
+#   le fichier de deploiement d'un client.
+#   on ne declare PAS un fichier du socle commun qui a seulement attrape un mot
+#   de marque au passage, ni un fichier ou un correctif n'a ete pose que d'un
+#   seul cote. Ces deux-la doivent converger, et le compteur doit continuer a
+#   les montrer.
+#
+# Toute entree ajoutee ici fait baisser le chiffre sans qu'une ligne de code ait
+# bouge. C'est un budget qu'on depense, pas un menage qu'on fait. Une raison
+# ecrite est donc obligatoire : sans elle, personne ne saura, dans six mois, si
+# la ligne protege une decision ou couvre un oubli.
+#
+# Une entree qui ne designe plus aucun fichier est signalee par le compteur
+# comme « sans objet » : c'est une bonne nouvelle, elle est a retirer.
+# ---------------------------------------------------------------------------
+
+
+[charte]
+# L'habillage d'enseigne. Vert foret d'un cote, bleu-rouge-jaune de l'autre.
+# Ces fichiers porteront toujours des valeurs differentes, meme apres
+# mutualisation : ils deviendront le theme charge par client.
+frontend/app/charte.css                 # les jetons --marque-* : le seul fichier de couleurs a changer
+frontend/components/nav/Logo.tsx        # trace du logo, propre au client (absent cote @MARQUE@ vert)
+frontend/app/layout.tsx                 # polices d'enseigne (Plus Jakarta Sans + Inter / Inter seul)
+frontend/app/(auth)/login/page.tsx      # marque de l'ecran de connexion : image SVG d'un cote, composant Logo de l'autre
+frontend/app/(auth)/verify/page.tsx     # le meme signe d'enseigne sur l'ecran de verification
+frontend/components/nav/TopNav.tsx      # le meme signe d'enseigne dans la barre du haut
+frontend/lib/permissions.ts             # pastilles de role tirees du logo + libelles de metier des onglets
+frontend/app/(app)/parametres/SettingsClient.tsx  # nom affiche du produit dans l'en-tete d'administration
+frontend/components/blocks/business/DocCard.tsx   # la teinte du format DWG descend de la marque
+backend/routers/auth.py                 # gabarit d'e-mail : le logo y est redessine en cellules de tableau
+backend/bureautique/modele.py           # couleur de marque des documents produits, assombrie pour l'impression
+
+[identite]
+# Ce que l'assistant dit de lui-meme et du metier qu'il sert. Un paysagiste et
+# un poseur de sols n'ont ni le meme vocabulaire, ni les memes livrables.
+#
+# A TERME ces fichiers doivent sortir de la declaration : le prompt a vocation
+# a devenir une donnee par client, pas du Python. Le jour ou SYSTEM_PROMPT sera
+# lu depuis un fichier de configuration, agent1.py et agent2.py convergeront et
+# ces deux lignes disparaitront.
+backend/agents/agent1.py                # SYSTEM_PROMPT : administratif @METIER@ / suivi de chantiers BTP
+backend/agents/agent2.py                # SYSTEM_PROMPT : conception et visuels / etudes et chiffrage
+backend/mail/skills.py                  # prompt de classement du courrier, formule selon le metier
+backend/scripts/seed_skills_catalogue.py  # catalogue de capacites metier livre a l'amorcage
+backend/scripts/test_e2e.py             # jeu d'essai metier (terrassement et plantation / ragreage et carrelage)
+frontend/app/(app)/gestion/page.tsx     # prompts d'agents affiches en demonstration
+frontend/app/(app)/conception/page.tsx  # formats de plans acceptes (SketchUp / DWG)
+frontend/app/(app)/navigateur/NavigateurClient.tsx  # domaines metier proposes en exemple
+
+[connecteurs]
+# Le socle documentaire et les outils du client. Google Drive et Microsoft 365
+# d'un cote, NAS Synology et Google Workspace de l'autre : ce ne sont pas deux
+# reglages du meme code, ce sont deux implementations.
+backend/outils/drive.py                 # lecture du Drive d'entreprise (cote @MARQUE@ vert seulement)
+backend/outils/nas.py                   # lecture du @STOCKAGE@ (cote @MARQUE@ bleu seulement)
+backend/nas/                            # acces bas niveau au @STOCKAGE@
+backend/skills/nas.py                   # skills exposant le @STOCKAGE@ a l'assistant
+backend/skills/visuels.py               # skills de rendu d'amenagement (offre @METIER@)
+backend/visuels/                        # generation de visuels Higgsfield, facturee a l'usage
+backend/ingestion/connectors/synology.py  # ingestion depuis le @STOCKAGE@
+backend/ingestion/connectors/gmail.py   # ingestion du courrier Google Workspace
+backend/ingestion/connectors/outlook.py # Microsoft 365 chez l'un, conserve mais inutilise chez l'autre
+backend/scripts/google_consentement.py  # obtention du consentement Google, propre au socle Drive
+backend/scripts/test_microsoft.py       # verification du raccordement Microsoft 365
+backend/skills/outils.py                # perimetres de lecture : dossiers Drive / partages @STOCKAGE@
+backend/outils/__init__.py              # registre des outils reellement branches chez ce client
+backend/routers/ingestion.py            # liste des sources proposees a l'ecran de synchronisation
+backend/llm/cles.py                     # cles d'API des services souscrits par ce client
+frontend/components/settings/ClesApiTab.tsx  # les memes cles, cote ecran de reglages
+
+[deploiement]
+# Ce qui installe l'application chez CE client : depot, base, chemins, notes
+# d'exploitation. Restera propre a chaque client tant que l'hebergement l'est.
+DEPLOY.md                               # depot GitHub et hote de destination du client
+SETUP.md                                # nom de la base de donnees du client
+DUPLICATION.md                          # mode d'emploi de la copie, cite les skills a vider chez ce client
+start-local.sh                          # chemin du projet sur le poste et utilisateur postgres
+backup.sh                               # utilisateur postgres de la sauvegarde
+README-DURET.md                         # note d'accueil propre au second client

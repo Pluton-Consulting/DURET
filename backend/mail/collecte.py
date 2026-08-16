@@ -23,6 +23,15 @@ logger = logging.getLogger("duret.mail.collecte")
 DOSSIER_ENVOYES = {"outlook": "sentitems", "gmail": "SENT"}
 
 
+def _module_present(chemin: str) -> bool:
+    """Le module est-il installe dans CE projet ? Sans le charger."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec(chemin) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def fournisseur() -> str:
     """'outlook', 'gmail', ou lève si rien n'est configuré."""
     choix = (getattr(settings, "mail_provider", "auto") or "auto").strip().lower()
@@ -34,7 +43,19 @@ def fournisseur() -> str:
 
     import os
     fichier = getattr(settings, "google_sa_file", None)
-    if fichier and os.path.exists(fichier):
+    # UN FOURNISSEUR N'EST CHOISI QUE SI SON CONNECTEUR EXISTE ICI.
+    #
+    # Les connecteurs de courrier sont propres au client : Duret lit dans Google
+    # Workspace, Symbiose dans Microsoft 365, et `gmail.py` n'est donc present
+    # que d'un cote. C'est voulu. Mais ce fichier-ci est du SOCLE COMMUN, et il
+    # se contentait de la presence d'une cle de compte de service Google pour
+    # renvoyer « gmail » : dans le projet ou le module n'existe pas, l'import
+    # plus bas levait un ModuleNotFoundError, c'est-a-dire une trace technique
+    # au lieu du message qui dit quoi configurer.
+    #
+    # `find_spec` ne charge rien, il regarde seulement si le module est
+    # trouvable. Meme technique que le controle des connecteurs au demarrage.
+    if fichier and os.path.exists(fichier) and _module_present("ingestion.connectors.gmail"):
         return "gmail"
 
     raise NotImplementedError(

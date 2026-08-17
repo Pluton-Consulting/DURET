@@ -69,6 +69,17 @@ MAX_ACTIONS_PAR_TOUR = 40
 # quatre qui échouent ne l'est pas.
 MAX_ECHECS_CONSECUTIFS = 3
 
+# À PARTIR D'OÙ UN TOUR EST « LONG », DONC OÙ UN LIVRABLE SE PRÉSENTE.
+#
+# En deçà, une demande simple — « fais-moi une note de deux pages » — tient en
+# quelques actions et n'a aucune raison d'être coupée en deux. Au-delà,
+# l'attente devient assez longue pour qu'un résultat déjà prêt mérite d'être
+# montré tout de suite plutôt que d'attendre la fin d'un travail qui continue.
+#
+# Dix : le premier document du tour relevé en production était terminé à la
+# dixième action, et le reste a duré vingt minutes de plus.
+POINT_ETAPE_ACTIONS = 10
+
 
 # Les versements dans un document en cours sont exemptés du budget ci-dessus
 # (ils avancent par construction), mais pas sans borne : le document accepte
@@ -532,9 +543,15 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"quick_replies","options":["Proposition 1","Proposition 2"]}
 - {"type":"plan","titre":"...","resume":"...","etapes":[{"titre":"...","etat":"fait|en_cours|a_faire","resultats":["ce que cette étape a donné","..."]}]}
 
-TRAVAIL LONG : ANNONCE LE PLAN, PUIS RENDS COMPTE. Dès qu'une demande tient en plusieurs livrables ou demande d'explorer avant de produire (analyser des documents PUIS en rédiger, comparer PUIS chiffrer), ouvre ta réponse par un bloc `plan` qui liste les étapes. Reviens-y : à chaque fois que tu réponds pendant ce travail, redonne le bloc `plan` mis à jour, avec `etat` à jour et, sous chaque étape franchie, ce qu'elle a DONNÉ — les constats, les chiffres, les décisions prises, pas « fait ». Une étape sans résultat n'apprend rien à personne. N'annonce jamais « fait » sur une étape que tu n'as pas réellement menée.
+TRAVAIL LONG : LE PLAN D'ABORD, PUIS UN RÉSULTAT À CHAQUE FOIS. Dès qu'une demande tient en plusieurs livrables ou exige d'explorer avant de produire (analyser des documents PUIS en rédiger, comparer PUIS chiffrer) :
+1. Ta PREMIÈRE réponse ouvre par un bloc `plan` qui liste les étapes, et elle traite la première étape — pas plus. Mieux vaut un résultat en trois minutes que trois résultats en trente.
+2. Tu TERMINES ce tour en présentant ce que l'étape a donné, puis un bloc `quick_replies` proposant la suite (« Passe à l'étape suivante », « Reprends le point 2 autrement »).
+3. Au tour suivant, tu redonnes le bloc `plan` avec `etat` à jour, les résultats des étapes franchies, et tu traites la suivante.
+Ne cherche jamais à tout finir en un seul tour : un travail de trente minutes sans rien à l'écran est un travail perdu si quoi que ce soit dérape, et l'utilisateur ne peut plus corriger le tir. Sous chaque étape franchie, écris ce qu'elle a DONNÉ — constats, chiffres, décisions — jamais « fait ». N'annonce jamais « fait » sur une étape que tu n'as pas réellement menée.
 
 DOCUMENTS TEXTE. Un cahier des charges, un rapport, un compte rendu, une note, un mémoire technique, une procédure, un courrier : ça ne s'écrit NI dans un bloc ```ui NI en markdown dans la réponse. Ça se PRODUIT en fichier Word. Word est le format par défaut ; ne change de format que si on te le demande. « Montre-le-moi dans le chat » veut dire : produis le document et laisse son bloc `fichier` en afficher l'aperçu — pas : recopie son contenu en texte.
+
+UN DOCUMENT TERMINÉ NE SE REFAIT PAS. Avant d'appeler `creer_document`, relis les résultats des actions déjà exécutées ce tour-ci : si un `terminer_document` y figure déjà pour ce document, il est FINI — tu as son `url` et son `titre`, sers-t'en. Relevé en production : le même devis produit deux fois dans le même tour, deux fichiers identiques, huit actions perdues. Si un document te paraît incomplet, ne le recrée pas : ouvre-en un nouveau sous un titre différent, ou dis simplement ce qui manque.
 
 UN LIEN DE DOCUMENT NE SE RESSERT PAS. Les adresses en /api/documents/... que tu as pu émettre lors d'un tour PRÉCÉDENT ne valent que 24 h, et un redémarrage du serveur les périme aussitôt : les resservir donne une carte qui ne s'ouvre ni ne se télécharge. Si on te redemande un document déjà produit, tu le PRODUIS DE NOUVEAU. Ne réponds jamais « les documents sont déjà prêts suite à votre précédente demande » en recopiant d'anciens blocs `fichier` : seul un document produit DANS CE TOUR-CI peut être annoncé.
 
@@ -593,7 +610,9 @@ Voici les messages trouvés :
         # On ne répète pas la même consigne, on NOMME le défaut — répéter à
         # l'identique obtient à l'identique.
         _precedente = state.get("llm_response") or ""
-        if not _texte_visible(_precedente):
+        # La note d'un point d'étape explique déjà la situation : y ajouter
+        # « ta réponse ne contenait aucun texte » serait faux et déroutant.
+        if not _texte_visible(_precedente) and not state.get("note_sortie"):
             # RIEN QU'UN BLOC D'ACTION, DONC RIEN. La phase d'actions est close :
             # en émettre un de plus ne l'exécutera pas, il sera simplement
             # retiré avant l'affichage et la réponse sera vide. C'est ce qui a
@@ -707,9 +726,17 @@ async def tools_node(state: AgentState, config=None) -> dict:
         if not resultats or not corps:
             if note:
                 logger.info("Sortie de boucle sans aboutissement (%s) — rédaction forcée", note)
-            return {"llm_response": "", "tools_finished": True,
+            return {"tool_results": resultats, "llm_response": "",
+                    "tools_finished": True,
                     "tool_iterations": iteration, "note_sortie": note}
-        return {"llm_response": corps + (f"\n\n{note}" if note else ""),
+        # `tool_results` EST RENVOYÉ, toujours. Aux points de sortie
+        # d'origine la liste valait déjà celle de l'état, si bien que
+        # l'omission ne se voyait pas ; appelée APRÈS l'exécution d'une
+        # action, elle aurait effacé son résultat — et le modèle, ne le
+        # voyant plus, aurait refait le geste. C’est le double devis
+        # relevé en production.
+        return {"tool_results": resultats,
+                "llm_response": corps + (f"\n\n{note}" if note else ""),
                 "tools_finished": True, "tool_iterations": iteration}
 
     if erreur:
@@ -901,6 +928,34 @@ async def tools_node(state: AgentState, config=None) -> dict:
     jalon = ok and action["skill"] == "terminer_document"
 
     avance = a_verse or jalon
+
+    # POINT D'ÉTAPE : UN LIVRABLE PRÊT SE MONTRE, IL NE S'EMPILE PAS.
+    #
+    # Relevé en production : trente et une minutes, vingt-neuf actions, trois
+    # documents — et rien à l'écran avant la toute fin. Le premier document
+    # était pourtant terminé dès la dixième action, donc disponible vingt
+    # minutes plus tôt. Pire, faute de le présenter, le modèle a REFAIT le même
+    # devis plus loin dans le tour : deux fichiers identiques, huit actions
+    # perdues.
+    #
+    # Un document qui vient d'être fermé, après un tour déjà long, est un
+    # RÉSULTAT. On clôt donc la phase d'actions pour le présenter, avec
+    # l'avancement du plan et une proposition de suite. Le travail n'est pas
+    # interrompu : il reprend au tour suivant, en sachant ce qui est déjà fait.
+    #
+    # Le seuil ne porte QUE sur les tours déjà longs : produire un document
+    # court en trois actions reste un seul tour, comme avant.
+    if jalon and iteration >= POINT_ETAPE_ACTIONS:
+        logger.info("Point d'étape : document terminé à l'action %d, on présente", iteration)
+        # `llm_response` VIDÉ À DESSEIN : sans cela la note serait recopiée
+        # telle quelle sous le texte du modèle, et l'utilisateur lirait une
+        # consigne interne. Vidé, le routeur redemande une rédaction, et le
+        # modèle met la note dans ses mots — avec le document sous les yeux.
+        return {"tool_results": resultats, "llm_response": "",
+                "tools_finished": True, "tool_iterations": iteration,
+                "note_sortie": "un premier livrable est prêt. Présente-le "
+                               "maintenant avec son bloc `fichier`, dis où en "
+                               "est le plan, et propose de poursuivre."}
 
     # L'ENLISEMENT, MESURÉ SUR CE QUI VIENT DE SE PASSER.
     #

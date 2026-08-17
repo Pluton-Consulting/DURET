@@ -218,6 +218,34 @@ async def routeur_node(state: AgentState) -> dict:
         # Le contexte est déjà là, mais analyser un document EST un travail de fond.
         return {"besoin_memoire": False, "llm_tier": "complex"}
 
+    # UNE POLITESSE N'A PAS BESOIN D'UNE IA POUR ÊTRE RECONNUE.
+    #
+    # Ce nœud coûte un aller-retour complet vers le modèle AVANT que la moindre
+    # rédaction ne commence. Sur une vraie question, il est rentable : il évite
+    # une recherche vectorielle inutile et choisit le palier. Sur « merci »,
+    # « ok » ou « oui », il fait attendre plusieurs secondes pour trancher ce
+    # qu'une comparaison de chaînes tranche à coup sûr — et ce sont justement
+    # les échanges où l'attente se remarque le plus, parce qu'on attend une
+    # réponse de trois mots.
+    #
+    # LA LISTE EST VOLONTAIREMENT COURTE ET FERMÉE : uniquement des messages qui
+    # ne peuvent RIEN vouloir dire d'autre, et seulement quand ils sont seuls.
+    # « merci de me sortir le devis Dupont » ne correspond pas — il y a autre
+    # chose derrière le mot. Au moindre doute, on paie l'appel : se tromper ici
+    # coûte une recherche manquée, ce qui est bien pire que deux secondes.
+    _nu = _re.sub(r"[\s!.,;:?…]+", " ", question.lower()).strip()
+    _COURTOISIES = {
+        "bonjour", "bonsoir", "salut", "coucou", "hello", "hey", "re",
+        "merci", "merci beaucoup", "merci bien", "mille mercis", "nickel",
+        "parfait", "super", "top", "genial", "génial", "ok", "okay", "d'accord",
+        "daccord", "ca marche", "ça marche", "tres bien", "très bien", "bien",
+        "oui", "non", "yes", "no", "au revoir", "bonne journee", "bonne journée",
+        "bonne soiree", "bonne soirée", "a bientot", "à bientôt", "bye",
+    }
+    if _nu in _COURTOISIES:
+        logger.info("Routage court-circuité (courtoisie) : « %s »", _nu[:40])
+        return {"besoin_memoire": False, "llm_tier": "standard"}
+
     invite = (
         "Tu orientes une demande adressée à l'assistant interne d'une entreprise.\n"
         "Dis UNIQUEMENT s'il faut consulter la mémoire d'entreprise (chantiers, devis, "

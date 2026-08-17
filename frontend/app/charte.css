@@ -49,6 +49,24 @@
   --marque-surface:        #FFFFFF;
   --marque-border:         #DFE4EA;
 
+  /* ── Le chat, et lui seul ─────────────────────────────────────────────
+     Trois surfaces se superposaient dans un mouchoir de poche : le fil, la
+     barre de saisie et le champ, tous à quelques pour cent les uns des
+     autres. Rien ne se détachait, et l'écran paraissait plat sans qu'on
+     sache dire pourquoi. Ces jetons creusent l'écart là où il porte du
+     sens, sans toucher à l'identité — le bleu de la marque reste exactement
+     le même partout ailleurs.
+
+     La bulle de l'utilisateur passe au bleu VIF de l'enseigne plutôt qu'au
+     bleu assagi de l'interface : c'est la seule surface de l'écran qui
+     porte la voix de la personne, elle a le droit d'être franche. Le blanc
+     dessus garde un contraste très au-dessus du seuil AA. */
+  --marque-chat-fond:      #EDF1F5;   /* le fil : plus profond que les cartes */
+  --marque-chat-barre:     #FFFFFF;   /* la barre de saisie, qui s'en détache */
+  --marque-chat-champ:     #F3F7FA;   /* le champ, creusé dans la barre */
+  --marque-bulle-moi:      #0A79C4;   /* ma question : bleu franc, pas terne */
+  --marque-bulle-moi-fin:  #0A6098;
+
   /* ── Textes ───────────────────────────────────────────────────────── */
   --marque-text-primary:   #0B0E11;
   --marque-text-body:      #2E3742;

@@ -139,14 +139,23 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
                 data-en-attente={msg.tacheId ? "oui" : undefined}
                 style={{
                   maxWidth: "70%",
-                  background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+                  // LA BULLE DESCEND DU VERT VIVANT, PLUS DU PRESQUE-NOIR.
+                  // `--marque-primary` vaut #182B16 : si sombre qu'il se lit
+                  // noir, et chaque question posait un bloc lourd dans le fil.
+                  // Les jetons de chat portent la teinte de la voix ; le
+                  // dégradé est resserré, parce qu'un dégradé qu'on remarque
+                  // sur une bulle de trois lignes est un dégradé de trop.
+                  background: "linear-gradient(180deg, var(--marque-bulle-moi), var(--marque-bulle-moi-fin))",
                   color: "var(--marque-text-on-dark)",
-                  padding: "12px 16px",
-                  borderRadius: "var(--marque-radius-card-sm)",
-                  boxShadow: "var(--marque-shadow-card)",
+                  padding: "11px 16px",
+                  // Un arrondi franc, et le coin bas-droit rentré : c'est ce
+                  // petit décrochement qui fait lire « ceci vient de moi »
+                  // sans qu'aucune étiquette n'ait à le dire.
+                  borderRadius: "18px 18px 6px 18px",
+                  boxShadow: "0 1px 2px rgb(0 0 0 / .06), 0 6px 16px -10px rgb(0 0 0 / .35)",
                   border: "none",
                   fontSize: 14,
-                  lineHeight: 1.5,
+                  lineHeight: 1.55,
                 }}
               >
                 {msg.content}

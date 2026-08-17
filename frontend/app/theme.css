@@ -243,6 +243,34 @@ button, input, select, textarea { font-family: var(--marque-font); }
  * comme composants, pas comme prose, et ont le meme besoin. */
 .sym-defile { overflow-x: auto; }
 
+/* LA CARTE DE SAISIE.
+ *
+ * Elle porte la surface claire, l'arrondi et l'ombre ; son conteneur, lui,
+ * garde le fond du fil. Le liseré est plus clair que la bordure ordinaire :
+ * une carte posee sur un fond deja sombre n'a pas besoin d'etre cernee, elle
+ * se detache par sa clarte. Au focus, la carte se souleve legerement au lieu
+ * de changer de couleur — le mouvement se voit mieux qu'une teinte. */
+.sym-barre-saisie {
+  background: var(--marque-chat-barre);
+  border: 1px solid var(--marque-border);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 8px 24px -12px rgb(0 0 0 / .18);
+  transition: box-shadow .18s ease, border-color .18s ease;
+}
+.sym-barre-saisie:focus-within {
+  border-color: var(--marque-primary-light);
+  box-shadow: 0 1px 2px rgb(0 0 0 / .05), 0 14px 32px -14px rgb(0 0 0 / .24);
+}
+/* Le champ est CREUSE dans la carte : sans cela, blanc sur blanc, rien ne
+ * disait ou l'on ecrit. Il redevient neutre au focus, quand la carte entiere
+ * signale deja qu'elle est active. */
+.sym-barre-saisie textarea {
+  background: var(--marque-chat-champ);
+  border-radius: 10px;
+  transition: background .18s ease;
+}
+.sym-barre-saisie:focus-within textarea { background: transparent; }
+
 .sym-in   { animation: symFadeUp .5s cubic-bezier(.22,.61,.36,1) both; }
 .sym-in-1 { animation-delay: .05s } .sym-in-2 { animation-delay: .11s }
 .sym-in-3 { animation-delay: .17s } .sym-in-4 { animation-delay: .23s }

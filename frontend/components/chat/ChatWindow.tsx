@@ -896,7 +896,12 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
 
   return (
     <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      {/* LE FIL A SON PROPRE FOND, plus profond que celui des cartes : c'est ce
+          creux qui fait remonter la barre de saisie et les documents posés
+          dessus. Sans lui, trois surfaces se superposaient à quatre pour cent
+          d'écart et l'écran paraissait plat. */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0,
+                    background: "var(--marque-chat-fond)" }}>
         <MessageList messages={messages} onAction={sendMessage}
                      apiUrl={process.env.NEXT_PUBLIC_API_URL || ""} backendToken={token} />
 

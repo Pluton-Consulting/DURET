@@ -176,8 +176,14 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
   }
 
   return (
-    <div style={{ padding: "16px 32px", background: "var(--marque-surface)",
-                  borderTop: "1px solid var(--marque-border)" }}>
+    // LA BARRE FLOTTE, ELLE NE SE COLLE PLUS.
+    //
+    // Elle était un bandeau blanc plein largeur, séparé du fil par un trait
+    // d'un pixel — la mise en page des formulaires d'il y a dix ans. Un trait
+    // dit « ceci finit ici » ; une carte posée dit « ceci est un objet, on
+    // écrit dedans ». Le fond reste celui du fil, et c'est la carte qui porte
+    // la surface claire, son arrondi et son ombre.
+    <div style={{ padding: "12px 32px 20px", background: "var(--marque-chat-fond)" }}>
       {erreur && (
         <div role="alert" style={{ fontSize: 13, color: "var(--marque-error-text)", marginBottom: 10 }}>
           {erreur}
@@ -185,7 +191,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
       )}
 
       <PromptInput
-        className="sym-in"
+        className="sym-in sym-barre-saisie"
         onSubmit={surEnvoi}
         // Une question porte UN document. Sans ces deux bornes, un dépôt
         // multiple est accepté en silence puis tronqué à l'envoi.
@@ -218,7 +224,12 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
             precedente pour écrire une seule ligne. Ici la rangée est explicite,
             et le champ retrouve sa hauteur d'avant tout en continuant de
             grandir quand le texte le demande. */}
-        <div className="flex w-full items-end gap-1 px-1 py-1">
+        {/* LES BOUTONS SONT CENTRÉS, PLUS ALIGNÉS EN BAS.
+            `items-end` les collait au bord inférieur de la carte : « Arrêter »
+            et « En file », qui portent un libellé et sont donc hauts, venaient
+            toucher le bord. Centrés, ils respirent, et le champ garde sa
+            liberté de grandir — c'est lui qui pousse la carte, pas eux. */}
+        <div className="flex w-full items-center gap-1.5 px-2 py-2">
           <BoutonJoindre desactive={disabled} />
 
           <PromptInputTextarea

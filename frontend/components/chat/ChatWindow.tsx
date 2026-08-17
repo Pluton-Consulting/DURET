@@ -98,11 +98,6 @@ function stepLabel(node: string | null | undefined): string {
 export default function ChatWindow({ threadId: initialThreadId = null, token: tokenProp }: ChatWindowProps) {
   const { data: session } = useSession()
   const token = tokenProp || (session as any)?.backendToken
-  // VUE DÉVELOPPEUR — le même rôle que l'onglet du même nom. Ce qui relève de
-  // l'exploitation (jetons consommés, modèle appelé) ne s'affiche que là :
-  // pour qui se sert de l'assistant, ce sont des chiffres sans usage, et ils
-  // encombraient la fin de chaque réponse.
-  const vueDeveloppeur = (session as any)?.user?.role === "super_admin"
   const [messages, setMessages] = useState<Message[]>([])
   const [threadId, setThreadId] = useState<string | null>(initialThreadId)
   const [loading, setLoading] = useState(false)
@@ -903,8 +898,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <MessageList messages={messages} onAction={sendMessage}
-                     apiUrl={process.env.NEXT_PUBLIC_API_URL || ""} backendToken={token}
-                     technique={vueDeveloppeur} />
+                     apiUrl={process.env.NEXT_PUBLIC_API_URL || ""} backendToken={token} />
 
         <style>{`
           @keyframes symPoint { 0%,68%,100%{opacity:.22;transform:scale(.68)} 34%{opacity:1;transform:scale(1)} }

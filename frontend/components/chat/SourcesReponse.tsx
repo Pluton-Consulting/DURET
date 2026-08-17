@@ -29,13 +29,17 @@ type Props = {
   jetons?: { entree: number; sortie: number }
   /** Le modèle qui a répondu, ou « cache » quand le tour n'a rien coûté. */
   modele?: string
-  /** VUE DÉVELOPPEUR — réservée au super_admin.
+  /** LE COÛT NE S'AFFICHE PLUS ICI, POUR PERSONNE.
    *
-   *  « 208 246 jetons · deepseek/deepseek-v4-pro » ne dit rien à qui utilise
-   *  l'assistant pour travailler : c'est une mesure d'exploitation, et elle
-   *  encombrait la fin de chaque réponse. Les sources, elles, restent visibles
-   *  de tous — savoir d'où vient une information n'est pas de la technique. */
-  technique?: boolean
+   *  « 208 246 jetons · deepseek-v4-pro » est une mesure d'exploitation : elle
+   *  ne dit rien à qui se sert de l'assistant pour travailler, et elle
+   *  encombrait la fin de chaque réponse. Je l'avais d'abord réservée au
+   *  super_admin ; la demande était qu'elle quitte le chat, pas qu'elle y
+   *  reste pour une personne. L'onglet Développeur donne déjà jetons et
+   *  modèle tour par tour : rien n'est perdu.
+   *
+   *  Les SOURCES restent visibles de tous — savoir d'où vient une information
+   *  n'est pas de la technique, c'est ce qui rend la réponse vérifiable. */
 }
 
 /** LA PAGE CONSULTÉE, MONTRÉE SUR PLACE.
@@ -92,14 +96,12 @@ function joli(nom: string): string {
   return nom.replace(/_/g, " ").replace(/\.(pdf|docx?|xlsx?|csv|pptx?|txt|md)$/i, "")
 }
 
-export function SourcesReponse({ documents, web, webFiltre, jetons, modele,
-                                 technique = false }: Props) {
+export function SourcesReponse({ documents, web, webFiltre, modele }: Props) {
   const total = documents.length + web.length
-  // Le coût n'apparaît qu'en vue développeur. Sans lui, une réponse qui n'a
-  // aucune source n'a plus rien à montrer : la rangée disparaît entièrement.
-  const cache = technique && modele === "cache"
-  const compte = technique ? jetons : undefined
-  if (!total && !compte && !cache) return null
+  // « Réponse déjà connue » RESTE : ce n'est pas une mesure technique, c'est
+  // l'explication d'une réponse instantanée — sans elle, elle semble bâclée.
+  const cache = modele === "cache"
+  if (!total && !cache) return null
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1">
@@ -130,19 +132,11 @@ export function SourcesReponse({ documents, web, webFiltre, jetons, modele,
         </span>
       )}
 
-      {/* LE COÛT, SANS JAUGE INVENTÉE. Le composant Context d'AI Elements
-          dessine un anneau de remplissage, qui suppose de connaître la fenêtre
-          maximale du modèle. Or la cascade en change à chaud, et aucune table
-          fiable n'existe ici : une jauge à 12 % calculée sur un maximum
-          approximatif serait un chiffre faux affiché avec assurance. On donne
-          donc la mesure réelle, sans le décor. */}
+      {/* « Réponse déjà connue » n'est pas une mesure, c'est une explication :
+          sans elle, une réponse instantanée passerait pour bâclée. Le coût
+          réel, lui, a quitté le chat pour l'onglet Développeur. */}
       {cache ? (
         <span className="text-xs text-muted-foreground">réponse déjà connue, aucun appel</span>
-      ) : compte ? (
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {(compte.entree + compte.sortie).toLocaleString("fr-FR")} jetons
-          {modele ? ` · ${modele.split(":").pop()}` : ""}
-        </span>
       ) : null}
     </div>
   )

@@ -19,7 +19,6 @@
  * d'un événement que le serveur émettait déjà et que l'écran jetait.
  */
 
-import { useEffect, useRef, useState } from "react"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 
 /** La grille de neuf points, reprise du repère d'attente. */
@@ -34,31 +33,25 @@ function Grille() {
 type Props = {
   /** Ce que l'assistant fait à l'instant. */
   activite: string
-  /** Toutes les étapes franchies, dans l'ordre. */
-  trace: string[]
+  /** Toutes les étapes franchies. Plus affichées ici — le détail par tour vit
+   *  dans l'onglet Développeur — mais l'appelant les tient toujours. */
+  trace?: string[]
   /** Un tour est-il en cours ? */
   enCours: boolean
 }
 
-export function ReflexionEnCours({ activite, trace, enCours }: Props) {
-  // LA DURÉE EST MESURÉE ICI, faute de dépliant pour la tenir. Le départ est
-  // pris au premier rendu où le tour est en cours, l'arrêt quand il retombe.
-  const debut = useRef<number | null>(null)
-  const [duree, setDuree] = useState<number | null>(null)
-
-  useEffect(() => {
-    if (enCours) {
-      if (debut.current === null) { debut.current = Date.now(); setDuree(null) }
-    } else if (debut.current !== null) {
-      setDuree(Math.ceil((Date.now() - debut.current) / 1000))
-      debut.current = null
-    }
-  }, [enCours])
-
-  if (!enCours && trace.length === 0) return null
-
-  const etapes = trace.length > 1 ? `${trace.length} étapes` : "1 étape"
-  const secondes = duree && duree > 0 ? `, ${duree} s` : ""
+export function ReflexionEnCours({ activite, enCours }: Props) {
+  // ELLE DISPARAÎT QUAND C'EST FINI.
+  //
+  // Cette ligne est unique et vit en bas du fil, sous le dernier message : elle
+  // n'appartient à aucune réponse. Tant qu'elle survivait au tour pour afficher
+  // son bilan, elle restait donc à l'écran en permanence — et se lisait comme
+  // « il réfléchit encore » alors que la réponse était arrivée depuis
+  // longtemps. Signalé deux fois en production, à raison.
+  //
+  // Le bilan n'est pas perdu pour autant : le détail par tour (étapes, durée,
+  // jetons, modèle) vit dans l'onglet Développeur, à sa place.
+  if (!enCours) return null
 
   return (
     <div className="px-8 py-2" role="status" aria-live="polite">
@@ -66,18 +59,12 @@ export function ReflexionEnCours({ activite, trace, enCours }: Props) {
           carte. Seul un liseré discret la rattache au message qui vient. */}
       <div className="flex w-full items-center gap-3 rounded-lg border border-border bg-transparent px-3 py-2 text-muted-foreground">
         <Grille />
-        {enCours ? (
-          // La `key` remonte l'élément à chaque changement d'étape et rejoue
-          // l'apparition : sans elle, le texte se remplacerait sur place, et
-          // rien ne signalerait que l'assistant a avancé.
-          <span className="sym-step min-w-0 flex-1 text-left" key={activite || "depart"}>
-            <Shimmer as="span">{activite || "je démarre"}</Shimmer>
-          </span>
-        ) : (
-          <span className="min-w-0 flex-1 text-left text-[13px]">
-            Raisonnement ({etapes}{secondes})
-          </span>
-        )}
+        {/* La `key` remonte l'élément à chaque changement d'étape et rejoue
+            l'apparition : sans elle, le texte se remplacerait sur place, et
+            rien ne signalerait que l'assistant a avancé. */}
+        <span className="sym-step min-w-0 flex-1 text-left" key={activite || "depart"}>
+          <Shimmer as="span">{activite || "je démarre"}</Shimmer>
+        </span>
       </div>
     </div>
   )

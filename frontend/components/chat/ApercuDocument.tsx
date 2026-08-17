@@ -140,6 +140,14 @@ export function ApercuDocument({
         const reponse = await fetch(url.startsWith("http") ? url : `${base}${url}`, {
           headers: backendToken ? { Authorization: `Bearer ${backendToken}` } : {},
         })
+        // UN 404 SE DIT EN FRANÇAIS. « réponse 404 » laisse croire à une panne
+        // de l'application, alors que le serveur répond correctement : le
+        // fichier n'existe plus. Il a soit dépassé ses 24 h, soit été emporté
+        // par un redémarrage du serveur — le modèle ressert parfois le lien
+        // d'un tour précédent en le croyant encore valide.
+        if (reponse.status === 404) {
+          throw new Error("ce document n'est plus disponible — demandez-le à nouveau")
+        }
         if (!reponse.ok) throw new Error(`réponse ${reponse.status}`)
         const blob = await reponse.blob()
         if (!vivant) return

@@ -26,6 +26,19 @@ services:
     environment:
       # Bind mount Windows : inotify ne remonte pas → uvicorn --reload doit sonder les fichiers.
       WATCHFILES_FORCE_POLLING: "true"
+      # LES DOCUMENTS PRODUITS SURVIVENT AU REDÉMARRAGE — MAINTENANT.
+      #
+      # Le code annonçait « volume du conteneur : ils survivent à un
+      # redémarrage » et repliait sur /tmp faute de mieux : la promesse
+      # n'était donc pas tenue, et personne ne s'en apercevait avant de
+      # cliquer. Un `docker compose up -d --build backend` effaçait tous les
+      # documents non encore téléchargés, pendant que leur carte continuait
+      # d'afficher « disponible 24 h ». Relevé en production : deux fichiers
+      # rendus, puis 404 sur les deux après un déploiement.
+      #
+      # La durée de vie de 24 h reste la règle, mais c'est la purge qui
+      # l'applique, pas le hasard d'un redémarrage.
+      DOCUMENTS_DIR: /documents
     # LIÉ À LA BOUCLE LOCALE, PAS À TOUTES LES INTERFACES.
     #
     # Docker publie ses ports en insérant ses propres règles iptables, EN AMONT
@@ -40,6 +53,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
+      - documents_produits:/documents
     # Rend Ollama (LLM local, palier LIGHT) accessible sur l'hôte Windows/WSL
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -119,3 +133,6 @@ networks:
 volumes:
   postgres_data:
   browser_sessions:
+  # Les documents rendus, hors du conteneur : un redéploiement ne les efface
+  # plus. Seule la purge des 24 h les retire.
+  documents_produits:

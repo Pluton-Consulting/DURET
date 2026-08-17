@@ -330,6 +330,19 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
     "statut_enrichissement": (
         "Avancement de la campagne d'enrichissement en cours (administration)",
         [], []),
+    "lancer_ingestion_documents": (
+        "ADMINISTRATION UNIQUEMENT. LA seule action qui fait ENTRER les documents "
+        "de l'entreprise dans la mémoire. Lance-la dès qu'on demande d'enrichir, "
+        "d'alimenter ou de nourrir la base de connaissance à partir des documents, "
+        "du Drive, du cloud, du serveur de fichiers ou du partage. Les gestes de "
+        "lecture ne font que LIRE pour le tour en cours : ils n'enregistrent rien, "
+        "et proposer de lire à la place d'ingérer ne répond pas à la demande. Tâche "
+        "de fond de plusieurs heures : annonce-la, ne prétends pas avoir déjà le "
+        "résultat",
+        [], []),
+    "statut_ingestion_documents": (
+        "Avancement de l'ingestion des documents en cours (administration)",
+        [], []),
     "creer_tache_agent": (
         "Enregistre une tâche que l'assistant exécutera plus tard, éventuellement de "
         "façon répétée. recurrence : interval (avec interval_minutes, minimum 5), "
@@ -460,10 +473,17 @@ def instruction_actions(role: str | None = None) -> str:
         "Les balises masquées ([PER_1], [MONTANT_2]...) sont acceptées dans les paramètres. "
         "Quand une boîte mail est demandée et que l'utilisateur n'en précise pas, "
         "omets le paramètre : la sienne sera utilisée.\n"
+        # « AUCUN BLOC » DISAIT TROP. Dans cette fonction, « bloc » désigne
+        # partout le bloc d'ACTION — mais le modèle lit cette phrase après la
+        # consigne qui lui réclame des suggestions, et y voit une interdiction
+        # générale. Relevé en production : une réponse qui EXPLIQUE ce que
+        # l'assistant sait faire, donc exactement le cas visé ici, est ressortie
+        # sans le moindre composant, ses options proposées en prose numérotée.
         "PARLER D'UNE ACTION N'EST PAS L'EXÉCUTER. Si l'on te demande ce que tu sais "
         "faire, quelles actions tu as, à quoi sert l'une d'elles ou ce qu'elle "
-        "contient, réponds AVEC DES MOTS et n'émets AUCUN bloc : décrire un outil "
-        "ne consiste pas à s'en servir.\n"
+        "contient, réponds AVEC DES MOTS et n'émets aucun bloc D'ACTION : décrire "
+        "un outil ne consiste pas à s'en servir. Les composants d'affichage, eux, "
+        "restent bienvenus, en particulier des suggestions quand tu proposes un choix.\n"
         "N'invente jamais les paramètres d'une action. S'il te manque une information "
         "indispensable (le destinataire, la référence d'un devis, le contexte), "
         "DEMANDE-LA au lieu de lancer l'action avec une valeur plausible.\n"

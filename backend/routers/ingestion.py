@@ -312,19 +312,24 @@ async def etat_syncs(current_user: User = Depends(get_current_user)):
     return sortie
 
 
-@router.post("/sync/{source}")
-async def trigger_sync(source: str, current_user: User = Depends(get_current_user)):
-    """Déclenche une synchronisation. Administration système.
+async def demarrer_sync(source: str, current_user) -> dict:
+    """Déclenche une synchronisation, quelle qu'en soit la porte d'entrée.
 
-    Elle tourne en TÂCHE DE FOND : parcourir plusieurs boîtes prend des minutes,
-    et chaque message consomme un embedding. Une requête HTTP expirerait bien
-    avant la fin, et l'utilisateur ne saurait pas si le travail a abouti.
-    L'avancement se lit sur `GET /sync`.
+    EXTRAIT DE LA ROUTE POUR ÊTRE PARTAGÉ. Le chat a maintenant son geste
+    d'ingestion du Drive, et il ne doit surtout pas réimplémenter ceci : la
+    ligne `synchronisations`, l'index unique partiel qui empêche deux
+    campagnes simultanées, la libération des synchros pendues et la remontée
+    d'avancement vivent tous ici. Une seconde implémentation, c'est un second
+    endroit où le verrou anti-doublon peut manquer.
+
+    Elle tourne en TÂCHE DE FOND : parcourir un Drive ou plusieurs boîtes prend
+    des minutes à des heures, et chaque document consomme un embedding. Une
+    requête HTTP expirerait bien avant la fin.
     """
     import asyncio
     import time
 
-    if not has_permission(current_user.role, "manage_system"):
+    if not has_permission(getattr(current_user, "role", ""), "manage_system"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
 
     if source not in CONNECTEURS:
@@ -361,6 +366,12 @@ async def trigger_sync(source: str, current_user: User = Depends(get_current_use
                                        str(ligne["id"])))
     return {"source": source, "lance": True,
             "note": "Synchronisation lancée en tâche de fond ; l'avancement s'affiche ici."}
+
+
+@router.post("/sync/{source}")
+async def trigger_sync(source: str, current_user: User = Depends(get_current_user)):
+    """Porte HTTP de `demarrer_sync` — l'écran de synchronisation."""
+    return await demarrer_sync(source, current_user)
 
 
 # ── Import manuel de fichiers (paramètres > Import de données) ──────────────

@@ -71,6 +71,30 @@ def compact_messages(messages, keep_recent: int | None = None, max_chars: int | 
     # Recale sur une frontière de paire.
     while out and getattr(out[0], "type", None) != "human":
         out.pop(0)
+
+    # UN ÉCHANGE SURVIT TOUJOURS AU BUDGET.
+    #
+    # Les deux règles ci-dessus se retournaient l'une contre l'autre. Le budget
+    # laisse entrer le DERNIER message sans condition (`if out and ...` : la
+    # liste est encore vide au premier tour de boucle), quelle qu'en soit la
+    # taille. Une réponse d'assistant un peu longue mangeait donc tout le
+    # budget à elle seule, la question qui l'avait produite ne passait plus, et
+    # le recalage ci-dessus supprimait cette réponse orpheline : la fonction
+    # rendait une liste VIDE alors que le fil était plein.
+    #
+    # Mesuré sur les réglages livrés (8 messages, 4000 caractères) : une
+    # réponse de 3 900 caractères efface la totalité de la mémoire du tour
+    # suivant. Or une réponse de cette taille est ordinaire ici — un devis
+    # complet, une arborescence Drive, une liste de mails. L'assistant
+    # répondait alors « je ne comprends pas » à un « oui » ou à un « 1 », sans
+    # que rien ne signale l'amnésie.
+    #
+    # Le budget existe pour économiser des jetons, pas pour effacer la
+    # mémoire : on rend donc le dernier échange coûte que coûte. Le
+    # dépassement est borné à une paire, et il ne se produit que dans le cas
+    # où l'alternative était de tout perdre.
+    if not out and len(tail) >= 2 and getattr(tail[-2], "type", None) == "human":
+        return list(tail[-2:])
     return out
 
 

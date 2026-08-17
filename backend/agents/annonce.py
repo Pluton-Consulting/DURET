@@ -219,3 +219,52 @@ def cloture_attendue(resultats) -> str | None:
         elif attendue and skill in SATISFAIT_PAR.get(attendue, {attendue}):
             attendue = None
     return attendue
+
+# Une option proposée en prose : « 1. Dresser l'arborescence », « 2) Lancer… ».
+# Bornée à 120 caractères : au-delà ce n'est plus un choix, c'est un paragraphe
+# numéroté (un plan, une procédure), et en faire un bouton serait absurde.
+_OPTION_NUMEROTEE = re.compile(r"^[ \t]*(\d{1,2})[.)][ \t]+(\S.{2,119})$", re.M)
+
+# Les amorces qui trahissent une VRAIE question à choix, par opposition à une
+# énumération d'étapes. Sans ce filtre, un plan en cinq points deviendrait cinq
+# boutons — et cliquer « 3. Rédiger le devis » n'aurait aucun sens.
+_INVITE_A_CHOISIR = re.compile(
+    r"(souhaitez-vous|voulez-vous|préférez-vous|que voulez-vous|"
+    r"dites-moi (?:lequel|laquelle|ce que)|par quoi|par où|"
+    r"laquelle|lequel de ces|je peux (?:commencer par|vous proposer))",
+    re.I)
+
+
+def options_proposees(texte: str) -> list[str]:
+    """Les choix qu'une réponse propose en prose, prêts à devenir des boutons.
+
+    POURQUOI ÇA VAUT UN TRAITEMENT À PART. Relevé en production : l'assistant
+    termine par « Souhaitez-vous que je commence par : 1. … 2. … 3. … ? »,
+    l'utilisateur répond « 1 », et le tour suivant reçoit un message d'un
+    caractère qui ne veut rien dire hors contexte. La réponse a été « Je ne
+    comprends pas bien ce que signifie ce « 1 » ».
+
+    Le défaut ne se corrige pas en demandant au modèle de mieux comprendre :
+    il se corrige en supprimant l'ambiguïté à la source. Un bouton renvoie le
+    LIBELLÉ ENTIER comme message, et il n'y a plus rien à deviner.
+
+    Rendu vide si le texte ne pose pas de choix, s'il en pose moins de deux, ou
+    s'il porte déjà des suggestions : on complète une réponse, on ne la corrige
+    jamais deux fois.
+    """
+    if not isinstance(texte, str) or not texte.strip():
+        return []
+    if "quick_replies" in texte:
+        return []
+    if not _INVITE_A_CHOISIR.search(texte):
+        return []
+    vus, options = set(), []
+    for _, libelle in _OPTION_NUMEROTEE.findall(texte):
+        propre = libelle.strip().rstrip(" ?:;.").strip()
+        # Une option qui reprend la numérotation dans son texte, ou qui n'est
+        # qu'un fragment, ne fait pas un bouton lisible.
+        if len(propre) < 3 or propre.lower() in vus:
+            continue
+        vus.add(propre.lower())
+        options.append(propre)
+    return options if 2 <= len(options) <= 4 else []

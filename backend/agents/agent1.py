@@ -119,7 +119,8 @@ PLAFOND_RESULTAT_GENEREUX = 12000
 # du tour. Une seule relance, avec une consigne explicite — au-delà on
 # insisterait sur un modèle qui ne veut pas, et la note de sortie explique alors
 # honnêtement pourquoi rien n'a été fait.
-from agents.annonce import est_une_annonce, cloture_attendue, promesse_sans_suite
+from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_suite,
+                            options_proposees)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -173,6 +174,27 @@ async def anonymize_node(state: AgentState) -> dict:
     }
 
 
+def _echange_precedent(state: AgentState) -> str:
+    """Le dernier tour, court, pour que le routeur ne juge pas à l'aveugle.
+
+    Quatre cents caractères par message suffisent à reconnaître une suite de
+    conversation : on paie quelques dizaines de jetons sur le palier LIGHT,
+    jamais davantage.
+    """
+    recents = [m for m in (state.get("messages") or [])
+               if getattr(m, "type", None) in ("human", "ai")][-2:]
+    lignes = []
+    for m in recents:
+        qui = "Utilisateur" if getattr(m, "type", None) == "human" else "Assistant"
+        texte = " ".join(str(getattr(m, "content", "") or "").split())
+        if texte:
+            lignes.append(qui + " : " + texte[:400])
+    if not lignes:
+        return ""
+    saut = chr(10)
+    return "Échange précédent :" + saut + saut.join(lignes) + saut + saut
+
+
 async def routeur_node(state: AgentState) -> dict:
     """Décide de la suite : répondre directement, ou consulter la mémoire.
 
@@ -214,7 +236,15 @@ async def routeur_node(state: AgentState) -> dict:
         "expliquer un raisonnement, tirer des conclusions d'un ensemble de données.\n"
         'Réponds par un objet JSON seul : {"memoire": true|false, "requete": '
         '"<mots-clés de recherche si true, sinon vide>", "effort": "simple|analyse"}\n\n'
-        f"Demande : {question}"
+        # LE ROUTEUR JUGEAIT À L'AVEUGLE. Sa grille ci-dessus contient la
+        # catégorie « suite directe de la conversation » — impossible à
+        # reconnaître sans savoir ce qui précède. Sur un « 1 » ou un « oui »,
+        # il tranchait au hasard ; et s'il concluait à une recherche,
+        # `recherche_node` interrogeait la mémoire avec « 1 » pour requête et
+        # injectait des extraits sans rapport en tête du message. L'ambiguïté
+        # du message court était aggravée au lieu d'être levée.
+        + _echange_precedent(state)
+        + f"Demande : {question}"
     )
 
     try:
@@ -358,6 +388,21 @@ async def llm_node(state: AgentState, config=None) -> dict:
     # Historique de conversation (déjà ANONYMISÉ : on ne stocke que du texte masqué),
     # borné en nombre de messages ET en caractères, recalé sur une frontière de paire.
     history = compact_messages(state.get("messages") or [])
+    # L'AMNÉSIE DOIT SE VOIR DANS LES JOURNAUX.
+    #
+    # Quand le modèle répond « je ne comprends pas » à un « oui » ou à un « 1 »,
+    # rien ne permettait de distinguer un historique ABSENT d'un modèle qui n'a
+    # pas su faire le lien. Ces deux causes appellent des correctifs opposés,
+    # et on ne peut pas les départager après coup : la trace ne conservait pas
+    # la taille de la fenêtre réellement envoyée. Une ligne suffit.
+    _brut = len([m for m in (state.get("messages") or [])
+                 if getattr(m, "type", None) != "system"])
+    if _brut and not history:
+        logger.warning("Historique VIDE alors que le fil porte %d messages", _brut)
+    else:
+        logger.info("Historique : %d messages sur %d, %d caractères",
+                    len(history), _brut,
+                    sum(len(str(getattr(m, "content", "") or "")) for m in history))
 
     # Cache exact (palier|requête|contexte anonymisés). La clé DOIT inclure le fil et
     # l'historique : sinon, reposer une question déjà posée renverrait la réponse figée
@@ -1036,6 +1081,33 @@ async def rehydrate_node(state: AgentState) -> dict:
         entity_map = {k: v for k, v in entity_map.items() if k in allowed}
 
     sortie = {"final_response": anonymizer.rehydrate(text, entity_map)}
+
+    # DES OPTIONS EN PROSE DEVIENNENT DES BOUTONS.
+    #
+    # Relevé en production : l'assistant termine par « Souhaitez-vous que je
+    # commence par : 1. … 2. … 3. … ? », l'utilisateur répond « 1 », et le tour
+    # suivant reçoit un message d'un caractère qui ne veut rien dire hors
+    # contexte. Réponse obtenue : « Je ne comprends pas bien ce que signifie
+    # ce « 1 » ».
+    #
+    # ON NE CORRIGE PAS ÇA PAR UNE CONSIGNE DE PLUS. Le dépôt a déjà payé deux
+    # fois pour apprendre qu'une règle répétée au modèle ne tient pas quand le
+    # prompt en porte trente autres. Ici la correction est mécanique : un
+    # bouton renvoie le LIBELLÉ ENTIER comme message utilisateur, et il n'y a
+    # plus aucune anaphore à résoudre. Le défaut devient impossible, au lieu de
+    # devenir moins probable.
+    #
+    # On COMPLÈTE la réponse, on ne la réécrit pas : la prose du modèle reste
+    # intacte, les boutons s'ajoutent dessous. Et rien n'est ajouté à
+    # l'historique (`sortie["messages"]` plus bas) : il ne porte que du texte
+    # masqué, et ces libellés sont déjà réhydratés.
+    import json as _json_ui
+    _options = options_proposees(sortie["final_response"])
+    if _options:
+        logger.info("Options en prose converties en suggestions : %d", len(_options))
+        bloc = _json_ui.dumps({"type": "quick_replies", "options": _options},
+                              ensure_ascii=False)
+        sortie["final_response"] += "\n\n```ui\n" + bloc + "\n```"
 
     # UN TOUR SANS EFFET NE S'ÉCRIT PAS DANS L'HISTORIQUE.
     #

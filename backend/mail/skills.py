@@ -610,6 +610,25 @@ async def statut_enrichissement(data: dict, user) -> dict:
 SKILLS_NATIFS["lancer_enrichissement"] = lancer_enrichissement
 SKILLS_NATIFS["statut_enrichissement"] = statut_enrichissement
 
+
+# L'INGESTION DES DOCUMENTS, pendant documentaire de l'enrichissement du
+# courrier. Elle manquait, et son absence se lisait mal : demandé d'enrichir la
+# mémoire à partir des documents, l'assistant renvoyait vers la campagne de
+# mails puis expliquait qu'elle ne lit pas les fichiers. Il disait vrai, et
+# n'avait aucun geste pour la suite.
+async def lancer_ingestion_documents(data: dict, user) -> dict:
+    from ingestion.skills import lancer_ingestion_documents as _lancer
+    return await _lancer(data, user)
+
+
+async def statut_ingestion_documents(data: dict, user) -> dict:
+    from ingestion.skills import statut_ingestion_documents as _statut
+    return await _statut(data, user)
+
+
+SKILLS_NATIFS["lancer_ingestion_documents"] = lancer_ingestion_documents
+SKILLS_NATIFS["statut_ingestion_documents"] = statut_ingestion_documents
+
 # EFFET de chaque skill — classification qui décide si une validation humaine est
 # exigée. Déclarée DANS LE CODE, jamais déduite du nom ni fournie par le modèle :
 #   lecture          : ne modifie rien ;
@@ -662,4 +681,10 @@ EFFETS_NATIFS = {
     # réservé à l'administration système.
     "lancer_enrichissement": "ecriture_interne",
     "statut_enrichissement": "lecture",
+    # Même raisonnement pour l'ingestion des documents : elle n'écrit que
+    # dans notre propre mémoire et ne sort rien du système. Le garde-fou
+    # n'est pas l'effet mais la PERMISSION, vérifiée dans le skill sur
+    # l'identité rechargée.
+    "lancer_ingestion_documents": "ecriture_interne",
+    "statut_ingestion_documents": "lecture",
 }

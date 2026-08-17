@@ -69,6 +69,7 @@ backend/skills/nas.py                   # skills exposant le @STOCKAGE@ a l'assi
 backend/skills/visuels.py               # skills de rendu d'amenagement (offre @METIER@)
 backend/visuels/                        # generation de visuels Higgsfield, facturee a l'usage
 backend/ingestion/connectors/synology.py  # ingestion depuis le @STOCKAGE@
+backend/ingestion/skills.py             # le geste qui fait ENTRER le @STOCKAGE@ en memoire : meme structure, source differente
 backend/ingestion/connectors/gmail.py   # ingestion du courrier Google Workspace
 backend/ingestion/connectors/outlook.py # Microsoft 365 chez l'un, conserve mais inutilise chez l'autre
 backend/scripts/google_consentement.py  # obtention du consentement Google, propre au socle Drive

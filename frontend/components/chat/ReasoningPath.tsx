@@ -31,7 +31,16 @@ const STAGES: { label: string; desc: string; nodes: string[] }[] = [
   { label: "Recherche web", desc: "Sources externes (si besoin)", nodes: ["browser"] },
   { label: "Agent spécialisé", desc: "Traitement métier", nodes: ["agent1", "agent2", "agent3", "vision", "extraction", "preprocess", "prechiffrage", "generate_skill", "test_skill"] },
   { label: "Rédaction", desc: "Génération de la réponse", nodes: ["llm", "tools", "rehydrate"] },
-  { label: "Validation", desc: "Contrôle humain", nodes: ["human_gate", "validation_check", "submit_validation"] },
+  // `validation_check` A ÉTÉ RETIRÉ DE CETTE ÉTAPE. Il s'exécute à CHAQUE tour
+  // — c'est l'arête qui suit la rédaction — si bien que « Validation ✓ Contrôle
+  // humain » s'affichait toujours, y compris quand aucun bouton n'était jamais
+  // apparu. Relevé par l'utilisateur en production, et à raison : une frise qui
+  // coche un contrôle humain qui n'a pas eu lieu ne se trompe pas, elle ment.
+  //
+  // Ne restent que les nœuds qui ATTESTENT d'une décision : `human_gate`
+  // suspend réellement le tour, `submit_validation` dépose une demande. Sans
+  // eux l'étape reste vide, comme « Recherche web » quand le web n'a pas servi.
+  { label: "Validation", desc: "Contrôle humain (si besoin)", nodes: ["human_gate", "submit_validation"] },
 ]
 
 function stageOf(node: string): number {

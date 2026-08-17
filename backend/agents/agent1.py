@@ -510,7 +510,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
 
 COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis, facture, document, liste, tableau, indicateur, avancement, suggestions d'actions...), intercale un composant : insère au milieu de ta réponse un bloc balisé ```ui contenant un objet JSON, et rédige le texte normalement autour. Un composant vaut mieux qu'un paragraphe pour tout ce qui est structuré. Règle absolue : n'invente jamais de valeurs ; remplis TOUS les champs requis, sinon reste en texte simple (un composant incomplet ne s'affiche pas). Types :
 - {"type":"email","subject":"...","from":"...","date":"...","preview":"..."}
-- {"type":"quote","id":"...","client":"...","status":"draft|sent|accepted","total":"...","lines":[{"label":"...","qty":"...","price":"..."}]}
+- {"type":"quote","id":"...","client":"...","status":"draft|sent|accepted","total":"...","lines":[{"label":"...","qty":"...","price":"..."}]} devis RÉSUMÉ, quand tu le cites. Pour MONTRER un devis complet, même type, forme longue : ajoute "emetteur","reference","date","objet","adresse":["...","..."],"suivi_par","totals":{"ht":"...","tva":"...","taux":"20 %","ttc":"..."},"footer":"...","mentions":["..."] et écris les lignes ainsi : [{"section":"LOT 1 — TERRASSEMENTS"},{"n":1,"description":"...","unite":"m²","qte":"250","pu":"3,40 €","montant":"850,00 €"}]. TOUT le devis tient dans CE SEUL bloc — en-tête, lots, lignes, totaux, conditions. N'écris jamais un devis en tableau markdown ni en morceaux séparés.
 - {"type":"invoice","number":"...","client":"...","amount":"...","issued":"...","due":"...","status":"paid|pending|late"}
 - {"type":"doc","name":"...","kind":"PDF|XLSX|DOCX","meta":"..."}
 - {"type":"doc_apercu","titre":"...","format":"docx|pdf|xlsx","extrait":"..."} pour l'aperçu d'un document QU'ON A LU et qui n'est pas téléchargeable. Un document que TU viens de produire ou de déposer s'annonce par un bloc `fichier` et par lui seul : sa carte montre déjà le document. Ici : `extrait` reprend TEL QUEL le champ `extrait` (document produit) ou le début du `contenu`/`texte` rendu par la lecture. Jamais un résumé réécrit : l'aperçu montre le VRAI contenu.
@@ -530,6 +530,10 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"stat","label":"...","value":"...","hint":"..."}
 - {"type":"badge","tone":"primary|success|warning|error|neutral","text":"..."}
 - {"type":"quick_replies","options":["Proposition 1","Proposition 2"]}
+
+DOCUMENTS TEXTE. Un cahier des charges, un rapport, un compte rendu, une note, un mémoire technique, une procédure, un courrier : ça ne s'écrit NI dans un bloc ```ui NI en markdown dans la réponse. Ça se PRODUIT en fichier Word — `produire_document` si c'est court, sinon `creer_document` + `ajouter_document` répétés + `terminer_document`. Word est le format par défaut ; ne change de format que si on te le demande. « Montre-le-moi dans le chat » veut dire : produis le document et laisse son bloc `fichier` en afficher l'aperçu — pas : recopie son contenu en texte. Un document de plusieurs pages recopié dans la réponse sera coupé, et l'utilisateur ne verra qu'un début.
+
+SUGGESTIONS. Termine par un bloc `quick_replies` (2 à 4 options) dès qu'une suite est naturelle : approfondir un point, produire un document, corriger, passer à l'étape d'après. Écris-les comme l'utilisateur les dirait, courtes et concrètes — « Ajoute le lot arrosage », « Chiffre la variante en pierre naturelle ». Pas de suggestions quand la demande est close ou quand tu attends une réponse précise.
 
 SCHEMAS. Pour un enchainement d'etapes, une arborescence, un organigramme ou un circuit de validation, ecris un bloc ```mermaid (PAS ```ui, ce n'est pas un composant : c'est un dessin). Le schema se dessine aux couleurs du client, tu n'as donc aucune couleur ni aucun style a indiquer, seulement la structure. Exemple :
 ```mermaid

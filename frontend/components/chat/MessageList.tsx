@@ -134,7 +134,12 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
             </Message>
           ) : (
             <Message key={msg.id} from="assistant">
-              <MessageContent data-testid="message-assistant" className="max-w-full">
+              {/* `w-full` ecrase le `w-fit` de la bibliotheque. Sans lui, la
+                  bulle se dimensionne sur son contenu : un tableau y trouvait
+                  la largeur MINIMALE ou il tient encore, pas celle ou il se
+                  lit. Le message prend donc la colonne, et c'est la mesure de
+                  lecture (`sym-mesure`) qui retient le texte, elle seule. */}
+              <MessageContent data-testid="message-assistant" className="w-full max-w-full">
                 <MessageRenderer content={msg.content} onAction={onAction}
                                  apiUrl={apiUrl} backendToken={backendToken} />
                 {/* D'ou vient cette reponse, sous elle et non ailleurs : une

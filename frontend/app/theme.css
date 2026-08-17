@@ -219,6 +219,30 @@ button, input, select, textarea { font-family: var(--marque-font); }
 @keyframes symFloat { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
 @keyframes symPop { 0% { transform: scale(.94) } 60% { transform: scale(1.03) } 100% { transform: scale(1) } }
 
+/* LA MESURE DE LECTURE VAUT POUR LA PROSE, PAS POUR LES TABLEAUX.
+ *
+ * Soixante-huit caracteres est la bonne largeur pour une phrase : au-dela,
+ * l'oeil perd la ligne suivante en revenant a la marge. Mais la mesure etait
+ * posee sur le CONTENEUR, si bien qu'un devis a six colonnes s'y comprimait
+ * jusqu'a couper chaque mot — « Decapage de la / terre vegetale sur / 250 m² »
+ * sur cinq lignes, dans une colonne large comme un pouce.
+ *
+ * Un tableau n'est pas de la prose : on ne le lit pas ligne a ligne, on le
+ * balaye. La mesure porte donc desormais sur les elements de TEXTE eux-memes,
+ * a quelque profondeur qu'ils soient ; tableaux, blocs de code et images
+ * prennent toute la largeur offerte.
+ */
+.sym-mesure :is(p, li, h1, h2, h3, h4, h5, h6, blockquote) { max-width: 68ch; }
+.sym-mesure :is(table, pre, img) { max-width: 100%; }
+.sym-mesure table { width: 100%; }
+.sym-mesure pre { overflow-x: auto; }
+
+/* Un tableau plus large que la place restante DEFILE au lieu de pousser la
+ * page : c'est le conteneur qui defile, jamais le corps du document.
+ * Hors de `.sym-mesure` a dessein — les cartes (devis, tableaux) sont rendues
+ * comme composants, pas comme prose, et ont le meme besoin. */
+.sym-defile { overflow-x: auto; }
+
 .sym-in   { animation: symFadeUp .5s cubic-bezier(.22,.61,.36,1) both; }
 .sym-in-1 { animation-delay: .05s } .sym-in-2 { animation-delay: .11s }
 .sym-in-3 { animation-delay: .17s } .sym-in-4 { animation-delay: .23s }

@@ -28,7 +28,54 @@ type Part = { kind: "text"; text: string } | { kind: "ui"; block: any }
 // registre des types plus bas : un objet dont le `type` est inconnu, ou dont
 // un champ requis manque, n'est pas rendu. Élargir la balise n'ouvre donc
 // aucune porte — ça évite seulement d'afficher du JSON à un humain.
-const RE_BLOC = /```(?:ui|json)?\s*(\{[\s\S]*?\})\s*```/g
+// La clôture est FACULTATIVE. Un bloc coupé net par le plafond de sortie
+// n'avait pas ses trois accents finaux, donc ne correspondait à rien, donc
+// restait dans le texte — et le markdown l'affichait en bloc de code. Relevé
+// en production : un cahier des charges entier rendu sous forme de
+// `{"type":"list","items":["1. Description sommaire du projet","2. Pres…` sur
+// une seule ligne à faire défiler. On capture donc jusqu'à la clôture OU la
+// fin du message, et c'est `lire()` qui juge si le contenu est exploitable.
+const RE_BLOC = /```(?:ui|json)?[ \t]*\n?[ \t]*(\{[\s\S]*?)(?:```|$)/g
+
+/** Ferme ce qui est resté ouvert : chaîne, tableaux, objets. */
+function fermer(s: string): string {
+  const pile: string[] = []
+  let chaine = false, echap = false
+  for (const c of s) {
+    if (echap) { echap = false; continue }
+    if (c === "\\") { echap = true; continue }
+    if (chaine) { if (c === '"') chaine = false; continue }
+    if (c === '"') { chaine = true; continue }
+    if (c === "{" || c === "[") pile.push(c)
+    else if (c === "}" || c === "]") pile.pop()
+  }
+  let out = s + (chaine ? '"' : "")
+  out = out.replace(/,\s*$/, "")
+  while (pile.length) out += pile.pop() === "{" ? "}" : "]"
+  return out
+}
+
+/** JSON D'UN MODÈLE : souvent juste, parfois coupé, jamais garanti.
+ *
+ *  On tente la lecture stricte, puis la refermeture, puis on recule d'un
+ *  séparateur à la fois — un élément perdu en fin de liste vaut mieux que la
+ *  liste entière affichée en JSON brut à un humain. Rien n'est inventé : on
+ *  ne fait que RETIRER ce qui est incomplet. Si rien ne parse, on renonce et
+ *  le texte d'origine est laissé intact.
+ */
+function lire(brut: string): any {
+  const t = brut.trim()
+  try { return JSON.parse(t) } catch { /* on répare */ }
+  let s = t
+  for (let essai = 0; essai < 40 && s.length > 2; essai++) {
+    try { return JSON.parse(fermer(s)) } catch { /* on recule */ }
+    const virgule = s.lastIndexOf(",")
+    const ouvre = Math.max(s.lastIndexOf("["), s.lastIndexOf("{"))
+    if (virgule <= 0 && ouvre <= 0) break
+    s = virgule > ouvre ? s.slice(0, virgule) : s.slice(0, ouvre + 1)
+  }
+  return null
+}
 
 function parse(content: string): Part[] {
   const parts: Part[] = []
@@ -36,8 +83,7 @@ function parse(content: string): Part[] {
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(content)) !== null) {
-    let bloc: any = null
-    try { bloc = JSON.parse(m[1].trim()) } catch { /* JSON invalide */ }
+    const bloc: any = lire(m[1])
     // Un objet SANS `type` n'est pas un composant : c'est du JSON que le
     // modèle montre volontairement. On le laisse tel quel dans le texte.
     if (!bloc || typeof bloc.type !== "string") continue
@@ -51,7 +97,10 @@ function parse(content: string): Part[] {
 
 // Champs requis par type : si l'un manque, le composant n'est PAS rendu (on garde le texte).
 const REQUIRED: Record<string, string[]> = {
-  quote: ["client", "total", "lines"],
+  // `total` n'est plus exigé : la forme document porte ses montants dans
+  // `totals`, et un devis complet se retrouvait rejeté pour un champ que sa
+  // propre écriture rendait inutile.
+  quote: ["client", "lines"],
   invoice: ["number", "client", "amount"],
   email: ["subject", "from"],
   doc: ["name"],
@@ -263,15 +312,18 @@ export function MessageRenderer({ content, onAction, apiUrl, backendToken }:
     // carte, un graphique, un document. C'est le contraste qui porte la
     // lecture, pas la décoration.
     //
-    // La largeur est bornée en CARACTÈRES et non en pixels : au-delà d'une
-    // soixantaine, l'œil perd la ligne suivante en revenant à la marge.
-    <div className="group flex w-full flex-col items-start gap-3">
+    // La largeur du TEXTE est bornée en caractères et non en pixels : au-delà
+    // d'une soixantaine, l'œil perd la ligne suivante en revenant à la marge.
+    // Elle est posée par `sym-mesure` sur les éléments de texte eux-mêmes, et
+    // non sur le conteneur : un tableau ou une carte a le droit d'être large,
+    // une phrase non.
+    <div className="group flex w-full flex-col items-stretch gap-3">
       {parts.map((part, i) => {
         if (part.kind === "text") {
           const t = part.text.trim()
           if (!t) return null
           return (
-            <div key={i} className="sym-in w-full max-w-[68ch] text-[var(--marque-text-body)]">
+            <div key={i} className="sym-in sym-mesure w-full text-[var(--marque-text-body)]">
               {/* Streamdown remplace notre rendu maison : titres, listes,
                   tableaux, code coloré et formules, et surtout un rendu
                   correct du markdown ENCORE INCOMPLET pendant que la réponse

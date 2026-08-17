@@ -1,4 +1,6 @@
 "use client"
+import { useEffect, useRef } from "react"
+import { useStickToBottomContext } from "use-stick-to-bottom"
 import {
   Conversation,
   ConversationContent,
@@ -8,6 +10,35 @@ import {
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import { MessageRenderer } from "./MessageRenderer"
 import { SourcesReponse } from "./SourcesReponse"
+
+/** LE FIL S'OUVRE EN BAS, ET Y REVIENT À CHAQUE MESSAGE.
+ *
+ *  `Conversation` ne se recale qu'au MONTAGE (`initial`) et quand son contenu
+ *  grandit alors qu'on est déjà collé en bas (`resize`). Or à l'ouverture d'une
+ *  conversation, la liste est VIDE au montage : le recalage initial s'applique
+ *  à rien, et l'historique n'arrive qu'ensuite, une fois la requête revenue.
+ *  Résultat relevé en production : on rouvre le chat et on doit faire défiler
+ *  vers le bas pour retrouver les derniers échanges.
+ *
+ *  Ce composant ne rend rien : il vit à l'intérieur du contexte pour pouvoir
+ *  demander le recalage. Sur la restauration il est INSTANTANÉ — traverser
+ *  lentement six mois d'historique sous les yeux de l'utilisateur n'apporte
+ *  rien ; sur un message qui arrive, il est doux, parce que là le mouvement
+ *  raconte quelque chose.
+ */
+function CollerEnBas({ nombre }: { nombre: number }) {
+  const { scrollToBottom } = useStickToBottomContext()
+  const precedent = useRef(0)
+
+  useEffect(() => {
+    if (nombre === 0) return
+    const restauration = precedent.current === 0
+    precedent.current = nombre
+    scrollToBottom({ animation: restauration ? "instant" : "smooth" })
+  }, [nombre, scrollToBottom])
+
+  return null
+}
 
 interface Message_ {
   id: string
@@ -59,6 +90,7 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
   { messages: Message_[]; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
   return (
     <Conversation initial="instant" resize="instant" data-testid="liste-messages">
+      <CollerEnBas nombre={messages.length} />
       {/* PLUS D'AIR ENTRE LES MESSAGES QU'AVANT.
           Seize pixels suffisaient tant que chaque réponse était une carte : le
           cadre faisait la séparation. Le texte de l'IA coulant désormais à

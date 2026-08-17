@@ -113,7 +113,14 @@ class Settings(BaseSettings):
     optim_cache_max: int = 500              # nb max d'entrées en cache (LRU)
     optim_max_tokens_light: int = 1024      # plafond sortie palier LIGHT
     optim_max_tokens_standard: int = 3072   # plafond sortie palier STANDARD
-    optim_max_tokens_complex: int = 4096    # plafond sortie palier COMPLEX
+    # 4096 jetons ≈ 3000 mots : un cahier des charges ET un devis demandés dans
+    # le même tour n'y tenaient pas, et la réponse se coupait en cours de phrase.
+    #
+    # Ce plafond est FACTURÉ À L'USAGE RÉEL, pas à sa valeur : le relever ne
+    # renchérit aucune réponse courte, il cesse seulement de tronquer les
+    # longues. Les appels intermédiaires du tour, qui n'émettent qu'un bloc
+    # d'action de quelques lignes, coûtent exactement la même chose qu'avant.
+    optim_max_tokens_complex: int = 8192    # plafond sortie palier COMPLEX
 
     # Résilience (retry + backoff + cascade de fallback)
     llm_max_retries: int = 3

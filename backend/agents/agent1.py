@@ -44,7 +44,31 @@ Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emp
 # Le garde-fou contre les boucles ne repose de toute façon pas sur ce chiffre :
 # une action REJOUÉE à l'identique est reconnue par son empreinte et resservie
 # sans être exécutée. Ce qui est borné ici, c'est le travail qui AVANCE.
-MAX_ACTIONS_PAR_TOUR = 8
+# CE N'EST PLUS UN BUDGET, C'EST UN GARDE-FOU D'EMBALLEMENT.
+#
+# À 8, le chiffre bornait des tâches légitimes : lire cinq cahiers des charges,
+# les analyser, puis produire deux documents demande bien davantage, et
+# l'utilisateur recevait « le nombre d'actions autorisées est atteint » sur une
+# demande parfaitement raisonnable.
+#
+# Or ce compteur n'a jamais mesuré le coût : il mesurait « est-ce que ça mène
+# quelque part », et mal. Le vrai signal d'un tour qui tourne en rond est
+# l'ENLISEMENT, pas le nombre d'actions — c'est lui qui est mesuré plus bas.
+# Ce plafond-ci ne sert plus qu'à empêcher une boucle folle de durer des heures.
+MAX_ACTIONS_PAR_TOUR = 40
+
+# CE QUI ARRÊTE VRAIMENT UN TOUR QUI N'AVANCE PLUS.
+#
+# Trois actions d'affilée qui échouent, c'est un modèle qui s'obstine sur un
+# chemin fermé : le dossier n'existe pas, le droit manque, le service ne répond
+# pas. Une quatrième tentative ne rendra pas le dossier existant, elle coûtera
+# un appel de plus et fera patienter pour rien.
+#
+# Distinct du plafond ci-dessus : celui-là borne la DURÉE, celui-ci reconnaît
+# l'ÉCHEC. Un tour de trente actions qui aboutissent est légitime ; un tour de
+# quatre qui échouent ne l'est pas.
+MAX_ECHECS_CONSECUTIFS = 3
+
 
 # Les versements dans un document en cours sont exemptés du budget ci-dessus
 # (ils avancent par construction), mais pas sans borne : le document accepte
@@ -363,7 +387,36 @@ async def llm_node(state: AgentState, config=None) -> dict:
         # affiché réellement gratuit.
         pour_le_modele = [{c: v for c, v in r.items() if c != "args"}
                           for r in resultats_outils]
+        # ON GARDE LES RÉSULTATS LES PLUS RÉCENTS, PAS LES PREMIERS.
+        #
+        # Tronquer la sérialisation entière par la fin coupait le bout le plus
+        # récent : le modèle relisait ses premières actions et perdait celle
+        # qu'il venait d'obtenir. Tant que le budget d'actions valait 8, la
+        # coupure était rare ; à 40 elle devient la règle — et perdre le dernier
+        # résultat est précisément ce qui fait relancer la même action.
+        #
+        # On empile donc depuis la fin, le plus ancien tombant en premier. Le
+        # dernier résultat est gardé même s'il dépasse à lui seul le plafond :
+        # mieux vaut un résultat coupé que pas de résultat du tout.
+        gardes, taille = [], 0
+        for _r in reversed(pour_le_modele):
+            _bloc = _json_out.dumps(_r, ensure_ascii=False, default=str)
+            if gardes and taille + len(_bloc) > plafond_bloc:
+                break
+            gardes.append(_r)
+            taille += len(_bloc)
+        gardes.reverse()
+
+        # L'OUBLI SE DIT. Sans cette phrase, le modèle voit trois résultats là
+        # où il en a obtenu douze, et croit devoir relancer les neuf manquants.
+        omis = len(pour_le_modele) - len(gardes)
+        entete = ("Résultats des actions déjà exécutées pour cette demande (ne les "
+                  "relance pas à l'identique)")
+        if omis > 0:
+            entete += (f" — les {omis} plus anciens ne sont plus détaillés ici, "
+                       "mais ils ont bien abouti : ne les refais pas")
         bloc_resultats = (
+            entete + " :\n"
             "Résultats des actions déjà exécutées pour cette demande (ne les "
             "relance pas à l'identique) :\n"
             + _json_out.dumps(pour_le_modele, ensure_ascii=False,
@@ -822,6 +875,30 @@ async def tools_node(state: AgentState, config=None) -> dict:
     jalon = ok and action["skill"] == "terminer_document"
 
     avance = a_verse or jalon
+
+    # L'ENLISEMENT, MESURÉ SUR CE QUI VIENT DE SE PASSER.
+    #
+    # C'est ce contrôle qui autorise le plafond haut posé en tête de fichier.
+    # Tant que les actions aboutissent, le tour continue : lire quinze fichiers
+    # avant de rédiger est un travail légitime, pas une boucle. Dès que trois
+    # échouent d'affilée, le chemin est fermé et une tentative de plus ne
+    # l'ouvrira pas.
+    #
+    # On regarde la FIN de la liste, pas son total : un tour qui a réussi dix
+    # actions puis en rate deux travaille encore. Le rejeu à l'identique est
+    # déjà écarté en amont (l'empreinte le resert sans l'exécuter), donc ces
+    # échecs-ci sont bien des tentatives distinctes qui échouent.
+    if not ok:
+        recents = [r for r in resultats if r.get("skill")][-MAX_ECHECS_CONSECUTIFS:]
+        if (len(recents) == MAX_ECHECS_CONSECUTIFS
+                and not any(r.get("ok") for r in recents)):
+            logger.info("Enlisement : %d actions consécutives en échec, tour arrêté",
+                        MAX_ECHECS_CONSECUTIFS)
+            # Formulé comme une RAISON : c'est le modèle qui la met en mots, et
+            # il a les résultats d'échec sous les yeux pour dire lequel a bloqué.
+            return _sortir("les dernières actions tentées ont toutes échoué ; "
+                           "inutile d'insister sur la même voie.")
+
     maj = {"tool_results": resultats,
            "tool_iterations": (state.get("tool_iterations") or 0) if avance else iteration,
            "versements": versements + 1 if a_verse else versements,

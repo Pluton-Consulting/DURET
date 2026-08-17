@@ -394,6 +394,10 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     )
 
     final_response = ""
+    # L'échange a-t-il déjà été écrit pendant la boucle ? Un tour qui se termine
+    # sur une demande de validation n'émet PAS de `final` : il faut alors écrire
+    # après coup, comme avant, sinon la question posée disparaîtrait du fil.
+    persistance_faite = False
     try:
         async for event in runtime.stream_turn(
             query=data.get("query", ""),
@@ -410,6 +414,29 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                 agent_used = (event.get("data") or {}).get("target_agent", agent_used)
             if event.get("type") == "final":
                 final_response = event.get("response") or ""
+                # ON ÉCRIT AVANT D'ANNONCER, ET C'EST TOUT LE CORRECTIF.
+                #
+                # La persistance vivait APRÈS la boucle. Or `final` est le
+                # dernier événement du serveur, et le client ferme la socket
+                # dès qu'il le reçoit (`finish()` appelle `closeWs()`) : le
+                # serveur partait donc écrire en base pendant que la connexion
+                # se fermait sous lui. Selon qui gagnait la course, le dernier
+                # échange était enregistré... ou perdu. Relevé en production :
+                # « le dernier message disparaît dès que je rafraîchis ».
+                #
+                # Une annulation de tâche n'est PAS une `Exception` en Python
+                # (CancelledError descend de BaseException) : le garde-fou
+                # best-effort de `_persist_messages` ne la voyait pas passer,
+                # et la perte était donc parfaitement silencieuse — aucun
+                # journal, aucune trace, un message évaporé.
+                #
+                # Écrire d'abord supprime la course au lieu de l'arbitrer :
+                # quand le client apprend que c'est fini, ça l'est vraiment.
+                # Le coût est une écriture avant l'affichage, quelques
+                # millisecondes sur un tour qui en a pris des milliers.
+                await _persist_messages(user, thread_pk,
+                                        data.get("query", ""), final_response)
+                persistance_faite = True
             await websocket.send_json(event)
     except asyncio.CancelledError:
         # ARRÊT DEMANDÉ — pas une panne. Le verrou de fil se libère de lui-même
@@ -423,9 +450,15 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         # LE MÊME TEXTE À L'ÉCRAN ET EN BASE : au rechargement, la conversation
         # doit dire exactement ce qu'elle disait avant.
         mot = final_response or "Traitement interrompu à votre demande."
+        # MÊME INVERSION QU'AU CHEMIN NORMAL : on écrivait APRÈS avoir annoncé,
+        # et le client ferme la socket sur `arrete` comme sur `final`. Pire ici :
+        # les deux appels partageaient un `try` dont l'échec du premier sautait
+        # le second, si bien qu'une socket déjà fermée emportait l'écriture.
+        if not persistance_faite:
+            await _persist_messages(user, thread_pk, data.get("query", ""), mot)
+            persistance_faite = True
         try:
             await websocket.send_json({"type": "arrete", "detail": mot})
-            await _persist_messages(user, thread_pk, data.get("query", ""), mot)
         except Exception:  # noqa: BLE001 - la socket peut déjà être fermée
             pass
         await log_action(action="chat_interrompu", user_id=str(user.id),
@@ -443,7 +476,11 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         return
 
     duration_ms = int((time.monotonic() - start) * 1000)
-    await _persist_messages(user, thread_pk, data.get("query", ""), final_response)
+    # Filet pour les tours qui n'ont pas émis de `final` : mise en attente de
+    # validation, principalement. Écrire deux fois le même échange serait pire
+    # que ne pas l'écrire — le fil afficherait la question en double.
+    if not persistance_faite:
+        await _persist_messages(user, thread_pk, data.get("query", ""), final_response)
     await _increment_usage(user, tokens=tokens, cost=0.0)
     await log_action(
         action="chat_request", user_id=str(user.id), agent_id=agent_used,

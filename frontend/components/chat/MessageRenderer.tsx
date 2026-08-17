@@ -1,5 +1,5 @@
 "use client"
-import { useState, type ReactNode } from "react"
+import { useRef, useState, type ReactNode } from "react"
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { MessageActions, MessageAction, MessageResponse } from "@/components/ai-elements/message"
 import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
@@ -154,7 +154,7 @@ function present(v: any): boolean {
  *  perd pas au rendu suivant. */
 function FichierAvecApercu({ bloc, acces }: {
   bloc: any
-  acces?: { apiUrl?: string; backendToken?: string }
+  acces?: { apiUrl?: string; backendToken?: string; dernier?: boolean }
 }) {
   const { url, nom, format } = bloc
   // Trois sources, de la plus fiable à la plus approximative : le format
@@ -163,7 +163,23 @@ function FichierAvecApercu({ bloc, acces }: {
     (format ? formatDepuisNom(`x.${String(format).replace(/^\./, "")}`) : null)
     ?? formatDepuisNom(nom)
     ?? formatDepuisNom(url)
-  const [ouvert, setOuvert] = useState(true)
+  // L'APERÇU NE S'OUVRE TOUT SEUL QUE SUR LE DERNIER MESSAGE.
+  //
+  // Chaque carte va chercher son fichier dès qu'elle s'affiche. En rouvrant
+  // une conversation, TOUTES les cartes de l'historique partaient donc en même
+  // temps — et comme le modèle avait resservi les mêmes liens sur plusieurs
+  // tours, la console se remplissait du même 404 répété sept fois pour deux
+  // documents. On paie de la bande passante pour des documents que personne ne
+  // regarde, et on transforme une expiration normale en avalanche d'erreurs.
+  //
+  // Le document qu'on vient de produire s'ouvre donc encore de lui-même —
+  // c'est celui qu'on veut voir — et les précédents attendent qu'on le
+  // demande. Le bouton reste là, au même endroit.
+  const [ouvert, setOuvert] = useState(acces?.dernier !== false)
+  // Une fois affiché, l'aperçu ne redescend plus : le replier le cache, il ne
+  // le décharge pas. C'est ce qui évite le second trajet réseau qui échouait.
+  const vuUneFois = useRef(false)
+  if (ouvert) vuUneFois.current = true
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 620, width: "100%" }}>
@@ -198,9 +214,12 @@ function FichierAvecApercu({ bloc, acces }: {
               pour échouer.
               L'aperçu s'ouvre par défaut : il est donc monté dès le premier
               rendu, et le masquer se borne à le cacher. */}
-          <div hidden={!ouvert}>
-            <ApercuDocument url={url} format={detecte} nom={nom} {...acces} />
-          </div>
+          {(ouvert || vuUneFois.current) && (
+            <div hidden={!ouvert}>
+              <ApercuDocument url={url} format={detecte} nom={nom}
+                              apiUrl={acces?.apiUrl} backendToken={acces?.backendToken} />
+            </div>
+          )}
         </>
       )}
     </div>
@@ -208,7 +227,7 @@ function FichierAvecApercu({ bloc, acces }: {
 }
 
 function renderBlock(block: any, onAction?: (v: string) => void,
-                     acces?: { apiUrl?: string; backendToken?: string }): ReactNode {
+                     acces?: { apiUrl?: string; backendToken?: string; dernier?: boolean }): ReactNode {
   if (!block || typeof block !== "object") return null
   const { type, ...p } = block
   const req = REQUIRED[type]
@@ -307,8 +326,11 @@ function ActionsReponse({ texte }: { texte: string }) {
   )
 }
 
-export function MessageRenderer({ content, onAction, apiUrl, backendToken }:
-  { content: string; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
+export function MessageRenderer({ content, onAction, apiUrl, backendToken, dernier = true }:
+  { content: string; onAction?: (v: string) => void; apiUrl?: string
+    backendToken?: string
+    /** Dernier message du fil ? Seul lui ouvre ses aperçus tout seul. */
+    dernier?: boolean }) {
   const parts = parse(content)
   // Ce qu'on copie : la réponse en toutes lettres, sans les blocs de données
   // qui ne veulent rien dire hors de l'écran.
@@ -353,7 +375,7 @@ export function MessageRenderer({ content, onAction, apiUrl, backendToken }:
             </div>
           )
         }
-        const node = renderBlock(part.block, onAction, { apiUrl, backendToken })
+        const node = renderBlock(part.block, onAction, { apiUrl, backendToken, dernier })
         return node ? <div key={i} className="sym-in">{node}</div> : null
       })}
       <ActionsReponse texte={texteSeul} />

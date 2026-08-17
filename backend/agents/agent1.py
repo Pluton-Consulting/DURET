@@ -593,7 +593,20 @@ Voici les messages trouvés :
         # On ne répète pas la même consigne, on NOMME le défaut — répéter à
         # l'identique obtient à l'identique.
         _precedente = state.get("llm_response") or ""
-        if est_une_annonce(_precedente) or promesse_sans_suite(_precedente):
+        if not _texte_visible(_precedente):
+            # RIEN QU'UN BLOC D'ACTION, DONC RIEN. La phase d'actions est close :
+            # en émettre un de plus ne l'exécutera pas, il sera simplement
+            # retiré avant l'affichage et la réponse sera vide. C'est ce qui a
+            # coûté trente et une minutes de travail abouti en production.
+            redaction_a_reprendre = True
+            system_prompt += (
+                "\n⚠ Ta réponse précédente ne contenait AUCUN texte : seulement un "
+                "bloc d'action. La phase d'actions est TERMINÉE pour ce tour — un "
+                "bloc de plus ne sera pas exécuté, il sera retiré, et l'utilisateur "
+                "verra une réponse vide. Écris maintenant une VRAIE réponse en "
+                "français : ce que tu as fait, ce que tu as trouvé, et les documents "
+                "produits avec leur bloc `fichier`. Aucun bloc d'action.")
+        elif est_une_annonce(_precedente) or promesse_sans_suite(_precedente):
             redaction_a_reprendre = True
             system_prompt += (
                 "\n⚠ Ta réponse précédente ANNONÇAIT le travail au lieu de le livrer "
@@ -935,16 +948,28 @@ async def rehydrate_node(state: AgentState) -> dict:
     # Les passes couvrent le bloc demandé, le bloc COUPÉ par le plafond de
     # sortie, la syntaxe native d'un modèle de la cascade, puis tout balisage
     # résiduel quel qu'en soit l'émetteur.
-    text = BLOC_ACTION_RE.sub("", text)
-    # Un bloc ouvert et jamais refermé échappait aux trois filtres : relevé en
-    # production, 8 000 caractères de JSON affichés à l'utilisateur.
-    text = BLOC_ACTION_TRONQUE_RE.sub("", text)
-    text = BLOC_NATIF_RE.sub("", text)
-    text = BALISAGE_OUTIL_RE.sub("", text).strip()
+    # Un bloc ouvert et jamais refermé échappait aux filtres : relevé en
+    # production, 8 000 caractères de JSON affichés à l'utilisateur. Les quatre
+    # passes vivent dans `_texte_visible`, partagé avec le routeur.
+    text = _texte_visible(text)
     if not text:
-        # Dernier filet : mieux vaut une phrase honnête qu'une bulle vide.
-        text = ("Je n'ai pas réussi à formuler de réponse pour cette demande. "
-                "Pouvez-vous la reformuler ?")
+        # DERNIER FILET, ET IL NE DOIT PAS ACCUSER L'UTILISATEUR.
+        #
+        # « Pouvez-vous la reformuler ? » suppose que la demande était mauvaise.
+        # Relevé en production alors que 29 actions avaient toutes abouti et que
+        # trois documents étaient terminés : la demande était parfaite, c'est la
+        # rédaction finale qui a manqué. On distingue donc les deux cas, et on
+        # dit ce qui EXISTE — un document produit se retrouve dans l'historique
+        # du fil, encore faut-il savoir qu'il est là.
+        faits = [r for r in (state.get("tool_results") or []) if r.get("ok")]
+        if faits:
+            text = (f"J'ai bien mené les {len(faits)} actions de cette demande, "
+                    "mais je n'ai pas réussi à en rédiger le compte rendu. "
+                    "Demandez-moi de vous présenter le résultat : le travail, lui, "
+                    "est fait.")
+        else:
+            text = ("Je n'ai pas réussi à formuler de réponse pour cette demande. "
+                    "Pouvez-vous la reformuler ?")
 
     entity_map = state.get("entity_map") or {}
     # Restreint aux jetons envoyés ce tour-ci (cf. turn_placeholders dans llm_node).
@@ -1169,6 +1194,25 @@ def route_apres_forcage(state: AgentState) -> str:
     return "rehydrate"
 
 
+def _texte_visible(texte: str) -> str:
+    """Ce qui resterait à l'écran une fois la mécanique interne retirée.
+
+    Les blocs d'action ne s'affichent jamais : `rehydrate_node` les retire.
+    Un texte qui n'est QUE cela vaut donc zéro pour l'utilisateur, même s'il
+    fait deux mille caractères. Cette fonction sert aux deux endroits qui ont
+    besoin de la même vérité — le routeur, pour décider s'il faut redemander
+    la rédaction, et la réhydratation, pour son dernier filet.
+    """
+    from skills.protocol import (BLOC_ACTION_RE, BLOC_ACTION_TRONQUE_RE,
+                                 BLOC_NATIF_RE, BALISAGE_OUTIL_RE)
+    if not isinstance(texte, str):
+        return ""
+    for motif in (BLOC_ACTION_RE, BLOC_ACTION_TRONQUE_RE, BLOC_NATIF_RE,
+                  BALISAGE_OUTIL_RE):
+        texte = motif.sub("", texte)
+    return texte.strip()
+
+
 def route_apres_llm(state: AgentState) -> str:
     """Le modèle a-t-il demandé une action ?"""
     from skills.protocol import BLOC_ACTION_RE, BLOC_NATIF_RE
@@ -1195,9 +1239,25 @@ def route_apres_llm(state: AgentState) -> str:
         # DEUX SIGNAUX, dont un indépendant du vocabulaire : la liste de verbes
         # ne reconnaissait PAS « Voici ce que je lance : », qui est pourtant le
         # cas relevé en production.
+        # TROISIÈME SIGNAL, ET LE PLUS COÛTEUX : RIEN DU TOUT.
+        #
+        # Le modèle peut rendre une dernière passe qui ne contient QU'un bloc
+        # d'action. Ces blocs sont retirés avant affichage — c'est de la
+        # mécanique interne — et il ne reste alors rien : `rehydrate_node`
+        # tombait sur son dernier filet et servait « Je n'ai pas réussi à
+        # formuler de réponse pour cette demande. Pouvez-vous la reformuler ? ».
+        #
+        # Relevé en production, et c'est le pire cas observé jusqu'ici : 29
+        # actions, TOUTES réussies, trois documents terminés, trente et une
+        # minutes de travail — et l'utilisateur reçoit une excuse, sans un seul
+        # lien. Une phrase qui, en plus, l'accuse d'avoir mal formulé.
+        #
+        # Un texte vide n'est pas une réponse : on redemande la rédaction, au
+        # même titre qu'une promesse.
         if not state.get("redaction_forcee") and (est_une_annonce(texte)
-                                                  or promesse_sans_suite(texte)):
-            logger.info("Dernière passe rendue en promesse : rédaction redemandée")
+                                                  or promesse_sans_suite(texte)
+                                                  or not _texte_visible(texte)):
+            logger.info("Dernière passe sans réponse utilisable : rédaction redemandée")
             return "llm"
         return "rehydrate"
 

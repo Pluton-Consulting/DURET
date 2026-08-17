@@ -96,7 +96,7 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
             background-size:22px 2px; animation:symPointille 1.1s linear infinite; }
           @media (prefers-reduced-motion: reduce){ .sym-attente-fil{ animation:none } }
         `}</style>
-        {messages.map((msg) =>
+        {messages.map((msg, rang) =>
           msg.role === "user" ? (
             <Message key={msg.id} from="user" className="sym-in">
               <MessageContent
@@ -141,7 +141,8 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
                   lecture (`sym-mesure`) qui retient le texte, elle seule. */}
               <MessageContent data-testid="message-assistant" className="w-full max-w-full">
                 <MessageRenderer content={msg.content} onAction={onAction}
-                                 apiUrl={apiUrl} backendToken={backendToken} />
+                                 apiUrl={apiUrl} backendToken={backendToken}
+                                 dernier={rang === messages.length - 1} />
                 {/* D'ou vient cette reponse, sous elle et non ailleurs : une
                     provenance rangee dans un panneau lateral n'est jamais lue. */}
                 {msg.provenance && (

@@ -57,17 +57,20 @@ Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emp
 # Ce plafond-ci ne sert plus qu'à empêcher une boucle folle de durer des heures.
 MAX_ACTIONS_PAR_TOUR = 40
 
-# CE QUI ARRÊTE VRAIMENT UN TOUR QUI N'AVANCE PLUS.
+# LE FILET CONTRE L'ERRANCE — PAS CONTRE L'EXPLORATION.
 #
-# Trois actions d'affilée qui échouent, c'est un modèle qui s'obstine sur un
-# chemin fermé : le dossier n'existe pas, le droit manque, le service ne répond
-# pas. Une quatrième tentative ne rendra pas le dossier existant, elle coûtera
-# un appel de plus et fera patienter pour rien.
+# À 3, ce compteur a tué un tour qui était en train de se corriger : chaque
+# refus du Drive renvoie la liste des dossiers réellement présents, et le tour
+# du matin, parti de la MÊME erreur, s'était rattrapé à l'essai suivant et
+# avait tout livré. Trois échecs DISTINCTS, c'est souvent un modèle qui lit
+# les indications et resserre — pas un modèle perdu.
 #
-# Distinct du plafond ci-dessus : celui-là borne la DURÉE, celui-ci reconnaît
-# l'ÉCHEC. Un tour de trente actions qui aboutissent est légitime ; un tour de
-# quatre qui échouent ne l'est pas.
-MAX_ECHECS_CONSECUTIFS = 3
+# La vraie obstination — redemander À L'IDENTIQUE une action qui a échoué —
+# a déjà sa sortie immédiate dans le bloc de rejeu, avec la raison d'origine.
+# Ce compteur-ci n'est que le filet DERRIÈRE ce garde : six tentatives
+# différentes qui échouent toutes d'affilée, c'est une errance qui n'écoute
+# plus les indications, et chaque essai coûte un appel.
+MAX_ECHECS_CONSECUTIFS = 6
 
 # À PARTIR D'OÙ UN TOUR EST « LONG », DONC OÙ UN LIVRABLE SE PRÉSENTE.
 #
@@ -713,7 +716,15 @@ async def tools_node(state: AgentState, config=None) -> dict:
         étant posé, `route_apres_llm` ira en réhydratation quoi qu'il produise.
         """
         corps = (texte or "").strip()
-        if not resultats or not corps:
+        # UNE NOTE NE S’AFFICHE JAMAIS TELLE QUELLE. La branche qui gardait le
+        # corps COLLAIT la note dessous, verbatim — et l’utilisateur a lu
+        # « les dernières actions tentées ont toutes échoué ; inutile
+        # d’insister sur la même voie. » sous une annonce d’exploration.
+        # C’est exactement ce que la docstring ci-dessus promettait d’éviter,
+        # mais la promesse ne couvrait qu’une branche sur deux. Dès qu’il y a
+        # une note, la rédaction est forcée : le modèle explique, dans ses
+        # mots, avec les erreurs sous les yeux.
+        if note or not resultats or not corps:
             if note:
                 logger.info("Sortie de boucle sans aboutissement (%s) — rédaction forcée", note)
             return {"tool_results": resultats, "llm_response": "",
@@ -725,8 +736,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
         # action, elle aurait effacé son résultat — et le modèle, ne le
         # voyant plus, aurait refait le geste. C’est le double devis
         # relevé en production.
-        return {"tool_results": resultats,
-                "llm_response": corps + (f"\n\n{note}" if note else ""),
+        return {"tool_results": resultats, "llm_response": corps,
                 "tools_finished": True, "tool_iterations": iteration}
 
     if erreur:
@@ -967,8 +977,10 @@ async def tools_node(state: AgentState, config=None) -> dict:
                         MAX_ECHECS_CONSECUTIFS)
             # Formulé comme une RAISON : c'est le modèle qui la met en mots, et
             # il a les résultats d'échec sous les yeux pour dire lequel a bloqué.
-            return _sortir("les dernières actions tentées ont toutes échoué ; "
-                           "inutile d'insister sur la même voie.")
+            return _sortir("les dernières actions ont toutes échoué. Explique "
+                           "ce qui a bloqué — les messages d'erreur le disent — "
+                           "présente ce que tu as déjà trouvé, et propose une "
+                           "autre voie.")
 
     maj = {"tool_results": resultats,
            "tool_iterations": (state.get("tool_iterations") or 0) if avance else iteration,

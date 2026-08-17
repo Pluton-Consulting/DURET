@@ -29,6 +29,13 @@ type Props = {
   jetons?: { entree: number; sortie: number }
   /** Le modèle qui a répondu, ou « cache » quand le tour n'a rien coûté. */
   modele?: string
+  /** VUE DÉVELOPPEUR — réservée au super_admin.
+   *
+   *  « 208 246 jetons · deepseek/deepseek-v4-pro » ne dit rien à qui utilise
+   *  l'assistant pour travailler : c'est une mesure d'exploitation, et elle
+   *  encombrait la fin de chaque réponse. Les sources, elles, restent visibles
+   *  de tous — savoir d'où vient une information n'est pas de la technique. */
+  technique?: boolean
 }
 
 /** LA PAGE CONSULTÉE, MONTRÉE SUR PLACE.
@@ -85,10 +92,14 @@ function joli(nom: string): string {
   return nom.replace(/_/g, " ").replace(/\.(pdf|docx?|xlsx?|csv|pptx?|txt|md)$/i, "")
 }
 
-export function SourcesReponse({ documents, web, webFiltre, jetons, modele }: Props) {
+export function SourcesReponse({ documents, web, webFiltre, jetons, modele,
+                                 technique = false }: Props) {
   const total = documents.length + web.length
-  const cache = modele === "cache"
-  if (!total && !jetons && !cache) return null
+  // Le coût n'apparaît qu'en vue développeur. Sans lui, une réponse qui n'a
+  // aucune source n'a plus rien à montrer : la rangée disparaît entièrement.
+  const cache = technique && modele === "cache"
+  const compte = technique ? jetons : undefined
+  if (!total && !compte && !cache) return null
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 pt-1">
@@ -127,9 +138,9 @@ export function SourcesReponse({ documents, web, webFiltre, jetons, modele }: Pr
           donc la mesure réelle, sans le décor. */}
       {cache ? (
         <span className="text-xs text-muted-foreground">réponse déjà connue, aucun appel</span>
-      ) : jetons ? (
+      ) : compte ? (
         <span className="text-xs text-muted-foreground tabular-nums">
-          {(jetons.entree + jetons.sortie).toLocaleString("fr-FR")} jetons
+          {(compte.entree + compte.sortie).toLocaleString("fr-FR")} jetons
           {modele ? ` · ${modele.split(":").pop()}` : ""}
         </span>
       ) : null}

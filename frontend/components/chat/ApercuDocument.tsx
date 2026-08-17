@@ -125,6 +125,9 @@ export function ApercuDocument({
   const [texte, setTexte] = React.useState<string>()
   const [erreur, setErreur] = React.useState<string>()
   const [sombre, setSombre] = React.useState(false)
+  // Un incident réseau ne doit pas être une impasse : incrémenter relance
+  // l'effet de récupération, sans rien remonter ni recharger la visionneuse.
+  const [essai, setEssai] = React.useState(0)
 
   React.useEffect(() => {
     let vivant = true
@@ -172,15 +175,23 @@ export function ApercuDocument({
       // ménage, chaque aperçu affiché garde son fichier en mémoire.
       if (cree) URL.revokeObjectURL(cree)
     }
-  }, [url, format, apiUrl, backendToken])
+  }, [url, format, apiUrl, backendToken, essai])
 
   if (erreur) {
     return (
       <div
-        className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
+        className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
         role="status"
       >
-        Aperçu indisponible ({erreur}). Le fichier reste téléchargeable.
+        <span>Aperçu indisponible ({erreur}). Le fichier reste téléchargeable.</span>
+        <button
+          type="button"
+          onClick={() => { setErreur(undefined); setEssai((n) => n + 1) }}
+          className="sym-tap rounded-full border border-border px-3 py-1 text-[12.5px]"
+          data-testid="reessayer-apercu"
+        >
+          Réessayer
+        </button>
       </div>
     )
   }

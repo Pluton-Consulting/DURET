@@ -8,7 +8,7 @@ import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, FileCard, ContactCard, ProjectCard,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
-  Callout, StatTile, Badge, BulletList,
+  Callout, StatTile, Badge, BulletList, PlanEtapes,
 } from "@/components/blocks"
 
 // Une réponse de l'IA = du texte, avec éventuellement des composants intercalés
@@ -124,6 +124,7 @@ const REQUIRED: Record<string, string[]> = {
   badge: ["text"],
   callout: ["text"],
   quick_replies: ["options"],
+  plan: ["etapes"],
 }
 
 // Un champ est « fourni » s'il n'est ni vide, ni une chaîne blanche, ni un tableau vide.
@@ -184,9 +185,22 @@ function FichierAvecApercu({ bloc, acces }: {
           >
             {ouvert ? "Masquer l’aperçu" : "Afficher l’aperçu"}
           </button>
-          {ouvert && (
+          {/* MASQUER N'EST PAS DÉCHARGER.
+              Le repli démontait l'aperçu, donc libérait le fichier, donc le
+              retéléchargeait au réaffichage — et ce second trajet échouait
+              (« Aperçu indisponible (Failed to fetch) ») là où le premier
+              avait parfaitement abouti. Relevé en production sur un document
+              qui s'affichait très bien une seconde plus tôt.
+              L'aperçu n'est donc monté qu'au PREMIER affichage — la
+              visionneuse et le fichier restent différés jusque-là, c'est tout
+              l'intérêt — puis il ne redescend plus : on le cache. Le fichier
+              n'est récupéré qu'une fois, et il n'y a plus de second trajet
+              pour échouer.
+              L'aperçu s'ouvre par défaut : il est donc monté dès le premier
+              rendu, et le masquer se borne à le cacher. */}
+          <div hidden={!ouvert}>
             <ApercuDocument url={url} format={detecte} nom={nom} {...acces} />
-          )}
+          </div>
         </>
       )}
     </div>
@@ -223,6 +237,7 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "gauge":         return <Gauge {...p} />
     case "stat":          return <StatTile {...p} />
     case "list":          return <BulletList {...p} />
+    case "plan":          return <PlanEtapes {...p} />
     case "badge":         return <Badge tone={p.tone}>{p.text}</Badge>
     case "callout":       return <Callout tone={p.tone} title={p.title}>{p.text}</Callout>
     // LES PROPOSITIONS PASSENT PAR AI ELEMENTS. Le bouton maison faisait le

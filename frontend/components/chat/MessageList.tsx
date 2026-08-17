@@ -55,8 +55,11 @@ interface Message_ {
  *  déclencherait sa propre animation, et le fil tremblerait en continu
  *  pendant toute la réflexion.
  */
-export default function MessageList({ messages, onAction, apiUrl, backendToken }:
-  { messages: Message_[]; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
+export default function MessageList({ messages, onAction, apiUrl, backendToken, technique }:
+  { messages: Message_[]; onAction?: (v: string) => void; apiUrl?: string
+    backendToken?: string
+    /** Vue developpeur : laisse passer le cout du tour sous la reponse. */
+    technique?: boolean }) {
   return (
     <Conversation initial="instant" resize="instant" data-testid="liste-messages">
       {/* PLUS D'AIR ENTRE LES MESSAGES QU'AVANT.
@@ -151,6 +154,7 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
                     webFiltre={msg.provenance.webFiltre}
                     jetons={msg.provenance.jetons}
                     modele={msg.provenance.modele}
+                    technique={technique}
                   />
                 )}
               </MessageContent>

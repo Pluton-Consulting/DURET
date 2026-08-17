@@ -178,6 +178,30 @@ def est_une_annonce(texte: str) -> bool:
     return bool(ANNONCE_SANS_ACTE.search(nu))
 
 
+def promesse_sans_suite(texte: str) -> bool:
+    """Le texte INTRODUIT quelque chose qui n'est jamais venu.
+
+    Signal volontairement INDÉPENDANT DU VOCABULAIRE, contrairement à
+    `est_une_annonce` qui repose sur une liste de verbes français. Une réponse
+    finale ne se termine jamais par deux-points : ce signe annonce une suite, et
+    s'il est le dernier caractère, la suite manque.
+
+    Relevé en production : « Je parcours le drive pour trouver des devis. Voici
+    ce que je lance : », affiché comme réponse finale après une action pourtant
+    réussie. Aucun verbe de la liste n'y figurait.
+
+    La borne de longueur évite le faux positif du texte long qui se termine par
+    une énumération vide : au-delà de quelques centaines de caractères, le
+    modèle a livré quelque chose, même imparfaitement.
+    """
+    if not isinstance(texte, str):
+        return False
+    t = texte.strip()
+    if not t or len(t) > 400:
+        return False
+    return t.endswith(":") or t.endswith(" :") or t.endswith("…") or t.endswith("...")
+
+
 def cloture_attendue(resultats) -> str | None:
     """L'action de fermeture qui manque, si un travail est resté ouvert.
 

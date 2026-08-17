@@ -219,6 +219,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # Vu dans les traces : `relance_annonce: True` dès l'entrée du tour,
         # avant que le modèle ait écrit quoi que ce soit.
         "relance_annonce": False,
+        "redaction_forcee": False,
         # Idem pour la décision du routeur et la raison d'une sortie de boucle :
         # ces canaux sont en « dernière valeur » et survivent au tour. Sans remise
         # à zéro, un tour hérite du « contexte » de sortie du précédent — et le

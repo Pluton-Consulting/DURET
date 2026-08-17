@@ -49,6 +49,10 @@ class AgentState(TypedDict):
     tools_finished: bool                 # force la sortie de boucle
     note_sortie: Optional[str]           # pourquoi la boucle s'est arrêtée sans aboutir
     relance_annonce: bool                # le modèle a annoncé une action sans l'émettre
+    # La dernière passe a rendu une PROMESSE au lieu d'une réponse, et on lui a
+    # redemandé une fois. Le drapeau borne la reprise : sans lui, un modèle qui
+    # annonce en boucle ferait tourner le tour indéfiniment.
+    redaction_forcee: bool
     pending_action: Optional[dict]       # action externe en attente de validation humaine
     besoin_memoire: Optional[bool]       # décision du routeur : consulter la mémoire ?
     requete_memoire: Optional[str]       # termes de recherche choisis par le routeur

@@ -81,7 +81,7 @@ PLAFOND_RESULTAT_GENEREUX = 12000
 # du tour. Une seule relance, avec une consigne explicite — au-delà on
 # insisterait sur un modèle qui ne veut pas, et la note de sortie explique alors
 # honnêtement pourquoi rien n'a été fait.
-from agents.annonce import est_une_annonce, cloture_attendue
+from agents.annonce import est_une_annonce, cloture_attendue, promesse_sans_suite
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -512,6 +512,10 @@ Voici les messages trouvés :
     # déjà ce qui avait rendu la première détection d'annonce si difficile à
     # débusquer. La reprise se fait maintenant dans un appel dédié.
 
+    # Drapeau de la seconde passe de rédaction, posé plus bas et renvoyé avec
+    # la réponse : c'est lui qui borne la reprise à UNE fois.
+    redaction_a_reprendre = False
+
     # Dernière passe imposée : la boucle d'actions est close, il ne reste qu'à
     # rédiger. Sans cette consigne, le modèle peut redemander une action, dont
     # le bloc serait retiré à l'affichage — donc une réponse vide.
@@ -519,6 +523,18 @@ Voici les messages trouvés :
         system_prompt += ("\n\nLa phase d'actions est TERMINÉE pour ce tour : n'émets plus "
                           "aucun bloc ```action. Rédige maintenant ta réponse finale à "
                           "partir des résultats ci-dessus.")
+        # SECONDE PASSE : la première a rendu une PROMESSE au lieu du contenu.
+        # On ne répète pas la même consigne, on NOMME le défaut — répéter à
+        # l'identique obtient à l'identique.
+        _precedente = state.get("llm_response") or ""
+        if est_une_annonce(_precedente) or promesse_sans_suite(_precedente):
+            redaction_a_reprendre = True
+            system_prompt += (
+                "\n⚠ Ta réponse précédente ANNONÇAIT le travail au lieu de le livrer "
+                "(« je vais… », « voici ce que je lance… »). L'utilisateur ne voit QUE "
+                "cette phrase, et rien d'autre : pour lui, tu n'as rien produit. "
+                "Écris MAINTENANT le contenu lui-même, en entier, dans ta réponse. "
+                "N'annonce rien, ne décris pas ce que tu vas faire.")
         # La raison d'une sortie sans résultat est expliquée par le modèle, dans
         # ses mots : l'utilisateur mérite une phrase, pas un code d'erreur.
         note = state.get("note_sortie")
@@ -544,6 +560,7 @@ Voici les messages trouvés :
 
     usage = getattr(response, "usage_metadata", None) or {}
     return {
+        "redaction_forcee": redaction_a_reprendre,
         "llm_response": response.content,
         "tokens_in": usage.get("input_tokens", 0),
         "tokens_out": usage.get("output_tokens", 0),
@@ -1065,9 +1082,35 @@ def route_apres_forcage(state: AgentState) -> str:
 def route_apres_llm(state: AgentState) -> str:
     """Le modèle a-t-il demandé une action ?"""
     from skills.protocol import BLOC_ACTION_RE, BLOC_NATIF_RE
-    if state.get("tools_finished"):
-        return "rehydrate"
     texte = state.get("llm_response") or ""
+
+    if state.get("tools_finished"):
+        # UNE PROMESSE N'EST PAS UNE RÉPONSE, MÊME EN DERNIÈRE PASSE.
+        #
+        # Ce chemin sortait DIRECTEMENT vers la rédaction, sans regarder ce que
+        # le modèle venait d'écrire. Le contrôle « annonce sans acte », plus
+        # bas, était donc court-circuité pour le seul cas où il compte le plus :
+        # la dernière passe, celle qui doit livrer.
+        #
+        # Relevé en production : après une arborescence Drive récupérée AVEC
+        # SUCCÈS, la réponse affichée était « Je parcours le drive pour trouver
+        # des devis. Voici ce que je lance : ». Le travail avait été fait, et
+        # l'utilisateur n'en a rien vu. Le garde-fou de `rehydrate_node` ne
+        # pouvait pas rattraper ce cas : il exige que RIEN n'ait abouti, or ici
+        # une action avait réussi.
+        #
+        # On redemande donc la rédaction UNE fois, avec une consigne qui nomme
+        # le défaut. La reprise est bornée par `redaction_forcee` : un modèle
+        # qui annonce en boucle ne doit pas faire tourner le tour sans fin.
+        # DEUX SIGNAUX, dont un indépendant du vocabulaire : la liste de verbes
+        # ne reconnaissait PAS « Voici ce que je lance : », qui est pourtant le
+        # cas relevé en production.
+        if not state.get("redaction_forcee") and (est_une_annonce(texte)
+                                                  or promesse_sans_suite(texte)):
+            logger.info("Dernière passe rendue en promesse : rédaction redemandée")
+            return "llm"
+        return "rehydrate"
+
     # Deux syntaxes : le bloc demandé, et celle que certains modèles de la
     # cascade émettent d'eux-mêmes. Ignorer la seconde la laissait s'afficher.
     demande = BLOC_ACTION_RE.search(texte) or BLOC_NATIF_RE.search(texte)

@@ -19,11 +19,19 @@ soupçonne pas.
 | `MessageActions`, `MessageAction` | copier la réponse | le texte affiché |
 | `PromptInput` et sa famille | la saisie, les pièces jointes, l'envoi | l'état local |
 | `Shimmer` | le balayage du libellé d'activité | `libelle` (WebSocket) |
-| `Reasoning` | le raisonnement qui s'empile et défile | `libelle`, accumulé |
 | `Sources` | les documents et pages ayant nourri la réponse | `sources_memoire`, `browser_sources` |
 | `Suggestion` | les propositions d'action | bloc ```ui `quick_replies` |
 
 ## Non branchés, et la raison
+
+**`Reasoning`** a été branché, puis débranché. Son dépliant listait les étapes
+déjà franchies — c'est-à-dire les phrases qui venaient de défiler dans la ligne
+d'activité juste au-dessus, et que la colonne de droite résume déjà par grandes
+étapes. Ouvrir ne montrait rien de neuf. Ce qui avait été demandé, « le texte de
+raisonnement qui défile », c'est la ligne vivante : elle reste, sans le pli.
+`ReflexionEnCours` mesure désormais sa durée elle-même, ce que le composant
+tenait pour lui. Le défaut d'ouverture automatique qu'il portait a été corrigé
+avant le débranchement, pour qu'il soit sain s'il resert un jour.
 
 **`Context`** dessine un anneau de remplissage du contexte. Il exige `maxTokens`,
 la fenêtre maximale du modèle. Or la cascade change de modèle à chaud

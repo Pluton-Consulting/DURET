@@ -96,12 +96,25 @@ export const Reasoning = memo(
       }
     }, [isStreaming, setDuration]);
 
-    // Auto-open when streaming starts (unless explicitly closed)
+    // L'OUVERTURE AUTOMATIQUE N'A LIEU QU'UNE FOIS PAR TOUR.
+    //
+    // L'effet dépendait de `isOpen` et se relançait donc à chaque fermeture :
+    // tant que le flux durait, un clic sur l'en-tête fermait le pli, l'effet le
+    // rouvrait aussitôt, et le repli était impossible. Relevé en production —
+    // « la carte qui se déplie ne se replie pas ».
+    //
+    // Le drapeau est un `ref` et non un état : le remettre à zéro ne doit pas
+    // provoquer de rendu. Il se réarme quand le flux s'arrête, pour que le tour
+    // suivant s'ouvre de nouveau tout seul.
+    const aOuvertSeulRef = useRef(false);
     useEffect(() => {
-      if (isStreaming && !isOpen && !isExplicitlyClosed) {
+      if (!isStreaming) {
+        aOuvertSeulRef.current = false;
+      } else if (!aOuvertSeulRef.current && !isExplicitlyClosed) {
+        aOuvertSeulRef.current = true;
         setIsOpen(true);
       }
-    }, [isStreaming, isOpen, setIsOpen, isExplicitlyClosed]);
+    }, [isStreaming, setIsOpen, isExplicitlyClosed]);
 
     // Auto-close when streaming ends (once only, and only if it ever streamed)
     useEffect(() => {

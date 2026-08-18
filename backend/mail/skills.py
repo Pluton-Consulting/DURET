@@ -626,6 +626,23 @@ async def statut_ingestion_documents(data: dict, user) -> dict:
     return await _statut(data, user)
 
 
+# LA NAVIGATION, ENFIN CHOISIE PAR L'ASSISTANT. Elle n'etait qu'un nœud du
+# graphe, declenche automatiquement apres une recherche infructueuse : le modele
+# n'avait aucun geste a proposer, et repondait — a juste titre — qu'il ne
+# pouvait pas aller sur le web. Ces deux-la LISENT, et rien d'autre.
+async def chercher_web(data: dict, user) -> dict:
+    from browser.skills import chercher_web as _chercher
+    return await _chercher(data, user)
+
+
+async def ouvrir_page(data: dict, user) -> dict:
+    from browser.skills import ouvrir_page as _ouvrir
+    return await _ouvrir(data, user)
+
+
+SKILLS_NATIFS["chercher_web"] = chercher_web
+SKILLS_NATIFS["ouvrir_page"] = ouvrir_page
+
 SKILLS_NATIFS["lancer_ingestion_documents"] = lancer_ingestion_documents
 SKILLS_NATIFS["statut_ingestion_documents"] = statut_ingestion_documents
 
@@ -685,6 +702,11 @@ EFFETS_NATIFS = {
     # dans notre propre mémoire et ne sort rien du système. Le garde-fou
     # n'est pas l'effet mais la PERMISSION, vérifiée dans le skill sur
     # l'identité rechargée.
+    # Lecture pure : ils ouvrent des pages et rendent du texte. Rien n'est
+    # ecrit, rien ne sort du systeme. Le garde-fou n'est pas l'effet mais le
+    # CONTENEUR — seul lui parle a l'internet — et l'interrupteur qui le coupe.
+    "chercher_web": "lecture",
+    "ouvrir_page": "lecture",
     "lancer_ingestion_documents": "ecriture_interne",
     "statut_ingestion_documents": "lecture",
 }

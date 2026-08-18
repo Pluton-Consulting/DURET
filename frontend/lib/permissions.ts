@@ -88,12 +88,22 @@ export const TABS: TabDef[] = [
     href: "/gestion",
     roles: ["super_admin", "direction"],
   },
-  {
-    key: "navigateur",
-    label: "Recherche web",
-    href: "/navigateur",
-    roles: MANAGERS,
-  },
+  // L'ONGLET « RECHERCHE WEB » A ÉTÉ RETIRÉ DU MENU, ET C'EST UN GAIN.
+  //
+  // Il portait une capacité que le chat n'avait pas : pour faire lire une page
+  // à l'assistant, il fallait quitter la conversation, remplir un formulaire
+  // dans un autre écran, puis revenir avec le résultat. Deux endroits pour une
+  // seule idée — et, côté modèle, une capacité qu'il ignorait posséder : il
+  // répondait « je ne peux pas accéder à internet », ce qui était vrai depuis
+  // sa place.
+  //
+  // La navigation est désormais un GESTE du chat (`chercher_web`,
+  // `ouvrir_page`) : on la demande là où le besoin naît.
+  //
+  // LA PAGE EXISTE TOUJOURS, à /navigateur, et reste accessible par son
+  // adresse : elle porte la navigation AUTONOME — celle qui se connecte et
+  // remplit des formulaires. Celle-là appelle un accord humain et un choix de
+  // domaines ; elle n'a pas sa place dans un menu de tous les jours.
   {
     key: "parametres",
     label: "Paramètres",

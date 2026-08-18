@@ -330,6 +330,20 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
     "statut_enrichissement": (
         "Avancement de la campagne d'enrichissement en cours (administration)",
         [], []),
+    "chercher_web": (
+        "CHERCHE SUR INTERNET et rend le texte des premieres pages. C'est le "
+        "geste a employer des qu'une information n'est PAS dans l'entreprise : "
+        "un prix public, une norme, une reglementation, un fournisseur, "
+        "l'actualite d'un site. `nombre` : 1 a 5 pages, 3 par defaut. "
+        "L'information obtenue est EXTERNE : cite les adresses, ne la presente "
+        "jamais comme une donnee interne",
+        ["requete"], ["nombre"]),
+    "ouvrir_page": (
+        "OUVRE UNE ADRESSE PRECISE et en rend le texte. A employer quand on te "
+        "donne un lien, ou quand tu connais deja la page a consulter (le site "
+        "d'une entreprise, une fiche produit). Meme regle : information "
+        "EXTERNE, cite l'adresse",
+        ["url"], ["motif"]),
     "lancer_ingestion_documents": (
         "ADMINISTRATION UNIQUEMENT. LA seule action qui fait ENTRER les documents "
         "de l'entreprise dans la mémoire. Lance-la dès qu'on demande d'enrichir, "

@@ -15,9 +15,18 @@ import db
 import wconfig
 from browser_agent import run_task
 
+# LES JOURNAUX DU WORKER ÉTAIENT MUETS. Sans configuration, seuls les
+# `warning` d'uvicorn sortaient : tout ce que ce service raconte de lui-même —
+# le moteur de recherche retenu, la présence du secret, une page écartée —
+# n'atteignait personne. Un service qu'on ne peut pas interroger se diagnostique
+# en devinant, et cette session a montré ce que ça coûte.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s — %(message)s")
+
 logger = logging.getLogger("browser-worker")
 
-app = FastAPI(title="Duret & Sols Browser Worker")
+app = FastAPI(title="Symbiose Browser Worker")
 
 _running: dict[str, asyncio.Task] = {}
 

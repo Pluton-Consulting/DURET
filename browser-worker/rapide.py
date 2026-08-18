@@ -81,36 +81,80 @@ async def _lire(navigateur, url: str, delai_ms: int) -> dict:
         await ctx.close()
 
 
+# PLUSIEURS MOTEURS, PARCE QU'UN SEUL NE TIENT PAS DEPUIS UN SERVEUR.
+#
+# DuckDuckGo était le seul essayé. Depuis un poste de travail il répond très
+# bien ; depuis l'adresse IP d'un hébergeur, il sert très souvent une page de
+# vérification à la place des résultats. La recherche rendait alors zéro lien
+# SANS erreur — le pire des échecs, celui qui ressemble à « rien à trouver ».
+#
+# Google n'est pas dans la liste, et c'est un choix : il détecte l'automatisation
+# plus agressivement que tous les autres, rend une page de consentement en
+# Europe, et change sa structure sans prévenir. Le mettre en tête rendrait la
+# recherche instable pour des raisons qu'on ne maîtriserait jamais.
+#
+# On essaie donc dans l'ordre, et on s'arrête au premier qui rend des liens.
+# Chaque moteur a sa page « sans JavaScript », qui rend un document complet et
+# se lit sans attendre.
+MOTEURS = [
+    ("duckduckgo", "https://html.duckduckgo.com/html/?q=", "a.result__url"),
+    ("bing",       "https://www.bing.com/search?q=",       "li.b_algo h2 a"),
+    ("mojeek",     "https://www.mojeek.com/search?q=",     "a.ob"),
+    ("brave",      "https://search.brave.com/search?q=",   "a[href^='http']:has(.snippet-title)"),
+]
+
+# Les adresses des moteurs eux-mêmes ne sont pas des résultats : sans ce
+# filtre, la première « page trouvée » est la page de recherche suivante.
+_MOTEUR_HOTES = ("duckduckgo.com", "bing.com", "mojeek.com", "brave.com",
+                 "google.com", "microsoft.com", "msn.com")
+
+
+async def _liens(navigateur, url: str, selecteur: str, delai_ms: int) -> list[str]:
+    """Les adresses de résultats rendues par UN moteur."""
+    ctx = await navigateur.new_context(user_agent=AGENT, accept_downloads=False)
+    try:
+        page = await ctx.new_page()
+        await page.route(INUTILES, lambda r: r.abort())
+        await page.goto(url, timeout=delai_ms, wait_until="domcontentloaded")
+        bruts = await page.evaluate(
+            "(sel) => Array.from(document.querySelectorAll(sel))"
+            "  .map(e => e.getAttribute('href') || '')"
+            "  .filter(h => h.startsWith('http'))", selecteur)
+    except Exception as e:  # noqa: BLE001 — un moteur qui refuse n'est pas une panne
+        logger.info("Moteur écarté (%s) : %s", url.split("/")[2], type(e).__name__)
+        return []
+    finally:
+        await ctx.close()
+    propres, vus = [], set()
+    for h in bruts:
+        hote = h.split("/")[2].lower() if "//" in h else ""
+        if any(m in hote for m in _MOTEUR_HOTES) or h in vus:
+            continue
+        vus.add(h)
+        propres.append(h)
+    return propres
+
+
 async def chercher(requete: str, max_resultats: int = 3,
                    delai_ms: int = 15000) -> dict:
-    """Cherche sur DuckDuckGo, puis lit les premiers résultats."""
+    """Cherche sur le web, puis lit les premiers résultats."""
     from playwright.async_api import async_playwright
 
     debut = time.monotonic()
     resultats: list[dict] = []
+    moteur_retenu = None
     async with async_playwright() as p:
         navigateur = await p.chromium.launch(headless=True, args=ARGS)
         try:
-            # La version « html » de DuckDuckGo ne dépend d'aucun JavaScript :
-            # elle rend un document complet, donc lisible sans attendre.
-            adresse = "https://html.duckduckgo.com/html/?q=" + quote_plus(requete)
-            ctx = await navigateur.new_context(user_agent=AGENT, accept_downloads=False)
-            try:
-                page = await ctx.new_page()
-                await page.route(INUTILES, lambda r: r.abort())
-                await page.goto(adresse, timeout=delai_ms, wait_until="domcontentloaded")
-                liens = await page.evaluate("""
-                    () => {
-                        const out = [];
-                        document.querySelectorAll("a.result__url").forEach(el => {
-                            const h = el.getAttribute("href") || "";
-                            if (h.startsWith("http")) out.push(h);
-                        });
-                        return out;
-                    }
-                """)
-            finally:
-                await ctx.close()
+            liens: list[str] = []
+            for nom, base, selecteur in MOTEURS:
+                liens = await _liens(navigateur, base + quote_plus(requete),
+                                     selecteur, delai_ms)
+                if liens:
+                    moteur_retenu = nom
+                    logger.info("Moteur retenu : %s (%d liens)", nom, len(liens))
+                    break
+                logger.info("Moteur %s : aucun lien, on passe au suivant", nom)
 
             # LES PAGES SE LISENT DE FRONT. Trois pages à la suite, c'est trois
             # fois l'attente réseau ; ensemble, c'est celle de la plus lente.
@@ -131,7 +175,10 @@ async def chercher(requete: str, max_resultats: int = 3,
     return {
         "success": any(r.get("contenu") for r in resultats),
         "results": resultats,
-        "error": None,
+        # LE MOTEUR EST DIT. Sans lui, « aucun résultat » ne distingue pas une
+        # requête sans réponse d'un web entier qui nous a fermé la porte.
+        "moteur": moteur_retenu,
+        "error": None if moteur_retenu else "aucun moteur n'a rendu de résultat",
         "execution_time_ms": int((time.monotonic() - debut) * 1000),
     }
 

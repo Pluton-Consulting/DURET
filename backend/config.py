@@ -123,8 +123,31 @@ class Settings(BaseSettings):
     optim_max_tokens_complex: int = 8192    # plafond sortie palier COMPLEX
 
     # Résilience (retry + backoff + cascade de fallback)
-    llm_max_retries: int = 3
+    # DEUX TENTATIVES, PAS TROIS. La cascade compte six candidats : insister
+    # trois fois sur chacun avant de passer au suivant transforme une panne
+    # passagère en minutes d'attente. On retente une fois, puis on change de
+    # fournisseur — c'est là qu'est la vraie résilience.
+    llm_max_retries: int = 2
     llm_retry_base_delay: float = 0.5      # secondes, doublé à chaque tentative
+
+    # LE DÉLAI D'ATTENTE, QUI N'EXISTAIT PAS.
+    #
+    # Aucun `timeout` n'était passé aux clients : le SDK OpenAI plafonne alors
+    # à 600 SECONDES, et retente deux fois de lui-même par-dessus nos propres
+    # tentatives. Un fournisseur qui rame ne rendait donc jamais la main, et la
+    # cascade — écrite précisément pour ça — ne servait à rien.
+    #
+    # Mesuré dans la trace du 17/08 : 25 à 38 secondes pour produire SOIXANTE
+    # jetons. Ce n'est pas de la génération, c'est de l'attente. Passé ce
+    # délai, le candidat suivant fera mieux que le candidat qui traîne.
+    #
+    # Les valeurs tiennent compte de ce qu'on attend en retour : le palier
+    # LIGHT ne rend qu'une décision de routage, les deux autres peuvent avoir
+    # un document entier à écrire, et couper une rédaction en cours serait pire
+    # que l'attendre.
+    llm_timeout_light: int = 20
+    llm_timeout_standard: int = 75
+    llm_timeout_complex: int = 180
     llm_fallback_enabled: bool = True
 
     # ── Embeddings (RAG) — multi-fournisseurs ────────────────────────────

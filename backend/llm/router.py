@@ -31,7 +31,7 @@ from typing import Any, Optional
 from config import settings
 from optim.tokens import tier_max_tokens
 
-logger = logging.getLogger("duret.llm")
+logger = logging.getLogger("symbiose.llm")
 
 
 class LLMTier(Enum):
@@ -67,8 +67,31 @@ def _provider_available(provider: str) -> bool:
     return False
 
 
-def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096):
-    """Construit l'instance LangChain (sans résilience) pour un couple (fournisseur, modèle)."""
+def tier_timeout(tier: str) -> int:
+    """Secondes accordées à UN candidat avant de passer au suivant."""
+    return {
+        "light": settings.llm_timeout_light,
+        "standard": settings.llm_timeout_standard,
+        "complex": settings.llm_timeout_complex,
+    }.get(tier, settings.llm_timeout_standard)
+
+
+def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096,
+                 delai: int = 75):
+    """Construit l'instance LangChain (sans résilience) pour un couple (fournisseur, modèle).
+
+    DEUX RÉGLAGES QUI MANQUAIENT, ET QUI COÛTAIENT DES MINUTES.
+
+    `timeout` : sans lui, le SDK OpenAI attend 600 SECONDES. Un fournisseur
+    qui rame ne rendait donc jamais la main, et la cascade — écrite pour
+    survivre exactement à ça — restait spectatrice.
+
+    `max_retries=0` : le SDK retente DEUX FOIS de lui-même, en plus de nos
+    propres tentatives. Les deux mécanismes se multipliaient : trois essais à
+    nous, trois à lui, chacun plafonné à dix minutes. La résilience se décide
+    ICI, à un seul étage, sinon personne ne sait plus combien de temps un appel
+    peut durer.
+    """
     if provider in _OPENAI_COMPAT:
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
@@ -77,14 +100,18 @@ def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096):
             base_url=getattr(settings, f"{provider}_base_url"),
             temperature=0.1,
             max_tokens=max_tokens,
-            default_headers={"HTTP-Referer": "https://pluton.local", "X-Title": "Duret & Sols"},
+            timeout=delai,
+            max_retries=0,
+            default_headers={"HTTP-Referer": "https://pluton.local", "X-Title": "Symbiose Paysage"},
         )
     if provider == "groq":
         from langchain_groq import ChatGroq
-        return ChatGroq(model=model, api_key=_cle("groq"), temperature=0.1, max_tokens=max_tokens)
+        return ChatGroq(model=model, api_key=_cle("groq"), temperature=0.1,
+                        max_tokens=max_tokens, timeout=delai, max_retries=0)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(model=model, api_key=_cle("anthropic"), temperature=0.1, max_tokens=max_tokens)
+        return ChatAnthropic(model=model, api_key=_cle("anthropic"), temperature=0.1,
+                             max_tokens=max_tokens, timeout=delai, max_retries=0)
     if provider == "ollama":
         from langchain_ollama import ChatOllama
         return ChatOllama(base_url=settings.ollama_base_url, model=settings.ollama_model_light, temperature=0.1)
@@ -144,31 +171,47 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     if tier == LLMTier.LIGHT:
         # Volume élevé, enjeu faible : orientation, classification, résumés
         # courts. On paie le moins possible, et on privilégie la latence.
+        # GROQ EN TÊTE, ET C'EST LA MESURE QUI TRANCHE. « DeepSeek Flash, rapide »
+        # était une hypothèse : la trace du 17/08 lui donne 25 à 38 secondes
+        # pour SOIXANTE jetons de sortie. Groq rend la même chose en une à trois
+        # secondes — son matériel est fait pour ça. Sur ce palier, qui ne produit
+        # qu'une décision de routage, seule la latence compte : personne ne lit
+        # jamais ce que le modèle y écrit.
         chain = [
-            ("deepseek", s.model_deepseek_flash),          # rapide et très bon marché
+            ("groq", s.model_groq_light),                  # gratuit, et le plus rapide de loin
+            ("deepseek", s.model_deepseek_flash),          # très bon marché, mais lent aux heures pleines
             ("openrouter", s.model_or_deepseek_flash),     # même modèle via la passerelle
-            ("groq", s.model_groq_light),                  # gratuit, très rapide
             ("openrouter", s.model_or_free_a),
             ("openrouter", s.model_or_free_b),
             ("ollama", None),
         ]
     elif tier == LLMTier.STANDARD:
         # Rédaction courante : la LATENCE passe devant. LongCat était en tête,
-        # et l'export Langfuse du 14/08 a donné la mesure : 61,8 s de MOYENNE
-        # par appel (37 appels), des pointes à 190 s. Or un tour n'est pas un
-        # appel : produire un document long en enchaîne quinze — un quart
-        # d'heure de rédaction pure, qui crevait le plafond des tâches de fond,
-        # et l'utilisateur lisait « délai dépassé » après avoir tout attendu.
+        # et l'export Langfuse du 14/08 (projet jumeau, même cascade) a donné la
+        # mesure : 61,8 s de MOYENNE par appel (37 appels), des pointes à 190 s.
+        # Or un tour n'est pas un appel : produire un document long en enchaîne
+        # quinze — un quart d'heure de rédaction pure, qui crevait le plafond
+        # des tâches de fond, et l'utilisateur lisait « délai dépassé » après
+        # avoir tout attendu.
         #
         # DeepSeek Flash écrit un français propre en quelques secondes ; Groq
         # 70B répond encore plus vite. LongCat n'apporte son surcroît de style
         # qu'au prix de la minute par appel : il devient le SECOURS, plus le
         # principal. La qualité d'un assistant qui répond est supérieure à
         # celle d'un assistant qui rédige mieux mais n'aboutit pas.
+        # LE MÊME RENVERSEMENT, POUR LA MÊME RAISON. Le commentaire ci-dessus
+        # promettait « DeepSeek Flash écrit un français propre en quelques
+        # secondes » : mesuré, c'est 25 à 38 secondes par appel aux heures
+        # pleines. Or un tour n'est pas un appel — celui du 17/08 en a enchaîné
+        # sept, et le modèle a coûté 145 secondes sur les 307 du tour.
+        #
+        # Groq 70B écrit un français tout aussi correct, en une à trois
+        # secondes. DeepSeek reste juste derrière : il prend le relais si Groq
+        # sature, et son délai est désormais borné, ce qui n'était pas le cas.
         chain = [
+            ("groq", s.model_groq_large),
             ("deepseek", s.model_deepseek_flash),
             ("openrouter", s.model_or_deepseek_flash),
-            ("groq", s.model_groq_large),
             ("longcat", s.model_longcat),
             ("openrouter", s.model_primary),               # LongCat via la passerelle
             ("openrouter", s.model_or_free_a),
@@ -232,7 +275,9 @@ class ResilientLLM:
         last_error: Optional[Exception] = None
         for idx, (provider, model) in enumerate(chain):
             try:
-                llm = _build_model(provider, model, tier_max_tokens(self.tier.value))
+                llm = _build_model(provider, model,
+                                   tier_max_tokens(self.tier.value),
+                                   tier_timeout(self.tier.value))
             except Exception as e:  # dépendance/clé manquante à l'instanciation
                 last_error = e
                 logger.warning("LLM %s indisponible : %s", provider, e)

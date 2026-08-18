@@ -196,6 +196,15 @@ class Settings(BaseSettings):
     # extraction. Toute action modifiante passe par la file de validation (HITL).
     browser_agent_enabled: bool = False
     browser_worker_url: str = "http://browser-worker:9000"   # service interne (non exposé)
+    # LE SECRET DU GUICHET. Le conteneur navigateur n'écrit plus en base : il
+    # raconte au backend, qui écrit. Ce secret empêche un tiers du réseau
+    # interne d'appeler ce guichet — il ne protège pas d'un conteneur
+    # compromis, qui l'a dans son environnement. Le vrai garde-fou est la
+    # forme de l'API : huit verbes, aucune requête libre.
+    #
+    # VIDE PAR DÉFAUT, ET LE GUICHET REFUSE ALORS TOUT. Un oubli de
+    # déploiement doit se voir, pas ouvrir une porte.
+    browser_worker_secret: str = ""
     browser_llm_provider: str = "openrouter"   # deepseek | groq | openrouter | longcat | openai
     # Free OpenRouter avec tool-calling (MoE 550B, 1M ctx). ⚠ soumis au rate-limit free.
     browser_llm_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"

@@ -16,7 +16,7 @@ services:
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
     networks:
-      - noa_network
+      - pluton_network
 
   langfuse-postgres:
     image: postgres:16
@@ -32,10 +32,10 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - noa_network
+      - pluton_network
 
 networks:
-  noa_network:
+  pluton_network:
     external: true
 
 volumes:

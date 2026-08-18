@@ -1,113 +1,128 @@
 """
-Accès Postgres du worker (pool asyncpg dédié).
+Ce que le worker RACONTE au backend — il n'écrit plus lui-même.
 
-Tables touchées : `browser_tasks` (suivi des tâches), `validations` (demandes
-d'approbation HITL, agent='browser'), `audit_log` (journal, INSERT-only).
-Décorrélé du backend — aucune dépendance au code FastAPI.
+AVANT, ce module ouvrait un pool asyncpg vers Postgres. Le conteneur qui ouvre
+des pages inconnues et exécute leur JavaScript détenait donc les identifiants de
+la base et une route vers elle : en pratique, la clé de toute la mémoire de
+l'entreprise, confiée au composant le plus exposé du montage.
+
+Il passe maintenant par un guichet du backend. Ce conteneur n'a plus de mot de
+passe de base, plus de route vers Postgres, et ne peut plus toucher qu'aux deux
+tables que ces gestes désignent — parce que ce sont les seuls gestes qui
+existent.
+
+LES SIGNATURES N'ONT PAS BOUGÉ D'UN CARACTÈRE. `worker.py` et
+`browser_agent.py` appellent exactement les mêmes fonctions qu'avant, avec les
+mêmes arguments et les mêmes retours. Seule l'implémentation change : c'est ce
+qui contient le risque de cette bascule à un seul fichier.
+
+UNE ÉCRITURE PERDUE NE DOIT PAS TUER UNE TÂCHE. Si le backend ne répond pas,
+on journalise et on continue : l'avancement affiché sera en retard, ce qui est
+gênant, mais la navigation elle-même aboutira. L'inverse — interrompre un
+travail de plusieurs minutes parce qu'un compteur n'a pas pu s'écrire — serait
+absurde. Les deux LECTURES, elles, rendent None : leurs appelants savent déjà
+traiter l'absence.
 """
-import json
-import asyncpg
+from __future__ import annotations
 
-import wconfig
+import logging
+import os
+from typing import Any, Optional
 
-_pool: asyncpg.Pool | None = None
+import httpx
+
+logger = logging.getLogger("browser-worker.guichet")
+
+BASE = os.environ.get("BACKEND_URL", "http://backend:8000").rstrip("/") + "/api/interne/navigateur"
+SECRET = os.environ.get("BROWSER_WORKER_SECRET", "")
+DELAI_S = 10.0
 
 
 async def init_pool() -> None:
-    global _pool
-    # asyncpg n'accepte que postgresql:// (pas le +asyncpg de style SQLAlchemy).
-    dsn = wconfig.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
-    _pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=4)
+    """Plus de pool à ouvrir. Conservée : `worker.py` l'appelle au démarrage.
+
+    On en profite pour dire tout de suite si le secret manque, plutôt que de
+    laisser chaque écriture échouer en silence pendant des heures.
+    """
+    if not SECRET:
+        logger.error("BROWSER_WORKER_SECRET absent : le backend refusera toute "
+                     "remontée, et l'avancement des tâches restera figé.")
+    else:
+        logger.info("Remontée par le guichet du backend (%s)", BASE)
 
 
 async def close_pool() -> None:
-    if _pool:
-        await _pool.close()
+    """Plus de pool à fermer. Conservée pour l'arrêt propre de `worker.py`."""
+    return None
+
+
+async def _dire(methode: str, chemin: str, charge: dict | None = None) -> Any:
+    """Un appel au guichet. Ne lève jamais : rend None en cas d'échec."""
+    try:
+        async with httpx.AsyncClient(timeout=DELAI_S) as client:
+            r = await client.request(
+                methode, BASE + chemin, json=charge,
+                headers={"X-Navigateur-Secret": SECRET})
+            r.raise_for_status()
+            return r.json()
+    except httpx.HTTPStatusError as e:
+        # 403 mérite d'être criant : c'est une erreur de configuration, pas un
+        # aléa réseau, et elle rendrait TOUTES les tâches muettes.
+        niveau = logger.error if e.response.status_code in (403, 503) else logger.warning
+        niveau("Guichet navigateur : %s sur %s", e.response.status_code, chemin)
+    except httpx.HTTPError as e:
+        logger.warning("Guichet navigateur injoignable (%s) sur %s",
+                       type(e).__name__, chemin)
+    return None
 
 
 # ── browser_tasks ────────────────────────────────────────────────────────
 async def update_status(job_id: str, status: str) -> None:
-    async with _pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE browser_tasks SET status=$2, updated_at=NOW() WHERE id=$1::uuid",
-            job_id, status,
-        )
+    await _dire("POST", "/tache/statut", {"job_id": job_id, "status": status})
 
 
 async def set_steps(job_id: str, steps: int) -> None:
-    async with _pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE browser_tasks SET steps=$2, updated_at=NOW() WHERE id=$1::uuid",
-            job_id, steps,
-        )
+    await _dire("POST", "/tache/etapes", {"job_id": job_id, "steps": steps})
 
 
 async def set_result(job_id: str, status: str, result: dict | None = None,
                      structured: dict | None = None, steps: int | None = None) -> None:
-    async with _pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE browser_tasks SET status=$2, "
-            "result=$3::jsonb, structured_output=$4::jsonb, "
-            "steps=COALESCE($5, steps), updated_at=NOW() WHERE id=$1::uuid",
-            job_id, status,
-            json.dumps(result) if result is not None else None,
-            json.dumps(structured) if structured is not None else None,
-            steps,
-        )
+    await _dire("POST", "/tache/resultat", {
+        "job_id": job_id, "status": status, "result": result,
+        "structured": structured, "steps": steps})
 
 
 async def set_error(job_id: str, error: str) -> None:
-    async with _pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE browser_tasks SET status='failed', error=$2, updated_at=NOW() WHERE id=$1::uuid",
-            job_id, (error or "")[:1000],
-        )
+    await _dire("POST", "/tache/erreur",
+                {"job_id": job_id, "error": (error or "")[:1000]})
 
 
 async def get_task(job_id: str) -> dict | None:
-    async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT id, status, task_prompt, result, structured_output, error, steps, "
-            "created_at, updated_at FROM browser_tasks WHERE id=$1::uuid",
-            job_id,
-        )
-        return dict(row) if row else None
+    d = await _dire("GET", "/tache/" + job_id)
+    return (d or {}).get("tache")
 
 
-# ── validations (HITL, agent='browser') ──────────────────────────────────
+# ── validations (accord humain, agent='browser') ─────────────────────────
 async def insert_validation(thread_id: str, user_id: str, reason: str,
                             payload: dict, draft: str | None = None) -> str:
-    async with _pool.acquire() as conn:
-        vid = await conn.fetchval(
-            "INSERT INTO validations (thread_id, user_id, agent, reason, payload, draft, status) "
-            "VALUES ($1, $2::uuid, 'browser', $3, $4::jsonb, $5, 'pending') RETURNING id",
-            thread_id, user_id, reason, json.dumps(payload), draft,
-        )
-        return str(vid)
+    d = await _dire("POST", "/validation", {
+        "thread_id": thread_id, "user_id": user_id, "reason": reason,
+        "payload": payload, "draft": draft})
+    # UNE CHAÎNE VIDE PLUTÔT QU'UNE EXCEPTION : l'appelant sondera ensuite ce
+    # dossier, et un identifiant vide le fera simplement conclure que l'accord
+    # n'a pas été obtenu. Aucune action à effet externe ne passe sans accord —
+    # échouer ici ferme la porte, ce qui est le bon sens de l'échec.
+    return str((d or {}).get("validation_id") or "")
 
 
 async def poll_validation_status(validation_id: str) -> str | None:
-    async with _pool.acquire() as conn:
-        return await conn.fetchval(
-            "SELECT status FROM validations WHERE id=$1::uuid", validation_id
-        )
+    if not validation_id:
+        return None
+    d = await _dire("GET", "/validation/" + validation_id)
+    return (d or {}).get("status")
 
 
 async def purge_validation_screenshot(validation_id: str) -> None:
-    """Retire la capture d'écran du payload après résolution (PII)."""
-    async with _pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE validations SET payload = payload - 'screenshot' WHERE id=$1::uuid",
-            validation_id,
-        )
-
-
-# ── audit_log (INSERT-only, jamais de contenu ni secret) ──────────────────
-async def log_audit(action: str, user_id: str | None = None,
-                    success: bool = True, metadata: dict | None = None) -> None:
-    async with _pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO audit_log (action, user_id, success, metadata) "
-            "VALUES ($1, $2::uuid, $3, $4::jsonb)",
-            action, user_id, success, json.dumps(metadata or {}),
-        )
+    if not validation_id:
+        return
+    await _dire("DELETE", "/validation/" + validation_id + "/capture")

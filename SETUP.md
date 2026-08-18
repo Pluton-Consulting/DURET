@@ -32,7 +32,7 @@ openssl rand -hex 16     # → LANGFUSE_SALT
 
 ### 4. Créer le réseau Docker partagé (requis avant Langfuse)
 ```bash
-docker network create noa_network
+docker network create pluton_network
 ```
 
 ### 5. Lancer l'infrastructure principale

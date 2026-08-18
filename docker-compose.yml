@@ -15,7 +15,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - noa_network
+      - pluton_network
 
   backend:
     build: ./backend
@@ -58,16 +58,17 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - noa_network
+      - pluton_network
       # Le backend est le SEUL à joindre le navigateur : c'est lui qui lui
       # donne du travail, et personne d'autre n'a de raison de lui parler.
       - navigation
 
   browser-worker:
     build: ./browser-worker
+    # PLUS DE `depends_on: postgres` : il ne lui parle plus. Il dépend du
+    # backend, qui porte désormais le guichet par lequel il rend compte.
     depends_on:
-      postgres:
-        condition: service_healthy
+      - backend
     env_file: .env
     environment:
       # Overrides propres au worker (chemins internes au conteneur)
@@ -75,6 +76,11 @@ services:
       # /tmp est inscriptible par l'utilisateur non-root du conteneur (le volume /sessions est root).
       BROWSER_SESSIONS_DIR: /tmp/sessions
       BACKEND_URL: http://backend:8000
+      # LE WORKER N'ÉCRIT PLUS EN BASE : il raconte au backend, qui écrit.
+      # Ce secret authentifie ses appels au guichet interne. Il ne le
+      # protège pas d'être compromis — il l'a dans son environnement —
+      # mais empêche un tiers du réseau interne de parler au guichet.
+      BROWSER_WORKER_SECRET: ${BROWSER_WORKER_SECRET}
       # Démarrage de Chromium étranglé sous forte pression mémoire (WSL) → on élargit
       # largement les timeouts d'événements browser-use (défauts 30 s trop courts au cold start).
       TIMEOUT_BrowserStartEvent: "180"
@@ -109,12 +115,15 @@ services:
     # AUCUN port publié : joignable seulement depuis les réseaux ci-dessous.
     #
     # DEUX RÉSEAUX, ET C'EST L'ESSENTIEL DE L'ISOLEMENT. `navigation` le relie
-    # au backend, qui lui donne du travail. `noa_network` lui donne encore
+    # au backend, qui lui donne du travail. `pluton_network` lui donne encore
     # Postgres, parce qu'il y écrit lui-même l'avancement de ses tâches : l'en
     # couper suppose qu'il rende compte au backend, et c'est le seul changement
     # de comportement du lot — à faire, mais pas en même temps que le reste.
+    # UN SEUL RÉSEAU, ET C'EST TOUT L'ISOLEMENT. Il ne voit plus Postgres :
+    # aucune route, et plus aucun identifiant de base dans son environnement.
+    # Le conteneur qui ouvre des pages inconnues ne peut plus atteindre la
+    # mémoire de l'entreprise, même s'il cède.
     networks:
-      - noa_network
       - navigation
 
   frontend:
@@ -138,7 +147,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     networks:
-      - noa_network
+      - pluton_network
 
   # langfuse-server : DÉSACTIVÉ — on utilise Langfuse Cloud (cf. .env LANGFUSE_BASE_URL).
   # Le conteneur auto-hébergé consommait ~0,6 Go de RAM (économie sur petit VPS).
@@ -155,10 +164,10 @@ services:
       - frontend
       - backend
     networks:
-      - noa_network
+      - pluton_network
 
 networks:
-  noa_network:
+  pluton_network:
     driver: bridge
   # Le segment de navigation : backend et conteneur navigateur, rien d'autre.
   # `internal: false` est nécessaire — c'est par là que le navigateur sort sur

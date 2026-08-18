@@ -161,10 +161,18 @@ async def naviguer(data: dict, user) -> dict:
             await agent_navigateur.cancel_task(str(job))
         except Exception:  # noqa: BLE001 — l'abandon ne doit pas masquer le dépassement
             logger.info("Abandon de navigation non confirmé (job %s)", job)
+        # LE NOMBRE D'ÉTAPES FRANCHIES EST LE DIAGNOSTIC. Zéro étape en trois
+        # minutes ne dit pas « site lent » : ça dit que l'agent n'a jamais
+        # démarré — Chromium étranglé, ou modèle à quota épuisé.
+        etapes = int(etat["steps"] or 0) if etat else 0
         return {"tache": tache, "trouve": False,
-                "erreur": ("la navigation a dépassé trois minutes et a été "
-                           "arrêtée ; le site est probablement trop lent ou "
-                           "trop long à parcourir")}
+                "erreur": (("la navigation a dépassé trois minutes et a été "
+                            "arrêtée après %d étape(s) ; le site est sans doute "
+                            "long à parcourir" % etapes) if etapes
+                           else ("la navigation a été arrêtée après trois minutes "
+                                 "sans avoir pu franchir la moindre étape : le "
+                                 "navigateur ou son modèle n'a pas démarré, ce "
+                                 "n'est pas la faute du site"))}
 
     if not etat or etat["status"] != "completed":
         return {"tache": tache, "trouve": False,

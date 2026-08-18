@@ -84,10 +84,23 @@ class ClientNavigateur:
                 r = await client.post(url, json=charge)
                 r.raise_for_status()
                 d = r.json()
+        except httpx.HTTPStatusError as e:
+            # LE CODE HTTP EST LA MOITIÉ DU DIAGNOSTIC, et il partait à la
+            # poubelle : « navigateur indisponible » couvrait aussi bien un
+            # conteneur arrêté qu'un 404 — c'est-à-dire un conteneur VIVANT
+            # mais construit sur une image d'avant, qui n'a pas encore la
+            # route qu'on appelle. Deux pannes, deux remèdes opposés (le
+            # démarrer / le reconstruire), un seul message : introuvable.
+            logger.warning("Conteneur navigateur : HTTP %s sur %s — s'il rend "
+                           "404, son image date d'avant cette route : "
+                           "reconstruire browser-worker",
+                           e.response.status_code, chemin)
+            return BrowserResult(success=False, error="navigateur indisponible")
         except httpx.HTTPError as e:
             # LE MESSAGE RESTE GÉNÉRIQUE : le détail porte l'adresse interne du
             # conteneur, qui n'a rien à faire dans un contexte rendu au modèle.
-            logger.warning("Conteneur navigateur injoignable (%s)", type(e).__name__)
+            logger.warning("Conteneur navigateur injoignable (%s sur %s)",
+                           type(e).__name__, chemin)
             return BrowserResult(success=False, error="navigateur indisponible")
         except Exception as e:  # noqa: BLE001
             logger.warning("Réponse du navigateur illisible : %s", type(e).__name__)

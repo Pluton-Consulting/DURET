@@ -112,7 +112,32 @@ async def fil_suspendu(thread_id: str) -> bool:
         raise FilOccupe(
             "Impossible de vérifier l'état de cette conversation pour le "
             "moment. Réessayez dans quelques instants.") from e
-    return bool(getattr(snapshot, "next", None))
+
+    # `next` NON VIDE NE SUFFIT PAS, et cette ligne a rendu des conversations
+    # amnésiques pendant deux jours. Un redéploiement, un plantage ou un onglet
+    # fermé en plein tour laissent EXACTEMENT le même `next` qu'une vraie
+    # attente de décision : le checkpoint s'arrête au dernier nœud franchi, et
+    # `next` pointe la suite qui ne viendra jamais. Le fil était alors déclaré
+    # suspendu POUR TOUJOURS — aucun tour ne pouvant plus s'y dérouler, rien ne
+    # pouvait réécrire le checkpoint. Chaque message partait en file d'attente,
+    # donc sur un fil `file:` neuf, sans mémoire : relevé en production, le
+    # modèle répondait « je ne dispose pas du contexte de la tentative
+    # précédente » à la question suivant immédiatement la tentative.
+    #
+    # Ce qui distingue les deux cas, c'est l'INTERRUPTION. `human_gate` suspend
+    # par `interrupt()`, qui se persiste dans l'instantané ; un tour mort n'en
+    # a pas. Et relancer un tour sur un checkpoint mort est sans danger : une
+    # nouvelle entrée repart du départ du graphe, l'historique des messages
+    # reste dans les canaux, seules les étapes fantômes sont abandonnées.
+    if not getattr(snapshot, "next", None):
+        return False
+    taches = getattr(snapshot, "tasks", None) or ()
+    if any(getattr(t, "interrupts", None) for t in taches):
+        return True
+    logger.warning("Fil %s : checkpoint inachevé sans interruption (tour mort, "
+                   "probablement un redémarrage) — on laisse le tour partir",
+                   thread_id)
+    return False
 
 
 def _graph_config(thread_id: str, user_id: Optional[str] = None,

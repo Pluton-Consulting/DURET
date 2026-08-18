@@ -37,12 +37,29 @@ logger = logging.getLogger("symbiose.navigateur")
 
 @dataclass
 class BrowserResult:
-    """Contrat inchangé : `browser/tools.py` lisait déjà cette forme."""
+    """La forme que `browser/tools.py` attend. TOUS les champs, pas seulement
+    ceux dont je me servais.
+
+    `was_filtered` MANQUAIT, et l'oubli a tout emporté. `fetch_url` le lit à
+    deux endroits : l'attribut absent levait un AttributeError, l'exécuteur le
+    transformait en « ERREUR : object has no attribute was_filtered », et le
+    modèle, qui ne pouvait pas savoir, annonçait un « incident technique » puis
+    « le navigateur est indisponible ». Le conteneur, lui, allait très bien.
+
+    Relevé en production : quatre tentatives d'affilée sur la même page, toutes
+    tombées au même endroit. Un contrat de données réécrit à la main doit être
+    comparé À CELUI QU'ON REMPLACE, champ par champ — pas à l'usage qu'on croit
+    en connaître.
+    """
     success: bool
     results: list[dict] = field(default_factory=list)
     error: str | None = None
     execution_time_ms: int = 0
     sandbox_type: str = "conteneur-navigateur"
+    # Une adresse a-t-elle été écartée par le garde de sécurité ? Remonte
+    # jusqu'à l'écran, qui le dit à l'utilisateur : sans cela, une réponse
+    # incomplète passe pour une réponse vide.
+    was_filtered: bool = False
 
 
 class ClientNavigateur:
@@ -57,10 +74,13 @@ class ClientNavigateur:
                                  error="navigation désactivée sur ce déploiement")
         url = settings.browser_worker_url.rstrip("/") + chemin
         try:
-            # Le délai côté client dépasse celui demandé au conteneur : sans
-            # cette marge, on couperait la connexion pendant qu'il rédige
-            # exactement la réponse qu'on attend.
-            async with httpx.AsyncClient(timeout=delai_s + 15) as client:
+            # LA MARGE COUVRE LE DÉMARRAGE DE CHROMIUM, pas seulement la page.
+            # `delai_s` borne le chargement d'UNE page ; s'y ajoutent le
+            # lancement du navigateur — dix à vingt secondes à froid, davantage
+            # sous pression mémoire — et la fermeture. Une marge de quinze
+            # secondes coupait donc la connexion pendant que le conteneur
+            # travaillait encore, et l'échec ressemblait à une panne.
+            async with httpx.AsyncClient(timeout=delai_s + 60) as client:
                 r = await client.post(url, json=charge)
                 r.raise_for_status()
                 d = r.json()

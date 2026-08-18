@@ -344,6 +344,15 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "d'une entreprise, une fiche produit). Meme regle : information "
         "EXTERNE, cite l'adresse",
         ["url"], ["motif"]),
+    "naviguer": (
+        "NAVIGATEUR LIBRE : il VOIT la page, CLIQUE, suit les liens, franchit "
+        "les bannieres. A employer quand `ouvrir_page` ne suffit pas — un site "
+        "qui n'affiche rien sans JavaScript, une information a plusieurs clics, "
+        "un catalogue a parcourir. `tache` : ce qu'il doit aller faire, en une "
+        "phrase. `domaines` : liste facultative pour le borner. LENT (une a "
+        "trois minutes) : prefere `chercher_web` ou `ouvrir_page` quand ils "
+        "peuvent repondre",
+        ["tache"], ["domaines"]),
     "lancer_ingestion_documents": (
         "ADMINISTRATION UNIQUEMENT. LA seule action qui fait ENTRER les documents "
         "de l'entreprise dans la mémoire. Lance-la dès qu'on demande d'enrichir, "

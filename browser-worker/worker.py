@@ -68,6 +68,9 @@ class RunRequest(BaseModel):
     ingest: bool = False
     readonly: bool = True
     output_schema: dict | None = None
+    # Facultatif : l'appelant borne le nombre d'etapes quand il attend la
+    # reponse en direct. Absent, le plafond du deploiement s'applique.
+    max_steps: int | None = None
 
 
 @app.on_event("startup")
@@ -85,7 +88,6 @@ async def health():
     return {"ok": True}
 
 
-@app.post("/run")
 def _readonly_effectif(demande: bool) -> bool:
     """Le reglage du DEPLOIEMENT est un plafond, pas une valeur par defaut.
 
@@ -106,13 +108,30 @@ def _readonly_effectif(demande: bool) -> bool:
     return demande
 
 
+# LA DÉCORATION ÉTAIT POSÉE SUR LE MAUVAIS `def`.
+#
+# `@app.post("/run")` se trouvait juste au-dessus de `_readonly_effectif`, une
+# fonction d'aide : c'est ELLE que FastAPI publiait, et la vraie `run` juste en
+# dessous n'était plus une route du tout. Le navigateur autonome n'était donc
+# plus joignable — POST /run répondait 422 (« paramètre `demande` manquant »),
+# le backend le traduisait en HTTPError, et `start_task_sur` rendait « le
+# navigateur est actuellement arrêté ».
+#
+# Relevé mot pour mot en production : « La tentative d'accès au site web a
+# échoué : le navigateur est actuellement indisponible. » Le conteneur tournait,
+# Chromium était prêt, le modèle était configuré. Seule la porte manquait.
+#
+# Une ligne blanche de moins entre un décorateur et l'aide qui le suivait, et
+# tout un pan de l'application disparaît sans qu'aucun test ne s'en aperçoive :
+# les routes ne sont pas vérifiées, elles sont supposées.
+@app.post("/run")
 async def run(req: RunRequest):
     async def _job():
         try:
             await run_task(
                 req.job_id, req.task_prompt, req.allowed_domains,
                 req.user_id, ingest=req.ingest, readonly=_readonly_effectif(req.readonly),
-                output_schema=req.output_schema,
+                output_schema=req.output_schema, max_steps=req.max_steps,
             )
         except asyncio.CancelledError:
             await db.update_status(req.job_id, "cancelled")

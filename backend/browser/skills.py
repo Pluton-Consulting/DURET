@@ -87,3 +87,114 @@ async def ouvrir_page(data: dict, user) -> dict:
         "a_savoir": ("Information EXTERNE, lue sur le web. Cite l'adresse dans ta "
                      "réponse et ne la présente jamais comme une donnée interne."),
     }
+
+async def naviguer(data: dict, user) -> dict:
+    """LE NAVIGATEUR LIBRE : il regarde, il clique, il suit les liens.
+
+    C'EST LA DÉMARCHE DE L'ONGLET, ramenée dans le chat. Les deux gestes
+    ci-dessus suivent un parcours ÉCRIT D'AVANCE : ouvrir, extraire, rendre.
+    Rapides et vérifiables, mais aveugles — ils ne franchissent pas une
+    bannière de cookies, ne déplient pas un menu, ne suivent pas « voir plus ».
+
+    Celui-ci confie la conduite au modèle : il voit la page, décide du prochain
+    clic, recommence. C'est ce que faisait l'onglet, et ce qui marchait.
+
+    IL RESTE EN LECTURE. Le mode écriture — remplir un formulaire, se connecter
+    — dépend de `BROWSER_READONLY` côté déploiement, et le conteneur refuse la
+    demande si le déploiement dit non. Le modèle ne peut pas s'en affranchir
+    depuis ici : il n'a aucun paramètre pour ça.
+
+    IL EST LENT, ET C'EST ASSUMÉ. Chaque étape est un aller-retour vers le
+    modèle. Compter une à trois minutes, contre quelques secondes pour les deux
+    gestes rapides. À réserver aux pages qui ne se laissent pas lire d'un coup.
+    """
+    import asyncio
+    import json
+
+    from browser_agent import client as agent_navigateur
+    from database.connection import get_db
+
+    tache = str(data.get("tache") or data.get("consigne") or "").strip()
+    if not tache:
+        return {"erreur": "Dis ce que le navigateur doit aller faire."}
+
+    domaines = data.get("domaines") or []
+    if isinstance(domaines, str):
+        domaines = [d.strip() for d in domaines.split(",") if d.strip()]
+
+    # La ligne AVANT le lancement, et l'identifiant vient de la base : le
+    # conteneur rend compte de son avancement en écrivant dessus, et il ne
+    # peut pas le faire sur une ligne qui n'existe pas encore.
+    async with get_db() as conn:
+        job = await conn.fetchval(
+            "INSERT INTO browser_tasks (user_id, status, task_prompt, allowed_domains) "
+            "VALUES ($1, 'pending', $2, $3) RETURNING id",
+            getattr(user, "id", None), tache, domaines)
+
+    try:
+        await agent_navigateur.start_task_sur(
+            str(job), tache, domaines, str(getattr(user, "id", "")),
+            readonly=True, max_steps=14)
+    except agent_navigateur.NavigateurCoupe as e:
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE browser_tasks SET status='failed', error=$2, updated_at=NOW() "
+                "WHERE id=$1", job, "navigateur arrêté")
+        return {"erreur": str(e)}
+
+    # ON ATTEND, MAIS PAS INDÉFINIMENT. Le tour de conversation est synchrone :
+    # rendre la main sans résultat obligerait à redemander, sans savoir quand.
+    # Trois minutes couvrent une navigation ordinaire.
+    fin = asyncio.get_event_loop().time() + 180
+    etat = None
+    while asyncio.get_event_loop().time() < fin:
+        await asyncio.sleep(3)
+        async with get_db() as conn:
+            etat = await conn.fetchrow(
+                "SELECT status, result, error, steps FROM browser_tasks WHERE id=$1", job)
+        if etat and etat["status"] in ("completed", "failed", "cancelled"):
+            break
+    else:
+        # DÉPASSÉ : on COUPE au lieu de laisser courir. Une session abandonnée
+        # garde un Chromium en vie, et la mémoire est la ressource rare ici.
+        try:
+            await agent_navigateur.cancel_task(str(job))
+        except Exception:  # noqa: BLE001 — l'abandon ne doit pas masquer le dépassement
+            logger.info("Abandon de navigation non confirmé (job %s)", job)
+        return {"tache": tache, "trouve": False,
+                "erreur": ("la navigation a dépassé trois minutes et a été "
+                           "arrêtée ; le site est probablement trop lent ou "
+                           "trop long à parcourir")}
+
+    if not etat or etat["status"] != "completed":
+        return {"tache": tache, "trouve": False,
+                "erreur": (etat["error"] if etat else None) or "la navigation n'a pas abouti"}
+
+    # asyncpg rend le JSONB en texte : sans ce décodage, le modèle reçoit une
+    # chaîne d'accolades au lieu du résumé.
+    brut = etat["result"]
+    if isinstance(brut, str):
+        try:
+            brut = json.loads(brut)
+        except Exception:  # noqa: BLE001
+            brut = {}
+    brut = brut or {}
+
+    # Le journal d'étapes n'a pas sa place dans le contexte du modèle : ce qui
+    # compte, c'est CE QU'IL A VU et OÙ. On garde les adresses, pas les clics.
+    vues, deja = [], set()
+    for e in brut.get("step_log") or []:
+        u = e.get("url")
+        if u and u not in deja:
+            deja.add(u)
+            vues.append(u)
+
+    return {
+        "tache": tache,
+        "trouve": bool(brut.get("summary")),
+        "contenu": brut.get("summary"),
+        "pages_vues": vues[:15],
+        "etapes": etat["steps"],
+        "a_savoir": ("Information EXTERNE, vue sur le web. Cite les adresses et ne "
+                     "la présente jamais comme une donnée interne."),
+    }

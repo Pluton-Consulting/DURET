@@ -177,7 +177,7 @@ async def _post_to_rag(job_id: str, structured: dict | None, final_text: str) ->
 # ── Point d'entrée : exécuter une tâche complète ──────────────────────────
 async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
                    user_id: str, ingest: bool = False, readonly: bool = True,
-                   output_schema=None) -> None:
+                   output_schema=None, max_steps: int | None = None) -> None:
     from browser_use import Agent, Browser
 
     await db.update_status(job_id, "running")
@@ -302,7 +302,14 @@ async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
             except Exception:
                 pass
 
-        history = await agent.run(max_steps=wconfig.MAX_STEPS, on_step_end=on_step_end)
+        # LE PLAFOND VIENT DE L'APPELANT QUAND IL EN POSE UN.
+        # Une tache lancee depuis l'ecran peut prendre son temps : personne
+        # n'attend devant. Une tache lancee depuis le chat se deroule DANS un
+        # tour de conversation : au-dela de quelques minutes, l'utilisateur
+        # n'a plus rien, et l'agent est coupe en pleine phrase. Mieux vaut
+        # qu'il s'arrete de lui-meme et redige ce qu'il a vu.
+        history = await agent.run(max_steps=max_steps or wconfig.MAX_STEPS,
+                                  on_step_end=on_step_end)
 
         final_text = ""
         try:

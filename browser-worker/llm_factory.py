@@ -5,6 +5,21 @@ ChatOpenRouter homonymes mais distinctes de LangChain.
 
 Le modèle doit être fiable en function-calling (deepseek-chat, llama-4-maverick,
 LongCat…). Un llama-3.1-8b ne convient pas pour du multi-étapes.
+
+LA VITESSE COMPTE AUTANT QUE LA QUALITÉ, DEPUIS QUE LE CHAT PEUT LANCER UNE
+NAVIGATION. Le geste `naviguer` se déroule DANS un tour de conversation :
+quelqu'un attend devant l'écran. Chaque étape est un appel au modèle, et une
+navigation ordinaire en demande dix à quinze.
+
+LongCat mène la navigation correctement — c'est lui qui servait l'onglet — mais
+il répond en une minute par appel (61,8 s mesuré) : quinze étapes feraient un
+quart d'heure, et le tour de conversation est coupé bien avant. Un modèle Groq
+70B rend la même décision en une à trois secondes, ce qui ramène la même
+navigation sous la minute.
+
+Le compromis est assumé : le quota journalier de Groq est limité là où LongCat
+n'en a pas. Le jour où il s'épuise, la tâche échoue avec un message clair, et
+`BROWSER_LLM_PROVIDER=longcat` la rétablit — plus lente, mais sans plafond.
 """
 import os
 

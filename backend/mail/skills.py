@@ -641,7 +641,13 @@ async def ouvrir_page(data: dict, user) -> dict:
 
 
 SKILLS_NATIFS["chercher_web"] = chercher_web
+async def naviguer(data: dict, user) -> dict:
+    from browser.skills import naviguer as _naviguer
+    return await _naviguer(data, user)
+
+
 SKILLS_NATIFS["ouvrir_page"] = ouvrir_page
+SKILLS_NATIFS["naviguer"] = naviguer
 
 SKILLS_NATIFS["lancer_ingestion_documents"] = lancer_ingestion_documents
 SKILLS_NATIFS["statut_ingestion_documents"] = statut_ingestion_documents
@@ -707,6 +713,11 @@ EFFETS_NATIFS = {
     # CONTENEUR — seul lui parle a l'internet — et l'interrupteur qui le coupe.
     "chercher_web": "lecture",
     "ouvrir_page": "lecture",
+    # Le navigateur LIBRE reste en lecture : le mode ecriture depend du
+    # deploiement (`BROWSER_READONLY`), et le conteneur refuse la demande
+    # si le deploiement dit non. Le modele n'a aucun parametre pour s'en
+    # affranchir depuis le chat.
+    "naviguer": "lecture",
     "lancer_ingestion_documents": "ecriture_interne",
     "statut_ingestion_documents": "lecture",
 }

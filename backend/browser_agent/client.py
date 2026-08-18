@@ -26,7 +26,8 @@ class NavigateurCoupe(RuntimeError):
 
 async def start_task(job_id: str, task_prompt: str, allowed_domains: list[str],
                      user_id: str, ingest: bool = False, readonly: bool = True,
-                     output_schema: Optional[dict] = None) -> dict:
+                     output_schema: Optional[dict] = None,
+                     max_steps: Optional[int] = None) -> dict:
     # DEUX FAÇONS DE COUPER, ET LES DEUX SONT PRÉVUES ICI.
     #
     # L'INTERRUPTEUR : `browser_enabled` à false, et rien ne part. C'est le
@@ -53,6 +54,7 @@ async def start_task(job_id: str, task_prompt: str, allowed_domains: list[str],
                 "ingest": ingest,
                 "readonly": readonly,
                 "output_schema": output_schema,
+                "max_steps": max_steps,
             },
         )
         r.raise_for_status()
@@ -61,12 +63,13 @@ async def start_task(job_id: str, task_prompt: str, allowed_domains: list[str],
 
 async def start_task_sur(job_id: str, task_prompt: str, allowed_domains: list[str],
                          user_id: str, ingest: bool = False, readonly: bool = True,
-                         output_schema: Optional[dict] = None) -> dict:
+                         output_schema: Optional[dict] = None,
+                         max_steps: Optional[int] = None) -> dict:
     """`start_task`, mais qui traduit un conteneur arrêté en refus lisible."""
     try:
         return await start_task(job_id, task_prompt, allowed_domains, user_id,
                                 ingest=ingest, readonly=readonly,
-                                output_schema=output_schema)
+                                output_schema=output_schema, max_steps=max_steps)
     except httpx.HTTPError as e:
         # Le conteneur ne répond pas : arrêté, en cours de redémarrage, ou
         # tombé. Le détail porte son adresse interne — il reste au journal.

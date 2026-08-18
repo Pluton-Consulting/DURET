@@ -177,9 +177,20 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         # secondes — son matériel est fait pour ça. Sur ce palier, qui ne produit
         # qu'une décision de routage, seule la latence compte : personne ne lit
         # jamais ce que le modèle y écrit.
+        # J'AVAIS MIS GROQ EN TÊTE ICI, ET C'ÉTAIT FAUX. La mesure disait bien
+        # que Groq répond en une à trois secondes là où DeepSeek en prend
+        # vingt-cinq — mais elle portait sur le modèle 70B. Le petit modèle de
+        # ce palier, `llama-3.1-8b-instant`, rend un 404 sur cette clé : chaque
+        # appel de routage partait donc chercher une adresse inexistante avant
+        # de retomber sur DeepSeek. J'avais rendu le chemin court PLUS LONG.
+        #
+        # DeepSeek reprend la tête tant que le petit modèle Groq n'est pas
+        # rétabli. Groq reste juste derrière : le jour où la clé y donne accès,
+        # il repasse devant sans rien changer d'autre — et depuis que le 404
+        # est reconnu comme définitif, l'essai ne coûte plus qu'un aller-retour.
         chain = [
-            ("groq", s.model_groq_light),                  # gratuit, et le plus rapide de loin
-            ("deepseek", s.model_deepseek_flash),          # très bon marché, mais lent aux heures pleines
+            ("deepseek", s.model_deepseek_flash),          # tête tant que le petit Groq est indisponible
+            ("groq", s.model_groq_light),                  # le plus rapide quand la clé y donne accès
             ("openrouter", s.model_or_deepseek_flash),     # même modèle via la passerelle
             ("openrouter", s.model_or_free_a),
             ("openrouter", s.model_or_free_b),
@@ -248,7 +259,18 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
 
 
 # Erreurs pour lesquelles il est inutile de retenter le MÊME modèle → passer au suivant.
+#
+# « 404 » ET « model_not_found » MANQUAIENT, et l'oubli coûtait cher. Groq écrit
+# `model_not_found` avec des soulignés, quand la liste ne portait que « not
+# found » avec un espace : l'erreur n'était donc pas reconnue comme définitive.
+#
+# Relevé en production : `llama-3.1-8b-instant` indisponible pour cette clé, et
+# CHAQUE appel du palier léger le retentait deux fois, avec 0,5 s puis 1 s
+# d'attente, avant de passer au suivant. Une seconde et demie perdue par tour,
+# sur une adresse qui n'existera jamais — un modèle absent ne réapparaît pas
+# parce qu'on redemande poliment.
 _HARD_FAIL_MARKERS = ("429", "rate limit", "rate_limit", "quota", "insufficient", "401", "403",
+                      "404", "model_not_found", "does not exist", "decommissioned",
                       "invalid api key", "authentication", "not found", "no endpoints")
 
 

@@ -45,9 +45,20 @@ LIBELLES = {
     # précédent, et l'utilisateur voit la même phrase pendant plusieurs secondes
     # alors que le traitement a changé d'étape. Le silence ne se lit pas comme
     # « rien à dire », il se lit comme « c'est bloqué ».
-    "agent1": "je traite votre demande",
-    "agent2": "j'étudie le document ou le plan",
-    "agent3": "j'apprends une nouvelle compétence",
+    # LA DÉLÉGATION SE DIT, ELLE NE SE DEVINE PAS.
+    #
+    # « je traite votre demande » était vrai mais muet : rien ne disait qu'un
+    # autre spécialiste venait de prendre la main, ni lequel. Or c'est
+    # précisément le moment où l'attente change de nature — analyser un plan ne
+    # prend pas le même temps que répondre à une question, et le savoir change
+    # la patience qu'on y met.
+    #
+    # Les noms sont ceux du MÉTIER, pas ceux du code : personne n'a à savoir
+    # qu'il existe un « agent2 ». Ce qui compte est de reconnaître à qui la
+    # demande a été confiée.
+    "agent1": "je délègue à notre expert commercial",
+    "agent2": "je délègue à notre expert conception : plans, photos, chiffrage",
+    "agent3": "je délègue à notre atelier : il apprend une compétence nouvelle",
     "preprocess": "je prépare le document",
     "generate_skill": "j'écris la compétence",
     "test_skill": "j'essaie la compétence",

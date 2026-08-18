@@ -43,6 +43,32 @@ const STAGES: { label: string; desc: string; nodes: string[] }[] = [
   { label: "Validation", desc: "Contrôle humain (si besoin)", nodes: ["human_gate", "submit_validation"] },
 ]
 
+// QUI A PRIS LA MAIN, ET SOUS SON NOM DE MÉTIER.
+//
+// L'étape s'appelait « Agent spécialisé — Traitement métier » quel que soit
+// l'expert qui avait traité la demande. C'est exact et ça n'apprend rien :
+// personne n'a à savoir qu'il existe un « agent2 », mais tout le monde gagne à
+// savoir que son plan est parti chez celui qui lit les plans.
+//
+// Déduit des nœuds RÉELLEMENT traversés, jamais annoncé d'avance : tant que la
+// demande n'a pas été confiée, l'étape garde son nom générique.
+const EXPERTS: { noeuds: string[]; label: string; desc: string }[] = [
+  { noeuds: ["agent2", "vision", "extraction", "preprocess", "prechiffrage"],
+    label: "Expert conception", desc: "Plans, photos, chiffrage" },
+  { noeuds: ["agent3", "generate_skill", "test_skill"],
+    label: "Atelier", desc: "Apprentissage d'une compétence" },
+  { noeuds: ["agent1"],
+    label: "Expert commercial", desc: "Devis, clients, documents" },
+]
+
+function expertDe(steps: string[]): { label: string; desc: string } | null {
+  const vus = new Set(steps)
+  for (const e of EXPERTS) {
+    if (e.noeuds.some((n) => vus.has(n))) return { label: e.label, desc: e.desc }
+  }
+  return null
+}
+
 function stageOf(node: string): number {
   return STAGES.findIndex((s) => s.nodes.includes(node))
 }
@@ -58,6 +84,7 @@ interface Props {
 
 export default function ReasoningPath({ steps, loading, rail }: Props) {
   const visited = new Set(steps.map(stageOf).filter((i) => i >= 0))
+  const expert = expertDe(steps)
   const reached = visited.size ? Math.max(...Array.from(visited)) : -1
 
   const stateOf = (i: number): string => {
@@ -104,17 +131,24 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
         <div className="sym-path-eyebrow">En coulisses</div>
         <div className="sym-path-title">Chemin de réflexion</div>
         <div>
-          {STAGES.map((s, i) => (
-            <div className={`sym-node ${stateOf(i)} sym-in sym-in-${Math.min(i + 1, 6)}`} key={s.label}
-                 data-testid="etape-reflexion" data-etape={s.label} data-etat={stateOf(i)}>
-              {i > 0 && <span className="sym-line" aria-hidden="true" />}
-              <span className="sym-dot" aria-hidden="true">{stateOf(i) === "done" ? "✓" : ""}</span>
-              <div>
-                <div className="sym-node-label">{s.label}</div>
-                <div className="sym-node-desc">{s.desc}</div>
+          {STAGES.map((s, i) => {
+            // L'étape du spécialiste prend le nom de celui qui a réellement
+            // pris la main. Tant que la demande n'a été confiée à personne,
+            // elle garde son intitulé générique : nommer un expert avant qu'il
+            // ait travaillé serait une promesse, pas une information.
+            const nomme = s.label === "Agent spécialisé" && expert ? expert : s
+            return (
+              <div className={`sym-node ${stateOf(i)} sym-in sym-in-${Math.min(i + 1, 6)}`} key={s.label}
+                   data-testid="etape-reflexion" data-etape={nomme.label} data-etat={stateOf(i)}>
+                {i > 0 && <span className="sym-line" aria-hidden="true" />}
+                <span className="sym-dot" aria-hidden="true">{stateOf(i) === "done" ? "✓" : ""}</span>
+                <div>
+                  <div className="sym-node-label">{nomme.label}</div>
+                  <div className="sym-node-desc">{nomme.desc}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
       {rail && <div className="sym-path-bas">{rail}</div>}

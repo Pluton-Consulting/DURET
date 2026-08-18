@@ -86,9 +86,9 @@ const NODE_LABELS: Record<string, string> = {
   test_skill: "Test de la compétence",
   submit_validation: "Envoi en validation",
   human_gate: "Validation humaine requise",
-  agent1: "Assistant commercial au travail",
-  agent2: "Assistant conception au travail",
-  agent3: "Apprentissage d'une compétence",
+  agent1: "Délégué à notre expert commercial",
+  agent2: "Délégué à notre expert conception : plans, photos, chiffrage",
+  agent3: "Délégué à notre atelier : apprentissage d'une compétence",
 }
 function stepLabel(node: string | null | undefined): string {
   if (!node) return "Analyse de votre demande"

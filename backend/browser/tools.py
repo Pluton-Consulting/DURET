@@ -1,10 +1,17 @@
 """
-Interface entre les agents LangGraph et DaytonaBrowserClient.
-Chaque outil sanitise, délègue à Daytona, loggue dans l'audit.
+Interface entre les agents LangGraph et le CONTENEUR NAVIGATEUR.
+
+Chaque outil assainit la requête, délègue au conteneur, journalise dans l'audit.
+Le backend n'ouvre lui-même aucune page : tout ce qui vient d'un site inconnu
+est manipulé dans le conteneur navigateur, seul contraint pour cela.
+
+Ce module parlait auparavant à un bac à sable Daytona — un service tiers dont
+la clé manquait en production, ce qui faisait échouer la recherche web en
+silence. Le contrat de retour n'a pas bougé d'un champ.
 """
 
 from typing import Optional
-from browser.daytona_browser import daytona_browser, BrowserResult
+from browser.navigateur import navigateur, BrowserResult
 from browser.sandbox_filter import SandboxFilter
 from security.audit import log_action
 
@@ -19,14 +26,14 @@ async def web_search(
     context: Optional[str] = None,
 ) -> dict:
     """
-    Recherche web via DuckDuckGo dans un sandbox Daytona.
+    Recherche web via DuckDuckGo, dans le conteneur navigateur.
     La requête est sanitisée avant envoi — aucune PII ne sort.
     """
     clean = _filter.sanitize_query(query)
     if context:
         clean = f"{clean} {_filter.sanitize_query(context)}"[:200]
 
-    result: BrowserResult = await daytona_browser.run_search(
+    result: BrowserResult = await navigateur.run_search(
         query=clean,
         max_results=max_results,
     )
@@ -67,8 +74,8 @@ async def fetch_url(
     agent_id: str,
     reason: str = "",
 ) -> dict:
-    """Récupère une URL spécifique dans un sandbox Daytona."""
-    result: BrowserResult = await daytona_browser.run_fetch(url)
+    """Ouvre une adresse précise dans le conteneur navigateur."""
+    result: BrowserResult = await navigateur.run_fetch(url)
 
     await log_action(
         action="browser_fetch_url",
@@ -98,7 +105,7 @@ async def fetch_url(
     }
 
 
-# ── Outils spécialisés métier Duret & Sols ───────────────────────────────
+# ── Outils spécialisés métier Symbiose ───────────────────────────────
 
 async def fetch_cadastral_info(commune: str, user_id: str, parcelle: Optional[str] = None) -> dict:
     """Recherche cadastrale — Agent 2 uniquement."""
@@ -117,7 +124,7 @@ async def fetch_cadastral_info(commune: str, user_id: str, parcelle: Optional[st
 async def search_material_price(product: str, user_id: str) -> dict:
     """Recherche prix matériau — Agent 2, pré-chiffrage uniquement."""
     return await web_search(
-        query=f"prix {product} professionnel BTP HT",
+        query=f"prix {product} professionnel paysagiste HT",
         user_id=user_id,
         agent_id="agent2",
         max_results=3,

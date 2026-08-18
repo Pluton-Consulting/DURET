@@ -22,6 +22,35 @@ app = FastAPI(title="Duret & Sols Browser Worker")
 _running: dict[str, asyncio.Task] = {}
 
 
+# ── LES DEUX GESTES RAPIDES ──────────────────────────────────────────────
+#
+# Ils ne passent PAS par l'agent autonome : leur parcours est ecrit d'avance,
+# sans boucle et sans modele. C'est ce qui les rend rapides, et c'est ce qui
+# permet de les verifier. Ils remplacent le bac a sable Daytona, qui faisait
+# la meme chose chez un tiers, avec une cle absente de la production.
+class RechercheRequest(BaseModel):
+    requete: str
+    max_resultats: int = 3
+    delai_ms: int = 15000
+
+
+class PageRequest(BaseModel):
+    url: str
+    delai_ms: int = 15000
+
+
+@app.post("/chercher")
+async def chercher(req: RechercheRequest):
+    from rapide import chercher as _chercher
+    return await _chercher(req.requete, req.max_resultats, req.delai_ms)
+
+
+@app.post("/ouvrir")
+async def ouvrir(req: PageRequest):
+    from rapide import ouvrir as _ouvrir
+    return await _ouvrir(req.url, req.delai_ms)
+
+
 class RunRequest(BaseModel):
     job_id: str
     task_prompt: str

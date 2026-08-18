@@ -27,7 +27,7 @@ from security.audit import log_action
 from config import settings
 from browser_agent import client
 
-logger = logging.getLogger("duret.browser.api")
+logger = logging.getLogger("symbiose.browser.api")
 router = APIRouter()
 
 
@@ -86,9 +86,22 @@ async def run_task(body: RunTaskRequest, current_user: User = Depends(get_curren
         )
 
     try:
-        await client.start_task(str(job_id), task, domains, str(current_user.id),
-                                ingest=body.ingest, readonly=body.readonly,
-                                output_schema=body.output_schema)
+        await client.start_task_sur(str(job_id), task, domains, str(current_user.id),
+                                    ingest=body.ingest, readonly=body.readonly,
+                                    output_schema=body.output_schema)
+    except client.NavigateurCoupe as e:
+        # COUPÉ N'EST PAS EN PANNE. Que la navigation soit désactivée par
+        # réglage ou que le conteneur soit arrêté, c'est une décision
+        # d'exploitation : on la dit en français, et on rend 503 (« pas
+        # maintenant ») plutôt que 502 (« quelque chose est cassé »).
+        async with get_db() as conn:
+            await conn.execute(
+                "UPDATE browser_tasks SET status='failed', error=$2, updated_at=NOW() WHERE id=$1",
+                job_id, "navigation coupée",
+            )
+        logger.info("Navigation coupée, tâche %s refusée", job_id)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=str(e))
     except Exception as e:
         async with get_db() as conn:
             await conn.execute(

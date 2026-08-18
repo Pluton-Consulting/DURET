@@ -59,6 +59,9 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - noa_network
+      # Le backend est le SEUL à joindre le navigateur : c'est lui qui lui
+      # donne du travail, et personne d'autre n'a de raison de lui parler.
+      - navigation
 
   browser-worker:
     build: ./browser-worker
@@ -82,9 +85,37 @@ services:
       - ./backend/secrets:/secrets:ro      # identifiants par site (lecture seule)
       - browser_sessions:/sessions         # sessions connectées persistées (rw)
     shm_size: '2gb'                        # obligatoire pour la stabilité de Chromium
-    # AUCUN port publié : service interne, joignable seulement sur noa_network.
+
+    # ── LE SEUL CONTENEUR QUI PARLE À L'INTERNET EST LE PLUS CONTRAINT ──────
+    #
+    # Il ouvre des pages inconnues et exécute leur JavaScript. C'était pourtant
+    # le service le MOINS bordé du montage : aucune capacité retirée, aucune
+    # limite de mémoire, et surtout le même réseau que Postgres — donc un accès
+    # direct à toute la mémoire de l'entreprise si Chromium venait à céder.
+    #
+    # Rien ici ne change son comportement. Ce sont des bornes, pas des
+    # réglages : elles ne se voient que le jour où quelque chose déraille.
+    cap_drop:
+      - ALL                # Chromium n'a besoin d'AUCUNE capacité noyau ici
+    security_opt:
+      - no-new-privileges:true   # interdit tout gain de droits en cours de route
+    mem_limit: 1500m       # un navigateur qui fuit n'emporte plus le VPS
+    pids_limit: 512        # ni ne le noie sous les processus
+    # `read_only` N'EST PAS POSÉ : browser-use écrit son profil, ses captures et
+    # ses traces sous /tmp et /app. Le poser demanderait de cartographier ces
+    # chemins un par un, et une racine en lecture seule mal découpée casse
+    # Chromium de façon illisible. Le gain serait mince à côté du reste.
+
+    # AUCUN port publié : joignable seulement depuis les réseaux ci-dessous.
+    #
+    # DEUX RÉSEAUX, ET C'EST L'ESSENTIEL DE L'ISOLEMENT. `navigation` le relie
+    # au backend, qui lui donne du travail. `noa_network` lui donne encore
+    # Postgres, parce qu'il y écrit lui-même l'avancement de ses tâches : l'en
+    # couper suppose qu'il rende compte au backend, et c'est le seul changement
+    # de comportement du lot — à faire, mais pas en même temps que le reste.
     networks:
       - noa_network
+      - navigation
 
   frontend:
     build: ./frontend
@@ -128,6 +159,12 @@ services:
 
 networks:
   noa_network:
+    driver: bridge
+  # Le segment de navigation : backend et conteneur navigateur, rien d'autre.
+  # `internal: false` est nécessaire — c'est par là que le navigateur sort sur
+  # l'internet. Ce qu'on gagne n'est pas d'empêcher la sortie, c'est de réduire
+  # ce qu'il peut atteindre À L'INTÉRIEUR.
+  navigation:
     driver: bridge
 
 volumes:

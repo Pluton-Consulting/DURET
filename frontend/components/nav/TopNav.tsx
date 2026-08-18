@@ -87,14 +87,27 @@ export default function TopNav({ role, email, name }: Props) {
                 padding: "7px 14px",
                 fontSize: 14,
                 fontWeight: isActive ? 600 : 500,
-                color: isActive
+                // UN ONGLET DE DÉVELOPPEUR NE RESSEMBLE À AUCUN AUTRE.
+                // Il porte la couleur à part, active ou non : c'est ce qui
+                // empêche de le confondre, d'un coup d'œil, avec un écran de
+                // travail. Le liseré permanent le fait exister même au repos,
+                // là où les autres onglets s'effacent.
+                color: tab.dev
+                  ? "var(--marque-dev)"
+                  : isActive
                   ? "var(--marque-primary)"
                   : "var(--marque-text-body)",
                 borderRadius: 9,
-                background: isActive
+                background: tab.dev
+                  ? "var(--marque-dev-bg)"
+                  : isActive
                   ? "var(--marque-primary-subtle)"
                   : "transparent",
-                boxShadow: isActive ? "inset 0 0 0 1px var(--marque-primary-subtle)" : "none",
+                boxShadow: tab.dev
+                  ? "inset 0 0 0 1px var(--marque-dev-border)"
+                  : isActive
+                  ? "inset 0 0 0 1px var(--marque-primary-subtle)"
+                  : "none",
                 transition: "background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease",
                 whiteSpace: "nowrap",
                 flexShrink: 0,

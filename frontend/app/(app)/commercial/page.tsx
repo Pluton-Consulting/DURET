@@ -9,17 +9,17 @@ export default async function CommercialPage() {
       <div className="sym-in" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>
-            Commercial / Admin
+            Administratif
           </h1>
           <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--marque-text-muted)" }}>
-            Agent 1 : RAG, NER, LLM · Requêtes commerciales et administratives
+            Vos dossiers, vos clients, vos documents : posez la question, l'assistant cherche dans la mémoire de l'entreprise.
           </p>
         </div>
         <a href="/chat" className="sym-tap" style={{
           background: "linear-gradient(180deg, var(--marque-primary-hover), var(--marque-primary))", color: "var(--marque-text-on-dark)",
           padding: "12px 24px", borderRadius: "var(--marque-radius-pill)", fontSize: 14, fontWeight: 700, boxShadow: "var(--marque-shadow-card)",
         }}>
-          Nouvelle requête
+          Poser une question
         </a>
       </div>
 
@@ -59,17 +59,26 @@ export default async function CommercialPage() {
 
           {/* Pipeline status — réel */}
           <div className="sym-in sym-in-2 sym-card" style={{ background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))", borderRadius: "var(--marque-radius-card)", padding: 24, boxShadow: "var(--marque-shadow-card)" }}>
-            <h3 style={{ margin: "0 0 18px", fontSize: 16, fontWeight: 700, color: "var(--marque-text-on-dark)" }}>Pipeline Agent 1</h3>
+            {/* CE BLOC MENTAIT DEUX FOIS. Il annonçait « stub » et « TODO » sur
+                cinq étapes qui fonctionnent toutes depuis longtemps, et il les
+                nommait dans le vocabulaire du code — « Anonymisation NER »,
+                « pgvector + TRGM », « Réhydratation PII ». Affiché à TOUS les
+                rôles, il donnait d'un produit fini l'image d'un chantier
+                inachevé, dans une langue que personne ici ne parle.
+
+                Les cinq étapes ci-dessous sont les vraies, dans l'ordre du
+                traitement, dites comme on les expliquerait à un collègue. */}
+            <h3 style={{ margin: "0 0 18px", fontSize: 16, fontWeight: 700, color: "var(--marque-text-on-dark)" }}>Ce qui se passe quand vous posez une question</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {[
-                { step: "1. Anonymisation NER", status: "stub", desc: "spaCy fr_core_news_lg (nœud TODO)" },
-                { step: "2. Recherche RAG", status: "stub", desc: "pgvector + TRGM (nœud TODO)" },
-                { step: "3. LLM (Claude Haiku)", status: "partial", desc: "Router implémenté, invocation TODO" },
-                { step: "4. Réhydratation PII", status: "stub", desc: "Remplacement entity_map (TODO)" },
-                { step: "5. Vérification devis", status: "stub", desc: "Human-in-the-loop (TODO)" },
+                { step: "1. Votre question est comprise", desc: "L'assistant repère de quoi elle parle et ce qu'elle demande." },
+                { step: "2. Les noms sont masqués", desc: "Clients, montants et coordonnées sont remplacés avant tout envoi extérieur." },
+                { step: "3. La mémoire est consultée", desc: "Devis, chantiers, documents et courriers déjà enregistrés." },
+                { step: "4. La réponse est rédigée", desc: "Et les actions demandées sont exécutées : lecture, document, envoi." },
+                { step: "5. Ce qui engage attend votre accord", desc: "Rien ne part à l'extérieur sans qu'un humain ait validé." },
               ].map((item, i) => (
                 <div key={i} className={`sym-in sym-in-${i + 1}`} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: item.status === "partial" ? "var(--marque-primary-light)" : "#ffffff44" }} />
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: "var(--marque-primary-light)" }} />
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "var(--marque-text-on-dark)" }}>{item.step}</div>
                     <div style={{ fontSize: 11, color: "var(--marque-on-dark-accent)" }}>{item.desc}</div>

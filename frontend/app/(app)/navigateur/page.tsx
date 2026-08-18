@@ -12,10 +12,10 @@ export default async function NavigateurPage() {
   return (
     <div className="sym-page" style={{ padding: 32, maxWidth: 1000, margin: "0 auto" }}>
       <div style={{ marginBottom: 8, fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--marque-primary-mid)", fontWeight: 600 }}>
-        Agent Navigateur · navigation autonome supervisée
+        L'assistant va lire des pages à votre place
       </div>
       <h1 style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>
-        Navigateur
+        Recherche web
       </h1>
       <p style={{ margin: "0 0 28px", fontSize: 15, color: "var(--marque-text-body)", maxWidth: "70ch", lineHeight: 1.55 }}>
         L'agent pilote un vrai navigateur pour chercher, se connecter, remplir des formulaires et extraire des données.

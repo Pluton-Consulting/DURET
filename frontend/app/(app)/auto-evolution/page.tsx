@@ -39,13 +39,13 @@ export default async function AutoEvolutionPage() {
   return (
     <div className="sym-page" style={{ padding: 32, maxWidth: 1100, margin: "0 auto" }}>
       <div className="sym-in" style={{ marginBottom: 8, fontFamily: "monospace", fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--marque-primary-mid)", fontWeight: 600 }}>
-        Agent 3 · Superviseur auto-apprenant
+        Ce que l'assistant a retenu, et ce qu'il attend de vous
       </div>
       <h1 className="sym-in sym-in-1" style={{ margin: "0 0 8px", fontSize: 28, fontWeight: 800, color: "var(--marque-text-primary)", letterSpacing: "-0.5px" }}>
-        Auto-Évolution
+        Apprentissage
       </h1>
       <p className="sym-in sym-in-2" style={{ margin: "0 0 28px", fontSize: 15, color: "var(--marque-text-body)", maxWidth: "70ch", lineHeight: 1.55 }}>
-        Quand une requête sort du champ des agents existants, Duret & Sols ne reste pas bloqué : il <b>génère un nouveau skill</b>,
+        Quand une demande sort de ce que l'assistant sait déjà faire, il ne reste pas bloqué : il <b>écrit lui-même le savoir-faire qui manque</b>,
         le teste dans un sandbox isolé, puis le soumet à validation humaine. Chaque cas non couvert devient une capacité réutilisable.
       </p>
 

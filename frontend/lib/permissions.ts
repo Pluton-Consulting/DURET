@@ -44,6 +44,9 @@ export interface TabDef {
   label: string
   href: string
   roles: string[]
+  /** RÉSERVÉ À QUI DÉVELOPPE. L'onglet se dessine dans la couleur à part
+   *  (`--marque-dev`) : de la mécanique, pas du travail de l'entreprise. */
+  dev?: boolean
 }
 
 const ALL_ROLES: string[] = [
@@ -69,25 +72,25 @@ export const TABS: TabDef[] = [
   },
   {
     key: "auto-evolution",
-    label: "Auto-Évolution",
+    label: "Apprentissage",
     href: "/auto-evolution",
     roles: ["super_admin", "direction"],
   },
   {
     key: "skills",
-    label: "Skills",
+    label: "Savoir-faire",
     href: "/skills",
     roles: MANAGERS,
   },
   {
     key: "gestion",
-    label: "Gestion",
+    label: "Pilotage",
     href: "/gestion",
     roles: ["super_admin", "direction"],
   },
   {
     key: "navigateur",
-    label: "Navigateur",
+    label: "Recherche web",
     href: "/navigateur",
     roles: MANAGERS,
   },
@@ -103,6 +106,7 @@ export const TABS: TabDef[] = [
     label: "Développeur",
     href: "/superviseur",
     roles: ["super_admin"],
+    dev: true,
   },
 ]
 

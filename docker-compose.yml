@@ -1,3 +1,17 @@
+# LE NOM DE PROJET EST ÉPINGLÉ ICI, ET C'EST UN FILET.
+#
+# Sans cette ligne, Docker Compose le déduit du NOM DU DOSSIER. Or ce nom
+# préfixe TOUS les volumes : `duret-sols_postgres_data`, `duret-sols_browser_sessions`,
+# `duret-sols_documents_produits`. Renommer le dossier créerait donc des volumes
+# NEUFS et VIDES, tandis que les anciens resteraient là, intacts et
+# invisibles — la base paraîtrait effacée alors que rien ne serait perdu.
+# C'est la panne la plus effrayante de la famille, et la plus facile à éviter.
+#
+# Épinglé, le dossier peut être renommé librement : les volumes ne bougent pas.
+# Changer CETTE valeur, en revanche, reste une opération à part entière : elle
+# demande de recopier chaque volume vers son nouveau nom, à l'arrêt.
+name: duret-sols
+
 services:
   postgres:
     image: pgvector/pgvector:pg16

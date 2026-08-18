@@ -363,6 +363,12 @@ async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
             await _post_to_rag(job_id, structured, final_text)
 
     except Exception as e:
+        # LA TRACE COMPLÈTE VA AU JOURNAL DU CONTENEUR, et seulement là. Le nom
+        # du type suffisait à dire « ça a cassé », jamais OÙ : le diagnostic de
+        # l'AttributeError de `log_audit` a demandé une relecture de tout le
+        # module au lieu d'une ligne de log. Le journal est interne — rien de
+        # tout cela n'atteint le modèle ni l'écran.
+        logger.exception("Tâche %s tombée (%s)", job_id, type(e).__name__)
         await db.set_error(job_id, type(e).__name__)  # message générique (pas de fuite d'URL/hôte)
         await db.log_audit("browser_task_failed", user_id, success=False,
                            metadata={"job_id": job_id, "error_type": type(e).__name__,

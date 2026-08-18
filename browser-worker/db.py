@@ -97,6 +97,18 @@ async def set_error(job_id: str, error: str) -> None:
                 {"job_id": job_id, "error": (error or "")[:1000]})
 
 
+async def log_audit(action: str, user_id: str | None = None,
+                    success: bool = True, metadata: dict | None = None) -> None:
+    """La fonction que la reecriture avait PERDUE, appelee en premier par
+    chaque tache : son absence tuait toute navigation autonome en
+    AttributeError avant la premiere page. Comme ses voisines, elle ne leve
+    jamais — l'audit ne doit pas emporter la tache qu'il raconte."""
+    await _dire("POST", "/audit", {
+        "action": action, "user_id": user_id,
+        "success": success, "metadata": metadata,
+    })
+
+
 async def get_task(job_id: str) -> dict | None:
     d = await _dire("GET", "/tache/" + job_id)
     return (d or {}).get("tache")

@@ -92,6 +92,31 @@ class Validation(BaseModel):
     draft: Optional[str] = None
 
 
+class Audit(BaseModel):
+    action: str
+    user_id: str | None = None
+    success: bool = True
+    metadata: dict | None = None
+
+
+@router.post("/audit")
+async def audit(c: Audit, x_navigateur_secret: str = Header(default="")):
+    """Le journal d'audit du navigateur, par le guichet.
+
+    `log_audit` etait la SEULE fonction oubliee en reecrivant `db.py` du worker
+    en passerelle HTTP — et elle est appelee en PREMIER dans chaque tache.
+    Toute navigation autonome mourait donc a sa premiere ligne, en
+    AttributeError, avant meme d'ouvrir une page. Meme lecon que
+    `was_filtered` : un contrat reecrit se compare A CELUI QU'ON REMPLACE,
+    element par element — l'usage qu'on croit en connaitre ne suffit pas.
+    """
+    _verifier(x_navigateur_secret)
+    from security.audit import log_action
+    await log_action(action=c.action, user_id=c.user_id, agent_id="browser",
+                     success=c.success, metadata=c.metadata)
+    return {"ok": True}
+
+
 @router.post("/tache/statut")
 async def tache_statut(c: Statut, x_navigateur_secret: str = Header(default="")):
     _verifier(x_navigateur_secret)

@@ -197,6 +197,14 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
         raise SkillError(f"skill introuvable : {name}")
 
     status = row["status"]
+    # Même garde que le catalogue, au goulot que TOUS les chemins empruntent :
+    # une coquille validée par erreur ne s'exécute pas non plus. Le message
+    # nomme la vraie capacité, pour que le modèle se rattrape dans le même tour.
+    if "Squelette g" in (row["code"] or ""):
+        raise SkillError(
+            f"skill '{name}' : squelette non implémenté, pas une capacité. "
+            "Pour une recherche dans la mémoire d'entreprise, utilise "
+            "`rechercher_documents`.")
     if not allow_draft:
         if status not in RUNNABLE_STATUSES:
             raise SkillError(

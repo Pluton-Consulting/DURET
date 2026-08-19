@@ -1110,7 +1110,26 @@ async def rehydrate_node(state: AgentState) -> dict:
         allowed = set(allowed)
         entity_map = {k: v for k, v in entity_map.items() if k in allowed}
 
-    sortie = {"final_response": anonymizer.rehydrate(text, entity_map)}
+    final = anonymizer.rehydrate(text, entity_map)
+
+    # UN JETON ORPHELIN NE SORT JAMAIS À L'ÉCRAN. Relevé au banc de recette :
+    # « TOTAL HT [MONTANT_1] » affiché tel quel. Les montants ne sont pas
+    # masqués sur ce déploiement (`anonymize_amounts` à faux), donc ce jeton
+    # n'a JAMAIS eu d'entrée dans la carte : il vient d'un CONTENU LU — un
+    # document qui le portait déjà en toutes lettres — que le modèle a recopié.
+    # La réhydratation ne peut rien pour lui. Mais son sens, lui, est clair :
+    # la donnée manque. Le brief dit quoi écrire dans ce cas (§5) : « [À
+    # COMPLÉTER] », jamais un balisage technique. On rend donc au lecteur la
+    # seule chose vraie — il manque une valeur ici — sans lui montrer la
+    # tuyauterie.
+    orphelins = anonymizer.find_placeholders(final)
+    if orphelins:
+        logger.warning("Réhydratation : %d jeton(s) sans valeur neutralisé(s) : %s",
+                       len(orphelins), " ".join(sorted(orphelins)[:6]))
+        for jeton in orphelins:
+            final = final.replace(jeton, "[À COMPLÉTER]")
+
+    sortie = {"final_response": final}
 
     # DES OPTIONS EN PROSE DEVIENNENT DES BOUTONS.
     #

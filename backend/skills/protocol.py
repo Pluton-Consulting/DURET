@@ -440,11 +440,24 @@ async def rafraichir_catalogue(force: bool = False) -> int:
     try:
         from database.connection import get_db
         async with get_db() as conn:
+            # UNE COQUILLE N'EST PAS UNE CAPACITÉ. Le catalogue métier semé au
+            # départ (`seed_skills_catalogue.py`) porte un code SQUELETTE qui
+            # rend « [À COMPLÉTER] » partout — c'est une feuille de route, pas
+            # une compétence. Validées depuis l'écran, ces coquilles arrivaient
+            # ici comme des actions disponibles ; leur effet, jamais qualifié,
+            # valait « externe ». Relevé au banc, sur la question phare du brief
+            # (« chantier similaire à Arcachon avec terrasse bois ») : le
+            # modèle choisit `recherche_chantier_similaire`, l'écran réclame
+            # un accord humain pour une simple lecture, et l'exécution rendrait
+            # une coquille — pendant que `rechercher_documents`, qui sait
+            # répondre, reste inutilisé. On ne les expose donc pas, quel que
+            # soit leur statut : le code dit ce qu'elles sont.
             lignes = await conn.fetch(
                 "SELECT name, description, COALESCE(access_level, 'all') AS access_level "
                 "FROM skills "
                 "WHERE status IN ('validated', 'stable') AND COALESCE(enabled, true) "
                 "  AND (agent IS NULL OR agent = 'agent1') "
+                "  AND COALESCE(code, '') NOT LIKE '%Squelette g_n_rique%' "
                 "ORDER BY name")
     except Exception as e:  # noqa: BLE001 - un registre injoignable n'empêche pas de répondre
         logger.info("Registre de skills indisponible (%s) — seuls les natifs sont exposés", e)

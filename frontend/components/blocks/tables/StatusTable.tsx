@@ -1,3 +1,4 @@
+import { md } from "../text/inline"
 type Row = { cells: string[]; status: "ok" | "wait" | "late" }
 const PILL = {
   ok:   { label: "Livrée",     bg: "var(--marque-paid-bg)",    fg: "var(--marque-paid-text)" },
@@ -26,7 +27,7 @@ export function StatusTable({
             return (
               <tr key={ri}>
                 {r.cells.map((cell, ci) => (
-                  <td key={ci} style={{ padding: "10px 14px", borderTop: "1px solid var(--marque-border)", color: ci === 0 ? "var(--marque-text-primary)" : "var(--marque-text-body)", fontWeight: ci === 0 ? 600 : 400 }}>{cell}</td>
+                  <td key={ci} style={{ padding: "10px 14px", borderTop: "1px solid var(--marque-border)", color: ci === 0 ? "var(--marque-text-primary)" : "var(--marque-text-body)", fontWeight: ci === 0 ? 600 : 400 }}>{md(cell)}</td>
                 ))}
                 <td style={{ padding: "10px 14px", borderTop: "1px solid var(--marque-border)" }}>
                   <span style={{ fontSize: 10.5, fontWeight: 700, padding: "2px 9px", borderRadius: "var(--marque-radius-pill)", background: p.bg, color: p.fg }}>{p.label}</span>

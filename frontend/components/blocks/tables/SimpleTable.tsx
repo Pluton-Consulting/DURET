@@ -1,3 +1,4 @@
+import { md } from "../text/inline"
 /** Tableau simple (colonnes + lignes), en-tête coloré. */
 export function SimpleTable({
   columns = ["Poste", "Quantité", "Unité", "P.U. HT"],
@@ -18,7 +19,7 @@ export function SimpleTable({
         <tbody>
           {rows.map((r, ri) => (
             <tr key={ri}>{r.map((cell, ci) => (
-              <td key={ci} style={{ textAlign: ci === 0 ? "left" : "right", padding: "10px 14px", borderTop: "1px solid var(--marque-border)", color: ci === 0 ? "var(--marque-text-primary)" : "var(--marque-text-body)", fontWeight: ci === 0 ? 600 : 400, fontVariantNumeric: "tabular-nums" }}>{cell}</td>
+              <td key={ci} style={{ textAlign: ci === 0 ? "left" : "right", padding: "10px 14px", borderTop: "1px solid var(--marque-border)", color: ci === 0 ? "var(--marque-text-primary)" : "var(--marque-text-body)", fontWeight: ci === 0 ? 600 : 400, fontVariantNumeric: "tabular-nums" }}>{md(cell)}</td>
             ))}</tr>
           ))}
         </tbody>

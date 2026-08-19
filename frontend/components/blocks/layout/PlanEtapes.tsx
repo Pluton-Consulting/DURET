@@ -1,5 +1,6 @@
 "use client"
 
+import { md } from "../text/inline"
 /**
  * LE PLAN D'UNE GROSSE DEMANDE, ET CE QUE CHAQUE ÉTAPE A DONNÉ.
  *
@@ -77,7 +78,7 @@ export function PlanEtapes({ titre, resume, etapes = [] }: {
               {faits.length > 0 && (
                 <TaskContent className="mt-1 flex flex-col gap-1 pl-7">
                   {faits.map((r, j) => (
-                    <TaskItem key={j}>{r}</TaskItem>
+                    <TaskItem key={j}>{md(r)}</TaskItem>
                   ))}
                 </TaskContent>
               )}

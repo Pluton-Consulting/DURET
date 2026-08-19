@@ -1,5 +1,6 @@
 "use client"
 import { useRef, useState, type ReactNode } from "react"
+import { md } from "@/components/blocks/text/inline"
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { MessageActions, MessageAction, MessageResponse } from "@/components/ai-elements/message"
 import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
@@ -258,7 +259,7 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "list":          return <BulletList {...p} />
     case "plan":          return <PlanEtapes {...p} />
     case "badge":         return <Badge tone={p.tone}>{p.text}</Badge>
-    case "callout":       return <Callout tone={p.tone} title={p.title}>{p.text}</Callout>
+    case "callout":       return <Callout tone={p.tone} title={p.title}>{md(p.text)}</Callout>
     // LES PROPOSITIONS PASSENT PAR AI ELEMENTS. Le bouton maison faisait le
     // travail, mais la version du registre apporte ce qui manquait vraiment :
     // une rangee qui DEFILE horizontalement au lieu de se replier sur trois

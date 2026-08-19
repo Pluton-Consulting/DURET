@@ -113,6 +113,15 @@ class ClientNavigateur:
             {"url": r.get("url"), "title": r.get("titre"), "content": r.get("contenu")}
             for r in (d.get("results") or [])
         ]
+        # L'APERÇU NE VA PAS AU MODÈLE. Il est rangé ici, côté backend, sous
+        # une clé ; le résultat ne porte que cette clé. L'écran la rend en
+        # image via `/api/browser/apercu/{cle}` ; le modèle, lui, reçoit une
+        # ligne de texte — jamais des kilooctets de base64.
+        for r in resultats:
+            png = d.get("apercu_b64")
+            if png and r.get("url"):
+                from browser.apercus import deposer
+                r["apercu"] = deposer(r["url"], png)
         return BrowserResult(
             success=bool(d.get("success")),
             results=resultats,

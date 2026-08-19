@@ -96,12 +96,17 @@ async def fetch_url(
         r = result.results[0]
         content = f"Source : {r['url']}\nTitre : {r.get('title','')}\n\n{r.get('content','')}"
 
+    premier = result.results[0] if result.results else {}
     return {
         "success": result.success,
         "content": content or result.error or "Échec de récupération.",
         "url": url,
         "was_filtered": result.was_filtered,
         "source_type": "web_external",
+        # La clé d'aperçu et le titre remontent tels quels : c'est le geste
+        # `ouvrir_page` qui décide d'en faire un composant à l'écran.
+        "apercu": premier.get("apercu"),
+        "title": premier.get("title"),
     }
 
 

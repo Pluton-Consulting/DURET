@@ -46,6 +46,7 @@ class RechercheRequest(BaseModel):
 class PageRequest(BaseModel):
     url: str
     delai_ms: int = 15000
+    capture: bool = True   # aperçu PNG de la page, en parallèle de sa lecture
 
 
 @app.post("/chercher")
@@ -57,7 +58,7 @@ async def chercher(req: RechercheRequest):
 @app.post("/ouvrir")
 async def ouvrir(req: PageRequest):
     from rapide import ouvrir as _ouvrir
-    return await _ouvrir(req.url, req.delai_ms)
+    return await _ouvrir(req.url, req.delai_ms, capture=req.capture)
 
 
 class RunRequest(BaseModel):

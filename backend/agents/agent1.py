@@ -635,6 +635,7 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"invoice","number":"...","client":"...","amount":"...","issued":"...","due":"...","status":"paid|pending|late"}
 - {"type":"doc","name":"...","kind":"PDF|XLSX|DOCX","meta":"..."}
 - {"type":"doc_apercu","titre":"...","format":"docx|pdf|xlsx","extrait":"..."} pour l'aperçu d'un document QU'ON A LU et qui n'est pas téléchargeable. Un document que TU viens de produire ou de déposer s'annonce par un bloc `fichier` et par lui seul : sa carte montre déjà le document. Ici : `extrait` reprend TEL QUEL le champ `extrait` (document produit) ou le début du `contenu`/`texte` rendu par la lecture. Jamais un résumé réécrit : l'aperçu montre le VRAI contenu.
+- {"type":"site","url":"...","titre":"...","apercu":"..."} pour MONTRER une page web que tu viens de lire : `ouvrir_page` te donne `apercu` (une clé) et `titre` — recopie-les tels quels, l'écran affiche la capture de la page avec son lien.
 - {"type":"contact","name":"...","role":"...","phone":"...","email":"..."}
 - {"type":"project","name":"...","client":"...","progress":62,"status":"..."}
 - {"type":"table","columns":["...","..."],"rows":[["...","..."]]}

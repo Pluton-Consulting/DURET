@@ -24,13 +24,13 @@
 // de bibliothèque qu'on gagnerait à l'échanger.
 
 const STAGES: { label: string; desc: string; nodes: string[] }[] = [
-  { label: "Analyse", desc: "Nature de la demande", nodes: ["classify", "check_schedule"] },
-  { label: "Protection des données", desc: "Anonymisation", nodes: ["rag", "anonymize"] },
-  { label: "Orientation", desc: "L'IA décide de la suite", nodes: ["routeur"] },
-  { label: "Mémoire d'entreprise", desc: "Recherche documentaire (si besoin)", nodes: ["recherche", "search_docs", "similar_projects"] },
-  { label: "Recherche web", desc: "Sources externes (si besoin)", nodes: ["browser"] },
-  { label: "Agent spécialisé", desc: "Traitement métier", nodes: ["agent1", "agent2", "agent3", "vision", "extraction", "preprocess", "prechiffrage", "generate_skill", "test_skill"] },
-  { label: "Rédaction", desc: "Génération de la réponse", nodes: ["llm", "tools", "rehydrate"] },
+  { label: "Je lis votre demande", desc: "de quoi il s'agit, et pour qui", nodes: ["classify", "check_schedule"] },
+  { label: "Je protège les noms et coordonnées", desc: "rien de personnel ne sort de l'entreprise", nodes: ["rag", "anonymize"] },
+  { label: "Je choisis comment m'y prendre", desc: "mémoire, données, web ou expert", nodes: ["routeur"] },
+  { label: "Je cherche dans la mémoire d'entreprise", desc: "dossiers, devis, documents, données", nodes: ["recherche", "search_docs", "similar_projects"] },
+  { label: "Je regarde sur le web", desc: "seulement si l'entreprise ne sait pas", nodes: ["browser"] },
+  { label: "Je confie à l'expert", desc: "le bon expert pour ce sujet", nodes: ["agent1", "agent2", "agent3", "vision", "extraction", "preprocess", "prechiffrage", "generate_skill", "test_skill"] },
+  { label: "J'agis et je rédige", desc: "actions, puis réponse", nodes: ["llm", "tools", "rehydrate"] },
   // `validation_check` A ÉTÉ RETIRÉ DE CETTE ÉTAPE. Il s'exécute à CHAQUE tour
   // — c'est l'arête qui suit la rédaction — si bien que « Validation ✓ Contrôle
   // humain » s'affichait toujours, y compris quand aucun bouton n'était jamais
@@ -40,7 +40,7 @@ const STAGES: { label: string; desc: string; nodes: string[] }[] = [
   // Ne restent que les nœuds qui ATTESTENT d'une décision : `human_gate`
   // suspend réellement le tour, `submit_validation` dépose une demande. Sans
   // eux l'étape reste vide, comme « Recherche web » quand le web n'a pas servi.
-  { label: "Validation", desc: "Contrôle humain (si besoin)", nodes: ["human_gate", "submit_validation"] },
+  { label: "Je vous demande votre accord", desc: "pour tout ce qui engage l'entreprise", nodes: ["human_gate", "submit_validation"] },
 ]
 
 // QUI A PRIS LA MAIN, ET SOUS SON NOM DE MÉTIER.
@@ -102,7 +102,7 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
            qui attend une decision — il doit rester visible sans defilement. */
         .sym-path{ width:26%; min-width:242px; max-width:340px; flex-shrink:0;
           display:flex; flex-direction:column; overflow:hidden;
-          border-left:1px solid var(--marque-border); background:var(--marque-surface); padding:16px 18px; }
+          border-left:1px solid var(--marque-border); background:color-mix(in srgb, var(--marque-primary-subtle) 35%, var(--marque-surface)); padding:18px 18px; }
         .sym-path-haut{ flex:1 1 auto; min-height:0; overflow-y:auto; }
         .sym-path-bas{ flex-shrink:0; max-height:52%; overflow-y:auto; }
         .sym-path-eyebrow{ font-size:11px; letter-spacing:.14em; text-transform:uppercase;
@@ -128,15 +128,15 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
         @media (prefers-reduced-motion: reduce){ .sym-node.active .sym-dot{ animation:none; } }
       `}</style>
       <div className="sym-path-haut">
-        <div className="sym-path-eyebrow">En coulisses</div>
-        <div className="sym-path-title">Chemin de réflexion</div>
+        <div className="sym-path-eyebrow">En ce moment</div>
+        <div className="sym-path-title">Ce que fait votre assistant</div>
         <div>
           {STAGES.map((s, i) => {
             // L'étape du spécialiste prend le nom de celui qui a réellement
             // pris la main. Tant que la demande n'a été confiée à personne,
             // elle garde son intitulé générique : nommer un expert avant qu'il
             // ait travaillé serait une promesse, pas une information.
-            const nomme = s.label === "Agent spécialisé" && expert ? expert : s
+            const nomme = s.label === "Je confie à l'expert" && expert ? expert : s
             return (
               <div className={`sym-node ${stateOf(i)} sym-in sym-in-${Math.min(i + 1, 6)}`} key={s.label}
                    data-testid="etape-reflexion" data-etape={nomme.label} data-etat={stateOf(i)}>

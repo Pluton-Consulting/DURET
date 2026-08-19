@@ -1,6 +1,8 @@
 "use client"
 import { useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
+import { CLE_CONTEXTE, EVENEMENT_CONTEXTE, type ContextePrealable } from "@/components/tableau/TableauDeBord"
+import { EXPERTS } from "@/lib/permissions"
 import MessageList from "./MessageList"
 import InputBar, { PieceJointe } from "./InputBar"
 import ReasoningPath from "./ReasoningPath"
@@ -34,6 +36,13 @@ interface Message {
 interface ChatWindowProps {
   threadId?: string | null
   token?: string        // passé côté serveur (fiable) ; sinon repli sur useSession
+}
+
+/** Le texte affiché ne montre pas le contexte pré-inscrit qui précède la demande. */
+function sansContexte(s: string): string {
+  if (!s.startsWith("[Contexte rappelé")) return s
+  const fin = s.indexOf("]\n\n")
+  return fin >= 0 ? s.slice(fin + 3) : s
 }
 
 function newId(): string {
@@ -99,6 +108,18 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const { data: session } = useSession()
   const token = tokenProp || (session as any)?.backendToken
   const [messages, setMessages] = useState<Message[]>([])
+  // LE CONTEXTE PRÉ-INSCRIT depuis le tableau de bord : une tâche ou une
+  // conversation passée d'un expert, posée comme une pièce jointe au-dessus de
+  // la saisie. Le prochain message part avec ce contexte en tête, puis la
+  // carte s'efface — la mémoire de conversation prend le relais.
+  const [contexte, setContexte] = useState<ContextePrealable | null>(null)
+  useEffect(() => {
+    try { const brut = localStorage.getItem(CLE_CONTEXTE); if (brut) setContexte(JSON.parse(brut)) } catch { /* rien */ }
+    const h = (e: Event) => setContexte((e as CustomEvent).detail)
+    window.addEventListener(EVENEMENT_CONTEXTE, h)
+    return () => window.removeEventListener(EVENEMENT_CONTEXTE, h)
+  }, [])
+  const oublierContexte = () => { setContexte(null); try { localStorage.removeItem(CLE_CONTEXTE) } catch { /* rien */ } }
   const [threadId, setThreadId] = useState<string | null>(initialThreadId)
   const [loading, setLoading] = useState(false)
   const [thinkingNode, setThinkingNode] = useState<string | null>(null)
@@ -586,7 +607,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     if (afficherDemande) {
       const idQuestion = newId()
       idDerniereQuestionRef.current = idQuestion
-      setMessages((prev) => [...prev, { id: idQuestion, role: "user", content: text }])
+      setMessages((prev) => [...prev, { id: idQuestion, role: "user", content: sansContexte(text) }])
     }
     try {
       const res = await apiRequest<{ tache_id: string }>(
@@ -629,7 +650,17 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
                   + "par la connexion temps réel). Il se terminera de lui-même.")
   }
 
-  const sendMessage = (text: string, piece?: PieceJointe) => {
+  const sendMessage = (texteAffiche: string, piece?: PieceJointe) => {
+    // Ce qui part porte le contexte pré-inscrit ; ce qui s'affiche reste ce
+    // que la personne a écrit. Le contexte ne sert qu'une fois.
+    const text = contexte
+      ? (`[Contexte rappelé par l'utilisateur — ${contexte.source === "tache" ? "tâche" : "conversation"} précédente avec ${EXPERTS.find((e) => e.cle === contexte.expert)?.nom || contexte.expert} : « ${contexte.titre} »`
+         + (contexte.resume ? ` — ${contexte.resume.slice(0, 600)}` : "")
+         + (contexte.thread_id ? ` (fil ${contexte.thread_id})` : "") + `]
+
+${texteAffiche}`)
+      : texteAffiche
+    if (contexte) oublierContexte()
     if (!token) {
       setMessages((prev) => [...prev,
         { id: newId(), role: "user", content: text },
@@ -647,7 +678,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       // suite vaut mieux qu'un fichier silencieusement ignore.
       if (piece) {
         setMessages((prev) => [...prev,
-          { id: newId(), role: "user", content: `📎 ${piece.name}\n${text}` },
+          { id: newId(), role: "user", content: `📎 ${piece.name}\n${texteAffiche}` },
           { id: newId(), role: "assistant",
             content: "Les pièces jointes ne peuvent pas rejoindre la file d'attente : attendez la fin de la tâche en cours, puis renvoyez le fichier." }])
         return
@@ -663,13 +694,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     idDerniereQuestionRef.current = idQuestion
     setMessages((prev) => [
       ...prev,
-      { id: idQuestion, role: "user", content: piece ? `📎 ${piece.name}\n${text}` : text },
+      { id: idQuestion, role: "user", content: piece ? `📎 ${piece.name}\n${texteAffiche}` : texteAffiche },
     ])
     setLoading(true)
     setThinkingNode(null)
     setThinkingSteps([]); setTraceReflexion([])
     setActivite("")
-    queryEnCoursRef.current = text
+    queryEnCoursRef.current = texteAffiche
 
     const tid = threadId ?? newId()
     if (!threadId) rememberThread(tid)
@@ -895,7 +926,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   ]
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
+    <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
       {/* LE FIL A SON PROPRE FOND, plus profond que celui des cartes : c'est ce
           creux qui fait remonter la barre de saisie et les documents posés
           dessus. Sans lui, trois surfaces se superposaient à quatre pour cent
@@ -947,6 +978,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           enCours={loading}
         />
 
+        {contexte && (
+          <div className="v2-contexte" role="status" data-testid="contexte-prealable">
+            <b>{contexte.source === "tache" ? "Tâche" : "Conversation"} rappelée</b>
+            <span title={contexte.titre}>{contexte.titre}</span>
+            <button type="button" onClick={oublierContexte} aria-label="Retirer ce contexte">×</button>
+          </div>
+        )}
         <InputBar onSend={sendMessage} disabled={false}
                   modeFile={loading || principalOccupe}
                   enCours={loading} onStop={stopper} />

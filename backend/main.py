@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from database.connection import init_db
-from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router, tasks as tasks_router, hooks as hooks_router, learning as learning_router, documents_produits, file_attente, navigateur_interne
+from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router, tasks as tasks_router, hooks as hooks_router, learning as learning_router, documents_produits, file_attente, navigateur_interne, tableau
 from agents.runtime import init_runtime, shutdown_runtime
 from config import settings
 
@@ -135,6 +135,7 @@ app.include_router(navigateur_interne.router, prefix="/api/interne/navigateur",
 # /api/hooks : PAS de JWT — authentification par signature HMAC (voir routers/hooks.py).
 app.include_router(hooks_router.router, prefix="/api/hooks", tags=["hooks"])
 app.include_router(file_attente.router, prefix="/api/file", tags=["file"])
+app.include_router(tableau.router, prefix="/api/dashboard", tags=["tableau"])
 
 
 @app.get("/api/health")

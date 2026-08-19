@@ -25,6 +25,7 @@
 
 @import "tailwindcss";
 @import "./charte.css";
+@import "./interface-v2.css";
 
 /* ── Streamdown : sans ces trois lignes, le rendu du chat est NU ──────────
    Streamdown (le moteur de rendu markdown des réponses) livre ses classes

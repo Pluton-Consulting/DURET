@@ -131,6 +131,16 @@ class Settings(BaseSettings):
     memoire_resume_max_chars: int = 1800    # taille du résumé glissant
     memoire_rappels_k: int = 3              # échanges anciens rappelés par proximité
     memoire_rappels_seuil: float = 0.45     # proximité minimale (cosinus) pour être rappelé
+
+    # ROI AFFICHÉ AU TABLEAU DE BORD : une estimation, et elle le dit.
+    # Le brief (§13) pose 65 €/h. Les minutes par geste sont des hypothèses
+    # prudentes, visibles sous le chiffre, réglables ici ou dans l'env.
+    roi_taux_horaire: float = 65.0
+    roi_minutes_question: float = 10.0     # une conversation menée à la place d'une recherche manuelle
+    roi_minutes_document: float = 45.0     # un document produit (devis, courrier, rapport)
+    roi_minutes_mail: float = 4.0          # un mail trié, résumé ou répondu
+    roi_minutes_analyse: float = 30.0      # un plan ou une photo analysés
+    roi_minutes_recherche: float = 6.0     # une recherche (mémoire, données, web)
     optim_cache_enabled: bool = True        # cache exact des réponses (query+contexte identiques)
     optim_cache_ttl_s: int = 900            # durée de vie d'une entrée de cache (s)
     optim_cache_max: int = 500              # nb max d'entrées en cache (LRU)

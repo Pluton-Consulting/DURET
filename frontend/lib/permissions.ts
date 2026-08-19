@@ -128,3 +128,39 @@ export function canAccess(role: string, tabKey: string): boolean {
   const tab = TABS.find((t) => t.key === tabKey)
   return tab ? tab.roles.includes(role) : false
 }
+
+// ════════════════════════════════════════════════════════════════════════
+//  NAVIGATION V2 — deux vues, un panneau, des experts.
+//  (Même principe que sur le socle : l'en-tête ne porte plus un menu mais
+//  trois bulles ; les onglets par agent disparaissent au profit d'une carte
+//  par EXPERT dans le tableau de bord ; Apprentissage et Savoir-faire
+//  deviennent « Connaissances ».)
+// ════════════════════════════════════════════════════════════════════════
+
+export const VUES = [
+  { key: "tableau", label: "Tableau de bord", href: "/accueil" },
+  { key: "chat",    label: "Chat",            href: "/chat" },
+] as const
+
+export const SECTIONS: TabDef[] = [
+  { key: "connaissances", label: "Connaissances", href: "/connaissances", roles: MANAGERS },
+  { key: "gestion",       label: "Pilotage",      href: "/gestion",       roles: ["super_admin", "direction"] },
+  { key: "parametres",    label: "Paramètres",    href: "/parametres",    roles: MANAGERS },
+  { key: "superviseur",   label: "Développeur",   href: "/superviseur",   roles: ["super_admin"], dev: true },
+]
+
+export function getVisibleSections(role: string): TabDef[] {
+  return SECTIONS.filter((s) => s.roles.includes(role))
+}
+
+/** Les experts, tels qu'ils se nomment à l'écran. Propres à l'entreprise. */
+export const EXPERTS: { cle: string; nom: string; domaine: string; accent: string }[] = [
+  { cle: "agent1", nom: "Expert administratif & clients",
+    domaine: "administratif et commercial — dossiers, courriers, mails, documents", accent: "primary" },
+  { cle: "agent2", nom: "Expert appels d'offres & chiffrage",
+    domaine: "études — CCTP, DPGF, plans, métrés, pré-chiffrage", accent: "leaf" },
+  { cle: "agent3", nom: "Expert savoir-faire",
+    domaine: "apprentissage — compétences, consignes, connaissances acquises", accent: "mid" },
+]
+
+export const MARQUE = { nom: "Duret & Sols", logo: "/duret-sols.svg", logoAlt: "Duret & Sols" }

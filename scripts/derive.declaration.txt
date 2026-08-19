@@ -54,7 +54,6 @@ backend/agents/agent2.py                # SYSTEM_PROMPT : conception et visuels 
 backend/mail/skills.py                  # prompt de classement du courrier, formule selon le metier
 backend/scripts/seed_skills_catalogue.py  # catalogue de capacites metier livre a l'amorcage
 backend/scripts/test_e2e.py             # jeu d'essai metier (terrassement et plantation / ragreage et carrelage)
-frontend/app/(app)/gestion/page.tsx     # prompts d'agents affiches en demonstration
 frontend/app/(app)/conception/page.tsx  # formats de plans acceptes (SketchUp / DWG)
 frontend/app/(app)/commercial/page.tsx  # titre et accroche dans le vocabulaire du client (devis et clients / administratif), comme les libelles d'onglets
 frontend/app/(app)/navigateur/NavigateurClient.tsx  # domaines metier proposes en exemple

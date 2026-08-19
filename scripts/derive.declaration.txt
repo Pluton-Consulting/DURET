@@ -90,3 +90,6 @@ DUPLICATION.md                          # mode d'emploi de la copie, cite les sk
 start-local.sh                          # chemin du projet sur le poste et utilisateur postgres
 backup.sh                               # utilisateur postgres de la sauvegarde
 README-DURET.md                         # note d'accueil propre au second client
+frontend/e2e/recette.json               # recette du brief : questions et attendus propres au client
+frontend/e2e/BRIEF.md                   # le brief client lui-meme, reproduit pour reference du banc
+frontend/e2e/fixtures/                  # pieces jointes de test (plan de masse, photos) propres au metier

@@ -23,7 +23,6 @@ cd "$(dirname "$0")/.."
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
 [ -f docker-compose.https.yml ] && COMPOSE="$COMPOSE -f docker-compose.https.yml"
-PROJET="$(basename "$(pwd)")"           # préfixe des images : <projet>-frontend, <projet>-backend
 BRANCHE_V2="interface-v2"
 BRANCHE_V1="$(git rev-parse --abbrev-ref HEAD)"
 [ "$BRANCHE_V1" = "$BRANCHE_V2" ] && BRANCHE_V1="main"
@@ -36,17 +35,21 @@ image_de() {
 
 case "${1:-}" in
   sauvegarder)
+    # Le NOM de l'image est lu sur le conteneur qui tourne (compose le dérive
+    # de son nom de projet, pas du dossier) ; seule l'étiquette change.
     for s in frontend backend; do
       img="$(image_de "$s")"
       if [ -z "$img" ]; then echo "⚠ aucune image en cours pour $s" >&2; continue; fi
-      docker tag "$img" "${PROJET}-${s}:v1"
-      echo "✓ $img → ${PROJET}-${s}:v1"
+      base="${img%%:*}"
+      docker tag "$img" "${base}:v1"
+      echo "✓ $img → ${base}:v1"
     done
     git rev-parse HEAD > .interface-v1.commit
     echo "✓ commit v1 noté : $(cat .interface-v1.commit)"
     ;;
   deployer)
-    if ! docker image inspect "${PROJET}-frontend:v1" >/dev/null 2>&1; then
+    base_f="$(image_de frontend)"; base_f="${base_f%%:*}"
+    if [ -z "$base_f" ] || ! docker image inspect "${base_f}:v1" >/dev/null 2>&1; then
       echo "✗ Lance d'abord : $0 sauvegarder (sinon pas de retour possible en dix secondes)" >&2; exit 1
     fi
     git fetch --all --quiet
@@ -57,8 +60,10 @@ case "${1:-}" in
     ;;
   revenir)
     for s in frontend backend; do
-      docker image inspect "${PROJET}-${s}:v1" >/dev/null 2>&1 || { echo "✗ image ${PROJET}-${s}:v1 absente" >&2; exit 1; }
-      docker tag "${PROJET}-${s}:v1" "${PROJET}-${s}:latest"
+      img="$(image_de "$s")"; base="${img%%:*}"
+      [ -n "$base" ] || { echo "✗ aucun conteneur $s en cours" >&2; exit 1; }
+      docker image inspect "${base}:v1" >/dev/null 2>&1 || { echo "✗ image ${base}:v1 absente — sauvegarder n'a pas été lancé" >&2; exit 1; }
+      docker tag "${base}:v1" "${base}:latest"
     done
     $COMPOSE up -d --no-build frontend backend
     if [ -f .interface-v1.commit ]; then git checkout --quiet "$(cat .interface-v1.commit)" 2>/dev/null || true; fi
@@ -68,7 +73,8 @@ case "${1:-}" in
   etat)
     echo "branche : $(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
     for s in frontend backend; do echo "$s : $(image_de "$s")"; done
-    docker image inspect "${PROJET}-frontend:v1" >/dev/null 2>&1 && echo "sauvegarde v1 : présente" || echo "sauvegarde v1 : ABSENTE"
+    base_f="$(image_de frontend)"; base_f="${base_f%%:*}"
+    [ -n "$base_f" ] && docker image inspect "${base_f}:v1" >/dev/null 2>&1 && echo "sauvegarde v1 : présente" || echo "sauvegarde v1 : ABSENTE"
     ;;
   *)
     sed -n '2,22p' "$0"; exit 1 ;;

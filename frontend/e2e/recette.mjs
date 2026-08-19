@@ -165,6 +165,10 @@ function controler(reponse, q) {
   // Un de ces termes suffit : utile quand plusieurs formulations conviennent.
   if (q.au_moins_un && !q.au_moins_un.some((t) => plat.includes(sansAccent(t))))
     echecs.push(`aucun de : ${q.au_moins_un.join(", ")}`)
+  // Un second lot indépendant, quand deux choses distinctes doivent chacune
+  // apparaître sous une forme ou une autre (la source ET le sujet, par exemple).
+  if (q.au_moins_un_2 && !q.au_moins_un_2.some((t) => plat.includes(sansAccent(t))))
+    echecs.push(`aucun de : ${q.au_moins_un_2.join(", ")}`)
 
   if (q.doit_avouer && !AVEUX.some((a) => plat.includes(a)))
     echecs.push("devait admettre ne pas savoir, ne l'a pas fait")

@@ -279,6 +279,15 @@ def _is_hard_fail(err: Exception) -> bool:
     return any(k in msg for k in _HARD_FAIL_MARKERS)
 
 
+def _contenu_vide(result: Any) -> bool:
+    """Le modèle a-t-il rendu un texte vide ? (liste de blocs ou chaîne.)"""
+    contenu = getattr(result, "content", result)
+    if isinstance(contenu, list):
+        contenu = "".join(
+            (b.get("text", "") if isinstance(b, dict) else str(b)) for b in contenu)
+    return not str(contenu or "").strip()
+
+
 class ResilientLLM:
     """LLM résilient : parcourt la cascade du palier, retry+backoff par candidat, fallback au suivant."""
 
@@ -306,9 +315,40 @@ class ResilientLLM:
                 continue
 
             label = f"{provider}:{model or settings.ollama_model_light}"
-            for attempt in range(settings.llm_max_retries):
+            # UNE RÉPONSE VIDE N'EST PAS UNE RÉPONSE. Un modèle RAISONNANT
+            # (DeepSeek V4 Pro en tête du palier) dépense son budget de sortie
+            # à réfléchir ; sur un gros contexte — une liste de vingt-cinq
+            # mails, l'analyse d'un plan — il atteint le plafond AVANT d'avoir
+            # écrit un mot, et rend un `content` vide avec finish_reason
+            # « length ». Le routeur prenait ce vide pour un succès, l'agent
+            # n'avait rien à afficher, et l'écran disait « je n'ai pas réussi à
+            # en rédiger le compte rendu ». Relevé trois fois au banc de
+            # recette, toujours après un gros résultat d'outil. On relance donc
+            # UNE fois le même modèle avec un budget doublé (la réflexion déjà
+            # faite ne se rejoue pas à l'identique, mais le plafond ne la coupe
+            # plus), puis on passe au candidat suivant : mieux vaut un modèle
+            # moins fin qui écrit qu'un modèle fin qui se tait.
+            budget_double = False
+            # La relance « budget doublé » s'AJOUTE aux tentatives ordinaires :
+            # avec une seule tentative configurée, elle aurait lieu quand même.
+            tentatives = settings.llm_max_retries
+            attempt = -1
+            while (attempt := attempt + 1) < tentatives:
                 try:
                     result = await llm.ainvoke(messages, **kwargs)
+                    if _contenu_vide(result):
+                        if not budget_double:
+                            budget_double = True
+                            tentatives += 1
+                            plafond = min(tier_max_tokens(self.tier.value) * 2, 16384)
+                            logger.warning("LLM %s : réponse VIDE (plafond de sortie atteint ?) — "
+                                           "relance avec %d jetons", label, plafond)
+                            llm = _build_model(provider, model, plafond,
+                                               tier_timeout(self.tier.value))
+                            continue
+                        logger.warning("LLM %s : réponse vide deux fois — candidat suivant", label)
+                        last_error = RuntimeError(f"réponse vide de {label}")
+                        break
                     self.last_model_used = label
                     if idx > 0:
                         logger.warning("LLM fallback → %s (palier %s)", label, self.tier.value)
@@ -321,9 +361,9 @@ class ResilientLLM:
                     delay = settings.llm_retry_base_delay * (2 ** attempt)
                     logger.warning(
                         "LLM %s tentative %d/%d échouée : %s — retry dans %.1fs",
-                        label, attempt + 1, settings.llm_max_retries, e, delay,
+                        label, attempt + 1, tentatives, e, delay,
                     )
-                    if attempt < settings.llm_max_retries - 1:
+                    if attempt < tentatives - 1:
                         await asyncio.sleep(delay)
 
         raise RuntimeError(f"Tous les modèles LLM ont échoué (dernier : {last_error})") from last_error

@@ -80,13 +80,24 @@ async def ouvrir_page(data: dict, user) -> dict:
 
     r = await fetch_url(url=url, user_id=str(getattr(user, "id", "")),
                         agent_id="agent1", reason=str(data.get("motif") or ""))
-    return {
+    sortie = {
         "url": url,
         "trouve": bool(r.get("success")),
         "contenu": r.get("content"),
         "a_savoir": ("Information EXTERNE, lue sur le web. Cite l'adresse dans ta "
                      "réponse et ne la présente jamais comme une donnée interne."),
     }
+    # L'APERÇU SE MONTRE. Quand le conteneur a capturé la page, le modèle
+    # reçoit la clé et le titre, et la consigne d'insérer le composant `site`
+    # — c'est lui qui affiche l'image, le titre et le lien à l'écran.
+    if r.get("apercu"):
+        sortie["apercu"] = r["apercu"]
+        sortie["titre"] = r.get("title")
+        sortie["a_savoir"] += (
+            " Montre la page : insère un bloc ```ui {\"type\":\"site\",\"url\":\"" + url
+            + "\",\"titre\":\"" + str(r.get("title") or url).replace('"', "'")[:120]
+            + "\",\"apercu\":\"" + str(r["apercu"]) + "\"} — l'écran y affiche la capture.")
+    return sortie
 
 async def naviguer(data: dict, user) -> dict:
     """LE NAVIGATEUR LIBRE : il regarde, il clique, il suit les liens.

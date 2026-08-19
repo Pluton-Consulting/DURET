@@ -170,3 +170,15 @@ async def cancel_task(job_id: UUID, current_user: User = Depends(get_current_use
     await log_action(action="browser_task_cancelled", user_id=str(current_user.id),
                      metadata={"job_id": str(job_id)})
     return {"job_id": str(job_id), "status": "cancelled"}
+
+
+@router.get("/apercu/{cle}")
+async def apercu_page(cle: str, current_user: User = Depends(get_current_user)):
+    """L'aperçu PNG d'une page lue par le navigateur (voir browser/apercus.py)."""
+    from fastapi.responses import Response
+    from browser.apercus import lire
+    octets = lire(cle)
+    if not octets:
+        raise HTTPException(status_code=404, detail="Aperçu expiré ou inconnu")
+    return Response(content=octets, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=3600"})

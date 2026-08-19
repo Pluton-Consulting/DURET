@@ -31,8 +31,10 @@ navigateur, seul à parler à l'internet et seul contraint pour cela.
 from __future__ import annotations
 
 import asyncio
+import base64
 import html as html_
 import logging
+import os
 import re
 import shutil
 import tempfile
@@ -272,11 +274,59 @@ async def chercher(requete: str, max_resultats: int = 3,
     }
 
 
-async def ouvrir(url: str, delai_ms: int = 15000) -> dict:
-    """Ouvre UNE page et en rend le texte."""
+async def _capturer(url: str, delai_ms: int, largeur: int = 1280, hauteur: int = 800) -> bytes | None:
+    """Une capture PNG de la page, telle qu'un écran la montrerait.
+
+    Un Chromium À PART : `--screenshot` et `--dump-dom` ne se combinent pas
+    dans un même lancement headless. Lancé EN PARALLÈLE de la lecture, il ne
+    coûte pas de latence supplémentaire — les deux processus tournent en même
+    temps et le plus lent des deux fixe la durée. Ne lève jamais : une capture
+    manquée rend None, la page reste lue.
+    """
+    with tempfile.TemporaryDirectory(prefix="capture-") as profil:
+        sortie = os.path.join(profil, "capture.png")
+        args = [a for a in _args(delai_ms, profil) if a != "--dump-dom"
+                and not a.startswith("--blink-settings")]   # ici, les images comptent
+        args += [f"--window-size={largeur},{hauteur}", "--hide-scrollbars",
+                 f"--screenshot={sortie}"]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                CHROMIUM, *args, url,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            try:
+                await asyncio.wait_for(proc.communicate(), timeout=delai_ms / 1000 + 20)
+            except asyncio.TimeoutError:
+                proc.kill(); await proc.wait()
+                return None
+            if os.path.exists(sortie) and os.path.getsize(sortie) > 0:
+                # PNG → JPEG 1024 px : une page riche en photos pèse plus d'un
+                # mégaoctet en PNG (mesuré : 1,1 Mo), dix fois moins en JPEG,
+                # et l'écran n'a pas besoin de mieux pour un aperçu.
+                try:
+                    from PIL import Image
+                    import io
+                    im = Image.open(sortie).convert("RGB")
+                    if im.width > 1024:
+                        im = im.resize((1024, int(im.height * 1024 / im.width)))
+                    tampon = io.BytesIO()
+                    im.save(tampon, format="JPEG", quality=74, optimize=True)
+                    return tampon.getvalue()
+                except Exception:  # noqa: BLE001 - sans Pillow, le PNG brut fait l'affaire
+                    with open(sortie, "rb") as f:
+                        return f.read()
+        except Exception as e:  # noqa: BLE001
+            logger.info("Capture de page impossible : %s", type(e).__name__)
+    return None
+
+
+async def ouvrir(url: str, delai_ms: int = 15000, capture: bool = True) -> dict:
+    """Ouvre UNE page : son texte, et son apercu (PNG en base64) si demandé."""
     debut = time.monotonic()
     try:
-        page = await _lire(url, delai_ms)
+        if capture:
+            page, image = await asyncio.gather(_lire(url, delai_ms), _capturer(url, delai_ms))
+        else:
+            page, image = await _lire(url, delai_ms), None
     except Exception as e:  # noqa: BLE001
         # LE MESSAGE RESTE GÉNÉRIQUE. Le détail d'une erreur réseau porte
         # souvent l'adresse visée et parfois l'hôte interne : il n'a rien
@@ -289,5 +339,8 @@ async def ouvrir(url: str, delai_ms: int = 15000) -> dict:
         "success": bool(page.get("contenu")),
         "results": [page],
         "error": None,
+        # L'aperçu voyage en base64 jusqu'au backend, qui le garde pour l'écran.
+        # Il ne part JAMAIS vers le modèle : c'est le backend qui tranche.
+        "apercu_b64": base64.b64encode(image).decode("ascii") if image else None,
         "execution_time_ms": int((time.monotonic() - debut) * 1000),
     }

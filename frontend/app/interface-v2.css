@@ -65,21 +65,25 @@
   transition: transform .7s var(--v2-courbe); will-change: transform; }
 .v2-scene[data-vue="chat"] .v2-piste { transform: translateX(-50%); }
 .v2-vue { position: relative; width: 50%; height: 100%; padding: calc(var(--v2-entete-h) + 30px) 22px 18px;
-  box-sizing: border-box; transition: transform .7s var(--v2-courbe), opacity .7s var(--v2-courbe), filter .7s var(--v2-courbe); }
+  box-sizing: border-box; transition: transform .7s var(--v2-courbe), opacity .7s var(--v2-courbe), filter .7s var(--v2-courbe), padding .7s var(--v2-courbe); }
 .v2-vue-cadre { height: 100%; border-radius: 26px; background: var(--marque-surface);
   border: 1px solid color-mix(in srgb, var(--marque-border) 80%, transparent);
   box-shadow: 0 24px 60px -28px color-mix(in srgb, var(--marque-primary) 35%, transparent), 0 2px 10px rgba(24, 43, 22, .05);
   overflow: hidden; display: flex; flex-direction: column; }
-/* L'INACTIVE DÉBORDE : rapprochée de quelques pour cent et légèrement
-   reculée, c'est son coin arrondi qui reste visible au bord — assez pour
-   dire « il y a une autre vue, là », pas assez pour gêner. */
-.v2-scene[data-vue="tableau"] .v2-vue-chat    { transform: translateX(-3.4%) scale(.965); opacity: .94; filter: saturate(.9); }
-.v2-scene[data-vue="chat"]    .v2-vue-tableau { transform: translateX(3.4%)  scale(.965); opacity: .94; filter: saturate(.9); }
+/* L'INACTIVE DÉBORDE, ET ELLE EST DERRIÈRE. La vue active laisse une marge
+   plus large du côté de sa voisine ; la voisine, reculée d'un cran (z-index
+   inférieur, légèrement réduite), y montre une cinquantaine de pixels de son
+   bord arrondi — assez pour dire « il y a une autre vue, là », assez pour
+   cliquer dessus. Mesuré à 1440 px : le cadre inactif apparaît à ~50 px du
+   bord, dans l'espace laissé libre. */
+.v2-vue { z-index: 1; }
+.v2-scene[data-vue="tableau"] .v2-vue-tableau, .v2-scene[data-vue="chat"] .v2-vue-chat { z-index: 2; }
+.v2-scene[data-vue="tableau"] .v2-vue-tableau { padding-right: 62px; }
+.v2-scene[data-vue="chat"]    .v2-vue-chat    { padding-left: 62px; }
+.v2-scene[data-vue="tableau"] .v2-vue-chat    { transform: translateX(-86px) scale(.965); opacity: .96; filter: saturate(.9) brightness(.985); }
+.v2-scene[data-vue="chat"]    .v2-vue-tableau { transform: translateX(86px)  scale(.965); opacity: .96; filter: saturate(.9) brightness(.985); }
 .v2-scene[data-vue="tableau"] .v2-vue-chat .v2-vue-cadre,
 .v2-scene[data-vue="chat"] .v2-vue-tableau .v2-vue-cadre { cursor: pointer; }
-.v2-vue::after { content: ""; position: absolute; inset: calc(var(--v2-entete-h) + 30px) 22px 18px; border-radius: 26px; pointer-events: none;
-  background: color-mix(in srgb, var(--marque-primary) 7%, transparent); opacity: 0; transition: opacity .7s var(--v2-courbe); }
-.v2-scene[data-vue="tableau"] .v2-vue-chat::after, .v2-scene[data-vue="chat"] .v2-vue-tableau::after { opacity: 1; }
 .v2-vue-defile { flex: 1; min-height: 0; overflow: auto; }
 
 /* ── Le panneau derrière l'engrenage ─────────────────────────────────── */
@@ -185,7 +189,6 @@
   .v2-grille { grid-template-columns: 1fr; padding: 14px; }
   .v2-grille > * { grid-column: span 1 !important; }
   .v2-vue { padding: calc(var(--v2-entete-h) + 22px) 8px 8px; }
-  .v2-vue::after { inset: calc(var(--v2-entete-h) + 22px) 8px 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .v2-piste, .v2-vue, .v2-panneau, .v2-voile, .v2-switch-curseur, .v2-bulle, .v2-carte, .v2-apparait, .v2-section, .v2-contexte { transition: none !important; animation: none !important; }

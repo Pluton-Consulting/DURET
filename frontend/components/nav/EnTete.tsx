@@ -90,7 +90,9 @@ export default function EnTete({ role, email, name }: Props) {
 
   const aller = (cle: string) => {
     setVue(cle)
-    const surScene = pathname === "/accueil" || pathname === "/" || pathname?.startsWith("/chat")
+    // La scène se déclare elle-même quand elle est montée : c'est elle qui sait
+    // glisser. Sans elle (page Connaissances, Paramètres…), on navigue.
+    const surScene = typeof document !== "undefined" && document.documentElement.hasAttribute("data-v2-scene")
     if (surScene) {
       // La scène écoute, glisse, et met l'URL à jour elle-même.
       window.dispatchEvent(new CustomEvent(EVENEMENT_VUE + ":demande", { detail: cle }))

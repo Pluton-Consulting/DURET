@@ -56,8 +56,14 @@ export default function Scene({ vueInitiale, tableau, chat }: Props) {
     return () => window.removeEventListener("popstate", h)
   }, [aller])
 
-  // Au montage, l'en-tête apprend la vue réelle (utile quand on arrive par /chat).
-  useEffect(() => { window.dispatchEvent(new CustomEvent(EVENEMENT_VUE, { detail: vueInitiale })) }, [vueInitiale])
+  // Au montage, la scène SE DÉCLARE (l'en-tête saura que cliquer sur le switch
+  // doit faire glisser, pas naviguer) et annonce la vue réelle — utile quand
+  // on arrive directement par /chat.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-v2-scene", "oui")
+    window.dispatchEvent(new CustomEvent(EVENEMENT_VUE, { detail: vueInitiale }))
+    return () => { document.documentElement.removeAttribute("data-v2-scene") }
+  }, [vueInitiale])
 
   return (
     <div className="v2-scene" data-vue={vue}>

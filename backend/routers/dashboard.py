@@ -381,6 +381,113 @@ async def get_alerts(current_user: User = Depends(get_current_user)):
 
 
 # ============================================================
+# PILOTAGE (direction) — usages, coûts, journal, par personne
+# ============================================================
+
+
+@router.get("/pilotage")
+async def get_pilotage(current_user: User = Depends(get_current_user)):
+    """Ce que la page Pilotage montre : des CHIFFRES RÉELS, agrégés en une fois.
+
+    La page affichait « n/d » sur ses indicateurs et « route non implémentée »
+    sur les coûts par personne, avec un avertissement disant que les vrais
+    chiffres étaient ailleurs. Le brief (§15) en fait pourtant une exigence de
+    la Direction : suivi de la consommation par utilisateur, des coûts IA, des
+    usages anormaux, journalisation des actions. La donnée existait déjà —
+    `api_usage_daily` (par personne et par jour) et `audit_log` (chaque action,
+    sa durée, son succès) — elle n'était simplement pas servie.
+
+    Un seul appel, parce que la page se lit d'un coup : indicateurs, série
+    quotidienne sur trente jours, répartition par personne sur trente jours,
+    erreurs des dernières vingt-quatre heures, dernières actions du journal.
+    Le journal est borné et ne porte JAMAIS le contenu des échanges — seulement
+    l'action, qui, quand, combien de temps, réussi ou non : c'est ce que
+    `log_action` y écrit, rien d'autre.
+    """
+    _exiger(current_user.role, "view_dashboard_global")
+    peut_couts = has_permission(current_user.role, "view_costs_global")
+    peut_journal = has_permission(current_user.role, "view_audit_log")
+
+    async with get_db() as conn:
+        kpi = await conn.fetchrow("""
+            SELECT
+              (SELECT COALESCE(SUM(request_count), 0) FROM api_usage_daily
+                WHERE date >= CURRENT_DATE - INTERVAL '30 days')            AS requetes_30j,
+              (SELECT COUNT(*) FROM audit_log
+                WHERE success = false AND created_at >= NOW() - INTERVAL '24 hours') AS erreurs_24h,
+              (SELECT COALESCE(SUM(cost_eur), 0) FROM api_usage_daily
+                WHERE date_trunc('month', date) = date_trunc('month', CURRENT_DATE)) AS cout_mois_eur,
+              (SELECT COUNT(DISTINCT user_id) FROM api_usage_daily
+                WHERE date >= CURRENT_DATE - INTERVAL '30 days')            AS personnes_actives_30j,
+              (SELECT COUNT(*) FROM validations WHERE status = 'pending')   AS accords_en_attente,
+              (SELECT COUNT(*) FROM skills WHERE status IN ('validated','stable')
+                                              AND COALESCE(enabled, true))   AS competences_actives
+        """)
+        par_jour = await conn.fetch("""
+            SELECT date,
+                   COALESCE(SUM(request_count), 0) AS requetes,
+                   COALESCE(SUM(tokens_total), 0)  AS jetons,
+                   COALESCE(SUM(cost_eur), 0)      AS cout_eur
+            FROM api_usage_daily
+            WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY date ORDER BY date
+        """)
+        par_personne = await conn.fetch("""
+            SELECT u.id, u.name, u.email, u.role,
+                   COALESCE(SUM(d.request_count), 0) AS requetes,
+                   COALESCE(SUM(d.tokens_total), 0)  AS jetons,
+                   COALESCE(SUM(d.cost_eur), 0)      AS cout_eur,
+                   MAX(d.date)                       AS derniere_activite
+            FROM users u
+            LEFT JOIN api_usage_daily d
+                   ON d.user_id = u.id AND d.date >= CURRENT_DATE - INTERVAL '30 days'
+            WHERE COALESCE(u.actif, true)
+            GROUP BY u.id, u.name, u.email, u.role
+            ORDER BY requetes DESC, u.email
+        """)
+        erreurs = await conn.fetch("""
+            SELECT a.created_at, a.action, a.agent_id, a.error_message,
+                   COALESCE(u.name, u.email) AS qui
+            FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+            WHERE a.success = false AND a.created_at >= NOW() - INTERVAL '24 hours'
+            ORDER BY a.created_at DESC LIMIT 50
+        """) if peut_journal else []
+        journal = await conn.fetch("""
+            SELECT a.created_at, a.action, a.agent_id, a.model_used, a.duration_ms,
+                   a.success, a.tokens_in, a.tokens_out,
+                   COALESCE(u.name, u.email) AS qui
+            FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+            ORDER BY a.created_at DESC LIMIT 80
+        """) if peut_journal else []
+
+    def _ligne(r):
+        d = dict(r)
+        for k, v in list(d.items()):
+            if hasattr(v, "isoformat"):
+                d[k] = v.isoformat()
+            elif type(v).__name__ == "Decimal":
+                d[k] = float(v)
+            elif hasattr(v, "hex") and k == "id":
+                d[k] = str(v)
+        return d
+
+    personnes = [_ligne(r) for r in par_personne]
+    if not peut_couts:
+        # Sans le droit de voir les coûts, on voit QUI utilise, pas COMBIEN ça coûte.
+        for p in personnes:
+            p.pop("cout_eur", None)
+
+    return {
+        "kpi": _ligne(kpi) if kpi else {},
+        "par_jour": [_ligne(r) for r in par_jour],
+        "par_personne": personnes,
+        "erreurs_24h": [_ligne(r) for r in erreurs],
+        "journal": [_ligne(r) for r in journal],
+        "droits": {"couts": peut_couts, "journal": peut_journal},
+    }
+
+
+# ============================================================
 # CONSOLE DÉVELOPPEUR (super_admin uniquement)
 # ============================================================
 

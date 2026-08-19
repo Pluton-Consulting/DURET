@@ -8,7 +8,9 @@ Pipeline : preprocess → vision → extraction → [browser?] → similar_proje
 
 Sécurité / RGPD :
 - Les fichiers sont ré-encodés via Pillow → suppression des métadonnées EXIF/GPS.
-- Le pré-chiffrage n'est JAMAIS validé par l'IA : requires_validation=True systématique.
+- Le pré-chiffrage n'est JAMAIS validé par l'IA : il est rendu comme une estimation
+  indicative, marquée comme telle, à valider par un humain avant tout usage. Aucune
+  porte d'accord devant la LECTURE (voir prechiffrage_node).
 """
 import base64
 import io
@@ -207,11 +209,30 @@ async def prechiffrage_node(state: AgentState) -> dict:
         state.get("llm_response") or "Aucune analyse disponible pour ce document."
     )
 
+    # L'ANALYSE SE LIT, ELLE NE S'APPROUVE PAS.
+    #
+    # Ce nœud posait `requires_validation=True` sur TOUT ce qu'il rendait — y
+    # compris une simple lecture de plan. L'écran affichait alors « une action
+    # attend votre accord », et la personne ne voyait rien de l'analyse avant
+    # d'avoir cliqué ; or approuver ne déclenchait rien : aucun chemin ne
+    # consomme une validation « prechiffrage ». C'était un accord demandé pour
+    # le droit de LIRE — relevé au banc de recette (socle commun).
+    #
+    # L'agent « ne doit pas valider seul un chiffrage ; il prépare les
+    # éléments, la décision finale reste humaine ». Ce qui est garanti ici :
+    # rien n'est engagé, rien n'est envoyé, rien n'est créé — l'agent n'en a
+    # pas le moyen — et le texte le DIT. Le jour où une approbation aura un
+    # effet (créer le devis dans l'outil métier), la porte se posera devant
+    # CET effet, pas devant la lecture.
+    summary += ("\n\n_Pré-chiffrage indicatif : estimations préparées par l'IA, à "
+                "vérifier et valider par un humain avant tout usage commercial. "
+                "Rien n'a été envoyé ni engagé._")
+
     return {
         "final_response": summary,
-        "requires_validation": True,
-        "validation_reason": "chiffrage",
-        "validation_payload": {"type": "prechiffrage", "extracted_data": extracted},
+        "requires_validation": False,
+        "validation_reason": None,
+        "validation_payload": None,
     }
 
 

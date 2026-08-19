@@ -96,3 +96,7 @@ class AgentState(TypedDict):
 
     # Messages (historique de la conversation)
     messages: Annotated[list, add_messages]
+    # MÉMOIRE LONGUE DU FIL (agents/memoire_conversation.py) : le résumé
+    # glissant de ce qui est sorti de la fenêtre récente, et jusqu'où il va.
+    resume_conversation: Optional[str]
+    resume_couvre: Optional[int]

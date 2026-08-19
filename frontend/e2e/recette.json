@@ -66,6 +66,97 @@
       "max_secondes": 90
     },
     {
+      "id": "hl-1",
+      "serie": "historique_long",
+      "reference": "générique — §5 conservation de l'historique — au-delà de la fenêtre récente",
+      "nouvelle_conversation": true,
+      "question": "Note bien pour plus tard, sans rien chercher : le devis de référence est le DV-2026-0417, pour la famille Cazenave à Gujan-Mestras, 23 450 € HT, terrasse en ipé. Confirme en une phrase.",
+      "doit_contenir": [
+        "0417"
+      ],
+      "max_secondes": 90
+    },
+    {
+      "id": "hl-2",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en un mot : quelle est la capitale de la France ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-3",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en un mot : combien font 7 fois 8 ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-4",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en une phrase : qu'est-ce qu'une lambourde ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-5",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en une phrase : à quoi sert un géotextile ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-6",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en un mot : quel mois vient après mars ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-7",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en une phrase : qu'est-ce qu'un paillage ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-8",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en un mot : de quelle couleur est une feuille de chêne en été ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-9",
+      "serie": "historique_long",
+      "reference": "générique — remplissage (fait sortir le fait de la fenêtre récente)",
+      "question": "Réponds en une phrase : qu'est-ce qu'un plot réglable ?",
+      "min_caracteres": 2,
+      "max_secondes": 60
+    },
+    {
+      "id": "hl-10",
+      "serie": "historique_long",
+      "reference": "générique — §5 conservation de l'historique — résumé glissant + rappel vectoriel",
+      "question": "Tu te souviens du devis de référence dont je t'ai parlé au début ? Donne son numéro, le client et le montant, sans rien chercher ailleurs.",
+      "doit_contenir": [
+        "0417",
+        "Cazenave"
+      ],
+      "au_moins_un": [
+        "23 450",
+        "23450",
+        "23 450"
+      ],
+      "max_secondes": 120
+    },
+    {
       "id": "inv-1",
       "serie": "non_invention",
       "reference": "générique — §5 il ne doit pas inventer d'information",

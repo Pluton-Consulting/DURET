@@ -119,8 +119,18 @@ class Settings(BaseSettings):
     # ── Optimisation des tokens (réduction coût + latence) ──
     optim_max_rag_chunks: int = 5           # nb max de chunks RAG envoyés au LLM
     optim_max_context_chars: int = 6000     # budget total de contexte (caractères)
-    optim_history_keep: int = 8             # messages d'historique conservés (fenêtre) = 4 échanges
-    optim_max_history_chars: int = 4000     # budget caractères de l'historique injecté (~1000 tokens)
+    # MÉMOIRE DE CONVERSATION À TROIS ÉTAGES (agents/memoire_conversation.py).
+    # La fenêtre récente valait 8 messages / 4 000 caractères : une réponse un
+    # peu longue effaçait tout, et au-delà de quatre échanges rien ne restait.
+    # Elle est quatre fois plus large, chaque message long est TAILLÉ plutôt
+    # que jeté, et ce qui en sort est fondu dans un résumé puis rappelé par
+    # proximité vectorielle quand la question du moment s'y rapporte.
+    optim_history_keep: int = 16            # messages d'historique conservés (fenêtre) = 8 échanges
+    optim_max_history_chars: int = 16000    # budget caractères de la fenêtre (~4000 tokens)
+    memoire_message_max_chars: int = 1400   # au-delà, un message est taillé (tête + queue)
+    memoire_resume_max_chars: int = 1800    # taille du résumé glissant
+    memoire_rappels_k: int = 3              # échanges anciens rappelés par proximité
+    memoire_rappels_seuil: float = 0.45     # proximité minimale (cosinus) pour être rappelé
     optim_cache_enabled: bool = True        # cache exact des réponses (query+contexte identiques)
     optim_cache_ttl_s: int = 900            # durée de vie d'une entrée de cache (s)
     optim_cache_max: int = 500              # nb max d'entrées en cache (LRU)

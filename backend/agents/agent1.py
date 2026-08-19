@@ -392,7 +392,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
         }
 
     import hashlib
-    from optim.tokens import trim_chunks, response_cache, compact_messages
+    from optim.tokens import trim_chunks, response_cache
     from skills.protocol import (instruction_actions, rafraichir_catalogue,
                                  BLOC_ACTION_RE, BLOC_NATIF_RE)
 
@@ -415,7 +415,25 @@ async def llm_node(state: AgentState, config=None) -> dict:
 
     # Historique de conversation (déjà ANONYMISÉ : on ne stocke que du texte masqué),
     # borné en nombre de messages ET en caractères, recalé sur une frontière de paire.
-    history = compact_messages(state.get("messages") or [])
+    # MÉMOIRE DE CONVERSATION À TROIS ÉTAGES (agents/memoire_conversation.py) :
+    # la fenêtre récente verbatim (large, messages longs taillés), le résumé
+    # glissant de ce qui en est sorti, et le rappel vectoriel des échanges
+    # anciens proches de la question. `compact_messages` ne donnait que la
+    # première, et petite : huit messages, quatre mille caractères.
+    from agents.memoire_conversation import (fenetre_recente, fondre_dans_le_resume,
+                                             rappeler_echanges, bloc_memoire)
+    _tous = state.get("messages") or []
+    history, _anciens = fenetre_recente(_tous)
+    maj_memoire: dict = {}
+    bloc_memoire_txt = ""
+    if _anciens:
+        maj_memoire = await fondre_dans_le_resume(state, _tous, _anciens)
+        _resume = maj_memoire.get("resume_conversation") or state.get("resume_conversation")
+        _nb = len([m for m in _tous if getattr(m, "type", None) != "system"])
+        _premier_rang_fenetre = (_nb - len(history)) // 2 + 1
+        _rappels = await rappeler_echanges(str(state.get("thread_id") or ""), query,
+                                           _premier_rang_fenetre)
+        bloc_memoire_txt = bloc_memoire(_resume, _rappels)
     # L'AMNÉSIE DOIT SE VOIR DANS LES JOURNAUX.
     #
     # Quand le modèle répond « je ne comprends pas » à un « oui » ou à un « 1 »,
@@ -440,6 +458,8 @@ async def llm_node(state: AgentState, config=None) -> dict:
     history_sig = hashlib.sha256(
         "\n".join(str(getattr(m, "content", "") or "") for m in history).encode("utf-8")
     ).hexdigest()[:16] if history else ""
+    if bloc_memoire_txt:
+        history_sig += "|" + hashlib.sha256(bloc_memoire_txt.encode("utf-8")).hexdigest()[:8]
     cache_scope = f"{state.get('thread_id', '')}|{history_sig}"
 
     # Le cache est COURT-CIRCUITÉ dès qu'une action a été exécutée : la réponse
@@ -449,7 +469,8 @@ async def llm_node(state: AgentState, config=None) -> dict:
     if not en_boucle_outils:
         cached = response_cache.get(tier, query, context_text, cache_scope)
         if cached is not None:
-            return {"llm_response": cached, "model_used": "cache", "tokens_in": 0, "tokens_out": 0}
+            return {"llm_response": cached, "model_used": "cache", "tokens_in": 0, "tokens_out": 0,
+                    **maj_memoire}
 
     # Résultats des actions déjà exécutées ce tour : c'est ce qui permet au modèle
     # de rédiger sa réponse finale à partir de ce que l'outil a réellement produit.
@@ -582,7 +603,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
     human_content = f"Question : {query}"
     if context_text:
         human_content = f"Documents disponibles :\n{context_text}\n\n{human_content}"
-    human_content = bloc_resultats + human_content
+    human_content = bloc_memoire_txt + bloc_resultats + human_content
 
     # Composants visuels : l'instruction est TOUJOURS présente.
     # Elle était auparavant conditionnée à des mots-clés (« devis », « tableau »…) pour
@@ -726,6 +747,7 @@ Voici les messages trouvés :
 
     usage = getattr(response, "usage_metadata", None) or {}
     return {
+        **maj_memoire,
         "redaction_forcee": redaction_a_reprendre,
         "llm_response": response.content,
         "tokens_in": usage.get("input_tokens", 0),
@@ -1192,10 +1214,23 @@ async def rehydrate_node(state: AgentState) -> dict:
     # exactement une fois par tour, quel que soit le nombre d'actions. On n'y
     # stocke QUE du texte masqué : aucune PII ne dort dans le checkpoint ni ne
     # repart vers le LLM.
+    question_masquee = state.get("anonymized_query") or state.get("query", "")
     sortie["messages"] = [
-        HumanMessage(content=state.get("anonymized_query") or state.get("query", "")),
+        HumanMessage(content=question_masquee),
         AIMessage(content=text),
     ]
+
+    # TROISIÈME ÉTAGE DE LA MÉMOIRE : l'échange clos est vectorisé pour être
+    # rappelé plus tard, quand une question s'y rapportera alors qu'il sera
+    # sorti de la fenêtre récente. Texte MASQUÉ, comme l'historique. Ne lève
+    # jamais ; un service d'embeddings absent coûte un rappel, pas un tour.
+    # En ARRIÈRE-PLAN : l'écran n'attend pas la vectorisation pour recevoir la
+    # réponse. La référence est gardée (`_TACHES_MEMOIRE`) : asyncio ne
+    # ramasse pas une tâche référencée.
+    from agents.memoire_conversation import memoriser_echange_en_fond
+    _nb = len([m for m in (state.get("messages") or []) if getattr(m, "type", None) != "system"])
+    memoriser_echange_en_fond(str(state.get("thread_id") or ""), state.get("user_id"),
+                              _nb // 2 + 1, question_masquee, text)
     return sortie
 
 

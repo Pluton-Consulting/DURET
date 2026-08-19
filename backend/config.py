@@ -66,6 +66,19 @@ class Settings(BaseSettings):
     model_groq_large: str = "llama-3.3-70b-versatile"   # plus gros, quota journalier limité
     model_groq_vision: str = "meta-llama/llama-4-scout-17b-16e-instruct"  # multimodal (Agent 2)
 
+    # Google Gemini, par le point d'entree COMPATIBLE OPENAI : aucune dependance
+    # nouvelle, le meme client que LongCat ou DeepSeek. La cle GOOGLE_API_KEY
+    # existait deja (embeddings) sans jamais servir a voir. Sert a la VISION de
+    # l'agent 2 : le modele Groq multimodal repondait 404 et l'agent n'avait
+    # plus d'yeux. `gemini-flash-latest` suit la version courante : Google
+    # retire les anciennes aux nouveaux comptes (« no longer available to new
+    # users », releve sur gemini-2.5-flash), un nom fige casserait un jour.
+    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    model_google_vision: str = "gemini-flash-latest"
+    # Second candidat Google, plus leger : au test, le premier a repondu 503
+    # « forte demande » pendant que celui-ci lisait le plan en une seconde.
+    model_google_vision_secours: str = "gemini-3.1-flash-lite"
+
     # Anthropic (optionnel) — vision agent 2 / palier COMPLEX si clé fournie
     anthropic_api_key: Optional[str] = None
     model_anthropic_vision: str = "claude-sonnet-4-6"

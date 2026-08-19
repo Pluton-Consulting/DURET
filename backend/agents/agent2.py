@@ -21,7 +21,7 @@ import re
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 from agents.state import AgentState
-from llm.router import get_llm, get_vision_llm, LLMTier
+from llm.router import get_llm, LLMTier
 
 logger = logging.getLogger("duret.agent2")
 
@@ -92,12 +92,13 @@ async def vision_node(state: AgentState, config=None) -> dict:
     if not b64:
         return {"vision_analysis": None}
 
-    llm, label = get_vision_llm()
-    if llm is None:
+    from llm.router import get_vision_candidates
+    candidats = get_vision_candidates()
+    if not candidats:
         return {
             "vision_analysis": None,
             "llm_response": ("Analyse visuelle indisponible : aucun modèle vision configuré. "
-                             "Ajoutez une clé Anthropic ou activez un modèle Groq multimodal."),
+                             "Ajoutez une clé Google, Anthropic ou un modèle Groq multimodal."),
             "error": "vision_unavailable",
         }
 
@@ -107,23 +108,30 @@ async def vision_node(state: AgentState, config=None) -> dict:
         {"type": "text", "text": f"{VISION_PROMPT}\n\nDemande de l'utilisateur : {demande}"},
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
     ])
-    try:
-        response = await llm.ainvoke([message], config=config)
-        usage = getattr(response, "usage_metadata", None) or {}
-        return {
-            "vision_analysis": response.content,
-            "llm_response": response.content,
-            "model_used": label,
-            "tokens_in": usage.get("input_tokens", 0),
-            "tokens_out": usage.get("output_tokens", 0),
-        }
-    except Exception as e:
-        logger.warning("Appel vision échoué (%s) : %s", label, e)
-        return {
-            "vision_analysis": None,
-            "llm_response": f"L'analyse visuelle a échoué ({type(e).__name__}). Réessayez ou joignez une image plus nette.",
-            "error": "vision_failed",
-        }
+    # LES CANDIDATS SE SUCCÈDENT, comme dans la cascade texte. Un seul essai
+    # laissait l'agent aveugle dès que le premier modèle répondait 404 — relevé
+    # au banc de recette (« L'analyse visuelle a échoué (NotFoundError) »).
+    derniere = None
+    for llm, label in candidats:
+        try:
+            response = await llm.ainvoke([message], config=config)
+            usage = getattr(response, "usage_metadata", None) or {}
+            return {
+                "vision_analysis": response.content,
+                "llm_response": response.content,
+                "model_used": label,
+                "tokens_in": usage.get("input_tokens", 0),
+                "tokens_out": usage.get("output_tokens", 0),
+            }
+        except Exception as e:  # noqa: BLE001 — on passe au suivant
+            derniere = e
+            logger.warning("Appel vision échoué (%s) : %s — candidat suivant", label, e)
+    return {
+        "vision_analysis": None,
+        "llm_response": (f"L'analyse visuelle a échoué ({type(derniere).__name__}). "
+                         "Réessayez ou joignez une image plus nette."),
+        "error": "vision_failed",
+    }
 
 
 async def extraction_node(state: AgentState) -> dict:

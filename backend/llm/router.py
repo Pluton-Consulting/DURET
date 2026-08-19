@@ -43,7 +43,7 @@ class LLMTier(Enum):
 # ── Disponibilité & construction des fournisseurs ────────────────────────
 
 # Fournisseurs OpenAI-compatibles (base_url + clé configurables) : direct ou via passerelle.
-_OPENAI_COMPAT = ("openrouter", "deepseek", "longcat")
+_OPENAI_COMPAT = ("openrouter", "deepseek", "longcat", "google")
 
 
 def _cle(provider: str) -> Optional[str]:
@@ -355,13 +355,38 @@ def get_vision_llm() -> tuple[Any, Optional[str]]:
     s = settings
     if not getattr(s, "vision_enabled", True):
         return None, None
-    for provider, model in (("anthropic", s.model_anthropic_vision), ("groq", s.model_groq_vision)):
-        if _provider_available(provider):
-            try:
-                return _build_model(provider, model), f"{provider}:{model}"
-            except Exception as e:
-                logger.warning("Modèle vision %s indisponible : %s", provider, e)
-    return None, None
+    candidats = get_vision_candidates()
+    return candidats[0] if candidats else (None, None)
+
+
+def get_vision_candidates() -> list[tuple[Any, str]]:
+    """TOUS les modèles de vision constructibles, dans l'ordre de préférence.
+
+    Un seul candidat ne suffisait pas : `get_vision_llm` rendait le premier
+    fournisseur qui AVAIT UNE CLÉ, et si son modèle répondait 404 — relevé au
+    banc de recette, Groq multimodal retiré : « L'analyse visuelle a échoué
+    (NotFoundError) » — l'agent 2 n'avait plus d'yeux, alors qu'une clé Google
+    capable de voir dormait dans la configuration. L'appelant essaie donc les
+    candidats l'un après l'autre, comme la cascade texte.
+
+    Ordre : Anthropic (meilleure lecture de plans), Google Gemini (rapide,
+    gratuit, toujours un modèle courant), Groq multimodal (si encore servi).
+    """
+    s = settings
+    if not getattr(s, "vision_enabled", True):
+        return []
+    sortie: list[tuple[Any, str]] = []
+    for provider, model in (("anthropic", s.model_anthropic_vision),
+                            ("google", s.model_google_vision),
+                            ("google", s.model_google_vision_secours),
+                            ("groq", s.model_groq_vision)):
+        if not _provider_available(provider):
+            continue
+        try:
+            sortie.append((_build_model(provider, model), f"{provider}:{model}"))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Modèle vision %s non constructible : %s", provider, e)
+    return sortie
 
 
 def classify_request_tier(query: str, has_attachment: bool = False) -> LLMTier:

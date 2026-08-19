@@ -292,8 +292,12 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "liste par critere : la recherche semantique approxime et ne sait pas compter. "
         "Sans argument : les jeux de donnees disponibles. Avec source_type seul : ses "
         "colonnes et leurs valeurs reelles. Avec filtres (objet {colonne: valeur}) : le "
-        "compte exact. Verifie TOUJOURS les valeurs reelles avant de filtrer",
-        [], ["source_type", "filtres"]),
+        "compte exact. Avec `agreger` {operation: somme|moyenne|min|max, colonne: "
+        "montant_ht, par: annee|mois|<colonne> (facultatif)} et `annee` (ex. \"2024\") : "
+        "le TOTAL ou la moyenne d'une colonne chiffree — chiffre d'affaires d'une "
+        "annee, panier moyen, montant par mois. Verifie TOUJOURS les valeurs reelles "
+        "avant de filtrer",
+        [], ["source_type", "filtres", "agreger", "annee"]),
     "lire_mails": (
         "LIT les derniers messages d'UNE boîte, en direct. Pour consulter, relever, "
         "faire le point sur le courrier récent. C'est un ÉCHANTILLON de 25 messages "

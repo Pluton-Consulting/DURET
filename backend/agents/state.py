@@ -100,3 +100,6 @@ class AgentState(TypedDict):
     # glissant de ce qui est sorti de la fenêtre récente, et jusqu'où il va.
     resume_conversation: Optional[str]
     resume_couvre: Optional[int]
+    # Résultats d'actions d'un tour dont la rédaction a échoué : portés au tour
+    # suivant, pour que « présente le résultat » puisse être tenu.
+    resultats_en_attente: Optional[list]

@@ -603,6 +603,19 @@ async def llm_node(state: AgentState, config=None) -> dict:
     human_content = f"Question : {query}"
     if context_text:
         human_content = f"Documents disponibles :\n{context_text}\n\n{human_content}"
+    # Résultats d'un tour précédent dont la rédaction avait échoué : on les
+    # remet sous les yeux du modèle UNE fois, au tour qui suit, pour que
+    # « présente le résultat » ou « continue » puissent être tenus.
+    en_attente = state.get("resultats_en_attente") or []
+    if en_attente and not resultats_outils:
+        import json as _json_att
+        bloc_attente = (
+            "RÉSULTATS DU TOUR PRÉCÉDENT, obtenus mais JAMAIS RESTITUÉS à l'utilisateur "
+            "(la rédaction avait échoué). Si la demande s'y rapporte — « présente le "
+            "résultat », « montre », « continue », ou la même question — restitue-les "
+            "MAINTENANT, complètement, sans relancer les actions :" + chr(10)
+            + _json_att.dumps(en_attente, ensure_ascii=False, default=str)[:8000] + chr(10) * 2)
+        bloc_resultats = bloc_attente + bloc_resultats
     human_content = bloc_memoire_txt + bloc_resultats + human_content
 
     # Composants visuels : l'instruction est TOUJOURS présente.
@@ -1106,6 +1119,7 @@ async def rehydrate_node(state: AgentState) -> dict:
     # production, 8 000 caractères de JSON affichés à l'utilisateur. Les quatre
     # passes vivent dans `_texte_visible`, partagé avec le routeur.
     text = _texte_visible(text)
+    resultats_en_attente = None
     if not text:
         # DERNIER FILET, ET IL NE DOIT PAS ACCUSER L'UTILISATEUR.
         #
@@ -1121,6 +1135,16 @@ async def rehydrate_node(state: AgentState) -> dict:
                     "mais je n'ai pas réussi à en rédiger le compte rendu. "
                     "Demandez-moi de vous présenter le résultat : le travail, lui, "
                     "est fait.")
+            # LA PROMESSE DOIT ÊTRE TENABLE. Ce message disait « demandez-moi le
+            # résultat » alors que les résultats d'outils ne vivent que le temps
+            # d'un tour : au « présente le résultat » suivant, le modèle n'avait
+            # rien à présenter, et montrait autre chose — relevé en production,
+            # une liste de clients demandée, trois documents sans rapport rendus.
+            # On porte donc ces résultats (masqués, taillés) au tour suivant.
+            resultats_en_attente = [
+                {"skill": r.get("skill"), "args": r.get("args") or {},
+                 "resultat_masque": str(r.get("resultat_masque") or "")[:6000]}
+                for r in faits[-4:]]
         else:
             text = ("Je n'ai pas réussi à formuler de réponse pour cette demande. "
                     "Pouvez-vous la reformuler ?")
@@ -1152,6 +1176,10 @@ async def rehydrate_node(state: AgentState) -> dict:
             final = final.replace(jeton, "[À COMPLÉTER]")
 
     sortie = {"final_response": final}
+    # Porté au tour suivant seulement si ce tour a échoué à rédiger ; sinon on
+    # efface ce qu'un tour précédent aurait laissé (il a été consommé ou n'a
+    # plus d'objet).
+    sortie["resultats_en_attente"] = resultats_en_attente
 
     # DES OPTIONS EN PROSE DEVIENNENT DES BOUTONS.
     #

@@ -65,7 +65,19 @@ async def interroger_donnees(data: dict, user) -> dict:
                                 "Reformule avec l'un de ces noms."),
                 }
 
-            if not filtres:
+            agreger = data.get("agreger") or {}
+            if isinstance(agreger, str):
+                import json as _j
+                try:
+                    agreger = _j.loads(agreger)
+                except _j.JSONDecodeError:
+                    agreger = {"operation": "somme", "colonne": agreger}
+            annee = str(data.get("annee") or "").strip()
+            if agreger or annee:
+                resultat = await _agreger(conn, niveaux, reel,
+                                          agreger if isinstance(agreger, dict) else {},
+                                          annee, filtres)
+            elif not filtres:
                 resultat = await _colonnes(conn, niveaux, reel)
             else:
                 resultat = await _filtrer(conn, niveaux, reel, filtres)
@@ -249,3 +261,155 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
                  f"PHRASE qui dit ce qui est compté, jamais par le nombre seul : un "
                  f"chiffre nu se lit comme une panne, même quand il est juste."),
     }
+
+
+# ── Agrégation : sommer, moyenner, grouper ─────────────────────────────────
+#
+# « Quel chiffre d'affaires avons-nous réalisé en 2024 ? » — et l'assistant
+# répondait, honnêtement, qu'il savait COMPTER les devis mais pas en TOTALISER
+# les montants. Relevé en production, avec 1 398 devis importés sous la main.
+# Compter sans sommer, c'est décrire un tableur sans savoir l'additionner.
+#
+# Les valeurs sont des chaînes telles qu'importées (« 12 500,00 € »,
+# « 03/04/2024 ») : le schéma d'import ne les type pas, à dessein. On les lit
+# donc ici avec prudence, et on DIT combien ont pu être lues : « sur 1 398
+# devis de 2024, 1 350 montants lisibles, total X » vaut mieux qu'un total
+# silencieusement faux.
+
+_OPERATIONS = {"somme": "SUM", "total": "SUM", "moyenne": "AVG", "min": "MIN",
+               "minimum": "MIN", "max": "MAX", "maximum": "MAX", "compte": "COUNT"}
+
+# Une valeur textuelle → un nombre, ou NULL. Gère « 12 500,00 € », « 12.500,00 »,
+# « 1,234.50 », « 850 ». Jamais d'erreur : une chaîne illisible devient NULL.
+_SQL_NOMBRE = r"""
+    CASE
+      WHEN nettoye ~ '^-?[0-9]+(\.[0-9]+)?$' THEN nettoye::numeric
+      ELSE NULL
+    END
+"""
+_SQL_NETTOYAGE = r"""
+    CASE
+      WHEN brut IS NULL THEN NULL
+      -- virgule ET point : le dernier des deux est le séparateur décimal
+      WHEN brut ~ ',' AND brut ~ '\.' THEN
+        CASE WHEN position(',' in reverse(brut)) < position('.' in reverse(brut))
+             THEN replace(replace(regexp_replace(brut, '[^0-9,.-]', '', 'g'), '.', ''), ',', '.')
+             ELSE replace(regexp_replace(brut, '[^0-9,.-]', '', 'g'), ',', '') END
+      -- virgule seule : décimale à la française
+      WHEN brut ~ ',' THEN replace(regexp_replace(brut, '[^0-9,-]', '', 'g'), ',', '.')
+      -- plusieurs points : des milliers
+      WHEN (length(brut) - length(replace(brut, '.', ''))) > 1
+           THEN replace(regexp_replace(brut, '[^0-9.-]', '', 'g'), '.', '')
+      -- UN point suivi d'exactement trois chiffres, sans virgule : « 7.000 »,
+      -- « 12.500 € » — en français c'est un séparateur de milliers, pas une
+      -- décimale. Relevé au test : 7.000 lu 7,0, le total d'une année faux
+      -- de 6 993 €. « 1250.50 » ou « 1.5 » restent des décimales.
+      WHEN regexp_replace(brut, '[^0-9.-]', '', 'g') ~ '^-?[0-9]{1,3}\.[0-9]{3}$'
+           THEN replace(regexp_replace(brut, '[^0-9.-]', '', 'g'), '.', '')
+      ELSE regexp_replace(brut, '[^0-9.-]', '', 'g')
+    END
+"""
+
+
+async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
+                   annee: str, filtres: dict) -> dict:
+    """Somme / moyenne / min / max d'une colonne numérique, avec filtre d'année
+    et regroupement facultatifs. Les clés voyagent en PARAMÈTRE, jamais dans le
+    texte SQL."""
+    import json
+    operation = _OPERATIONS.get(str(agreger.get("operation") or "somme").strip().lower(), "SUM")
+    colonne = str(agreger.get("colonne") or "").strip()
+    par = str(agreger.get("par") or "").strip()          # "annee", "mois" ou un nom de colonne
+    colonne_date = str(agreger.get("colonne_date") or "date").strip()
+
+    if operation != "COUNT" and not colonne:
+        return {"source_type": type_source, "erreur":
+                "Précise `agreger.colonne` (la colonne à sommer/moyenner, ex. montant_ht). "
+                "Rappelle `interroger_donnees` avec le seul `source_type` pour voir les colonnes."}
+
+    # Filtres d'égalité éventuels (même logique que _filtrer).
+    critere = {str(k): str(v) for k, v in (filtres or {}).items() if str(k).strip()}
+    charge = json.dumps(critere, ensure_ascii=False) if critere else None
+
+    # L'année se lit dans la colonne de date, texte brut : on cherche les quatre
+    # chiffres entourés de non-chiffres (03/04/2024, 2024-04-03, « avril 2024 »).
+    motif_annee = None
+    if annee:
+        if not annee.isdigit() or len(annee) != 4:
+            return {"source_type": type_source,
+                    "erreur": f"`annee` doit être sur quatre chiffres (reçu « {annee} »)."}
+        motif_annee = f"(^|[^0-9]){annee}([^0-9]|$)"
+
+    # Regroupement : par année (4 chiffres de la date), par mois (AAAA-MM, ou
+    # MM/AAAA ramené à AAAA-MM), ou par la valeur brute d'une colonne.
+    if par in ("annee", "année"):
+        sql_groupe = "substring(COALESCE(m.champs->>$5::text, m.data->>$5::text) from '([0-9]{4})')"
+    elif par == "mois":
+        sql_groupe = ("COALESCE(substring(COALESCE(m.champs->>$5::text, m.data->>$5::text) from '([0-9]{4}-[0-9]{2})'), "
+                      "regexp_replace(substring(COALESCE(m.champs->>$5::text, m.data->>$5::text) from '([0-9]{2}/[0-9]{4})'), "
+                      r"'([0-9]{2})/([0-9]{4})', '\2-\1'))")
+    elif par:
+        sql_groupe = "COALESCE(m.champs->>$6::text, m.data->>$6::text)"
+    else:
+        sql_groupe = "NULL"
+
+    sql = f"""
+        WITH base AS (
+          SELECT COALESCE(m.champs->>$3::text, m.data->>$3::text) AS brut,
+                 {sql_groupe} AS groupe,
+                 -- $6 est cite ici meme quand le regroupement ne s'en sert pas :
+                 -- asyncpg ne sait pas typer un parametre absent de la requete.
+                 $6::text AS _groupe_param
+          FROM document_metadata m
+          WHERE m.source_type = $1::text AND m.access_level = ANY($2::text[])
+            AND ($4::text IS NULL OR COALESCE(m.champs->>$5::text, m.data->>$5::text) ~ $4)
+            AND ($7::jsonb IS NULL OR m.champs @> $7::jsonb OR m.data @> $7::jsonb)
+        ), nettoyee AS (
+          SELECT groupe, brut, ({_SQL_NETTOYAGE}) AS nettoye FROM base
+        ), valeurs AS (
+          SELECT groupe, brut, ({_SQL_NOMBRE}) AS nombre FROM nettoyee
+        )
+        SELECT groupe,
+               COUNT(*)                         AS enregistrements,
+               COUNT(nombre)                    AS lisibles,
+               {operation}(nombre)              AS resultat
+        FROM valeurs
+        GROUP BY groupe
+        ORDER BY groupe NULLS LAST
+    """
+    param_groupe = par if par not in ("annee", "année", "mois", "") else colonne_date
+    lignes = await conn.fetch(sql, type_source, niveaux, colonne or "_", motif_annee,
+                              colonne_date, param_groupe, charge)
+
+    total_enr = sum(int(l["enregistrements"]) for l in lignes)
+    total_lis = sum(int(l["lisibles"]) for l in lignes)
+    if not total_enr:
+        return {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
+                "annee": annee or None, "filtres": critere or None, "nombre": 0,
+                "message": ("Aucun enregistrement ne correspond (année ou filtres). Vérifie "
+                            "la colonne de date (`agreger.colonne_date`, par défaut « date ») "
+                            "et les valeurs réelles avec le seul `source_type`.")}
+
+    def _num(v):
+        return float(v) if v is not None else None
+
+    groupes = [{"groupe": l["groupe"], "enregistrements": int(l["enregistrements"]),
+                "lisibles": int(l["lisibles"]), "resultat": _num(l["resultat"])} for l in lignes]
+    if not par:
+        g = groupes[0]
+        sortie = {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
+                  "annee": annee or None, "filtres": critere or None,
+                  "enregistrements": g["enregistrements"], "valeurs_lisibles": g["lisibles"],
+                  "resultat": g["resultat"]}
+    else:
+        sortie = {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
+                  "par": par, "annee": annee or None, "filtres": critere or None,
+                  "groupes": groupes, "enregistrements": total_enr, "valeurs_lisibles": total_lis}
+    sortie["note"] = (
+        f"{total_enr} enregistrement(s) pris en compte, {total_lis} valeur(s) de "
+        f"« {colonne or 'compte'} » lisibles comme nombres ({total_enr - total_lis} "
+        "illisible(s) ou vide(s), ignorée(s)). Le résultat porte sur les valeurs lisibles "
+        "UNIQUEMENT : dis-le si l'écart est notable. Les montants sont dans l'unité du "
+        "fichier d'origine (souvent HT, en euros) : ne convertis pas, ne devine pas la TVA. "
+        "Réponds par une PHRASE qui dit ce qui est calculé, sur quoi, et avec quelle réserve.")
+    return sortie

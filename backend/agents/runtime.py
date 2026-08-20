@@ -245,6 +245,13 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # avant que le modèle ait écrit quoi que ce soit.
         "relance_annonce": False,
         "redaction_forcee": False,
+        # LA PROVENANCE AUSSI. Ces trois champs survivaient au tour via le
+        # checkpointer : un « Hello » affichait « 3 sources » — les pages web
+        # d'une recherche de devis faite plusieurs tours plus tôt. Relevé en
+        # production, mot pour mot. La provenance appartient à UN tour.
+        "sources_memoire": None,
+        "browser_sources": None,
+        "browser_was_filtered": None,
         # Idem pour la décision du routeur et la raison d'une sortie de boucle :
         # ces canaux sont en « dernière valeur » et survivent au tour. Sans remise
         # à zéro, un tour hérite du « contexte » de sortie du précédent — et le

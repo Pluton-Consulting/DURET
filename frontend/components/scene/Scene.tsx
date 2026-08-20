@@ -1,5 +1,5 @@
 "use client"
-import { useCallback, useEffect, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { EVENEMENT_VUE } from "@/components/nav/EnTete"
 
 /**
@@ -65,8 +65,68 @@ export default function Scene({ vueInitiale, tableau, chat }: Props) {
     return () => { document.documentElement.removeAttribute("data-v2-scene") }
   }, [vueInitiale])
 
+  // ── LE GESTE : deux doigts vers la gauche ou la droite, et la vue suit ──
+  //
+  // Trois gardes, toutes indispensables :
+  //  * le geste doit être FRANCHEMENT horizontal (deux fois plus large que
+  //    haut), sinon le défilement vertical du tableau de bord déclencherait
+  //    des allers-retours ;
+  //  * il ne compte pas au-dessus d'un contenu qui défile horizontalement
+  //    (un tableau large, une rangée de suggestions) : ce défilement-là a
+  //    la priorité, c'est lui que la personne visait ;
+  //  * un seul déclenchement par geste — un trackpad émet des dizaines
+  //    d'événements par seconde, on s'arme, on tire, on attend le calme.
+  const cumulRef = useRef(0)
+  const armeRef = useRef(true)
+  const reposRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const vueRef = useRef(vue)
+  vueRef.current = vue
+
+  const surUnDefilementHorizontal = (depart: EventTarget | null): boolean => {
+    let e = depart as HTMLElement | null
+    while (e && !e.classList?.contains("v2-scene")) {
+      if (e.scrollWidth > e.clientWidth + 2) {
+        const s = getComputedStyle(e)
+        if (s.overflowX === "auto" || s.overflowX === "scroll") return true
+      }
+      e = e.parentElement
+    }
+    return false
+  }
+
+  const surMolette = (e: React.WheelEvent) => {
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 2) return
+    if (surUnDefilementHorizontal(e.target)) return
+    if (reposRef.current) clearTimeout(reposRef.current)
+    reposRef.current = setTimeout(() => { cumulRef.current = 0; armeRef.current = true }, 220)
+    if (!armeRef.current) return
+    cumulRef.current += e.deltaX
+    const SEUIL = 90
+    if (cumulRef.current > SEUIL && vueRef.current === "tableau") {
+      armeRef.current = false; aller("chat")
+    } else if (cumulRef.current < -SEUIL && vueRef.current === "chat") {
+      armeRef.current = false; aller("tableau")
+    }
+  }
+
+  const toucheRef = useRef<{ x: number; y: number } | null>(null)
+  const surToucheDebut = (e: React.TouchEvent) => {
+    toucheRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+  const surToucheFin = (e: React.TouchEvent) => {
+    const d = toucheRef.current; toucheRef.current = null
+    if (!d) return
+    const dx = e.changedTouches[0].clientX - d.x
+    const dy = e.changedTouches[0].clientY - d.y
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+    if (surUnDefilementHorizontal(e.target)) return
+    if (dx < 0 && vueRef.current === "tableau") aller("chat")
+    else if (dx > 0 && vueRef.current === "chat") aller("tableau")
+  }
+
   return (
-    <div className="v2-scene" data-vue={vue}>
+    <div className="v2-scene" data-vue={vue} onWheel={surMolette}
+         onTouchStart={surToucheDebut} onTouchEnd={surToucheFin}>
       <div className="v2-piste">
         <section className="v2-vue v2-vue-tableau" aria-hidden={vue !== "tableau"}
                  onClick={vue === "chat" ? () => aller("tableau") : undefined}>

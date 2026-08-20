@@ -26,7 +26,8 @@ type Expert = { cle: string; actif: boolean; kpis: Kpi[]; en_attente: number }
 type Donnees = {
   perimetre: "global" | "personnel"
   roi: { euros: number; heures: number; periode: string; cout_ia_eur: number | null
-         hypotheses: Record<string, number>; detail: Record<string, number> }
+         hypotheses: Record<string, number>; detail: Record<string, number>
+         serie: { jour: string; euros: number }[]; variation_pct: number | null } | null
   experts: Expert[]
   a_valider: { accords: any[]; competences: any[] }
   synthese: { terminees: number; en_attente: number; echouees: number; total: number; par_jour: { jour: string; conversations: number; actions: number }[] }
@@ -81,6 +82,33 @@ const STATUTS: Record<string, { libelle: string; ton: string }> = {
 }
 const SCHEDULE: Record<string, string> = { interval: "toutes les", daily: "chaque jour à", weekly: "chaque semaine" }
 
+/** La courbe du ROI : une aire douce, un trait, un point sur aujourd'hui. */
+function CourbeRoi({ serie }: { serie: { jour: string; euros: number }[] }) {
+  const L = 300, H = 64
+  const vals = serie.map((s) => s.euros)
+  const max = Math.max(1, ...vals)
+  const pts = vals.map((v, i) => [
+    (i / Math.max(1, vals.length - 1)) * L,
+    H - 6 - (v / max) * (H - 14),
+  ] as const)
+  const trait = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ")
+  const aire = `${trait} L${L},${H} L0,${H} Z`
+  const [fx, fy] = pts[pts.length - 1] || [L, H - 6]
+  return (
+    <svg viewBox={`0 0 ${L} ${H}`} style={{ width: "100%", height: H, display: "block" }} aria-hidden>
+      <defs>
+        <linearGradient id="roiAire" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--marque-leaf)" stopOpacity=".28" />
+          <stop offset="100%" stopColor="var(--marque-leaf)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={aire} fill="url(#roiAire)" />
+      <path d={trait} fill="none" stroke="var(--marque-leaf)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={fx} cy={fy} r="3.4" fill="var(--marque-leaf)" stroke="var(--marque-surface)" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
 function IconeExpert({ cle }: { cle: string }) {
   if (cle === "agent2") return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M9 22V12h6v10" /></svg>
   if (cle === "agent3") return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 2a7 7 0 0 0-4 12.7V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.3A7 7 0 0 0 12 2z" /><path d="M10 22h4" /></svg>
@@ -127,35 +155,39 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
 
   return (
     <div className="v2-grille">
-      {/* ── ROI ─────────────────────────────────────────────────────── */}
-      <div className="v2-carte v2-roi v2-apparait">
-        <div className="v2-carte-titre"><h3>Temps et argent récupérés</h3><small>{d.roi.periode}</small></div>
-        <div className="v2-roi-chiffre">{euros(d.roi.euros)}</div>
-        <div className="v2-roi-sous">
-          ≈ <b>{d.roi.heures.toLocaleString("fr-FR")} h</b> de travail récupérées
-          {d.roi.cout_ia_eur !== null && <> · pour <b>{euros(d.roi.cout_ia_eur)}</b> d'IA</>}
-        </div>
-        <div style={{ marginTop: 14, display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12.5, opacity: .95 }}>
-          <span><b>{d.roi.detail.conversations}</b> conversations</span>
-          <span><b>{d.roi.detail.documents}</b> documents</span>
-          <span><b>{d.roi.detail.mails}</b> mails</span>
-          <span><b>{d.roi.detail.analyses}</b> analyses</span>
-          <span><b>{d.roi.detail.recherches}</b> recherches</span>
-        </div>
-        <button type="button" onClick={() => setHypotheses((h) => !h)}
-                style={{ marginTop: 12, border: "1px solid rgba(255,255,255,.35)", background: "rgba(255,255,255,.12)", color: "inherit",
-                         borderRadius: 999, padding: "5px 11px", fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>
-          {hypotheses ? "Masquer les hypothèses" : "Comment c'est calculé ?"}
-        </button>
-        {hypotheses && (
-          <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5, opacity: .92 }}>
-            Estimation : temps valorisé <b>{d.roi.hypotheses.taux_horaire} €/h</b> ; une conversation ≈ {d.roi.hypotheses.minutes_par_conversation} min gagnées,
-            un document ≈ {d.roi.hypotheses.minutes_par_document} min, un mail ≈ {d.roi.hypotheses.minutes_par_mail} min,
-            une analyse de plan ≈ {d.roi.hypotheses.minutes_par_analyse} min, une recherche ≈ {d.roi.hypotheses.minutes_par_recherche} min.
-            Réglable par l'administration.
+      {/* ── ROI — carte de direction : le serveur ne la donne qu'à elle ── */}
+      {d.roi && (
+        <div className="v2-carte v2-apparait" style={{ gridColumn: "span 4", display: "flex", flexDirection: "column" }}>
+          <div className="v2-carte-titre">
+            <h3>ROI ce mois</h3>
+            <button type="button" onClick={() => setHypotheses((h) => !h)}
+                    style={{ border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit",
+                             fontSize: 12.5, fontWeight: 600, color: "var(--marque-primary)", padding: 0 }}>
+              {hypotheses ? "Masquer le détail" : "Détail →"}
+            </button>
           </div>
-        )}
-      </div>
+          <div style={{ fontSize: 42, fontWeight: 800, letterSpacing: "-1.5px", lineHeight: 1,
+                        color: "var(--marque-text-primary)", fontVariantNumeric: "tabular-nums" }}>
+            {euros(d.roi.euros)}
+          </div>
+          <div style={{ marginTop: 6, fontSize: 13, color: "var(--marque-leaf)", fontWeight: 600 }}>
+            {d.roi.variation_pct !== null ? `${d.roi.variation_pct >= 0 ? "+" : ""}${d.roi.variation_pct} % ce mois` : "premier mois mesuré"}
+            <span style={{ color: "var(--marque-text-muted)", fontWeight: 500 }}> · {d.roi.heures.toLocaleString("fr-FR")} h économisées</span>
+          </div>
+          {!hypotheses && <div style={{ marginTop: "auto", paddingTop: 12 }}><CourbeRoi serie={d.roi.serie || []} /></div>}
+          {hypotheses && (
+            <div style={{ marginTop: 12, fontSize: 12.5, lineHeight: 1.55, color: "var(--marque-text-body)" }}>
+              <b>{d.roi.detail.conversations}</b> conversations · <b>{d.roi.detail.documents}</b> documents · <b>{d.roi.detail.mails}</b> mails · <b>{d.roi.detail.analyses}</b> analyses · <b>{d.roi.detail.recherches}</b> recherches
+              {d.roi.cout_ia_eur !== null && <> · coût IA <b>{euros(d.roi.cout_ia_eur)}</b></>}
+              <div style={{ marginTop: 6, color: "var(--marque-text-muted)", fontSize: 12 }}>
+                Estimation : temps valorisé {d.roi.hypotheses.taux_horaire} €/h ; une conversation ≈ {d.roi.hypotheses.minutes_par_conversation} min,
+                un document ≈ {d.roi.hypotheses.minutes_par_document} min, un mail ≈ {d.roi.hypotheses.minutes_par_mail} min,
+                une analyse ≈ {d.roi.hypotheses.minutes_par_analyse} min, une recherche ≈ {d.roi.hypotheses.minutes_par_recherche} min.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Synthèse ────────────────────────────────────────────────── */}
       <div className="v2-carte v2-apparait" style={{ gridColumn: "span 4" }}>

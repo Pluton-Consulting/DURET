@@ -121,6 +121,27 @@ async def tableau(current_user: User = Depends(get_current_user)):
             GROUP BY 1 ORDER BY 1
         """, uid, global_)
 
+        # La MATIÈRE du ROI, par jour sur 60 jours : les mêmes gestes que
+        # `faits`, datés. Les 30 derniers dessinent la courbe ; les 30 d'avant
+        # donnent la variation « ce mois ». Une seule requête, convertie en
+        # minutes puis en euros côté Python, avec les mêmes hypothèses.
+        roi_jours = await _sur(conn, f"""
+            SELECT date_trunc('day', created_at)::date AS jour,
+                   COUNT(*) FILTER (WHERE action = 'chat_request' AND COALESCE(agent_id,'agent1') <> 'agent2') AS conversations,
+                   COUNT(*) FILTER (WHERE action = 'chat_request' AND agent_id = 'agent2')                      AS analyses,
+                   COUNT(*) FILTER (WHERE action = 'skill_executed'
+                                      AND metadata->>'skill' IN ('terminer_document','produire_document'))      AS documents,
+                   COUNT(*) FILTER (WHERE action = 'skill_executed'
+                                      AND metadata->>'skill' IN ('lire_mails','triage_email_entrant',
+                                                                 'resume_fil_email','redaction_email'))         AS mails,
+                   COUNT(*) FILTER (WHERE action = 'skill_executed'
+                                      AND metadata->>'skill' IN ('rechercher_documents','interroger_donnees',
+                                                                 'chercher_web','ouvrir_page','naviguer'))      AS recherches
+            FROM audit_log
+            WHERE created_at >= NOW() - INTERVAL '60 days' AND {perim.format(col='user_id')}
+            GROUP BY 1 ORDER BY 1
+        """, uid, global_)
+
         # ── À valider : accords en attente + compétences à valider ──
         accords = await _sur(conn, f"""
             SELECT v.id, v.agent, v.reason, v.created_at, v.thread_id,
@@ -248,9 +269,34 @@ async def tableau(current_user: User = Depends(get_current_user)):
         },
     ]
 
-    return {
-        "perimetre": "global" if global_ else "personnel",
-        "roi": {
+    # La courbe et la variation, avec les mêmes hypothèses que le total.
+    import datetime as _dt
+    def _euros_du_jour(l) -> float:
+        mn = (int(_val(l, "conversations")) * mn_q + int(_val(l, "documents")) * mn_doc
+              + int(_val(l, "mails")) * mn_mail + int(_val(l, "analyses")) * mn_ana
+              + int(_val(l, "recherches")) * mn_rech)
+        return round(mn / 60.0 * taux, 2)
+    aujourdhui = _dt.date.today()
+    par_date = {l["jour"]: _euros_du_jour(l) for l in roi_jours}
+    serie = [{"jour": (aujourdhui - _dt.timedelta(days=29 - i)).isoformat(),
+              "euros": par_date.get(aujourdhui - _dt.timedelta(days=29 - i), 0.0)}
+             for i in range(30)]
+    avant = sum(v for j, v in par_date.items()
+                if aujourdhui - _dt.timedelta(days=60) <= j < aujourdhui - _dt.timedelta(days=30))
+    # Un mois de référence quasi vide rend des pourcentages absurdes (-100 %,
+    # +4 000 %) : sous dix euros de base, on n'affiche pas de variation.
+    if avant >= 10:
+        variation_pct = round((euros - avant) / avant * 100)
+    else:
+        variation_pct = None
+
+    # LE ROI EST UNE AFFAIRE DE DIRECTION (§15 : les collaborateurs n'ont pas
+    # accès aux indicateurs financiers). Pour les autres rôles, le bloc n'est
+    # pas rendu du tout : l'écran ne dessine pas une carte qu'on ne lui donne
+    # pas — c'est le serveur qui tranche, jamais un `if` d'affichage.
+    bloc_roi = None
+    if global_:
+        bloc_roi = {
             "euros": euros, "heures": heures, "periode": "30 derniers jours",
             "hypotheses": {
                 "taux_horaire": taux, "minutes_par_conversation": mn_q,
@@ -260,7 +306,13 @@ async def tableau(current_user: User = Depends(get_current_user)):
             "detail": {"conversations": conv, "documents": docs, "mails": mails,
                        "analyses": analyses, "recherches": recherches},
             "cout_ia_eur": round(float(_val(cout, "cout")), 2) if cout is not None else None,
-        },
+            "serie": serie,
+            "variation_pct": variation_pct,
+        }
+
+    return {
+        "perimetre": "global" if global_ else "personnel",
+        "roi": bloc_roi,
         "experts": experts,
         "a_valider": {
             "accords": [_ligne(a) for a in accords],

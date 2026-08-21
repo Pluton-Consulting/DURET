@@ -145,14 +145,43 @@ def _is_non_pii_span(value: str) -> bool:
     """
     True si le span ne peut pas porter de donnée personnelle.
 
-    Deux cas :
+    Quatre cas :
       * aucun caractère alphabétique (chiffres seuls) — la détection est alors
         assurée par les regex métier (IBAN/SIRET/SIREN/TEL/MONTANT) exécutées
         juste après, donc aucune fuite ;
+
+      * LE SPAN CONTIENT UN DEUX-POINTS. Ce n'est alors plus une entité, c'est
+        une phrase. Mesuré sur un brief de visuel réel : spaCy étiquetait
+        « GARDEN ELEMENTS: modern contemporary house » en LOC d'un seul tenant,
+        et toute la description de la scène disparaissait du texte que le modèle
+        relit ensuite. Aucun patronyme, aucune commune, aucune raison sociale ne
+        contient de deux-points ;
+
+      * AUCUN MOT DU SPAN N'EST CAPITALISÉ. En français comme en anglais, un nom
+        propre porte une majuscule. Ce garde-fou existe parce que le modèle NER
+        est FRANÇAIS alors que le socle brasse de l'anglais — briefs de visuels
+        (rédigés en anglais par conception), pages web, mails et documents
+        fournisseurs. Mesuré sur un brief réel : « local stone » -> PER,
+        « no watermark » -> PER, « subtle film-like color grading » -> LOC,
+        « lavender shrubs and two feature olive trees » -> ORG. Six faux
+        positifs sur sept jetons, dont deux avalant une clause entière : le
+        modèle relisait un brief amputé de sa scène et de sa plantation.
+
+        CONTREPARTIE ASSUMÉE : un patronyme écrit tout en minuscules
+        (« contactez jean dupont ») échappe désormais au NER. Le compromis est
+        pris en connaissance de cause — les regex métier (e-mail, téléphone,
+        IBAN, SIRET/SIREN, montants) ne passent PAS par ici et continuent de
+        masquer les identifiants, qui sont le vrai vecteur de ré-identification.
+        Un prénom nu en minuscules, lui, n'identifie personne ;
+
       * TOUS les mots du span appartiennent au vocabulaire non-PII.
     """
     words = _RE_WORDS.findall(value)
     if not words:
+        return True
+    if ":" in value or ";" in value:
+        return True
+    if not any(w[:1].isupper() for w in words):
         return True
     for w in words:
         if w.isdigit():

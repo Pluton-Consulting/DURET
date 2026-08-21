@@ -207,13 +207,23 @@ def libelle(node: str, update: dict | None = None) -> str:
             motif = _motif(dernier)
             texte += f", sans succès ({motif})" if motif else ", sans succès"
 
-        # OÙ ON EN EST DANS LE BUDGET. Le compteur est déjà tenu et déjà transmis
-        # dans le même lot. L'afficher change la nature de l'attente : « action 6
-        # sur 8 » dit qu'on approche de la fin, là où une phrase seule laisse
-        # croire que ça peut durer indéfiniment.
+        # OÙ ON EN EST DANS LE BUDGET — SEULEMENT QUAND ÇA VEUT DIRE QUELQUE CHOSE.
+        #
+        # Ce compteur a été écrit quand le plafond valait 8 : « action 6 sur 8 »
+        # disait alors qu'on approchait de la fin, et c'était une information.
+        # Le plafond est depuis passé à 40 et n'est plus un budget : c'est un filet
+        # anti-boucle (cf. le commentaire de MAX_ACTIONS_PAR_TOUR, agents/agent1.py),
+        # et un tour ordinaire en consomme deux ou trois.
+        #
+        # « [1/40] » n'annonce donc plus rien. Pire : il affiche un dénominateur
+        # qu'on n'atteindra jamais et fait passer un tour normal pour le début d'un
+        # long calvaire — l'inverse exact de ce que le compteur cherchait à faire.
+        # On ne le montre plus que dans le dernier quart, là où il redevient ce
+        # qu'il était : un avertissement.
         rang = update.get("tool_iterations")
-        if isinstance(rang, int) and rang > 0:
-            texte += f" [{rang}/{_budget_actions()}]"
+        budget = _budget_actions()
+        if isinstance(rang, int) and rang > 0 and rang >= budget * 0.75:
+            texte += f" [{rang}/{budget}]"
 
         return texte[:MAX_LIBELLE]
 

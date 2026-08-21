@@ -129,7 +129,11 @@ def _tete(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     approximative ne doit pas empêcher l'assistant de répondre. Elle est
     journalisée pour que la faute de frappe se voie.
     """
-    brut = (getattr(settings, "llm_tete", "") or "").strip()
+    # Paramètres d'abord, `.env` ensuite. Ce réglage sert à essayer un modèle
+    # sur des tours réels : il doit se poser et se retirer depuis l'interface,
+    # pas par une session SSH et une recréation de conteneur sur CHAQUE serveur.
+    from llm.reglages import valeur as reglage
+    brut = (reglage("llm_tete") or "").strip()
     if not brut:
         return []
     sortie: list[tuple[str, Optional[str]]] = []

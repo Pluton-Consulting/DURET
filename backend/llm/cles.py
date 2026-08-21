@@ -71,8 +71,23 @@ def valeur(nom: str) -> str | None:
     """Clé effective : surcharge en base si elle existe, sinon `.env`.
 
     Volontairement SYNCHRONE : appelée depuis la construction des modèles, qui
-    ne peut pas attendre. Elle lit le cache, rafraîchi séparément.
+    ne peut pas attendre. Elle lit le cache — et RELANCE le rafraîchissement
+    quand il est périmé, sans l'attendre.
+
+    Ce déclenchement manquait, et une clé enregistrée dans Paramètres était
+    IGNORÉE après chaque redéploiement : le cache ne se remplissait que si
+    quelqu'un rouvrait la page Paramètres. Relevé en production — la clé
+    Google créditée dormait en base pendant que l'application retombait sur
+    celle du `.env`, au palier gratuit. L'appel courant garde la valeur du
+    moment (le repli `.env`), le suivant a la bonne : au démarrage, la
+    première lecture réelle arrive après le rafraîchissement du lifespan.
     """
+    if time.monotonic() >= _EXPIRE:
+        try:
+            import asyncio
+            asyncio.get_running_loop().create_task(rafraichir())
+        except RuntimeError:
+            pass  # hors boucle (script) : le repli .env reste le comportement
     if nom in _CACHE:
         return _CACHE[nom]
     return getattr(settings, nom, None)

@@ -173,6 +173,46 @@ class CleBody(BaseModel):
     valeur: Optional[str] = None      # vide = revenir à la valeur du .env
 
 
+class ReglageBody(BaseModel):
+    cle: str
+    valeur: Optional[str] = None      # vide = revenir à la valeur du .env
+
+
+@router.get("/reglages")
+async def lire_reglages(current_user: User = Depends(get_current_user)):
+    """Réglages système non secrets, avec leur valeur EN CLAIR.
+
+    Contrairement aux clés, un réglage doit être relisible : c'est la seule
+    façon de vérifier ce qui est réellement en vigueur sur ce serveur.
+    """
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.reglages import etat
+    return await etat()
+
+
+@router.put("/reglages")
+async def ecrire_reglage(body: ReglageBody, current_user: User = Depends(get_current_user)):
+    """Enregistre ou efface un réglage. Effet immédiat, sans redéploiement."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.reglages import enregistrer, REGLAGES_CONNUS
+    if body.cle not in REGLAGES_CONNUS:
+        raise HTTPException(status_code=422,
+                            detail=f"Réglage inconnu. Attendu : {', '.join(REGLAGES_CONNUS)}")
+    try:
+        effective = await enregistrer(body.cle, body.valeur, str(current_user.id))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    # La valeur EST journalisée, à la différence des clés : ce n'est pas un
+    # secret, et savoir quel modèle a été forcé — et quand — est précisément
+    # ce qu'on voudra relire le jour où les temps de réponse s'effondrent.
+    await log_action(action="reglage_modifie", user_id=str(current_user.id),
+                     metadata={"cle": body.cle, "valeur": (body.valeur or "").strip()})
+    return {"cle": body.cle, "valeur": effective,
+            "note": "Prise en compte immédiate, sans redéploiement."}
+
+
 @router.get("/cles-api")
 async def lire_cles(current_user: User = Depends(get_current_user)):
     """Ce qui est configuré, et d'où ça vient. Jamais la valeur."""

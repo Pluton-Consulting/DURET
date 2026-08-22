@@ -401,9 +401,14 @@ async def check_mails(data: dict, user) -> dict:
         limite = 15
     limite = max(1, min(limite, 25))
 
+    # La période vient de l'utilisateur (« cette semaine » → jours=7). Sans
+    # elle, les plus récents. Avec elle, le TOTAL de la période est exact même
+    # si le détail reste borné — c'est la différence entre « 25 mails » et
+    # « 84 mails cette semaine, voici les 25 derniers ».
+    depuis = data.get("depuis") or data.get("periode") or data.get("jours")
     brut = await lire_mails({"mailbox": data.get("mailbox"),
                              "dossier": data.get("dossier") or "recus",
-                             "limite": limite}, user)
+                             "limite": limite, "depuis": depuis}, user)
 
     messages = brut.get("messages") or brut.get("mails") or []
     if not isinstance(messages, list):
@@ -449,18 +454,31 @@ async def check_mails(data: dict, user) -> dict:
 
     fils = sum(1 for r in releve if r["reponse_dans_un_fil"])
     non_lus = sum(1 for r in releve if r["non_lu"])
+    total = brut.get("total_periode")
+    tronque = bool(brut.get("tronque"))
+    compte = brut.get("compte") or f"{len(releve)} message(s)."
 
     return {
         "nombre": len(releve),
+        "total_periode": total,
+        "tronque": tronque,
+        "compte": compte,
         "reponses_dans_un_fil": fils,
         "non_lus": non_lus,
         "boite": brut.get("boite") or brut.get("mailbox"),
         "messages": releve,
-        "message_final": (f"{len(releve)} message(s) récent(s)"
-                          + (f", dont {fils} réponse(s) à un fil en cours" if fils else "")
-                          + (f" et {non_lus} non lu(s)" if non_lus else "") + "."),
+        "message_final": (compte
+                          + (f" Parmi les détaillés : {fils} réponse(s) à un fil en cours" if fils else "")
+                          + (f", {non_lus} non lu(s)" if non_lus and fils else
+                             f" Parmi les détaillés : {non_lus} non lu(s)" if non_lus else "")
+                          + ("." if (fils or non_lus) else "")),
         "a_faire": (
-            "Fais le point en UN SEUL message, sans rappeler ce skill. Pour chaque "
+            "Commence par le COMPTE, mot pour mot : « " + compte + " » — c'est le "
+            "total qui répond à « combien », pas le nombre de messages détaillés. "
+            + ("Le détail ne couvre PAS toute la période : dis-le, et propose de "
+               "cibler (un expéditeur, un sujet, une journée) si l'utilisateur veut le reste. "
+               if tronque else "")
+            + "Fais le point en UN SEUL message, sans rappeler ce skill. Pour chaque "
             "message : l'expéditeur, l'objet, et UNE phrase de résumé tirée de "
             "l'extrait — jamais de ta mémoire. Mets EN PREMIER ceux marqués "
             "`reponse_dans_un_fil` : ce sont des échanges en cours. "
@@ -515,8 +533,11 @@ SKILLS = {
             "dans ma boite », « resume-moi mes mails ». Rends ensuite UN SEUL "
             "message : un resume par mail, et une PROPOSITION de reponse quand le "
             "message en appelle une. N'envoie rien — l'envoi passe par "
-            "`redaction_email` et sa validation. `limite` : 1 a 25 (defaut 15)"),
-        requis=[], optionnels=["mailbox", "dossier", "limite"],
+            "`redaction_email` et sa validation. `depuis` : OBLIGATOIRE des qu'une "
+            "periode est nommee (« cette semaine » → \"7j\", « ce mois » → \"30j\", ou "
+            "une date AAAA-MM-JJ) : le resultat donne alors le TOTAL EXACT de la "
+            "periode en plus du detail des 25 plus recents. `limite` : 1 a 25 (defaut 15)"),
+        requis=[], optionnels=["mailbox", "dossier", "limite", "depuis"],
         effet="lecture",
         libelle="je fais le point sur les mails"),
 }

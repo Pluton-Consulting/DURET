@@ -206,10 +206,13 @@ def _action_native(texte: str, role: str | None = None):
 # sont déclarés dans le code. Les skills générés (bac à sable) n'y figurent pas.
 CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
     "rechercher_documents": (
-        "Cherche dans la mémoire d'entreprise (devis, chantiers, clients, mails, "
-        "documents importés). À appeler dès qu'une question porte sur des données "
-        "internes. Peut être relancé avec d'autres termes si la première recherche "
-        "ne donne rien",
+        "Cherche par RESSEMBLANCE dans les DOCUMENTS et mails ingérés (contrats, "
+        "comptes rendus, plans, pièces de dossier, courrier archivé). Elle retrouve "
+        "un texte, elle ne sait NI compter NI lister : pour les clients, les devis, "
+        "les factures, un chiffre d'affaires ou un nombre, ce sont `liste_clients`, "
+        "`fiche_client` et `interroger_donnees`, qui lisent les fichiers importés de "
+        "façon exacte. Peut être relancée avec d'autres termes si la première "
+        "recherche ne donne rien",
         ["requete"], ["types"]),
     "connaissances_acquises": (
         "LISTE ce que l'assistant a APPRIS de l'entreprise (connaissances et manières "
@@ -299,13 +302,18 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "avant de filtrer",
         [], ["source_type", "filtres", "agreger", "annee"]),
     "lire_mails": (
-        "LIT les derniers messages d'UNE boîte, en direct. Pour consulter, relever, "
-        "faire le point sur le courrier récent. C'est un ÉCHANTILLON de 25 messages "
-        "au plus : n'en tire jamais de conclusion sur l'entreprise entière, ses "
-        "activités ou ses process. Pour cela, c'est `lancer_enrichissement`. "
-        "dossier : recus (défaut) ou envoyes ; limite : 1 à 25. Sans mailbox, la "
-        "boîte de la personne connectée",
-        [], ["mailbox", "dossier", "limite"]),
+        "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. "
+        "`depuis` : une période (« 7j », « semaine », « mois ») ou une date "
+        "AAAA-MM-JJ — OBLIGATOIRE dès qu'on parle d'une période (« cette semaine », "
+        "« depuis lundi ») : le résultat dit alors « N messages sur la période, voici "
+        "les 25 plus récents ». Le DÉTAIL est borné à 25 ; le TOTAL ne l'est pas, "
+        "c'est lui qu'on cite pour « combien ». Sans `depuis` : les plus récents et le "
+        "total du dossier. N'en tire jamais de conclusion sur l'entreprise entière, "
+        "ses activités ou ses process (pour cela, `lancer_enrichissement`). dossier : "
+        "recus (défaut) ou envoyes ; limite : 1 à 25. Sans mailbox, la boîte de la "
+        "personne connectée. Pour un POINT complet avec résumés et propositions de "
+        "réponse, préfère `check_mails`",
+        [], ["mailbox", "dossier", "limite", "depuis"]),
     "triage_email_entrant": (
         "Classe et priorise un message reçu (catégorie, urgence, action suggérée)",
         ["mailbox"], ["objet", "corps"]),
@@ -335,12 +343,14 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "Avancement de la campagne d'enrichissement en cours (administration)",
         [], []),
     "chercher_web": (
-        "CHERCHE SUR INTERNET et rend le texte des premieres pages. C'est le "
-        "geste a employer des qu'une information n'est PAS dans l'entreprise : "
-        "un prix public, une norme, une reglementation, un fournisseur, "
-        "l'actualite d'un site. `nombre` : 1 a 5 pages, 3 par defaut. "
-        "L'information obtenue est EXTERNE : cite les adresses, ne la presente "
-        "jamais comme une donnee interne",
+        "CHERCHE SUR INTERNET et rend le texte des premieres pages. UNIQUEMENT pour "
+        "une information PUBLIQUE qui n'existe pas dans l'entreprise : un prix "
+        "public, une norme, une reglementation, les coordonnees d'un fournisseur, "
+        "l'actualite d'un site — ou quand l'utilisateur le demande. JAMAIS pour ses "
+        "clients, ses devis, ses factures, ses chantiers ni ses mails : ces donnees "
+        "sont internes, le web ne les connait pas et ne peut rendre que du bruit. "
+        "`nombre` : 1 a 5 pages, 3 par defaut. L'information obtenue est EXTERNE : "
+        "cite les adresses, ne la presente jamais comme une donnee interne",
         ["requete"], ["nombre"]),
     "ouvrir_page": (
         "OUVRE UNE ADRESSE PRECISE et en rend le texte. A employer quand on te "

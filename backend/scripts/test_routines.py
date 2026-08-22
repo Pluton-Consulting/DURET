@@ -112,7 +112,14 @@ MAILS = {"boite": "contact@duret-sols.fr", "dossier": "recus", "nombre": 3, "mes
      "expediteur_interne": False, "expediteur_automatique": False},
 ]}
 m = types.ModuleType("mail.skills")
-async def _lire_mails(data, user): return MAILS
+APPELS = []
+async def _lire_mails(data, user):
+    APPELS.append(dict(data))
+    # Quand une période est demandée, la messagerie rend aussi le TOTAL.
+    if data.get("depuis"):
+        return {**MAILS, "total_periode": 84, "tronque": True,
+                "compte": "84 message(s) reçu(s) depuis le 15/08/2026, dont voici les 3 plus récents."}
+    return MAILS
 m.lire_mails = _lire_mails
 paquet = types.ModuleType("mail"); paquet.skills = m
 sys.modules["mail"] = paquet; sys.modules["mail.skills"] = m
@@ -226,6 +233,17 @@ async def principal():
              "n'envoie rien" in (r.get("a_faire") or "").lower())
     verifier("la consigne impose UN SEUL message",
              "un seul message" in (r.get("a_faire") or "").lower())
+    # ── La période : « cette semaine » ────────────────────────────────
+    r = await routines.check_mails({"depuis": "7j"}, User())
+    verifier("la période est transmise à la lecture", APPELS[-1].get("depuis") == "7j", APPELS[-1])
+    verifier("le TOTAL de la période remonte (84), distinct du détail (3)",
+             r.get("total_periode") == 84 and r.get("nombre") == 3, (r.get("total_periode"), r.get("nombre")))
+    verifier("le message final COMMENCE par le compte", (r.get("message_final") or "").startswith("84 message"),
+             r.get("message_final"))
+    verifier("la consigne impose de citer le compte mot pour mot et signale la troncature",
+             "84 message" in (r.get("a_faire") or "") and "ne couvre PAS" in (r.get("a_faire") or ""))
+    verifier("`jours` est accepté comme synonyme", (await routines.check_mails({"jours": 7}, User())) and APPELS[-1].get("depuis") == 7)
+
     MAILS["messages"] = []
     r = await routines.check_mails({}, User())
     verifier("une boîte vide se dit simplement", r.get("nombre") == 0 and "Aucun" in r["message_final"])

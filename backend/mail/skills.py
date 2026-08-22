@@ -473,8 +473,12 @@ async def lire_mails(data: dict, user) -> dict:
     except (TypeError, ValueError):
         limite = 10
 
+    # La période : « 7j », « semaine », une date — ou `jours` en nombre. Sans
+    # elle, les plus récents, comme avant. C'est elle qui permet de répondre à
+    # « combien de mails cette semaine » par un chiffre et non par un échantillon.
+    depuis = data.get("depuis") or data.get("periode") or data.get("jours")
     try:
-        return await lire_boite(boite, data.get("dossier") or "recus", limite)
+        return await lire_boite(boite, data.get("dossier") or "recus", limite, depuis=depuis)
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except Exception as e:  # noqa: BLE001 - une messagerie injoignable n'est pas une panne du chat

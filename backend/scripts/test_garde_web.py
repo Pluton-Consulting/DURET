@@ -13,7 +13,7 @@ arbre = ast.parse(source)
 
 espace = {"AgentState": dict}
 for noeud in arbre.body:
-    garde = isinstance(noeud, ast.Assign) and getattr(noeud.targets[0], "id", "") == "_MOTS_INTERNES"
+    garde = isinstance(noeud, ast.Assign) and getattr(noeud.targets[0], "id", "") in ("_MOTS_INTERNES", "_MOTS_EXTERNES")
     fonction = isinstance(noeud, ast.FunctionDef) and noeud.name == "should_use_browser"
     if garde or fonction:
         exec(compile(ast.Module(body=[noeud], type_ignores=[]), "agent1", "exec"), espace)
@@ -50,17 +50,28 @@ INTERNES = [
     "où en est le chantier de la mairie ?",
     "fais un check de mes mails",
     "quels sont nos fournisseurs de pierre ?",
+    # LE CAS QUI A FAIT ÉCHOUER LA PREMIÈRE GARDE : pas de « mes », pas de
+    # « client » — juste « les mails de la semaine ». Parti chercher la météo.
+    "donne-moi les mails de la semaine",
+    "combien de mails cette semaine ?",
+    "quel est le prix du devis Dupont ?",          # « prix » mais c'est un devis : veto
+    "résume-moi le dossier de la résidence du Port",
+    # Aucun marqueur ni interne ni externe : dans le doute, on reste au-dedans.
+    "quelles essences résistent au vent salé ?",
+    "quelle heure est-il ?",
 ]
 for q in INTERNES:
     verifier(f"« {q[:46]}… » reste en interne",
              decider({"query": q, "raw_chunks": [], "anonymized_chunks": []}) == "llm")
 
 # ── 2. Une vraie question externe garde son repli web ─────────────────────
-print("\n2. Question réellement externe, RAG vide")
+print("\n2. Demande EXPLICITE d'information publique, RAG vide")
 EXTERNES = [
     "quel est le prix moyen du m2 de terrasse en ipé en 2026 ?",
-    "quelles essences résistent au vent salé ?",
     "réglementation sur les clôtures mitoyennes",
+    "cherche sur internet les horaires d'ouverture de la déchetterie",
+    "quelle est la météo à Arcachon demain ?",
+    "qu'est-ce que le DTU 51.4 ?",
 ]
 for q in EXTERNES:
     verifier(f"« {q[:46]}… » peut aller sur le web",

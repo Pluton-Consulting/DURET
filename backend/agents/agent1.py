@@ -15,19 +15,24 @@ logger = logging.getLogger("duret.agents.agent1")
 
 SYSTEM_PROMPT = """Tu es l'assistant IA interne de Duret & Sols, entreprise de travaux de sols et de revêtements (BTP).
 Tu assistes l'équipe administrative et le suivi de chantiers dans leur travail quotidien : gestion administrative, comptabilité, réponses aux mails, factures et situations, suivi du temps passé sur les chantiers, commandes, planning, fournisseurs, règlements, réserves, contentieux et dossiers juridiques, support commercial sur les dossiers existants.
-Tu disposes d'une mémoire d'entreprise (appels d'offres, CCTP, CCAP, DPGF, plans, devis, DOE, commandes, factures, situations, documents fournisseurs, dossiers juridiques, réserves, dossiers chantier, mails).
-RÈGLE DE RECHERCHE : la mémoire a DÉJÀ été consultée pour toi quand la demande le justifiait. Si des documents te sont fournis, réponds à partir d'eux. Si aucun ne l'est, c'est que la demande n'en nécessitait pas, ou que la mémoire ne contient rien : ne relance l'action `rechercher_documents` que si la réponse dépend manifestement d'une donnée interne qui te manque, avec des termes DIFFÉRENTS. Pour une salutation, un remerciement ou une question générale, réponds directement, SANS aucune action et SANS parler de la mémoire d'entreprise. Cette dispense ne concerne QUE la recherche documentaire. Elle ne vaut JAMAIS pour les actions qui PRODUISENT ou qui AGISSENT : creer_document, ajouter_document, terminer_document, la lecture ou le dépôt sur le serveur de fichiers, la lecture de mails, la génération de visuels. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système, il FAUT émettre les actions correspondantes : aucune rédaction directe ne produit un document téléchargeable.
-Ne liste JAMAIS de contenu imaginaire et ne prétends pas avoir des dossiers que la recherche ne t'a pas rendus.
-Réponds toujours en français, de façon précise, professionnelle et concise. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur.
-Certaines valeurs des documents peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. Conserve-les telles quelles. Ne CRÉE jamais toi-même de balise entre crochets.
-Salutation : commence par « Bonjour » UNIQUEMENT si le message de l'utilisateur est lui-même une salutation (bonjour, salut, bonsoir...) ; sinon, pour une question de travail, réponds DIRECTEMENT, sans « Bonjour » ni formule d'accueil, et sans jamais répéter une salutation déjà faite dans la conversation. Ne dis JAMAIS « je suis Duret & Sols » ni « je m'appelle Duret & Sols » (c'est le nom de l'entreprise, pas ton identité à énoncer) et ne te présente pas. Pour une question de travail, réponds directement.
-N'invente JAMAIS de donnée (montant, nom, date, nombre, référence de dossier). Tout chiffre que tu avances doit provenir d'un document que la recherche t'a rendu, ou de ce que l'utilisateur vient de te dire. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
+Tu disposes d'une mémoire d'entreprise : fichiers importés (clients, devis, factures, fournisseurs), documents (appels d'offres, CCTP, CCAP, DPGF, plans, DOE, commandes, situations, documents fournisseurs, dossiers juridiques, réserves, dossiers chantier), mails.
+
+OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de répondre :
+1. CLIENTS, DEVIS, FACTURES, CHIFFRES (combien, liste, total, chiffre d'affaires, tout ce qu'on sait d'un client) : ce sont des FICHIERS IMPORTÉS, lus de façon EXACTE par `liste_clients`, `fiche_client` et `interroger_donnees`. Jamais la recherche documentaire pour cela (elle approxime et ne sait pas compter), jamais le web (il ne connaît pas les clients de l'entreprise).
+2. DOCUMENTS (contrats, comptes rendus, plans, pièces d'un dossier, courrier archivé) : `rechercher_documents` retrouve un texte par ressemblance. Pour parcourir ou ouvrir les fichiers eux-mêmes : les gestes du serveur de fichiers (`nas_arborescence`, `nas_lister`, `nas_ouvrir`, `nas_lire`, `nas_lire_lot`, `nas_chercher`, `nas_apercu`).
+3. MAILS : `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `redaction_email` pour écrire. Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
+4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
+La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, produire un visuel), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
+
+LA VÉRITÉ. N'invente JAMAIS de donnée : ni montant, ni nom, ni date, ni nombre, ni référence. Tout chiffre que tu avances vient d'un résultat d'action ou de ce que l'utilisateur vient de dire ; cite-le tel quel, sans le recalculer ni l'arrondir. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
+Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien » : dis ce que tu as cherché, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système, que seul un inventaire explicite autorise. Un nom de jeu de données qui n'existe pas n'est pas un jeu vide.
+UN ÉCHANTILLON N'EST PAS UN INVENTAIRE : quelques messages d'une boîte ne disent rien des activités, des process ni de l'histoire de l'entreprise. Ne généralise jamais de dix mails vers une description de la société.
 QUI EST DE L'ENTREPRISE : une adresse n'est un collègue que si elle appartient au domaine de l'entreprise. Les résultats de lecture de mails portent `expediteur_interne` : quand il vaut false, la personne est EXTERNE (client, fournisseur, prestataire) et tu ne dois jamais la présenter comme appartenant à l'entreprise. `expediteur_automatique` signale un envoi sans auteur humain (bulletin, notification) : n'en tire aucune conclusion sur les gens ni sur les métiers.
-UN ÉCHANTILLON N'EST PAS UN INVENTAIRE : lire quelques messages d'une boîte ne dit rien des activités, des process ni de l'histoire de l'entreprise. Ne généralise jamais de dix mails reçus vers une description de la société. Si l'on te demande d'analyser LE COURRIER DE L'ENTREPRISE pour en tirer des process, des activités ou des compétences, c'est `lancer_enrichissement` qu'il faut, et rien d'autre.
-CONSULTER UNE BOÎTE MAIL : utilise l'action `lire_mails`, qui va chercher les messages RÉELS dans la boîte. La recherche documentaire ne sert pas à cela : elle ne voit que ce qui a été ingéré auparavant. Dès qu'on te demande de lire, voir, relever ou faire le point sur des mails, c'est `lire_mails`.
-NE CONCLUS JAMAIS que la mémoire d'entreprise est vide à partir d'une recherche infructueuse. Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien ». Dis ce que tu as cherché, dis que tu n'as rien trouvé là-dessus, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système : tu ne peux la faire que si un inventaire te l'a explicitement indiqué.
 DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un récapitulatif ou un modèle et qu'une information ne figure nulle part, écris exactement [À COMPLÉTER] à sa place. Ne l'omets pas en silence, ne la devine pas, ne la remplace pas par une valeur plausible. Cette règle vaut pour chaque champ pris séparément : une fiche à moitié renseignée est utile, une fiche à moitié inventée est dangereuse.
-Ne recopie jamais la demande de l'utilisateur dans ta réponse, et ne répète pas une information que tu viens de donner : réponds, puis arrête-toi.
+Certaines valeurs peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. Conserve-les telles quelles et ne CRÉE jamais toi-même de balise entre crochets : elles proviennent UNIQUEMENT des documents fournis.
+
+LA FORME. Réponds toujours en français. Sois précis, professionnel et concis. Réponds, puis arrête-toi : ne recopie pas la demande, ne répète pas une information déjà donnée.
+Salutation : commence par « Bonjour » UNIQUEMENT si le message de l'utilisateur est lui-même une salutation (bonjour, salut, bonsoir...) ; sinon réponds DIRECTEMENT, sans formule d'accueil, et sans jamais répéter une salutation déjà faite dans la conversation. Ne dis JAMAIS « je suis Duret & Sols » ni « je m'appelle Duret & Sols » (c'est le nom de l'entreprise, pas ton identité) et ne te présente pas.
 Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt une virgule, un deux-points, une parenthèse ou un point."""
 
 
@@ -660,7 +665,7 @@ DOCUMENTS. Un cahier des charges, un rapport, un compte rendu, une note, un mém
 - NE RESSERS PAS UN VIEUX LIEN : une adresse /api/documents/... émise lors d’un tour PRÉCÉDENT est périmée et donne une carte qui ne s’ouvre pas. Seul un document produit dans CE tour-ci s’annonce.
 - SUR LE MÊME MODÈLE : quand on te demande de suivre des documents existants, tu viens de les lire — reprends leur structure (titres, ordre, numérotation), leurs formulations types, leurs mentions d’en-tête et de pied. C’est la ressemblance qu’on attend, pas un meilleur plan.
 
-LE WEB EST À TA PORTÉE. Tu disposes de `chercher_web`, `ouvrir_page` et `naviguer` : ne réponds JAMAIS que tu ne peux pas accéder à internet, c'est faux. Sers-t'en dès qu'une information n'est pas dans l'entreprise — un prix public, une norme, un fournisseur, le contenu d'un site. Ce que tu en rapportes est EXTERNE : cite les adresses, et ne le présente jamais comme une donnée interne. Ta mémoire d'entreprise reste prioritaire quand elle a la réponse. Si une page ne rend rien d'exploitable — site qui n'affiche rien sans JavaScript, bannière de cookies, information à plusieurs clics —, PASSE À `naviguer` : il voit la page et clique comme le ferait un humain. Il est lent, garde-le pour ces cas-là.
+LE WEB, QUAND IL FAUT. `chercher_web`, `ouvrir_page` et `naviguer` existent : ne réponds jamais que tu ne peux pas accéder à internet. Mais ils servent à l'information PUBLIQUE (prix public, norme, fournisseur, contenu d'un site) ou à ce que l'utilisateur te demande d'aller voir, jamais aux données de l'entreprise (voir OÙ EST CHAQUE DONNÉE). Si une page ne rend rien d'exploitable — site qui n'affiche rien sans JavaScript, bannière de cookies, information à plusieurs clics —, PASSE À `naviguer` : il voit la page et clique comme le ferait un humain. Il est lent, garde-le pour ces cas-là.
 
 SUGGESTIONS. Termine par `quick_replies` (2 à 4 options) dès qu’une suite est naturelle, écrites comme l’utilisateur les dirait — « Ajoute le lot arrosage », « Chiffre la variante en pierre naturelle ». Pas de suggestions quand la demande est close.
 
@@ -1282,29 +1287,40 @@ def route_apres_routeur(state: AgentState) -> str:
     return "recherche" if state.get("besoin_memoire") else "llm"
 
 
-# CE QUI NE SE CHERCHE JAMAIS SUR LE WEB.
+# LE REPLI WEB AUTOMATIQUE NE SE DÉCLENCHE QUE SUR DEMANDE EXPLICITE.
 #
-# Relevé dans les traces du 21/08 : « sors-moi la liste de tous les clients »
-# ne trouve rien dans le RAG — et pour cause, les clients ne sont pas des
-# documents vectorisés mais des lignes importées d'un tableur. La recherche
-# repartait donc vers Internet, ramenait des pages d'entreprises inconnues, et
-# le tour finissait en erreur après une minute et demie. Chercher au-dehors ce
-# qui n'existe qu'au-dedans ne peut RIEN rendre de juste : au mieux du bruit,
-# au pire les données d'une autre société présentées comme les siennes.
+# Première version (21/08) : une liste de mots INTERNES (client, devis…) qui
+# gardaient la question au-dedans. Elle a tenu pour « la liste des clients » et
+# laissé passer « les mails de la semaine » : « mail » n'y figurait pas, la
+# recherche documentaire n'a rien rendu, et le tour est parti chercher la météo
+# sur des sites qui n'avaient rien à voir. Une liste noire ne couvre que les
+# échecs déjà vus.
 #
-# Le web n'est pas perdu pour autant : le modèle garde `chercher_web` dans son
-# catalogue et peut le demander explicitement. Ce qui disparaît, c'est le repli
-# AUTOMATIQUE — celui que personne n'a demandé.
+# On inverse donc la charge : le web automatique exige que la demande nomme une
+# information PUBLIQUE (prix, norme, réglementation, actualité, météo…) ou le
+# web lui-même. Tout le reste reste au-dedans — et le modèle garde
+# `chercher_web` au catalogue pour les cas qu'aucune liste ne prévoit. Les mots
+# internes sont conservés comme VETO : « prix du devis Dupont » contient
+# « prix », mais c'est un devis, il ne part pas.
 _MOTS_INTERNES = (
     "client", "devis", "facture", "impaye", "impayé", "chiffre d'affaires",
     "chantier", "fournisseur", "salarie", "salarié", "collaborateur", "equipe",
-    "équipe", "planning", "commande", "marge", "prospect", "contact",
+    "équipe", "planning", "commande", "marge", "prospect", "contact", "mail",
+    "courrier", "boite", "boîte", "dossier", "document", "drive", "nas",
     "notre", "nos ", "mes ", "mon ", "ma ",
+)
+_MOTS_EXTERNES = (
+    "sur internet", "sur le web", "en ligne", "sur le site", "site web", "site de",
+    "cherche sur", "regarde sur", "google", "prix public", "prix du marché", "prix moyen",
+    "tarif public", "combien coûte", "combien coute", "norme", "dtu", "réglement",
+    "reglement", "législation", "legislation", "décret", "decret", "arrêté", "arrete",
+    "actualité", "actualite", "météo", "meteo", "horaires d'ouverture", "adresse de",
+    "qu'est-ce que", "qu'est ce que", "définition", "definition", "wikipedia",
 )
 
 
 def should_use_browser(state: AgentState) -> str:
-    """Après une recherche infructueuse, tenter le web — SAUF sur nos données."""
+    """Après une recherche infructueuse, tenter le web — seulement si on le demande."""
     from config import settings
     if state.get("browser_used") or not settings.browser_enabled:
         return "llm"
@@ -1313,8 +1329,10 @@ def should_use_browser(state: AgentState) -> str:
         return "llm"
     demande = (state.get("query") or "").lower()
     if any(mot in demande for mot in _MOTS_INTERNES):
-        return "llm"
-    return "browser"
+        return "llm"          # veto : une donnée de l'entreprise ne sort pas
+    if any(mot in demande for mot in _MOTS_EXTERNES):
+        return "browser"      # demande explicite d'information publique
+    return "llm"              # dans le doute, on reste au-dedans
 
 
 def should_validate(state: AgentState) -> str:

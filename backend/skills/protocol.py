@@ -335,7 +335,8 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "c'est lui qu'on cite pour « combien ». Sans `depuis` : les plus récents et le "
         "total du dossier. N'en tire jamais de conclusion sur l'entreprise entière, "
         "ses activités ou ses process (pour cela, `lancer_enrichissement`). dossier : "
-        "recus (défaut) ou envoyes ; limite : 1 à 25. Sans mailbox, la boîte de la "
+        "recus (défaut) ou envoyes ; limite : 1 à 25 (25 d'office quand une période est "
+        "donnée). Sans mailbox, la boîte de la "
         "personne connectée. Pour un POINT complet avec résumés et propositions de "
         "réponse, préfère `check_mails`",
         [], ["mailbox", "dossier", "limite", "depuis"]),

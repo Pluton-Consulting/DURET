@@ -468,10 +468,14 @@ async def lire_mails(data: dict, user) -> dict:
 
     cible = await _boite_a_lire(data, user)
     boite = await verifier_acces(user, cible)      # le contrôle reste ICI
+    # Quand une PÉRIODE est demandée (« les mails de la semaine »), le détail va
+    # au maximum : relevé le 22/08, 28 messages sur la période, 10 rendus par
+    # défaut, et le modèle qui promet « une limite plus élevée » sans pouvoir.
+    _periode = data.get("depuis") or data.get("periode") or data.get("jours")
     try:
-        limite = int(data.get("limite") or 10)
+        limite = int(data.get("limite") or (25 if _periode else 10))
     except (TypeError, ValueError):
-        limite = 10
+        limite = 25 if _periode else 10
 
     # La période : « 7j », « semaine », une date — ou `jours` en nombre. Sans
     # elle, les plus récents, comme avant. C'est elle qui permet de répondre à

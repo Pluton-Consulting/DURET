@@ -262,6 +262,9 @@ async def principal():
     verifier("la consigne impose de citer le compte mot pour mot et signale la troncature",
              "84 message" in (r.get("a_faire") or "") and "ne couvre PAS" in (r.get("a_faire") or ""))
     verifier("`jours` est accepté comme synonyme", (await routines.check_mails({"jours": 7}, User())) and APPELS[-1].get("depuis") == 7)
+    verifier("une période demandée ⇒ le détail va au maximum (25)", APPELS[-1].get("limite") == 25, APPELS[-1])
+    await routines.check_mails({}, User())
+    verifier("sans période, le défaut reste 15", APPELS[-1].get("limite") == 15, APPELS[-1])
 
     MAILS["messages"] = []
     r = await routines.check_mails({}, User())

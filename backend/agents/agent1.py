@@ -110,6 +110,14 @@ MAX_VERSEMENTS_PAR_TOUR = 40
 # une sortie tronquée par le plafond se répète volontiers une fois avant que le
 # modèle réduise vraiment le volume. Au-delà, on n'insiste pas.
 MAX_REPARATIONS_PAR_TOUR = 2
+# DEUX FORÇAGES PAR TOUR, PAS UN. Relevé le 22/08 : le modèle annonce « je
+# prépare le visuel » (forcé → preparer_visuel réussit), puis annonce « je
+# lance le tirage » — et le forceur, déjà consommé, ne pouvait plus rien. La
+# boucle se fermait, la dernière passe annonçait encore, fin du tour sans
+# image. Un enchaînement de deux gestes est la norme, pas l'exception
+# (préparer puis essayer, lire puis résumer). Au-delà de deux, on rédige avec
+# ce qu'on a.
+MAX_FORCAGES_PAR_TOUR = 2
 
 RESULTATS_GENEREUX = {"drive_arborescence", "nas_arborescence"}
 PLAFOND_RESULTAT = 4000
@@ -1111,6 +1119,71 @@ async def tools_node(state: AgentState, config=None) -> dict:
     return maj
 
 
+
+
+def _rendu_de_secours(resultats) -> str:
+    """Ce qu'on affiche quand le modèle n'a pas rédigé : la sortie du skill lui-même.
+
+    LE CONSTAT QUI IMPOSE CE FILET. Traces du 22/08, 21:42 à 21:50 : le skill
+    réussit (28 mails lus, un visuel préparé), et le modèle répond « Je vais
+    lire les 25 mails… », « Je prépare le visuel… » — une annonce, deux fois
+    de suite malgré la consigne qui nomme le défaut. L'utilisateur ne voit
+    rien de ce qui a été fait. Pire : l'annonce entre dans l'historique comme
+    une réponse acceptée, et le tour suivant l'imite — chaque échec enseigne le
+    suivant. Le docstring du forceur l'avait prédit ; les traces le confirment.
+
+    On cesse donc de dépendre du modèle pour MONTRER. Les skills fréquents
+    produisent déjà leur propre affichage (`message_final`, `bloc_ui`, une
+    liste de messages) : c'est le contrat des actions validées, qu'on étend
+    ici aux actions de lecture. Si la dernière passe de rédaction n'est qu'une
+    promesse ou du vide, on rend la sortie du dernier skill réussi, telle
+    quelle — et c'est ELLE qui va dans l'historique, pas la promesse.
+    """
+    import json as _j
+    for r in reversed(list(resultats or [])):
+        if not r.get("ok"):
+            continue
+        brut = str(r.get("resultat_masque") or "")
+        # La déduplication préfixe « (déjà exécuté à ce tour…)\n{…} » : on lit
+        # à partir du premier objet JSON.
+        i = brut.find("{")
+        if i < 0:
+            continue
+        try:
+            d = _j.loads(brut[i:])
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        # Un refus HONNÊTE du skill (« ce nom n'existe pas », « quota épuisé »)
+        # vaut mieux qu'une promesse : on le rend tel quel.
+        if d.get("trouve") is False or d.get("genere") is False:
+            texte = str(d.get("message") or "").strip()
+            if texte:
+                return texte
+            continue
+        parties = []
+        texte = str(d.get("message_final") or d.get("compte") or d.get("message") or "").strip()
+        if texte:
+            parties.append(texte)
+        bloc = d.get("bloc_ui")
+        if isinstance(bloc, dict) and bloc.get("type"):
+            parties.append("```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```")
+        messages = d.get("messages")
+        if isinstance(messages, list) and messages and not (isinstance(bloc, dict) and bloc.get("type")):
+            for m in messages[:25]:
+                if not isinstance(m, dict):
+                    continue
+                carte = {"type": "email",
+                         "subject": str(m.get("objet") or m.get("subject") or "(sans objet)")[:140],
+                         "from": str(m.get("de") or m.get("from") or "")[:120],
+                         "date": str(m.get("date") or "")[:19],
+                         "preview": str(m.get("apercu") or m.get("extrait") or m.get("preview") or "")[:220]}
+                parties.append("```ui\n" + _j.dumps(carte, ensure_ascii=False) + "\n```")
+        if parties:
+            return "\n\n".join(parties)
+    return ""
+
 async def rehydrate_node(state: AgentState) -> dict:
     """Réinjecte les vraies entités dans la réponse via entity_map."""
     from security.anonymizer import anonymizer
@@ -1129,6 +1202,14 @@ async def rehydrate_node(state: AgentState) -> dict:
     # production, 8 000 caractères de JSON affichés à l'utilisateur. Les quatre
     # passes vivent dans `_texte_visible`, partagé avec le routeur.
     text = _texte_visible(text)
+    # LE FILET. Une promesse ou du vide à la fin d'un tour où un skill a
+    # réussi : on montre la sortie du skill (voir _rendu_de_secours). C'est
+    # aussi ce texte-là qui entrera dans l'historique — jamais la promesse.
+    if not text or est_une_annonce(text) or promesse_sans_suite(text):
+        secours = _rendu_de_secours(state.get("tool_results") or [])
+        if secours:
+            logger.info("Rédaction absente ou promesse : rendu de secours depuis le dernier skill réussi")
+            text = secours
     resultats_en_attente = None
     if not text:
         # DERNIER FILET, ET IL NE DOIT PAS ACCUSER L'UTILISATEUR.
@@ -1503,17 +1584,17 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         texte = str(reponse.content or "")
     except Exception as e:  # noqa: BLE001 - un forçage raté n'est pas une panne
         logger.warning("Forçage d'action impossible : %s", e)
-        return {"relance_annonce": True}
+        return {"relance_annonce": True, "forcages": (state.get("forcages") or 0) + 1}
 
     action, _, erreur = extraire_action(texte, role)
     if action is None:
         # Le drapeau reste levé : le tour est reconnu sans effet, la promesse ne
         # sera ni affichée comme une réponse ni rangée dans l'historique.
         logger.info("Forçage sans résultat (%s)", erreur or "aucun bloc produit")
-        return {"relance_annonce": True}
+        return {"relance_annonce": True, "forcages": (state.get("forcages") or 0) + 1}
 
     logger.info("Action forcée : %s", action.get("skill"))
-    return {"relance_annonce": True,
+    return {"relance_annonce": True, "forcages": (state.get("forcages") or 0) + 1,
             "llm_response": "```action\n"
                             + _json.dumps(action, ensure_ascii=False) + "\n```"}
 
@@ -1617,18 +1698,20 @@ def route_apres_llm(state: AgentState) -> str:
     # La détection doit vivre ICI et nulle part ailleurs : sans bloc d'action,
     # `tools` n'est JAMAIS appelé, donc un contrôle placé là-bas ne s'exécute
     # pas — il en avait tout l'air, et c'est ce qui l'a rendu difficile à voir.
-    if est_une_annonce(texte) or promesse_sans_suite(texte):
-        # DEUX SITUATIONS QUI N'APPELLENT PAS LE MÊME REMÈDE. Relevé le 22/08 :
-        # `fiche_client` avait RÉUSSI, le modèle a répondu « Je recherche les
-        # informations sur X. » et le tour s'est terminé là — l'utilisateur a
-        # lu une promesse au-dessus d'un résultat qui existait. Forcer une
-        # action ici referait la même (dédupliquée, donc pour rien). Quand les
-        # résultats sont là, le manque est la RÉDACTION : on ferme la boucle
-        # et on relance la passe d'écriture, qui nomme le défaut au modèle.
+    if est_une_annonce(texte) or promesse_sans_suite(texte) or not _texte_visible(texte):
+        # L'ORDRE COMPTE, ET IL A ÉTÉ FAUX UNE SOIRÉE. Première version : une
+        # annonce après un résultat réussi allait droit à la rédaction. Or
+        # l'annonce porte souvent sur l'étape SUIVANTE (« je lance le tirage »
+        # après avoir préparé le brief) : fermer la boucle à ce moment-là tue
+        # le travail en cours. On FORCE donc d'abord — le forceur voit les
+        # résultats acquis et choisit la suite — jusqu'à deux fois ; on ne
+        # rédige que quand forcer n'est plus permis, et seulement s'il y a
+        # quelque chose à rédiger. Une réponse VIDE après un résultat compte
+        # comme une promesse : elle n'a rien montré non plus.
+        if _texte_visible(texte) and (state.get("forcages") or 0) < MAX_FORCAGES_PAR_TOUR:
+            return "forcer"
         if any(r.get("ok") for r in (state.get("tool_results") or [])):
             return "rediger"
-        if not state.get("relance_annonce"):
-            return "forcer"
 
     # TRAVAIL RESTÉ OUVERT. Le signal qui ne dépend pas des mots : un document
     # ouvert et jamais fermé n'a produit aucun fichier, quoi qu'en dise la

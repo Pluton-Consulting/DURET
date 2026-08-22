@@ -466,10 +466,12 @@ async def check_mails(data: dict, user) -> dict:
     from mail.skills import lire_mails
     from skills.erreurs import SkillError
 
+    # Une période demandée ⇒ le détail va au maximum (voir lire_mails).
+    _periode = data.get("depuis") or data.get("periode") or data.get("jours")
     try:
-        limite = int(data.get("limite") or 15)
+        limite = int(data.get("limite") or (25 if _periode else 15))
     except (TypeError, ValueError):
-        limite = 15
+        limite = 25 if _periode else 15
     limite = max(1, min(limite, 25))
 
     # La période vient de l'utilisateur (« cette semaine » → jours=7). Sans

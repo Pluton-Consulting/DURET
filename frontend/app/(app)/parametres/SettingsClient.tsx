@@ -135,7 +135,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-primary)", marginBottom: 14 }}>
             Nouvel utilisateur
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div className="sym-grid-1" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
             <input type="email" placeholder="Email *" required value={form.email}
               onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} style={inp} />
             <input type="text" placeholder="Nom complet" value={form.name}

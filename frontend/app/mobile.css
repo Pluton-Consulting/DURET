@@ -1,0 +1,93 @@
+/* ════════════════════════════════════════════════════════════════════════
+   MOBILE — le palier téléphone (≤ 640 px), pour toute l'application.
+
+   POURQUOI UN FICHIER À PART. `theme.css` et `interface-v2.css` savent déjà
+   se replier à 900 px (tablette, fenêtre étroite). Il manquait le vrai
+   téléphone : 360 à 430 px de large, une barre d'adresse qui mange de la
+   hauteur, une encoche, un clavier qui remonte. Sur cet écran-là, la scène
+   à deux vues « qui déborde » mangeait un tiers de la largeur, la barre de
+   saisie gardait 32 px de marge de chaque côté, les champs à 14 px
+   faisaient ZOOMER iOS à chaque saisie, et plusieurs grilles ne se
+   repliaient pas. Tout est ici, et nulle part ailleurs : un palier qui se
+   lit d'un coup se maintient ; dispersé dans six fichiers, il dérive.
+
+   SOCLE : ce fichier est identique chez tous les clients. Il ne contient
+   aucune couleur — tout descend de `charte.css` par les jetons.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Le texte ne doit pas grossir tout seul quand le téléphone bascule. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+/* `100vh` sur mobile inclut la barre d'adresse : la scène dépassait du bas
+   et le champ de saisie passait sous le bord. `dvh` suit la hauteur RÉELLE
+   visible. Le navigateur qui ne le connaît pas garde la règle d'origine. */
+@supports (height: 100dvh) {
+  .v2-scene { height: 100dvh; }
+}
+
+@media (max-width: 640px) {
+  :root { --v2-entete-h: 50px; }
+
+  /* Rien ne doit faire défiler la page horizontalement : un seul débordement
+     suffit à rendre tout l'écran « flottant » sous le doigt. */
+  html, body { overflow-x: hidden; max-width: 100%; }
+
+  /* ── L'en-tête : trois bulles plus serrées, sous l'encoche ─────────── */
+  .v2-entete { top: calc(8px + env(safe-area-inset-top)); padding: 0 8px; gap: 6px; }
+  .v2-bulle-logo { padding: 0 12px 0 10px; gap: 6px; }
+  .v2-bulle-logo img, .v2-bulle-logo svg { height: 24px; }
+  .v2-switch { padding: 4px; }
+  .v2-switch-bouton { padding: 0 14px; height: calc(var(--v2-entete-h) - 8px); font-size: 13px; }
+  .v2-switch-curseur { top: 4px; bottom: 4px; left: 4px; }
+
+  /* ── La scène : PLUS DE DÉBORD. Sur 390 px, montrer 50 px de la vue voisine
+     coûtait 86 px de décalage + 62 px de marge : il restait 300 px pour le
+     chat. Chaque vue prend tout l'écran ; le swipe et le switch, eux,
+     restent — c'est par eux qu'on change de vue, pas en cliquant sur un
+     bord qu'on ne voit plus. ─────────────────────────────────────────── */
+  .v2-vue { padding: calc(var(--v2-entete-h) + 16px + env(safe-area-inset-top)) 6px calc(6px + env(safe-area-inset-bottom)); }
+  .v2-vue-tableau, .v2-vue-chat { padding-left: 6px; padding-right: 6px; }
+  .v2-scene[data-vue="tableau"] .v2-vue-chat,
+  .v2-scene[data-vue="chat"] .v2-vue-tableau { transform: none; opacity: 1; }
+  .v2-vue-cadre { border-radius: 18px; }
+
+  /* ── Le tableau de bord : une colonne, des cartes moins espacées ────── */
+  .v2-grille { padding: 12px 10px 18px; gap: 12px; }
+  .v2-carte { padding: 14px 14px; border-radius: 16px; }
+  /* `!important` : TableauDeBord pose `repeat(4, 1fr)` en style inline sur
+     une carte, et un style inline gagne toujours sur une feuille. Quatre
+     chiffres sur 360 px, c'est illisible ; deux colonnes. */
+  .v2-mini { grid-template-columns: repeat(2, 1fr) !important; }
+  .v2-roi::before { right: -70px; top: -70px; }
+
+  /* ── Le panneau de l'engrenage : plein écran, avec une marge ────────── */
+  .v2-panneau { top: 6px; right: 6px; bottom: 6px; left: 6px; width: auto; border-radius: 20px; }
+  .v2-contexte span { max-width: 42vw; }
+
+  /* ── Le chat ────────────────────────────────────────────────────────── */
+  .sym-page { padding: 12px 12px 20px !important; }
+  .sym-bulle { max-width: 94% !important; }
+  /* iOS ZOOME sur tout champ dont la police fait moins de 16 px, et ne
+     revient pas tout seul : après chaque message la page restait agrandie.
+     Seize pixels, et le zoom ne se déclenche plus. */
+  .sym-barre-saisie textarea, .sym-barre-saisie input,
+  .sym-page input, .sym-page textarea, .sym-page select { font-size: 16px !important; }
+
+  /* ── Les blocs de réponse : jamais plus larges que l'écran ──────────── */
+  .sym-fluide, .sym-mesure { max-width: 100% !important; }
+  .sym-defile, .sym-scroll-x { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+  pre, code { white-space: pre-wrap; word-break: break-word; }
+  img, video { max-width: 100%; }
+  table { font-size: 13px; }
+
+  /* ── Les pages longues (Paramètres, Connaissances, Pilotage) ────────── */
+  .sym-grid-1, .sym-grid-auto { grid-template-columns: 1fr !important; }
+  .v2-section { padding: 12px 14px; }
+}
+
+/* Sous 400 px (iPhone SE, petits Android) : le switch perd ses libellés —
+   déjà fait à 900 px — et l'en-tête colle davantage. */
+@media (max-width: 400px) {
+  .v2-entete { padding: 0 6px; gap: 4px; }
+  .v2-switch-bouton { padding: 0 12px; }
+}

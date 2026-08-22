@@ -32,7 +32,7 @@ export default function StatsCards({ data }: { data?: StatsCardsData | null }) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
+        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
         gap: 20,
         marginBottom: 24,
       }}

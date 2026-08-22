@@ -119,7 +119,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
         {kpi("skills", db.skills)}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
+      <div className="sym-grid-1" style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16 }}>
         {/* Live log stream */}
         <div className="sym-in" style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.dim, display: "flex", justifyContent: "space-between" }}>

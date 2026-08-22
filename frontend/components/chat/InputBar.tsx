@@ -183,7 +183,11 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
     // dit « ceci finit ici » ; une carte posée dit « ceci est un objet, on
     // écrit dedans ». Le fond reste celui du fil, et c'est la carte qui porte
     // la surface claire, son arrondi et son ombre.
-    <div style={{ padding: "12px 32px 20px", background: "var(--marque-chat-fond)" }}>
+    // 32 px de chaque côté sur un écran de 390 px, c'était 16 % de la largeur
+    // perdus. `clamp` garde les 32 px sur grand écran et descend à 12 px sur
+    // téléphone ; `env(safe-area-inset-bottom)` laisse la place à la barre
+    // d'accueil d'iOS, qui recouvrait le bouton d'envoi.
+    <div style={{ padding: "12px clamp(12px, 4vw, 32px) calc(16px + env(safe-area-inset-bottom))", background: "var(--marque-chat-fond)" }}>
       {erreur && (
         <div role="alert" style={{ fontSize: 13, color: "var(--marque-error-text)", marginBottom: 10 }}>
           {erreur}

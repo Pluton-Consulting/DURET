@@ -1,4 +1,4 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { SessionProvider } from "next-auth/react"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
@@ -19,6 +19,16 @@ import "./theme.css"
 export const metadata: Metadata = {
   title: "Duret & Sols",
   description: "Assistant IA interne Duret & Sols",
+}
+
+// `viewportFit: "cover"` : sans lui, `env(safe-area-inset-*)` vaut zéro et
+// l'en-tête passe sous l'encoche des iPhone. `maximumScale` n'est PAS fixé :
+// empêcher le zoom est une faute d'accessibilité, et le zoom intempestif d'iOS
+// se règle par la taille des champs (voir mobile.css), pas en le bloquant.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

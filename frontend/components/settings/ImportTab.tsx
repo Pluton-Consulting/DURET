@@ -240,7 +240,7 @@ export default function ImportTab({ apiUrl, backendToken }: { apiUrl: string; ba
             )}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "end" }}>
+          <div className="sym-grid-1" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "end" }}>
             <div>
               <label style={label}>Qui peut le consulter</label>
               <select value={acces} onChange={(e) => setAcces(e.target.value)} style={champ}>

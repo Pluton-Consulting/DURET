@@ -37,7 +37,7 @@ export default function LoginPage() {
   const card: React.CSSProperties = {
     background: "var(--marque-surface)",
     borderRadius: "var(--marque-radius-card)",
-    padding: "40px 48px",
+    padding: "clamp(24px, 7vw, 40px) clamp(18px, 8vw, 48px)",
     boxShadow: "var(--marque-shadow-card)",
     textAlign: "center",
     maxWidth: 380,

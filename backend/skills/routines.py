@@ -1,0 +1,510 @@
+"""
+LES ROUTINES — ce qu'on demande dix fois par semaine, en UN SEUL appel.
+
+POURQUOI CE MODULE EXISTE. « Sors-moi la liste des clients » se répondait
+jusqu'ici en enchaînant `interroger_donnees` trois fois : une fois sans
+argument pour découvrir les jeux de données, une fois avec `source_type` pour
+voir les colonnes, une fois avec un filtre pour obtenir les lignes. Trois
+allers-retours, donc trois passages complets dans la cascade LLM — et chacun
+paie les fournisseurs en panne avant d'atteindre celui qui répond. Sur la
+session du 21/08, cela faisait une minute et demie pour une question dont la
+réponse tient dans une requête SQL.
+
+Le remède n'est pas un meilleur prompt : c'est de rendre le geste ATOMIQUE.
+Une question fréquente mérite un skill qui la répond d'un coup, avec le bloc
+d'écran déjà prêt. Moins d'appels au modèle, c'est moins de latence ET moins
+d'occasions de se tromper.
+
+TROIS ROUTINES :
+  · `liste_clients`  — qui sont les clients, combien, avec quoi les joindre ;
+  · `fiche_client`   — TOUT ce qu'on sait d'un client : devis, montants,
+                       chiffre d'affaires, chantiers, contact — d'un seul appel
+                       et à travers TOUS les jeux de données importés ;
+  · `check_mails`    — le point sur le courrier récent, prêt à être résumé.
+
+ELLES NE SAVENT RIEN DU MÉTIER. Aucun nom de colonne n'est codé en dur : les
+imports viennent de fichiers Excel ou CSV faits par le client, dont les
+en-têtes varient (« Nom », « Client », « Raison sociale », « Société »…). Les
+colonnes sont donc RECONNUES par famille de synonymes, et ce qui n'est pas
+reconnu est rendu tel quel — mieux vaut afficher une colonne qu'on n'a pas su
+nommer que de la perdre.
+"""
+from __future__ import annotations
+
+import logging
+import re
+import unicodedata
+
+logger = logging.getLogger("pluton.skills.routines")
+
+MAX_CLIENTS = 300
+MAX_LIGNES_PAR_JEU = 40
+
+
+# ── Reconnaissance des colonnes, par familles de synonymes ──────────────────
+#
+# L'ordre compte : le premier synonyme trouvé gagne. « raison_sociale » avant
+# « nom » parce qu'un fichier qui porte les deux met l'identité dans le premier
+# et le nom du contact dans le second.
+FAMILLES = {
+    "nom": ("raison_sociale", "raison sociale", "societe", "société", "client",
+            "nom_client", "customer", "entreprise", "nom", "name"),
+    "email": ("email", "e-mail", "mail", "courriel", "adresse_mail"),
+    "telephone": ("telephone", "téléphone", "tel", "portable", "mobile", "phone"),
+    "ville": ("ville", "commune", "city", "localite"),
+    "montant": ("montant_ttc", "total_ttc", "ttc", "montant_ht", "total_ht", "ht",
+                "montant", "total", "prix", "amount", "chiffre_affaires", "ca"),
+    "date": ("date", "date_devis", "date_facture", "date_signature", "created_at",
+             "date_creation", "annee"),
+    "statut": ("statut", "status", "etat", "état"),
+    "reference": ("reference", "référence", "ref", "numero", "numéro", "num", "id"),
+}
+
+
+def _plat(texte) -> str:
+    """Minuscules, sans accents, sans ponctuation : la forme qui se compare."""
+    s = unicodedata.normalize("NFD", str(texte or ""))
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+    return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+
+
+def _colonne(donnees: dict, famille: str):
+    """La colonne de cette famille présente dans l'enregistrement, ou None."""
+    index = {_plat(k): k for k in donnees}
+    for synonyme in FAMILLES.get(famille, ()):
+        clef = index.get(_plat(synonyme))
+        if clef is not None and str(donnees[clef] or "").strip():
+            return clef
+    return None
+
+
+def _valeur(donnees: dict, famille: str) -> str:
+    clef = _colonne(donnees, famille)
+    return str(donnees[clef]).strip() if clef else ""
+
+
+def _fusion(ligne) -> dict:
+    """Les en-têtes d'origine ET le vocabulaire normalisé, dans un seul dict.
+
+    La migration 020 conserve les deux à dessein : `data` porte les en-têtes du
+    fichier tel qu'il a été exporté (« Raison sociale », « Montant HT »),
+    `champs` la même ligne ramenée au vocabulaire du type (« nom »,
+    « montant_ht »). Reconnaître une colonne a donc DEUX chances au lieu d'une
+    — et l'export dont personne n'a normalisé les en-têtes reste lisible.
+
+    `data` est appliqué en dernier : à valeur égale, l'orthographe d'origine
+    l'emporte pour l'affichage, parce que c'est celle que le client reconnaît.
+    """
+    return {**dict(ligne["champs"] or {} if "champs" in ligne else {}),
+            **dict(ligne["data"] or {})}
+
+
+_NOMBRE = re.compile(r"-?\d[\d\s  .,]*")
+
+
+def _montant(texte) -> float:
+    """« 12 450,50 € » → 12450.5. Rend 0.0 sur tout ce qui n'est pas un nombre.
+
+    Les exports comptables français mélangent espaces insécables, virgules
+    décimales et séparateurs de milliers. Un parseur naïf lit « 12 450,50 »
+    comme 12, et le chiffre d'affaires d'un client devient faux sans que rien
+    ne le signale — c'est le genre d'erreur qui ne se voit qu'en réunion.
+    """
+    m = _NOMBRE.search(str(texte or ""))
+    if not m:
+        return 0.0
+    brut = m.group(0)
+    for espace in (" ", " ", " "):
+        brut = brut.replace(espace, "")
+    # Le dernier séparateur rencontré est le décimal ; les autres sont des
+    # milliers. « 1.234,56 » et « 1,234.56 » se lisent donc tous les deux.
+    if "," in brut and "." in brut:
+        decimal = "," if brut.rindex(",") > brut.rindex(".") else "."
+        millier = "." if decimal == "," else ","
+        brut = brut.replace(millier, "").replace(decimal, ".")
+    elif "," in brut:
+        brut = brut.replace(",", ".")
+    try:
+        return float(brut)
+    except ValueError:
+        return 0.0
+
+
+def _euros(valeur: float) -> str:
+    return f"{valeur:,.2f} €".replace(",", " ").replace(".", ",")
+
+
+async def _jeux(conn, niveaux: list) -> list:
+    lignes = await conn.fetch(
+        "SELECT DISTINCT source_type FROM document_metadata "
+        "WHERE access_level = ANY($1::text[]) ORDER BY source_type", niveaux)
+    return [l["source_type"] for l in lignes]
+
+
+def _jeu_clients(existants: list):
+    """Le jeu de données qui contient les clients, quel que soit son nom.
+
+    On ne suppose pas « client » : un import peut s'appeler « clients »,
+    « CLIENTS 2025 », « base_clients ». On cherche donc la racine dans le nom.
+    """
+    for candidat in existants:
+        if "client" in _plat(candidat) or "customer" in _plat(candidat):
+            return candidat
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  LISTE DES CLIENTS
+# ═══════════════════════════════════════════════════════════════════════════
+async def liste_clients(data: dict, user) -> dict:
+    """Qui sont les clients, combien, et de quoi les joindre. UN appel."""
+    from database.connection import get_db
+    from security.acces import niveaux_visibles
+    from skills.erreurs import SkillError
+
+    niveaux = sorted(niveaux_visibles(getattr(user, "role", "")))
+    try:
+        async with get_db() as conn:
+            existants = await _jeux(conn, niveaux)
+            jeu = _jeu_clients(existants)
+            if not jeu:
+                # NE PAS RÉPONDRE « AUCUN CLIENT ». Un jeu de données absent et
+                # un jeu vide se ressemblent dans une réponse, et l'assistant a
+                # déjà conclu « les données ne sont pas importées » alors
+                # qu'elles l'étaient sous un autre nom.
+                return {
+                    "trouve": False,
+                    "jeux_de_donnees": existants,
+                    "message": (
+                        "Aucun jeu de données ne porte de nom de client. Ce n'est PAS "
+                        "« il n'y a pas de clients » : c'est que rien n'a été importé "
+                        "sous ce nom. Jeux disponibles : "
+                        + (", ".join(existants) if existants else "aucun") + "."),
+                    "a_faire": ("Dis-le tel quel à l'utilisateur, propose d'importer le "
+                                "fichier des clients depuis Paramètres > Import de "
+                                "données, et n'invente AUCUN nom."),
+                }
+
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM document_metadata "
+                "WHERE source_type = $1 AND access_level = ANY($2::text[])",
+                jeu, niveaux)
+            lignes = await conn.fetch(
+                "SELECT data, champs FROM document_metadata "
+                "WHERE source_type = $1 AND access_level = ANY($2::text[]) "
+                "ORDER BY ligne NULLS LAST LIMIT $3",
+                jeu, niveaux, MAX_CLIENTS)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Liste des clients impossible : %s", e)
+        raise SkillError("La base des clients est momentanément indisponible.")
+
+    clients = []
+    for l in lignes:
+        d = _fusion(l)
+        nom = _valeur(d, "nom")
+        if not nom:
+            continue
+        clients.append({"nom": nom, "ville": _valeur(d, "ville"),
+                        "email": _valeur(d, "email"), "telephone": _valeur(d, "telephone")})
+
+    if not clients:
+        return {"trouve": False, "source_type": jeu, "nombre": 0,
+                "message": (f"Le jeu « {jeu} » existe ({total} enregistrement(s)) mais "
+                            "aucun nom de client n'a pu y être lu. Les colonnes ne "
+                            "portent peut-être pas un nom reconnu."),
+                "a_faire": "Propose d'appeler `interroger_donnees` pour voir les colonnes réelles."}
+
+    colonnes = ["Client"] + [t for t, c in (("Ville", "ville"), ("Email", "email"),
+                                            ("Téléphone", "telephone"))
+                             if any(x[c] for x in clients)]
+    cles = {"Client": "nom", "Ville": "ville", "Email": "email", "Téléphone": "telephone"}
+    bloc = {"type": "table",
+            "columns": colonnes,
+            "rows": [[c[cles[t]] for t in colonnes] for c in clients]}
+
+    tronque = total > len(clients)
+    return {
+        "trouve": True,
+        "source_type": jeu,
+        "nombre": total,
+        "affiches": len(clients),
+        "clients": clients,
+        "bloc_ui": bloc,
+        "message_final": (f"{total} client{'s' if total > 1 else ''} en base"
+                          + (f" — les {len(clients)} premiers ci-dessous." if tronque else ".")),
+        "a_faire": ("AFFICHE la liste : insère un bloc ```ui contenant EXACTEMENT le "
+                    "contenu de `bloc_ui`. Annonce le NOMBRE EXACT (" + str(total) + "). "
+                    + ("Précise que seuls les premiers sont affichés. " if tronque else "")
+                    + "Pour le détail d'UN client, c'est `fiche_client`."),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FICHE D'UN CLIENT
+# ═══════════════════════════════════════════════════════════════════════════
+async def fiche_client(data: dict, user) -> dict:
+    """TOUT ce qu'on sait d'un client, à travers TOUS les jeux importés.
+
+    Le point clé : on ne se limite pas au fichier des clients. Un client
+    n'existe pas dans une table, il existe dans les devis, les factures, les
+    chantiers — et c'est le recoupement qui répond à « combien il nous a
+    rapporté ». Chercher dans un seul jeu rendrait une fiche vide et juste.
+    """
+    from database.connection import get_db
+    from security.acces import niveaux_visibles
+    from skills.erreurs import SkillError
+
+    demande = (data.get("nom") or data.get("client") or data.get("demande") or "").strip()
+    if not demande:
+        raise SkillError("Quel client ? Donne son nom dans `nom`.")
+
+    niveaux = sorted(niveaux_visibles(getattr(user, "role", "")))
+    cible = _plat(demande)
+
+    try:
+        async with get_db() as conn:
+            existants = await _jeux(conn, niveaux)
+            # Une seule lecture pour TOUS les jeux : la fiche croise les
+            # sources, la faire en N requêtes multiplierait les allers-retours
+            # pour un volume que Postgres filtre sans effort.
+            lignes = await conn.fetch(
+                "SELECT source_type, data, champs FROM document_metadata "
+                "WHERE access_level = ANY($1::text[]) "
+                "  AND (data::text ILIKE $2 OR champs::text ILIKE $2) "
+                "LIMIT 2000",
+                niveaux, f"%{demande}%")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Fiche client impossible : %s", e)
+        raise SkillError("Les données clients sont momentanément indisponibles.")
+
+    par_jeu: dict = {}
+    identite: dict = {}
+    for l in lignes:
+        d = _fusion(l)
+        # LE ILIKE RATISSE TROP LARGE, ET C'EST UN PIÈGE À CHIFFRES.
+        # Relevé au banc : un chantier de la mairie portait « accès par la
+        # parcelle de SCI Les Tilleuls » en commentaire, et se retrouvait
+        # compté dans la fiche des Tilleuls. Un enregistrement n'appartient à
+        # un client que si c'est SA COLONNE D'IDENTITÉ qui porte le nom —
+        # « Client », « Raison sociale », « Société ». Le reste est du contexte.
+        #
+        # Quand aucune colonne d'identité n'existe (un fichier sans en-tête
+        # reconnu), on retombe sur la correspondance large : mieux vaut une
+        # ligne de trop, visible et vérifiable, qu'une fiche vide.
+        colonne_identite = _colonne(d, "nom")
+        if colonne_identite is not None:
+            if cible not in _plat(d[colonne_identite]):
+                continue
+        elif not any(cible in _plat(v) for v in d.values()):
+            continue
+        par_jeu.setdefault(l["source_type"], []).append(d)
+        if not identite and "client" in _plat(l["source_type"]):
+            identite = d
+
+    if not par_jeu:
+        return {
+            "trouve": False, "nom_demande": demande, "jeux_de_donnees": existants,
+            "message": (f"Aucun enregistrement ne mentionne « {demande} » dans les "
+                        f"{len(existants)} jeu(x) de données importés."),
+            "a_faire": ("Dis-le sans détour et n'invente RIEN. Propose d'appeler "
+                        "`liste_clients` pour vérifier l'orthographe exacte du nom."),
+        }
+
+    # ── Le recoupement : combien, pour combien, dans quel jeu ──────────────
+    resume, total_general = [], 0.0
+    detail_devis = []
+    # Les jeux réellement additionnés : un chiffre qui circule sans sa source
+    # finit par être cité en réunion sans que personne ne sache d'où il sort.
+    sources_ca = []
+    for jeu, enregistrements in sorted(par_jeu.items(), key=lambda x: -len(x[1])):
+        somme = 0.0
+        for d in enregistrements:
+            colonne = _colonne(d, "montant")
+            if colonne:
+                somme += _montant(d[colonne])
+        resume.append({"jeu": jeu, "enregistrements": len(enregistrements),
+                       "montant_total": _euros(somme) if somme else ""})
+        # Le chiffre d'affaires ne compte QUE les jeux de facturation : additionner
+        # les devis ET les factures compterait deux fois la même affaire.
+        if somme and any(mot in _plat(jeu) for mot in ("factur", "vente", "ca", "chiffre")):
+            total_general += somme
+            sources_ca.append(jeu)
+        if any(mot in _plat(jeu) for mot in ("devis", "quote", "offre", "factur")):
+            for d in enregistrements[:MAX_LIGNES_PAR_JEU]:
+                detail_devis.append({
+                    "jeu": jeu,
+                    "reference": _valeur(d, "reference"),
+                    "date": _valeur(d, "date"),
+                    "statut": _valeur(d, "statut"),
+                    "montant": _valeur(d, "montant"),
+                })
+
+    # Sans jeu de facturation identifié, le total le plus élevé fait foi —
+    # et on DIT d'où il vient, pour qu'un chiffre ne circule jamais sans source.
+    origine_ca = ", ".join(sources_ca)
+    if not total_general and resume:
+        meilleur = max(resume, key=lambda r: _montant(r["montant_total"]))
+        total_general = _montant(meilleur["montant_total"])
+        origine_ca = meilleur["jeu"]
+
+    fiche = {"Client": _valeur(identite, "nom") or demande}
+    for etiquette, famille in (("Ville", "ville"), ("Email", "email"), ("Téléphone", "telephone")):
+        v = _valeur(identite, famille)
+        if v:
+            fiche[etiquette] = v
+    for r in resume:
+        fiche[r["jeu"].capitalize()] = (f"{r['enregistrements']}"
+                                        + (f" · {r['montant_total']}" if r["montant_total"] else ""))
+    if total_general:
+        fiche["Chiffre d'affaires"] = f"{_euros(total_general)} (source : {origine_ca})"
+
+    return {
+        "trouve": True,
+        "client": fiche["Client"],
+        "identite": identite,
+        "par_jeu": resume,
+        "devis": detail_devis,
+        "chiffre_affaires": _euros(total_general) if total_general else None,
+        "source_chiffre_affaires": origine_ca if total_general else None,
+        "bloc_ui": {"type": "keyvalue",
+                    "rows": [[k, v] for k, v in fiche.items()]},
+        "message_final": (f"Voici ce que je sais de {fiche['Client']} : "
+                          + ", ".join(f"{r['enregistrements']} {r['jeu']}" for r in resume)
+                          + (f", pour un chiffre d'affaires de {_euros(total_general)}."
+                             if total_general else ".")),
+        "a_faire": ("AFFICHE la fiche : insère un bloc ```ui contenant EXACTEMENT le "
+                    "contenu de `bloc_ui`. Si `devis` n'est pas vide, ajoute un second "
+                    "bloc ```ui de type `table` (champs `columns` et `rows`) avec les "
+                    "colonnes Référence, Date, Statut, Montant. Cite les chiffres TELS QUELS — ne les recalcule "
+                    "pas, ne les arrondis pas, et rappelle la source du chiffre "
+                    "d'affaires."),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  POINT SUR LES MAILS
+# ═══════════════════════════════════════════════════════════════════════════
+async def check_mails(data: dict, user) -> dict:
+    """Le point sur le courrier récent, prêt à être résumé en UN message.
+
+    Ce skill ne résume pas lui-même : il RASSEMBLE. Faire écrire un résumé par
+    message coûterait un appel LLM chacun — soit, sur vingt messages, vingt
+    passages dans la cascade. Il rend donc la matière d'un seul coup, avec la
+    consigne de tout traiter dans la même réponse.
+    """
+    from mail.skills import lire_mails
+    from skills.erreurs import SkillError
+
+    try:
+        limite = int(data.get("limite") or 15)
+    except (TypeError, ValueError):
+        limite = 15
+    limite = max(1, min(limite, 25))
+
+    brut = await lire_mails({"mailbox": data.get("mailbox"),
+                             "dossier": data.get("dossier") or "recus",
+                             "limite": limite}, user)
+
+    messages = brut.get("messages") or brut.get("mails") or []
+    if not isinstance(messages, list):
+        raise SkillError("La messagerie a répondu dans un format inattendu.")
+
+    if not messages:
+        return {"nombre": 0, "boite": brut.get("boite") or brut.get("mailbox"),
+                "message_final": "Aucun message récent dans cette boîte.",
+                "a_faire": "Dis-le simplement, sans meubler."}
+
+    def _champ(m, *noms):
+        for n in noms:
+            v = m.get(n)
+            if v:
+                return str(v)
+        return ""
+
+    releve = []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        objet = _champ(m, "objet", "subject", "sujet")
+        releve.append({
+            "de": _champ(m, "de", "from", "expediteur", "sender"),
+            "objet": objet,
+            "date": _champ(m, "date", "recu_le", "receivedAt", "received_at"),
+            "extrait": _champ(m, "extrait", "preview", "apercu", "body", "corps")[:400],
+            # « Re: » n'est pas un détail : une réponse dans un fil en cours est
+            # ce qu'on veut voir en premier quand on fait le point.
+            "reponse_dans_un_fil": bool(re.match(r"\s*(re|rép|rep)\s*:", objet, re.I)),
+            "non_lu": bool(m.get("non_lu") or m.get("unread") or m.get("is_unread")),
+        })
+
+    fils = sum(1 for r in releve if r["reponse_dans_un_fil"])
+    non_lus = sum(1 for r in releve if r["non_lu"])
+
+    return {
+        "nombre": len(releve),
+        "reponses_dans_un_fil": fils,
+        "non_lus": non_lus,
+        "boite": brut.get("boite") or brut.get("mailbox"),
+        "messages": releve,
+        "message_final": (f"{len(releve)} message(s) récent(s)"
+                          + (f", dont {fils} réponse(s) à un fil en cours" if fils else "")
+                          + (f" et {non_lus} non lu(s)" if non_lus else "") + "."),
+        "a_faire": (
+            "Fais le point en UN SEUL message, sans rappeler ce skill. Pour chaque "
+            "message : l'expéditeur, l'objet, et UNE phrase de résumé tirée de "
+            "l'extrait — jamais de ta mémoire. Mets EN PREMIER ceux marqués "
+            "`reponse_dans_un_fil` : ce sont des échanges en cours. "
+            "Quand un message appelle visiblement une réponse (question posée, "
+            "demande de devis, relance), propose une réponse courte en deux ou trois "
+            "lignes, présentée comme une PROPOSITION à valider — n'envoie rien : "
+            "l'envoi passe par `redaction_email`, que l'utilisateur devra approuver. "
+            "Si un extrait est vide, dis que le contenu n'a pas pu être lu au lieu "
+            "d'inventer un résumé."),
+    }
+
+
+# ── Déclarations : tout ce que le système doit savoir, ICI ──────────────────
+from skills.registre import Declaration
+
+SKILLS = {
+    "liste_clients": Declaration(
+        fonction=liste_clients,
+        description=(
+            "LISTE les clients de l'entreprise en UN SEUL appel : le nombre exact, "
+            "les noms, et le contact quand il est connu. C'est le skill a appeler "
+            "pour « la liste des clients », « combien de clients », « qui sont nos "
+            "clients » — PAS `interroger_donnees`, qui demanderait trois "
+            "allers-retours pour la meme reponse, ni `rechercher_documents`, qui "
+            "approxime. Le resultat donne un bloc ```ui a inserer TEL QUEL. Ne "
+            "cherche JAMAIS sur le web pour cette question : les clients sont une "
+            "donnee interne"),
+        requis=[], optionnels=[],
+        effet="lecture",
+        libelle="je liste les clients"),
+    "fiche_client": Declaration(
+        fonction=fiche_client,
+        description=(
+            "TOUT ce que l'entreprise sait d'UN client, en UN SEUL appel et a "
+            "travers TOUS les fichiers importes : devis (nombre, references, "
+            "montants, statuts), factures, chantiers, chiffre d'affaires genere, "
+            "coordonnees. C'est le skill a appeler des qu'une question porte sur un "
+            "client nomme — « parle-moi de X », « combien de devis pour X », « quel "
+            "chiffre d'affaires avec X ». `nom` : le nom du client. Les chiffres "
+            "rendus sont EXACTS : cite-les tels quels, ne les recalcule pas"),
+        requis=["nom"], optionnels=[],
+        effet="lecture",
+        libelle="je rassemble la fiche du client"),
+    "check_mails": Declaration(
+        fonction=check_mails,
+        description=(
+            "FAIT LE POINT sur le courrier recent en UN SEUL appel : les derniers "
+            "messages, lesquels sont des reponses a un fil en cours, lesquels sont "
+            "non lus. A appeler pour « fais un check de mes mails », « quoi de neuf "
+            "dans ma boite », « resume-moi mes mails ». Rends ensuite UN SEUL "
+            "message : un resume par mail, et une PROPOSITION de reponse quand le "
+            "message en appelle une. N'envoie rien — l'envoi passe par "
+            "`redaction_email` et sa validation. `limite` : 1 a 25 (defaut 15)"),
+        requis=[], optionnels=["mailbox", "dossier", "limite"],
+        effet="lecture",
+        libelle="je fais le point sur les mails"),
+}

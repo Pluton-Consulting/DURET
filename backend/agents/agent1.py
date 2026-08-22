@@ -1282,13 +1282,39 @@ def route_apres_routeur(state: AgentState) -> str:
     return "recherche" if state.get("besoin_memoire") else "llm"
 
 
+# CE QUI NE SE CHERCHE JAMAIS SUR LE WEB.
+#
+# Relevé dans les traces du 21/08 : « sors-moi la liste de tous les clients »
+# ne trouve rien dans le RAG — et pour cause, les clients ne sont pas des
+# documents vectorisés mais des lignes importées d'un tableur. La recherche
+# repartait donc vers Internet, ramenait des pages d'entreprises inconnues, et
+# le tour finissait en erreur après une minute et demie. Chercher au-dehors ce
+# qui n'existe qu'au-dedans ne peut RIEN rendre de juste : au mieux du bruit,
+# au pire les données d'une autre société présentées comme les siennes.
+#
+# Le web n'est pas perdu pour autant : le modèle garde `chercher_web` dans son
+# catalogue et peut le demander explicitement. Ce qui disparaît, c'est le repli
+# AUTOMATIQUE — celui que personne n'a demandé.
+_MOTS_INTERNES = (
+    "client", "devis", "facture", "impaye", "impayé", "chiffre d'affaires",
+    "chantier", "fournisseur", "salarie", "salarié", "collaborateur", "equipe",
+    "équipe", "planning", "commande", "marge", "prospect", "contact",
+    "notre", "nos ", "mes ", "mon ", "ma ",
+)
+
+
 def should_use_browser(state: AgentState) -> str:
-    """Après une recherche infructueuse, tenter le web (si activé)."""
+    """Après une recherche infructueuse, tenter le web — SAUF sur nos données."""
     from config import settings
     if state.get("browser_used") or not settings.browser_enabled:
         return "llm"
     trouve = (state.get("anonymized_chunks") or []) or (state.get("raw_chunks") or [])
-    return "llm" if trouve else "browser"
+    if trouve:
+        return "llm"
+    demande = (state.get("query") or "").lower()
+    if any(mot in demande for mot in _MOTS_INTERNES):
+        return "llm"
+    return "browser"
 
 
 def should_validate(state: AgentState) -> str:

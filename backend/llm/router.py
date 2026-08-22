@@ -24,6 +24,7 @@ la configuration progressive : avec seulement GROQ_API_KEY, tout tourne sur Groq
 dès qu'OPENROUTER_API_KEY est fournie, LongCat/DeepSeek/free s'activent en tête de cascade.
 """
 import asyncio
+import time
 import logging
 from enum import Enum
 from typing import Any, Optional
@@ -292,6 +293,102 @@ def _contenu_vide(result: Any) -> bool:
     return not str(contenu or "").strip()
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+#  LE DISJONCTEUR — un candidat mort ne se retente pas à chaque appel.
+#
+#  Relevé dans les traces Langfuse du 21/08 : sur 38 appels LLM d'une seule
+#  session, 33 ont échoué. DeepSeek rendait 401 « User not found » (clé morte),
+#  Groq 404 sur ses deux modèles (retirés du compte), OpenRouter 401, Ollama
+#  injoignable. Chaque appel repartait pourtant du haut de la cascade et
+#  refaisait les quatre mêmes échecs avant d'atteindre le seul fournisseur
+#  vivant — le plus lent de tous. Un tour qui enchaîne quinze appels payait donc
+#  soixante allers-retours pour rien, et finissait en « une erreur est survenue ».
+#
+#  Le correctif n'est pas de mieux ordonner la cascade : c'est de RETENIR
+#  l'échec. Un candidat qui répond « clé invalide » ou « modèle inconnu » est
+#  écarté pour un temps, et la cascade commence directement au premier candidat
+#  qui a une chance de répondre.
+#
+#  DEUX DURÉES, parce que les deux pannes n'ont pas la même nature :
+#    · authentification / modèle inconnu -> 30 min. C'est un problème de
+#      configuration : il ne se répare pas tout seul dans la minute.
+#    · quota (429) -> 5 min. Là, l'attente EST le remède.
+#
+#  On ne bannit jamais définitivement : la quarantaine EXPIRE, et le candidat
+#  est retenté une fois. Une clé rechargée redevient donc utilisable sans
+#  redémarrer quoi que ce soit — comme pour les clés (`llm/cles.py`).
+# ════════════════════════════════════════════════════════════════════════════
+QUARANTAINE_AUTH_S = 1800.0
+QUARANTAINE_QUOTA_S = 300.0
+
+_QUARANTAINE: dict = {}
+
+
+def _motif_quarantaine(err: Exception) -> Optional[tuple]:
+    """La panne justifie-t-elle d'écarter ce candidat, et pour combien de temps ?
+
+    Un timeout ou une coupure réseau n'entrent PAS ici : ils sont ponctuels, et
+    écarter un bon fournisseur pour une seconde de réseau coûterait plus cher
+    que de le retenter.
+    """
+    msg = str(err).lower()
+    if "429" in msg or "rate limit" in msg or "rate_limit" in msg or "quota" in msg:
+        return QUARANTAINE_QUOTA_S, "quota épuisé"
+    if "401" in msg or "403" in msg or "invalid api key" in msg or "authentication" in msg \
+       or "user not found" in msg:
+        return QUARANTAINE_AUTH_S, "clé refusée"
+    if "404" in msg or "model_not_found" in msg or "does not exist" in msg \
+       or "decommissioned" in msg or "no endpoints" in msg:
+        return QUARANTAINE_AUTH_S, "modèle inconnu de cette clé"
+    return None
+
+
+def _ecarter(provider: str, model, err: Exception) -> None:
+    motif = _motif_quarantaine(err)
+    if not motif:
+        return
+    duree, raison = motif
+    _QUARANTAINE[(provider, model)] = (time.monotonic() + duree, raison)
+    logger.warning("LLM %s:%s écarté %d min — %s", provider, model, int(duree // 60), raison)
+
+
+def _ecarte(provider: str, model) -> Optional[str]:
+    """La raison pour laquelle ce candidat est écarté, ou None s'il est utilisable."""
+    fin, raison = _QUARANTAINE.get((provider, model), (0.0, ""))
+    return raison if time.monotonic() < fin else None
+
+
+def _filtrer_quarantaine(chain: list) -> list:
+    """Retire les candidats écartés — mais JAMAIS tous.
+
+    Si la quarantaine vidait la cascade, on n'aurait plus aucun chemin et le
+    tour tomberait alors qu'un des candidats est peut-être revenu entre-temps.
+    Tout écarter revient donc à n'écarter personne : on retente tout.
+    """
+    vivants = [(p, m) for p, m in chain if not _ecarte(p, m)]
+    return vivants or chain
+
+
+def sante_cascade() -> list[dict]:
+    """Ce que l'écran Paramètres montre : qui répond, qui est écarté et pourquoi."""
+    maintenant = time.monotonic()
+    etat = []
+    for tier in LLMTier:
+        for provider, model in _tier_chain(tier):
+            fin, raison = _QUARANTAINE.get((provider, model), (0.0, ""))
+            ecarte = maintenant < fin
+            etat.append({
+                "palier": tier.value,
+                "fournisseur": provider,
+                "modele": model or "",
+                "ecarte": ecarte,
+                "raison": raison if ecarte else "",
+                "reprise_dans_s": int(fin - maintenant) if ecarte else 0,
+            })
+    return etat
+
+
 class ResilientLLM:
     """LLM résilient : parcourt la cascade du palier, retry+backoff par candidat, fallback au suivant."""
 
@@ -300,7 +397,7 @@ class ResilientLLM:
         self.last_model_used: Optional[str] = None
 
     async def ainvoke(self, messages: Any, **kwargs) -> Any:
-        chain = _tier_chain(self.tier)
+        chain = _filtrer_quarantaine(_tier_chain(self.tier))
         if not chain:
             raise RuntimeError(
                 "Aucun fournisseur LLM configuré : renseignez au moins GROQ_API_KEY "
@@ -361,6 +458,9 @@ class ResilientLLM:
                     last_error = e
                     if _is_hard_fail(e):
                         logger.warning("LLM %s indispo (quota/auth) : %s — candidat suivant", label, e)
+                        # Et on le RETIENT : sans cela, l'appel suivant referait
+                        # exactement le même échec, quinze fois par tour.
+                        _ecarter(provider, model, e)
                         break  # inutile de retenter ce modèle, passer au suivant
                     delay = settings.llm_retry_base_delay * (2 ** attempt)
                     logger.warning(

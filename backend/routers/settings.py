@@ -241,3 +241,18 @@ async def ecrire_cle(body: CleBody, current_user: User = Depends(get_current_use
                      metadata={"cle": body.cle, "effacee": not (body.valeur or "").strip()})
     return {"cle": body.cle, "empreinte": empreinte,
             "note": "Prise en compte immédiate, sans redéploiement."}
+
+@router.get("/cascade")
+async def sante_de_la_cascade(current_user: User = Depends(get_current_user)):
+    """Qui répond, qui est écarté, et pourquoi — pour l'écran d'administration.
+
+    La lenteur ressentie a une cause mesurable, et elle était invisible : sur la
+    session du 21/08, quatre fournisseurs sur cinq échouaient à chaque appel
+    (clés mortes, modèles retirés du compte) sans que rien ne le dise à l'écran.
+    On regardait les traces pour l'apprendre. Ce rapport rend l'état lisible
+    depuis l'application.
+    """
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.router import sante_cascade
+    return sante_cascade()

@@ -38,6 +38,12 @@ import unicodedata
 logger = logging.getLogger("pluton.skills.routines")
 
 MAX_CLIENTS = 300
+# CE QUI ENTRE DANS LE BLOC D'ÉCRAN. Relevé le 22/08 : le bloc portait 300
+# lignes, le modèle a dû le recopier, s'est arrêté vers la quarantième et a
+# écrit « 300 affichés ». Un bloc que le modèle doit retaper doit tenir dans ce
+# qu'il retape sans faute : soixante noms, et une pagination par initiale pour
+# la suite. Le TOTAL, lui, reste exact et se dit.
+MAX_AFFICHES = 60
 MAX_LIGNES_PAR_JEU = 40
 
 
@@ -47,8 +53,12 @@ MAX_LIGNES_PAR_JEU = 40
 # « nom » parce qu'un fichier qui porte les deux met l'identité dans le premier
 # et le nom du contact dans le second.
 FAMILLES = {
-    "nom": ("raison_sociale", "raison sociale", "societe", "société", "client",
-            "nom_client", "customer", "entreprise", "nom", "name"),
+    # « client » en DERNIER : c'est souvent un drapeau ou un identifiant, pas
+    # un nom. « nom » avant lui, mais après la raison sociale (un fichier qui
+    # porte les deux met l'identité dans la première et le contact dans le
+    # second).
+    "nom": ("raison_sociale", "raison sociale", "societe", "société",
+            "nom_client", "customer", "entreprise", "nom", "name", "client"),
     "email": ("email", "e-mail", "mail", "courriel", "adresse_mail"),
     "telephone": ("telephone", "téléphone", "tel", "portable", "mobile", "phone"),
     "ville": ("ville", "commune", "city", "localite"),
@@ -73,8 +83,18 @@ def _colonne(donnees: dict, famille: str):
     index = {_plat(k): k for k in donnees}
     for synonyme in FAMILLES.get(famille, ()):
         clef = index.get(_plat(synonyme))
-        if clef is not None and str(donnees[clef] or "").strip():
-            return clef
+        if clef is None:
+            continue
+        valeur = str(donnees[clef] or "").strip()
+        if not valeur:
+            continue
+        # UN NOM CONTIENT DES LETTRES. Relevé le 22/08 : un export portait une
+        # colonne « Client » valant « 1 » (un drapeau) à côté de « Nom » ; la
+        # fiche s'est intitulée « 1 ». Une valeur sans lettre n'est pas une
+        # identité, on passe au synonyme suivant.
+        if famille == "nom" and not re.search(r"[a-zA-Z\u00C0-\u024F]", valeur):
+            continue
+        return clef
     return None
 
 
@@ -236,6 +256,15 @@ async def liste_clients(data: dict, user) -> dict:
             continue
         clients.append({"nom": nom, "ville": _valeur(d, "ville"),
                         "email": _valeur(d, "email"), "telephone": _valeur(d, "telephone")})
+    clients.sort(key=lambda c: _plat(c["nom"]))
+
+    # Pagination par initiale : « les clients en B », « la suite ».
+    lettre = _plat(data.get("lettre") or "")[:1]
+    if lettre:
+        clients = [c for c in clients if _plat(c["nom"])[:1] == lettre]
+    total_filtre = len(clients)
+    tronque_ecran = total_filtre > MAX_AFFICHES
+    clients = clients[:MAX_AFFICHES]
 
     if not clients:
         return {"trouve": False, "source_type": jeu, "nombre": 0,
@@ -252,19 +281,31 @@ async def liste_clients(data: dict, user) -> dict:
             "columns": colonnes,
             "rows": [[c[cles[t]] for t in colonnes] for c in clients]}
 
-    tronque = total > len(clients)
+    n = len(clients)
+    if lettre:
+        compte = (f"{total_filtre} client{'s' if total_filtre > 1 else ''} dont le nom "
+                  f"commence par « {lettre.upper()} » (sur {total} au total)"
+                  + (f", les {n} premiers affichés." if tronque_ecran else ", tous affichés."))
+    else:
+        compte = (f"{total} client{'s' if total > 1 else ''} en base"
+                  + (f", les {n} premiers affichés par ordre alphabétique." if tronque_ecran
+                     else ", tous affichés."))
     return {
         "trouve": True,
         "source_type": jeu,
         "nombre": total,
-        "affiches": len(clients),
+        "affiches": n,
+        "lettre": lettre.upper() or None,
         "clients": clients,
         "bloc_ui": bloc,
-        "message_final": (f"{total} client{'s' if total > 1 else ''} en base"
-                          + (f" — les {len(clients)} premiers ci-dessous." if tronque else ".")),
-        "a_faire": ("AFFICHE la liste : insère un bloc ```ui contenant EXACTEMENT le "
-                    "contenu de `bloc_ui`. Annonce le NOMBRE EXACT (" + str(total) + "). "
-                    + ("Précise que seuls les premiers sont affichés. " if tronque else "")
+        "message_final": compte,
+        "a_faire": ("Commence par cette phrase, mot pour mot : « " + compte + " ». "
+                    "Puis AFFICHE la liste en insérant un bloc ```ui contenant EXACTEMENT "
+                    "le contenu de `bloc_ui` — n'écris PAS les noms toi-même en texte, ne "
+                    "dis pas un autre nombre que " + str(n) + " pour les affichés ni que "
+                    + str(total) + " pour le total. "
+                    + ("Pour la suite, rappelle `liste_clients` avec `lettre` (une initiale). "
+                       if tronque_ecran else "")
                     + "Pour le détail d'UN client, c'est `fiche_client`."),
     }
 
@@ -535,10 +576,11 @@ SKILLS = {
             "pour « la liste des clients », « combien de clients », « qui sont nos "
             "clients » — PAS `interroger_donnees`, qui demanderait trois "
             "allers-retours pour la meme reponse, ni `rechercher_documents`, qui "
-            "approxime. Le resultat donne un bloc ```ui a inserer TEL QUEL. Ne "
-            "cherche JAMAIS sur le web pour cette question : les clients sont une "
-            "donnee interne"),
-        requis=[], optionnels=[],
+            "approxime. Le resultat donne un bloc ```ui a inserer TEL QUEL (60 noms "
+            "au plus par appel, par ordre alphabetique ; `lettre` = une initiale pour "
+            "la suite). Ne cherche JAMAIS sur le web pour cette question : les "
+            "clients sont une donnee interne"),
+        requis=[], optionnels=["lettre"],
         effet="lecture",
         libelle="je liste les clients"),
     "fiche_client": Declaration(

@@ -86,7 +86,8 @@ const NODE_LABELS: Record<string, string> = {
   test_skill: "Test de la compétence",
   submit_validation: "Envoi en validation",
   human_gate: "Validation humaine requise",
-  agent1: "Délégué à notre expert commercial",
+  agent1: "Pris en charge par l'assistant",
+  rediger: "Rédaction de la réponse",
   agent2: "Délégué à notre expert conception : plans, photos, chiffrage",
   agent3: "Délégué à notre atelier : apprentissage d'une compétence",
 }

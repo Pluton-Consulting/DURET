@@ -57,8 +57,10 @@ const EXPERTS: { noeuds: string[]; label: string; desc: string }[] = [
     label: "Expert conception", desc: "Plans, photos, chiffrage" },
   { noeuds: ["agent3", "generate_skill", "test_skill"],
     label: "Atelier", desc: "Apprentissage d'une compétence" },
+  // agent1 est l'assistant lui-même (clients, mails, documents, visuels) :
+  // l'appeler « expert commercial » mentait sur un rendu 3D. Relevé le 22/08.
   { noeuds: ["agent1"],
-    label: "Expert commercial", desc: "Devis, clients, documents" },
+    label: "Assistant", desc: "Clients, devis, mails, documents, visuels" },
 ]
 
 function expertDe(steps: string[]): { label: string; desc: string } | null {

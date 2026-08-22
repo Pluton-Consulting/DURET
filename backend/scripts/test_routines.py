@@ -15,7 +15,9 @@ sys.path.insert(0, BACKEND)
 
 # ══════════════════ Le jeu d'essai ══════════════════
 CLIENTS = [
-    {"Raison sociale": "SCI Les Tilleuls", "Ville": "Arcachon", "Email": "contact@tilleuls.fr", "Téléphone": "05 56 00 00 01"},
+    # « Client » = « 1 » : un DRAPEAU, comme dans l'export réel du 22/08. La
+    # fiche s'intitulait « 1 ». L'identité est dans « Raison sociale ».
+    {"Client": "1", "Raison sociale": "SCI Les Tilleuls", "Ville": "Arcachon", "Email": "contact@tilleuls.fr", "Téléphone": "05 56 00 00 01"},
     {"Raison sociale": "Mairie de La Teste", "Ville": "La Teste-de-Buch", "Email": "marches@lateste.fr"},
     {"Raison sociale": "Dupont & Fils", "Ville": "Bordeaux", "Téléphone": "05 56 00 00 03"},
 ]
@@ -170,6 +172,13 @@ async def principal():
     verifier("le jeu est trouvé malgré son nom « CLIENTS 2025 »", r.get("trouve"), r.get("message"))
     verifier("le compte est exact", r.get("nombre") == 3, r.get("nombre"))
     verifier("les trois noms sont lus", len(r.get("clients", [])) == 3)
+    verifier("`affiches` dit ce que le bloc contient", r.get("affiches") == len(r["bloc_ui"]["rows"]))
+    verifier("le message final commence par le compte exact", r["message_final"].startswith("3 clients"))
+    verifier("la consigne interdit au modèle d'écrire les noms lui-même", "n'écris PAS" in r["a_faire"])
+    r2 = await routines.liste_clients({"lettre": "m"}, User())
+    verifier("la pagination par initiale marche (M → Mairie)",
+             r2.get("affiches") == 1 and r2["clients"][0]["nom"].startswith("Mairie"), r2.get("clients"))
+    verifier("le compte filtré est distinct du total", "1 client" in r2["message_final"] and "sur 3" in r2["message_final"], r2["message_final"])
     bloc = r.get("bloc_ui") or {}
     verifier("le bloc est un `table` aux champs du composant",
              bloc.get("type") == "table" and "columns" in bloc and "rows" in bloc, list(bloc))
@@ -205,6 +214,8 @@ async def principal():
              r.get("chiffre_affaires") == routines._euros(16140.60), r.get("chiffre_affaires"))
     verifier("les devis sont détaillés avec leur référence",
              any(d["reference"] == "DEV-2025-014" for d in r.get("devis", [])), r.get("devis"))
+    verifier("la fiche s'intitule du NOM, pas du drapeau « Client = 1 »",
+             r.get("client") == "SCI Les Tilleuls", r.get("client"))
     verifier("le contact du fichier clients est repris",
              r["identite"].get("Email") == "contact@tilleuls.fr", r.get("identite"))
     bloc = r.get("bloc_ui") or {}

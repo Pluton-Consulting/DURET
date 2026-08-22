@@ -56,7 +56,12 @@ LIBELLES = {
     # Les noms sont ceux du MÉTIER, pas ceux du code : personne n'a à savoir
     # qu'il existe un « agent2 ». Ce qui compte est de reconnaître à qui la
     # demande a été confiée.
-    "agent1": "je délègue à notre expert commercial",
+    # agent1 n'est pas un spécialiste : c'est l'assistant lui-même, qui traite
+    # les clients, les mails, les documents ET les visuels. Lui faire dire « je
+    # délègue à notre expert commercial » sur un rendu 3D était faux, et ça se
+    # voyait (relevé le 22/08).
+    "agent1": "je prends la demande en charge",
+    "rediger": "je rédige la réponse",
     "agent2": "je délègue à notre expert conception : plans, photos, chiffrage",
     "agent3": "je délègue à notre atelier : il apprend une compétence nouvelle",
     "preprocess": "je prépare le document",

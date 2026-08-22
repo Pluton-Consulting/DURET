@@ -79,7 +79,16 @@ _PRODUCTION = (rf"je {_PRON}(?:cree|redige|genere|produis|finalise|termine"
                # « je continue » non. C'est exactement la faille de liste que
                # le module documente ; on la rebouche sans se raconter qu'elle
                # ne se rouvrira pas ailleurs.
-               r"|continue|reprends|verse|insere)\b"
+               r"|continue|reprends|verse|insere"
+               # Relevés le 22/08, chacun sur un tour qui s'est arrêté là :
+               # « Je recherche les informations sur X. », « Je relance la
+               # consultation », « Je retente », « Je vais lire les mails »,
+               # « Je vais modifier le visuel ». La liste reste perdante par
+               # nature (le docstring le dit) ; chaque verbe manquant est
+               # un tour perdu, on les ajoute au fur et à mesure.
+               r"|recherche|cherche|relance|retente|reessaie|modifie|retouche"
+               r"|change|applique|regarde|verifie|analyse|interroge|lis"
+               r"|examine|refais|rappelle|mets a jour|consulte a nouveau)\b"
                # Élision, avec ou sans pronom intercalé : « j'y ajoute ».
                r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais"
                r"|inscris|insere)")

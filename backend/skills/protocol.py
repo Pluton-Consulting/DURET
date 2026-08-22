@@ -181,8 +181,23 @@ def _action_native(texte: str, role: str | None = None):
     reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
     corps = trouve.group(1)
     nom = corps.splitlines()[0].strip() if corps.strip() else ""
-    if nom not in catalogue(role):
-        return None, reste, None
+    # LE NOM TEL QUE LONGCAT L'ÉCRIT. Relevé le 22/08 : « <longcat_tool_call>
+    # lire_mails} » — une accolade collée au nom, vestige de sa syntaxe JSON.
+    # Le nom ne correspondait à rien, le bloc était jeté, le tour se fermait
+    # sur « Je vais lire les mails » sans que rien n'ait été lu. Un nom de
+    # skill n'est fait que de lettres, chiffres et soulignés : le reste est
+    # du bruit, on le retire.
+    nom = re.sub(r"[^a-z0-9_]+$", "", nom.lower())
+    catalogue_role = catalogue(role)
+    if nom not in catalogue_role:
+        # Un bloc natif PRÉSENT mais illisible n'est pas « pas d'action » :
+        # c'est une action mal écrite, et le modèle sait la réécrire si on le
+        # lui dit. Rendu comme erreur, il déclenche la réparation (une fois)
+        # au lieu de fermer le tour.
+        return None, reste, (
+            f"ton appel d'outil natif nomme « {nom or '?'} », qui n'existe pas. "
+            "Ré-émets l'action dans un bloc ```action contenant "
+            '{"skill":"<nom exact de la liste>","args":{...}}.')
 
     args = {}
     for cle, valeur in _ARG_NATIF_RE.findall(corps):
@@ -194,11 +209,21 @@ def _action_native(texte: str, role: str | None = None):
             except json.JSONDecodeError:
                 pass
         args[cle.strip()] = valeur
+    # AUTRE FORME RELEVÉE : une seule clé « args » dont la valeur est l'objet
+    # entier ({"depuis": "7j", "limite": 25}). C'est notre propre convention
+    # (`skill` / `args`) recopiée dans sa syntaxe : on déplie.
+    if len(args) == 1 and next(iter(args)).strip().lower() in ("args", "arguments", "parametres", "paramètres"):
+        interieur = next(iter(args.values()))
+        if isinstance(interieur, dict):
+            args = interieur
 
-    manquants = [p for p in catalogue(role)[nom][1]
+    manquants = [p for p in catalogue_role[nom][1]
                  if not str(args.get(p) or "").strip()]
     if manquants:
-        return None, reste, None
+        return None, reste, (
+            f"ton appel natif de « {nom} » omet le(s) paramètre(s) obligatoire(s) "
+            f"{', '.join(manquants)}. Ré-émets l'action dans un bloc ```action "
+            "complet.")
     return {"skill": nom, "args": args}, reste, None
 
 # Catalogue exposé au modèle : nom -> (description, requis[], optionnels[]).

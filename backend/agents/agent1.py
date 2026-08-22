@@ -32,6 +32,7 @@ DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un ré
 Certaines valeurs peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. Conserve-les telles quelles et ne CRÉE jamais toi-même de balise entre crochets : elles proviennent UNIQUEMENT des documents fournis.
 
 LA FORME. Réponds toujours en français. Sois précis, professionnel et concis. Réponds, puis arrête-toi : ne recopie pas la demande, ne répète pas une information déjà donnée.
+Un message qui commence par « non » suivi d'une demande (« non, affiche les 28 ») REFUSE ta proposition précédente et FORMULE la demande à exécuter : exécute-la, ne réponds pas « d'accord, je ne le fais pas ».
 Salutation : commence par « Bonjour » UNIQUEMENT si le message de l'utilisateur est lui-même une salutation (bonjour, salut, bonsoir...) ; sinon réponds DIRECTEMENT, sans formule d'accueil, et sans jamais répéter une salutation déjà faite dans la conversation. Ne dis JAMAIS « je suis Duret & Sols » ni « je m'appelle Duret & Sols » (c'est le nom de l'entreprise, pas ton identité) et ne te présente pas.
 Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt une virgule, un deux-points, une parenthèse ou un point."""
 
@@ -692,6 +693,9 @@ Voici les messages trouvés :
     # sur deux est pire qu'une regle absente.
     from learning.consignes import texte_injecte
     system_prompt += await texte_injecte(state.get("user_id"), state.get("user_role"))
+    # Les références d'images du fil, pour que « retouche celle-là » soit une
+    # action possible sans fouille de l'historique (voir cles_images_du_fil).
+    system_prompt += _consigne_images(state)
 
     # Il y avait ici un rappel « ATTENTION, tu as annoncé sans exécuter »,
     # ajouté quand `relance_annonce` était levé. RETIRÉ, pour deux raisons.
@@ -1341,6 +1345,50 @@ def should_validate(state: AgentState) -> str:
 
 # ── Graph ─────────────────────────────────────────────────────────────
 
+import re as _re_images
+_CLE_IMAGE_RE = _re_images.compile(r'"cle"\s*:\s*"([0-9a-f]{16,64})"')
+
+
+def cles_images_du_fil(state: AgentState) -> list[str]:
+    """Les références des images de CETTE conversation, la plus récente en dernier.
+
+    Lues dans l'historique (les blocs ```ui `visuel` que l'assistant a émis) et
+    dans les résultats du tour : aucun champ d'état à ajouter, rien à remettre
+    à zéro, et cela survit au redémarrage comme l'historique lui-même.
+
+    POURQUOI. Relevé le 22/08 : « change les montants gris de la maison en
+    rouge vif », juste après un essai de visuel. Le modèle a ANNONCÉ la retouche
+    sans l'émettre ; le forceur, qui part d'un contexte neuf, n'avait aucune
+    référence d'image sous la main et a répondu RIEN. Le tour s'est terminé sur
+    « Je n'ai pas réussi à exécuter l'action » — alors que la clé était là, dans
+    le message précédent. Une référence qu'il faut aller déterrer dans
+    l'historique n'est pas une référence disponible.
+    """
+    vues: list[str] = []
+    for m in (state.get("messages") or []):
+        contenu = getattr(m, "content", "")
+        for cle in _CLE_IMAGE_RE.findall(contenu if isinstance(contenu, str) else str(contenu)):
+            if cle not in vues:
+                vues.append(cle)
+    for r in (state.get("tool_results") or []):
+        for cle in _CLE_IMAGE_RE.findall(str(r.get("resultat_masque") or "")):
+            if cle not in vues:
+                vues.append(cle)
+    return vues[-6:]
+
+
+def _consigne_images(state: AgentState) -> str:
+    cles = cles_images_du_fil(state)
+    if not cles:
+        return ""
+    return ("\n\nIMAGES DE CETTE CONVERSATION (références, la plus récente en dernier) : "
+            + ", ".join(cles) + ". Pour en RETOUCHER une (changer un détail, une couleur, "
+            "ajouter ou retirer un élément en gardant tout le reste identique), appelle "
+            "`modifier_visuel` avec `image` = cette référence recopiée telle quelle et "
+            "`changements` en anglais simple. Sans autre précision, « cette image » "
+            "désigne la dernière.")
+
+
 async def forcer_action_node(state: AgentState, config=None) -> dict:
     """Le modèle a annoncé une action sans l'émettre : on la lui FAIT produire.
 
@@ -1405,7 +1453,7 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         "L'assistant vient d'écrire cette intention SANS l'exécuter :\n"
         f"« {(state.get('llm_response') or '').strip()[:400]} »\n\n"
         "Produis le bloc ```action de la PROCHAINE action à exécuter."
-    )
+    ) + _consigne_images(state)
 
     # Quand un travail est resté OUVERT, on ne laisse pas deviner : dire quelle
     # fermeture manque évite qu'un document déjà rempli soit rouvert une fois de
@@ -1468,6 +1516,17 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
     return {"relance_annonce": True,
             "llm_response": "```action\n"
                             + _json.dumps(action, ensure_ascii=False) + "\n```"}
+
+
+async def rediger_node(state: AgentState, config=None) -> dict:
+    """Les résultats sont là, le modèle a promis au lieu d'écrire : on ferme la
+    boucle d'actions et on lui redonne la main pour RÉDIGER.
+
+    Pas de logique ici : c'est `llm_node` qui, voyant `tools_finished` et une
+    annonce en réponse précédente, ajoute la consigne qui nomme le défaut. Ce
+    nœud ne fait que poser le drapeau — mais un routeur ne peut pas écrire
+    l'état, d'où son existence."""
+    return {"tools_finished": True}
 
 
 def route_apres_forcage(state: AgentState) -> str:
@@ -1558,8 +1617,18 @@ def route_apres_llm(state: AgentState) -> str:
     # La détection doit vivre ICI et nulle part ailleurs : sans bloc d'action,
     # `tools` n'est JAMAIS appelé, donc un contrôle placé là-bas ne s'exécute
     # pas — il en avait tout l'air, et c'est ce qui l'a rendu difficile à voir.
-    if not state.get("relance_annonce") and est_une_annonce(texte):
-        return "forcer"
+    if est_une_annonce(texte) or promesse_sans_suite(texte):
+        # DEUX SITUATIONS QUI N'APPELLENT PAS LE MÊME REMÈDE. Relevé le 22/08 :
+        # `fiche_client` avait RÉUSSI, le modèle a répondu « Je recherche les
+        # informations sur X. » et le tour s'est terminé là — l'utilisateur a
+        # lu une promesse au-dessus d'un résultat qui existait. Forcer une
+        # action ici referait la même (dédupliquée, donc pour rien). Quand les
+        # résultats sont là, le manque est la RÉDACTION : on ferme la boucle
+        # et on relance la passe d'écriture, qui nomme le défaut au modèle.
+        if any(r.get("ok") for r in (state.get("tool_results") or [])):
+            return "rediger"
+        if not state.get("relance_annonce"):
+            return "forcer"
 
     # TRAVAIL RESTÉ OUVERT. Le signal qui ne dépend pas des mots : un document
     # ouvert et jamais fermé n'a produit aucun fichier, quoi qu'en dise la
@@ -1618,9 +1687,11 @@ def build_agent1_graph():
     # a déjà refusé une fois, consigne en main) — on lui fait produire l'action
     # dans un appel dédié, puis on l'exécute.
     graph.add_node("forcer", forcer_action_node)
+    graph.add_node("rediger", rediger_node)
     graph.add_conditional_edges("llm", route_apres_llm,
                                 {"tools": "tools", "forcer": "forcer",
-                                 "rehydrate": "rehydrate"})
+                                 "rediger": "rediger", "rehydrate": "rehydrate"})
+    graph.add_edge("rediger", "llm")
     graph.add_conditional_edges("forcer", route_apres_forcage,
                                 {"tools": "tools", "rehydrate": "rehydrate"})
     graph.add_conditional_edges("tools", route_apres_tools,

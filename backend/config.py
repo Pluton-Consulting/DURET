@@ -343,6 +343,12 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        # UN REGLAGE RETIRE DU CODE NE DOIT PAS EMPECHER LE DEMARRAGE.
+        # Le `.env` des serveurs vit sa vie : il garde des lignes de reglages
+        # qu'on a cesse d'utiliser (Higgsfield, retire le 22/08/2026). Sans
+        # cette tolerance, retirer un champ ici ferait tomber le backend au
+        # redemarrage chez qui n'a pas nettoye son fichier le meme jour.
+        extra = "ignore"
         protected_namespaces = ()  # autorise les champs model_light / model_standard / model_complex
 
 

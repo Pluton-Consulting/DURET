@@ -67,7 +67,7 @@ backend/outils/nas.py                   # lecture du @STOCKAGE@ (cote @MARQUE@ b
 backend/nas/                            # acces bas niveau au @STOCKAGE@
 backend/skills/nas.py                   # skills exposant le @STOCKAGE@ a l'assistant
 backend/skills/visuels.py               # skills de rendu d'amenagement (offre @METIER@)
-backend/visuels/                        # generation de visuels Higgsfield, facturee a l'usage
+backend/visuels/                        # generation et retouche d'images (Nano Banana), offre propre au client
 backend/routers/visuels.py              # sert les visuels generes (offre visuelle du client)
 backend/ingestion/connectors/synology.py  # ingestion depuis le @STOCKAGE@
 backend/ingestion/skills.py             # le geste qui fait ENTRER le @STOCKAGE@ en memoire : meme structure, source differente

@@ -19,6 +19,10 @@ class AgentState(TypedDict):
     attachment_mime: Optional[str]  # 'image/jpeg', 'application/pdf', ...
     attachment_name: Optional[str]     # nom du fichier joint (traçabilité, invite)
     attachment_text: Optional[str]     # texte extrait d'un fichier non-image (Excel, Word, PDF, CSV…)
+    # Référence de la photo rangée au dépôt, quand l'offre visuelle existe :
+    # c'est elle qui permet de RETOUCHER l'image plus tard (même maison,
+    # quelques détails changés) au lieu d'en générer une autre.
+    attachment_visuel_cle: Optional[str]
     vision_analysis: Optional[str]  # description brute produite par le modèle vision (Agent 2)
     extracted_data: Optional[dict]  # extraction structurée (postes, surfaces, contraintes)
 

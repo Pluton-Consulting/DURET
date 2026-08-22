@@ -19,6 +19,8 @@ CLIENTS = [
     # fiche s'intitulait « 1 ». L'identité est dans « Raison sociale ».
     {"Client": "1", "Raison sociale": "SCI Les Tilleuls", "Ville": "Arcachon", "Email": "contact@tilleuls.fr", "Téléphone": "05 56 00 00 01"},
     {"Raison sociale": "Mairie de La Teste", "Ville": "La Teste-de-Buch", "Email": "marches@lateste.fr"},
+    # Nom et prénom séparés, comme dans l'export réel : il faut les deux.
+    {"Nom": "MARTIN", "Prénom": "Claire", "Ville": "Gujan-Mestras"},
     {"Raison sociale": "Dupont & Fils", "Ville": "Bordeaux", "Téléphone": "05 56 00 00 03"},
 ]
 DEVIS = [
@@ -100,6 +102,15 @@ class SkillError(Exception): pass
 m.SkillError = SkillError
 sys.modules["skills.erreurs"] = m
 
+ATELIER = {}
+m = types.ModuleType("bureautique.atelier")
+def _ouvrir(entete, proprio): ATELIER["entete"] = entete; return "jeton-doublure"
+def _ajouter(jeton, elements, proprio): ATELIER["elements"] = elements; return len(elements)
+def _terminer(jeton, proprio): return {"fini": True, "fichier": "x.xlsx", "octets": 1234}
+m.ouvrir, m.ajouter, m.terminer = _ouvrir, _ajouter, _terminer
+pb = types.ModuleType("bureautique"); pb.atelier = m
+sys.modules["bureautique"] = pb; sys.modules["bureautique.atelier"] = m
+
 m = types.ModuleType("skills.registre")
 class Declaration:
     def __init__(self, **kw): self.__dict__.update(kw)
@@ -144,6 +155,7 @@ spec.loader.exec_module(routines)
 
 class User:
     role = "direction"
+    id = "00000000-0000-0000-0000-000000000001"
 
 
 echecs = []
@@ -170,21 +182,31 @@ async def principal():
     print("\n2. Liste des clients")
     r = await routines.liste_clients({}, User())
     verifier("le jeu est trouvé malgré son nom « CLIENTS 2025 »", r.get("trouve"), r.get("message"))
-    verifier("le compte est exact", r.get("nombre") == 3, r.get("nombre"))
-    verifier("les trois noms sont lus", len(r.get("clients", [])) == 3)
+    verifier("le compte est exact", r.get("nombre") == 4, r.get("nombre"))
+    verifier("les quatre noms sont lus", len(r.get("clients", [])) == 4)
+    verifier("nom ET prénom quand l'export les sépare",
+             any(c["nom"] == "MARTIN Claire" for c in r["clients"]), [c["nom"] for c in r["clients"]])
     verifier("`affiches` dit ce que le bloc contient", r.get("affiches") == len(r["bloc_ui"]["rows"]))
-    verifier("le message final commence par le compte exact", r["message_final"].startswith("3 clients"))
+    verifier("le message final commence par le compte exact", r["message_final"].startswith("4 clients"))
     verifier("la consigne interdit au modèle d'écrire les noms lui-même", "n'écris PAS" in r["a_faire"])
     r2 = await routines.liste_clients({"lettre": "m"}, User())
-    verifier("la pagination par initiale marche (M → Mairie)",
-             r2.get("affiches") == 1 and r2["clients"][0]["nom"].startswith("Mairie"), r2.get("clients"))
-    verifier("le compte filtré est distinct du total", "1 client" in r2["message_final"] and "sur 3" in r2["message_final"], r2["message_final"])
+    verifier("la pagination par initiale marche (M → Mairie, MARTIN)",
+             r2.get("affiches") == 2 and all(c["nom"].upper().startswith("MA") for c in r2["clients"]), r2.get("clients"))
+    verifier("le compte filtré est distinct du total", "2 client" in r2["message_final"] and "sur 4" in r2["message_final"], r2["message_final"])
+    # ── Le fichier Excel pour la liste complète ────────────────────────
+    r3 = await routines.liste_clients({"fichier": True}, User())
+    verifier("`fichier: true` rend un bloc `fichier` xlsx", (r3.get("bloc_ui") or {}).get("type") == "fichier"
+             and (r3["bloc_ui"].get("nom") or "").endswith(".xlsx"), r3.get("bloc_ui"))
+    verifier("l'atelier a reçu TOUTES les lignes (4), en une feuille",
+             ATELIER["elements"] and ATELIER["elements"][0]["type"] == "feuille" and len(ATELIER["elements"][0]["lignes"]) == 4, ATELIER)
+    verifier("le message dit que la liste complète est dans le fichier", "fichier Excel" in r3["message_final"], r3["message_final"])
+    verifier("la consigne interdit d'écrire des noms", "AUCUN nom" in r3["a_faire"])
     bloc = r.get("bloc_ui") or {}
     verifier("le bloc est un `table` aux champs du composant",
              bloc.get("type") == "table" and "columns" in bloc and "rows" in bloc, list(bloc))
     verifier("la colonne Téléphone n'apparaît que si elle est renseignée",
              "Téléphone" in bloc.get("columns", []))
-    verifier("le nombre exact est imposé au modèle", "3" in (r.get("a_faire") or ""))
+    verifier("le nombre exact est imposé au modèle", str(r.get("nombre")) in (r.get("a_faire") or ""), r.get("a_faire"))
     verifier("le web est explicitement exclu",
              "web" in (routines.SKILLS["liste_clients"].description or "").lower())
 

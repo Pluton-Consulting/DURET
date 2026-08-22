@@ -208,9 +208,28 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
         logger.warning("Échec de l'action %s : %s", action.get("skill"), e)
         message = f"Action non exécutée : {getattr(e, 'detail', None) or e}"
 
-    return {"pending_action": None,
-            "final_response": ((state.get("final_response") or "").rstrip()
-                               + f"\n\n{message}").strip()}
+    sortie = {"pending_action": None,
+              "final_response": ((state.get("final_response") or "").rstrip()
+                                 + f"\n\n{message}").strip()}
+    # LA RÉFÉRENCE DE L'IMAGE VALIDÉE ENTRE DANS L'HISTORIQUE DU MODÈLE.
+    # L'historique (`messages`) n'est écrit que par la réhydratation, AVANT la
+    # décision humaine : le résultat d'une action validée n'y figurait jamais.
+    # Conséquence relevée le 22/08 : après un tirage final validé, « ajoute une
+    # maison sur cette image » a retouché l'ESSAI d'avant — la seule clé que le
+    # modèle voyait. On n'ajoute à l'historique QUE le bloc `visuel` (des clés,
+    # pas de donnée personnelle) : le reste de la sortie d'un skill exécuté
+    # n'est pas masqué, et l'historique part au modèle.
+    try:
+        import json as _json
+        from langchain_core.messages import AIMessage
+        bloc = ((resultat or {}).get("output") or {}).get("bloc_ui") \
+            if isinstance((resultat or {}).get("output"), dict) else None
+        if isinstance(bloc, dict) and bloc.get("type") == "visuel":
+            sortie["messages"] = [AIMessage(
+                content="```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```")]
+    except Exception:  # noqa: BLE001 - l'historique n'est pas vital
+        pass
+    return sortie
 
 
 def route_apres_gate(state: AgentState) -> str:

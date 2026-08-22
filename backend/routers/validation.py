@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from agents import runtime
 from auth.dependencies import get_current_user
 from database.models import User
-from database.connection import get_db
+from database.connection import get_db, get_rls_db
 from security.rbac import has_permission
 from security.audit import log_action
 
@@ -260,11 +260,33 @@ async def resolve_validation(
             logging.getLogger("duret.validation").warning(
                 "Exécution %s non mise à jour : %s", run_id, e)
 
+    # LA RÉPONSE D'UNE ACTION VALIDÉE ENTRE DANS L'HISTORIQUE. Elle partait au
+    # navigateur (`result["response"]`), qui l'affichait — et c'était tout :
+    # seul le chemin de conversation ordinaire écrit dans `messages`. Au
+    # rechargement de la page, le visuel généré, le mail envoyé, la variante
+    # retouchée avaient disparu de la conversation, comme si rien n'avait été
+    # fait. Relevé le 22/08 (« je perds les réponses quand je rafraîchis »).
+    # Best-effort, comme _persist_messages : l'historique ne fait jamais
+    # échouer une décision. Les fils de tâches (file:, task:) ont leur propre
+    # suivi et n'ont pas de conversation à alimenter.
+    reponse = str((result or {}).get("response") or "").strip()
+    if reponse and fil and not fil.startswith(("file:", "task:")):
+        try:
+            async with get_rls_db(str(current_user.id), current_user.role) as conn:
+                pk = await conn.fetchval(
+                    "SELECT id FROM threads WHERE langgraph_thread_id = $1", fil)
+                if pk is not None:
+                    await conn.execute(
+                        "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'assistant', $2)",
+                        pk, reponse)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("pluton.validation").warning(
+                "Réponse post-validation non persistée : %s", e)
+
     await log_action(
         action="validation_resolved",
         user_id=str(current_user.id),
         metadata={"validation_id": str(validation_id), "approved": body.approved,
                   "fil": fil},
     )
-
     return result

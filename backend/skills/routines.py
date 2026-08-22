@@ -37,7 +37,7 @@ import unicodedata
 
 logger = logging.getLogger("pluton.skills.routines")
 
-MAX_CLIENTS = 300
+MAX_CLIENTS = 5000
 # CE QUI ENTRE DANS LE BLOC D'ÉCRAN. Relevé le 22/08 : le bloc portait 300
 # lignes, le modèle a dû le recopier, s'est arrêté vers la quarantième et a
 # écrit « 300 affichés ». Un bloc que le modèle doit retaper doit tenir dans ce
@@ -59,6 +59,9 @@ FAMILLES = {
     # second).
     "nom": ("raison_sociale", "raison sociale", "societe", "société",
             "nom_client", "customer", "entreprise", "nom", "name", "client"),
+    # Le prénom à part : quand l'export le sépare du nom, « DUPONT » seul n'est
+    # qu'un bout du client (relevé le 22/08 : « elle n'a donné que les noms »).
+    "prenom": ("prenom", "prénom", "first_name", "firstname", "first name"),
     "email": ("email", "e-mail", "mail", "courriel", "adresse_mail"),
     "telephone": ("telephone", "téléphone", "tel", "portable", "mobile", "phone"),
     "ville": ("ville", "commune", "city", "localite"),
@@ -131,6 +134,15 @@ def _jsonb(valeur) -> dict:
         return dict(valeur)
     except (TypeError, ValueError):
         return {}
+
+
+def _nom_complet(d: dict) -> str:
+    """Nom ET prénom quand l'export les sépare : « DUPONT Marie », pas « DUPONT »."""
+    nom = _valeur(d, "nom")
+    prenom = _valeur(d, "prenom")
+    if prenom and _plat(prenom) not in _plat(nom):
+        return f"{nom} {prenom}".strip()
+    return nom
 
 
 def _fusion(ligne) -> dict:
@@ -251,12 +263,23 @@ async def liste_clients(data: dict, user) -> dict:
     clients = []
     for l in lignes:
         d = _fusion(l)
-        nom = _valeur(d, "nom")
+        nom = _nom_complet(d)
         if not nom:
             continue
         clients.append({"nom": nom, "ville": _valeur(d, "ville"),
                         "email": _valeur(d, "email"), "telephone": _valeur(d, "telephone")})
     clients.sort(key=lambda c: _plat(c["nom"]))
+
+    # LA LISTE COMPLÈTE, C'EST UN FICHIER. Relevé le 22/08 : « il dit qu'il
+    # affiche tout, il n'affiche jamais de grosse quantité ». Un bloc d'écran
+    # n'est pas fait pour 478 lignes, et le modèle ne les recopiera jamais.
+    # Quand on veut tout, on produit un Excel — rangé par l'atelier, servi par
+    # la route des documents, affiché en aperçu dans le chat comme n'importe
+    # quel fichier produit.
+    veut_fichier = str(data.get("fichier") or data.get("format") or "").strip().lower() in (
+        "1", "true", "oui", "vrai", "xlsx", "excel", "fichier", "csv", "complet", "tout")
+    if veut_fichier and clients:
+        return await _fichier_clients(clients, jeu, total, user)
 
     # Pagination par initiale : « les clients en B », « la suite ».
     lettre = _plat(data.get("lettre") or "")[:1]
@@ -307,6 +330,45 @@ async def liste_clients(data: dict, user) -> dict:
                     + ("Pour la suite, rappelle `liste_clients` avec `lettre` (une initiale). "
                        if tronque_ecran else "")
                     + "Pour le détail d'UN client, c'est `fiche_client`."),
+    }
+
+
+async def _fichier_clients(clients: list, jeu: str, total: int, user) -> dict:
+    """Toute la liste dans un .xlsx produit par l'atelier, avec son bloc `fichier`."""
+    import asyncio
+    from bureautique.atelier import ouvrir, ajouter, terminer
+    proprio = str(getattr(user, "id", "") or "")
+    colonnes = [("Client", "nom"), ("Ville", "ville"), ("Email", "email"), ("Téléphone", "telephone")]
+    colonnes = [(t_, c) for t_, c in colonnes if c == "nom" or any(x.get(c) for x in clients)]
+    entete = {"titre": "Liste des clients", "format": "xlsx"}
+    elements = [{"type": "feuille", "nom": "Clients",
+                 "entetes": [t_ for t_, _ in colonnes],
+                 "lignes": [[c.get(cle, "") for _, cle in colonnes] for c in clients]}]
+
+    def _produire():
+        jeton = ouvrir(entete, proprio)
+        ajouter(jeton, elements, proprio)
+        return jeton, terminer(jeton, proprio)
+
+    try:
+        jeton, fiche = await asyncio.to_thread(_produire)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Excel des clients impossible : %s", e)
+        from skills.erreurs import SkillError
+        raise SkillError("Le fichier des clients n'a pas pu être produit. Réessayez, ou "
+                         "demandez la liste à l'écran (par initiale).")
+
+    bloc = {"type": "fichier", "url": f"/api/documents/{jeton}", "nom": "clients.xlsx",
+            "format": "xlsx", "octets": fiche.get("octets")}
+    compte = (f"{total} client{'s' if total > 1 else ''}, la liste complète est dans le fichier "
+              f"Excel ci-dessous ({len(clients)} lignes).")
+    return {
+        "trouve": True, "source_type": jeu, "nombre": total, "affiches": len(clients),
+        "fichier": bloc["url"], "bloc_ui": bloc, "message_final": compte,
+        "a_faire": ("Dis : « " + compte + " », puis insère un bloc ```ui contenant EXACTEMENT "
+                    "le contenu de `bloc_ui` (type `fichier`) : l'écran affiche l'aperçu du "
+                    "tableau et le bouton de téléchargement. N'écris AUCUN nom toi-même. Le "
+                    "lien vaut 24 h."),
     }
 
 
@@ -418,7 +480,7 @@ async def fiche_client(data: dict, user) -> dict:
         total_general = _montant(meilleur["montant_total"])
         origine_ca = meilleur["jeu"]
 
-    fiche = {"Client": _valeur(identite, "nom") or demande}
+    fiche = {"Client": _nom_complet(identite) or demande}
     for etiquette, famille in (("Ville", "ville"), ("Email", "email"), ("Téléphone", "telephone")):
         v = _valeur(identite, famille)
         if v:
@@ -580,9 +642,12 @@ SKILLS = {
             "allers-retours pour la meme reponse, ni `rechercher_documents`, qui "
             "approxime. Le resultat donne un bloc ```ui a inserer TEL QUEL (60 noms "
             "au plus par appel, par ordre alphabetique ; `lettre` = une initiale pour "
-            "la suite). Ne cherche JAMAIS sur le web pour cette question : les "
+            "la suite). Pour la liste COMPLETE, ou des qu'on demande « tous », « tout », "
+            "« la liste entiere », un export, un Excel : passe `fichier: true` — le "
+            "resultat est un fichier Excel avec apercu dans le chat, jamais une liste "
+            "a recopier. Ne cherche JAMAIS sur le web pour cette question : les "
             "clients sont une donnee interne"),
-        requis=[], optionnels=["lettre"],
+        requis=[], optionnels=["lettre", "fichier"],
         effet="lecture",
         libelle="je liste les clients"),
     "fiche_client": Declaration(

@@ -385,6 +385,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     accordEnCoursRef.current = id
     setAccordEnCours(id)
     setErreurAccord(null)
+    // Le chat aussi montre qu'il travaille : la décision est prise dans le
+    // panneau latéral, mais le résultat arrive dans le fil. Entre les deux,
+    // l'indicateur d'activité du chat s'allume comme pendant un tour ordinaire.
+    if (accorde) { principalOccupeRef.current = true; setPrincipalOccupe(true) }
     try {
       const res = await apiRequest<{ status?: string; response?: string; validation_id?: string | null }>(
         `/api/validations/${id}/resolve`,
@@ -408,11 +412,9 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       // rechargement de la page, alors que la decision venait d'etre prise.
       setTachesLocales((prev) => prev.filter((t) => t.validationId !== id))
       // Le fil principal etait suspendu sur CET accord : il redevient libre.
-      if (filSuspenduRef.current === id) {
-        filSuspenduRef.current = null
-        principalOccupeRef.current = false
-        setPrincipalOccupe(false)
-      }
+      if (filSuspenduRef.current === id) filSuspenduRef.current = null
+      principalOccupeRef.current = false
+      setPrincipalOccupe(false)
       await rafraichirEtat()
     } catch (e: any) {
       if (e?.status === 409) {

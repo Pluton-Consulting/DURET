@@ -26,6 +26,36 @@ MAX_VALEURS_DISTINCTES = 12
 MAX_COLONNES = 30
 
 
+def _jsonb(valeur) -> dict:
+    """Un JSONB tel qu'asyncpg le rend : une CHAÎNE, pas un dict.
+
+    Relevé en production le 22/08, traces Langfuse : `liste_clients` rendait
+    « dictionary update sequence element #0 has length 1; 2 is required » — le
+    message de `dict()` nourri d'une chaîne. Aucun codec JSON n'est posé sur le
+    pool (`database/connection.py`), donc `row["data"]` arrive en texte. Le
+    banc ne l'avait pas vu parce que sa fausse base rendait des dicts : une
+    doublure qui ment sur le TYPE teste un code qui n'existe pas. Elle rend
+    désormais des chaînes, comme la vraie.
+    """
+    if not valeur:
+        return {}
+    if isinstance(valeur, dict):
+        return valeur
+    if isinstance(valeur, (bytes, bytearray)):
+        valeur = valeur.decode("utf-8", "replace")
+    if isinstance(valeur, str):
+        import json
+        try:
+            d = json.loads(valeur)
+            return d if isinstance(d, dict) else {}
+        except ValueError:
+            return {}
+    try:
+        return dict(valeur)
+    except (TypeError, ValueError):
+        return {}
+
+
 async def interroger_donnees(data: dict, user) -> dict:
     """Compte et filtre sur les colonnes importées. Aucun embedding, aucun seuil."""
     from database.connection import get_db
@@ -253,7 +283,7 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
 
     return {
         "source_type": type_source, "filtres": critere, "nombre": total,
-        "enregistrements": [{"titre": l["title"], "valeurs": dict(l["data"] or {}),
+        "enregistrements": [{"titre": l["title"], "valeurs": _jsonb(l["data"]),
                              "fichier": l["source_filename"], "ligne": l["ligne"]}
                             for l in lignes],
         "note": (f"{total} enregistrement(s) au total ; {min(total, MAX_ENREGISTREMENTS)} "
@@ -317,7 +347,19 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
     et regroupement facultatifs. Les clés voyagent en PARAMÈTRE, jamais dans le
     texte SQL."""
     import json
-    operation = _OPERATIONS.get(str(agreger.get("operation") or "somme").strip().lower(), "SUM")
+    demandee = str(agreger.get("operation") or "somme").strip().lower()
+    # UNE OPÉRATION INCONNUE N'EST PAS UNE SOMME. Relevé dans les traces du
+    # 22/08 : le modèle a demandé {"operation": "liste", "colonne": "nom"} pour
+    # obtenir les noms des clients, et a reçu… la SOMME de la colonne nom — un
+    # résultat absurde, rendu avec l'assurance d'un calcul juste. On refuse, et
+    # on dit quel geste fait ce qu'il voulait.
+    if demandee not in _OPERATIONS:
+        return {"source_type": type_source, "erreur":
+                f"Opération « {demandee} » inconnue. Opérations possibles : "
+                + ", ".join(sorted(set(_OPERATIONS))) + ". Pour LISTER des "
+                "enregistrements, n'utilise pas `agreger` : passe des `filtres`, ou "
+                "appelle `liste_clients` / `fiche_client` s'il s'agit de clients."}
+    operation = _OPERATIONS[demandee]
     colonne = str(agreger.get("colonne") or "").strip()
     par = str(agreger.get("par") or "").strip()          # "annee", "mois" ou un nom de colonne
     colonne_date = str(agreger.get("colonne_date") or "date").strip()

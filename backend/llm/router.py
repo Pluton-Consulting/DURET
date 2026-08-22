@@ -341,6 +341,18 @@ def _motif_quarantaine(err: Exception) -> Optional[tuple]:
     if "404" in msg or "model_not_found" in msg or "does not exist" in msg \
        or "decommissioned" in msg or "no endpoints" in msg:
         return QUARANTAINE_AUTH_S, "modèle inconnu de cette clé"
+    # UN HÔTE QUI REFUSE LA CONNEXION, CE N'EST PAS UN TIMEOUT. Ollama est
+    # toujours « disponible » pour la cascade (repli hors ligne, sans clé), mais
+    # sur ces serveurs il ne tourne pas : chaque appel LLM payait deux
+    # tentatives vers un port fermé — visible dans CHAQUE trace du 22/08,
+    # « mistral:7b · All connection attempts failed » ×2. Un refus de connexion
+    # ne se répare pas dans la seconde : cinq minutes d'écart, comme un quota.
+    # Un timeout, lui, reste hors quarantaine : c'est un réseau lent, pas un
+    # service absent.
+    if "connection attempts failed" in msg or "connection refused" in msg \
+       or "connecterror" in msg or "nodename nor servname" in msg \
+       or "name or service not known" in msg or "failed to establish" in msg:
+        return QUARANTAINE_QUOTA_S, "injoignable"
     return None
 
 

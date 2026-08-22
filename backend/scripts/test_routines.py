@@ -49,6 +49,12 @@ def _normalise(d):
     return {correspondance[k]: v for k, v in d.items() if k in correspondance}
 
 
+# LE JSONB ARRIVE EN CHAÎNE, COMME AVEC ASYNCPG SANS CODEC. C'est ce détail qui
+# a laissé passer le crash de production : la doublure rendait des dicts.
+def _jsonb_comme_asyncpg(d):
+    return json.dumps(d, ensure_ascii=False)
+
+
 class FausseConnexion:
     async def fetch(self, sql, *args):
         if "DISTINCT source_type" in sql:
@@ -59,10 +65,12 @@ class FausseConnexion:
             for type_source, lignes in BASE.items():
                 for d in lignes:
                     if motif in json.dumps(d, ensure_ascii=False).lower():
-                        out.append({"source_type": type_source, "data": d, "champs": _normalise(d)})
+                        out.append({"source_type": type_source, "data": _jsonb_comme_asyncpg(d),
+                                    "champs": _jsonb_comme_asyncpg(_normalise(d))})
             return out
         if "SELECT data, champs FROM document_metadata" in sql:
-            return [{"data": d, "champs": _normalise(d)} for d in BASE.get(args[0], [])]
+            return [{"data": _jsonb_comme_asyncpg(d), "champs": _jsonb_comme_asyncpg(_normalise(d))}
+                    for d in BASE.get(args[0], [])]
         return []
 
     async def fetchval(self, sql, *args):

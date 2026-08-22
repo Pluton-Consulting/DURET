@@ -70,7 +70,7 @@ CAS = [
     ("Error code: 404 - {'error': {'message': 'The model `llama-3.3-70b-versatile` does not exist'}}",
      "modèle inconnu de cette clé", 1800),
     ("Error code: 429 - rate limit exceeded", "quota épuisé", 300),
-    ("All connection attempts failed", None, 0),          # réseau : ponctuel
+    ("All connection attempts failed", "injoignable", 300),  # port fermé : pas ponctuel
     ("Read timeout after 60s", None, 0),                  # lenteur : ponctuel
 ]
 for message, raison_attendue, duree_attendue in CAS:
@@ -116,7 +116,7 @@ verifier("le candidat est de nouveau dans la cascade",
 # ── 5. Le gain réel : combien d'appels morts évités ───────────────────────
 print("\n5. Gain mesuré sur la panne du 21/08")
 router._QUARANTAINE.clear()
-MORTS = {"deepseek", "groq", "ollama", "openrouter"}      # ce qui échouait en production
+MORTS = {"deepseek", "groq", "ollama", "openrouter"}      # ce qui échouait en production (22/08 : Ollama aussi)
 chaine = router._tier_chain(router.LLMTier.STANDARD)
 avant = sum(1 for p, _ in chaine if p in MORTS)
 for p, m in chaine:

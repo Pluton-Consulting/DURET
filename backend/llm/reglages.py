@@ -30,10 +30,17 @@ REGLAGES_CONNUS = (
 )
 
 # Un réglage dont la valeur finit DANS du SQL doit être validé à l'écriture ET
-# à la lecture. La date est la seule valeur du genre aujourd'hui : on l'oblige à
-# n'être qu'un AAAA-MM-JJ, ce qui la rend inoffensive une fois insérée.
+# à la lecture. On l'oblige à n'être qu'un instant ISO, ce qui le rend
+# inoffensif une fois inséré.
+#
+# L'HEURE EST ADMISE, ET CE N'EST PAS UN LUXE. Avec une granularité au jour,
+# « remets les compteurs à zéro » laissait sur le tableau de bord toute
+# l'activité du jour même — 20 évènements en production, ceux des essais de la
+# matinée. Or une remise à zéro est un INSTANT, pas une journée : on veut
+# repartir de MAINTENANT. Une date nue reste acceptée (le champ de l'écran en
+# produit une) et vaut minuit, comme avant.
 import re
-_FORMAT_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_FORMAT_INSTANT = re.compile(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$")
 
 DUREE_CACHE_S = 30
 
@@ -93,8 +100,9 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     # doit rien ouvrir du tout, pas même une connexion.
     if nom not in REGLAGES_CONNUS:
         raise ValueError(f"Réglage inconnu : {nom}")
-    if nom == "kpi_depuis" and (brut or "").strip() and not _FORMAT_DATE.match((brut or "").strip()):
-        raise ValueError("Date attendue au format AAAA-MM-JJ (ex. 2026-08-22).")
+    if nom == "kpi_depuis" and (brut or "").strip() and not _FORMAT_INSTANT.match((brut or "").strip()):
+        raise ValueError("Date attendue au format AAAA-MM-JJ, éventuellement "
+                         "suivie de HH:MM (ex. 2026-08-22 ou 2026-08-22 18:30).")
     from database.connection import get_db
 
     v = (brut or "").strip()
@@ -135,7 +143,7 @@ def date_kpi() -> str | None:
     tableau de bord qui tombe n'aide personne.
     """
     v = (valeur("kpi_depuis") or "").strip()
-    return v if _FORMAT_DATE.match(v) else None
+    return v if _FORMAT_INSTANT.match(v) else None
 
 
 def plancher_sql(colonne: str) -> str:
@@ -148,4 +156,9 @@ def plancher_sql(colonne: str) -> str:
     que la valeur ne peut être qu'un AAAA-MM-JJ (`_FORMAT_DATE`, deux fois).
     """
     d = date_kpi()
-    return f" AND {colonne} >= DATE '{d}'" if d else ""
+    # TIMESTAMPTZ et non DATE : une date nue y vaut minuit — le comportement
+    # d'avant — tandis qu'un instant complet coupe à la seconde près. Sur une
+    # colonne de type DATE (`api_usage_daily.date`), Postgres promeut la date à
+    # minuit avant de comparer : la journée en cours sort donc du compte, ce
+    # qui est bien l'intention d'une remise à zéro.
+    return f" AND {colonne} >= TIMESTAMPTZ '{d}'" if d else ""

@@ -98,6 +98,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
     plancher = plancher_sql("created_at")
     plancher_a = plancher_sql("a.created_at")
     plancher_date = plancher_sql("date")
+    plancher_t = plancher_sql("t.created_at")
 
     async with get_db() as conn:
         # ── Ce que les experts ont fait ce mois-ci (30 jours glissants) ──
@@ -174,7 +175,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
             SELECT t.id, LEFT(t.query, 160) AS demande, t.status, t.progress, t.created_at, t.updated_at,
                    COALESCE(u.name, u.email) AS par
             FROM taches_differees t LEFT JOIN users u ON u.id = t.user_id
-            WHERE {perim.format(col='t.user_id')}
+            WHERE {perim.format(col='t.user_id')}{plancher_t}
             ORDER BY t.updated_at DESC LIMIT 10
         """, uid, global_)
         synthese = await _une(conn, f"""

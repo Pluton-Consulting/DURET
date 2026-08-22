@@ -96,13 +96,20 @@ class Declaration:
 m.Declaration = Declaration
 sys.modules["skills.registre"] = m
 
-MAILS = {"messages": [
-    {"de": "marches@lateste.fr", "objet": "Re: Devis DEV-2025-041", "date": "2026-08-22 09:12",
-     "extrait": "Bonjour, pouvez-vous confirmer le délai de pose ?", "non_lu": True},
-    {"de": "info@fournisseur.fr", "objet": "Catalogue automne", "date": "2026-08-22 08:40",
-     "extrait": "Découvrez nos nouveautés."},
-    {"de": "contact@tilleuls.fr", "objet": "RE : visite de chantier", "date": "2026-08-21 17:02",
-     "extrait": "Je serai disponible jeudi matin."},
+# LES CLÉS SONT CELLES DE `mail/lecture.py`, PAS DES CLÉS INVENTÉES.
+# C'est tout l'intérêt : le banc a révélé que le skill cherchait `non_lu`
+# quand la messagerie rend `lu`, et que `extrait` s'appelle en réalité
+# `apercu`. Un compteur de non-lus serait resté à zéro sans que rien ne le dise.
+MAILS = {"boite": "contact@duret-sols.fr", "dossier": "recus", "nombre": 3, "messages": [
+    {"de": "marches@lateste.fr", "objet": "Re: Devis DEV-2025-041", "date": "2026-08-22T09:12:00Z",
+     "apercu": "Bonjour, pouvez-vous confirmer le délai de pose ?", "lu": False,
+     "expediteur_interne": False, "expediteur_automatique": False},
+    {"de": "info@fournisseur.fr", "objet": "Catalogue automne", "date": "2026-08-22T08:40:00Z",
+     "apercu": "Découvrez nos nouveautés.", "lu": True,
+     "expediteur_interne": False, "expediteur_automatique": True},
+    {"de": "contact@tilleuls.fr", "objet": "RE : visite de chantier", "date": "2026-08-21T17:02:00Z",
+     "apercu": "Je serai disponible jeudi matin.", "lu": True,
+     "expediteur_interne": False, "expediteur_automatique": False},
 ]}
 m = types.ModuleType("mail.skills")
 async def _lire_mails(data, user): return MAILS
@@ -207,7 +214,14 @@ async def principal():
     verifier("les trois messages sont relevés", r.get("nombre") == 3, r.get("nombre"))
     verifier("les réponses à un fil sont repérées (Re: ET RE :)",
              r.get("reponses_dans_un_fil") == 2, r.get("reponses_dans_un_fil"))
-    verifier("le non-lu est compté", r.get("non_lus") == 1, r.get("non_lus"))
+    verifier("le non-lu est compté (clé réelle `lu`, inversée)",
+             r.get("non_lus") == 1, r.get("non_lus"))
+    verifier("l'expéditeur automatique est signalé (pas de réponse à une pub)",
+             sum(1 for m in r["messages"] if m.get("automatique")) == 1,
+             [m.get("automatique") for m in r["messages"]])
+    verifier("l'aperçu réel est repris", "délai de pose" in r["messages"][0]["extrait"],
+             r["messages"][0]["extrait"])
+    verifier("la boîte lue est rendue", r.get("boite") == "contact@duret-sols.fr", r.get("boite"))
     verifier("la consigne interdit d'envoyer quoi que ce soit",
              "n'envoie rien" in (r.get("a_faire") or "").lower())
     verifier("la consigne impose UN SEUL message",

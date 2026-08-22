@@ -430,11 +430,21 @@ async def check_mails(data: dict, user) -> dict:
             "de": _champ(m, "de", "from", "expediteur", "sender"),
             "objet": objet,
             "date": _champ(m, "date", "recu_le", "receivedAt", "received_at"),
-            "extrait": _champ(m, "extrait", "preview", "apercu", "body", "corps")[:400],
+            "extrait": _champ(m, "apercu", "extrait", "preview", "body", "corps")[:400],
             # « Re: » n'est pas un détail : une réponse dans un fil en cours est
             # ce qu'on veut voir en premier quand on fait le point.
             "reponse_dans_un_fil": bool(re.match(r"\s*(re|rép|rep)\s*:", objet, re.I)),
-            "non_lu": bool(m.get("non_lu") or m.get("unread") or m.get("is_unread")),
+            # LA MESSAGERIE REND `lu`, PAS `non_lu` — et l'écart était invisible.
+            # Le skill cherchait une clé qui n'existe nulle part dans
+            # `mail/lecture.py` : le compteur de non-lus serait resté à zéro
+            # pour toujours, sans erreur, sans trace. Relevé au banc.
+            # `.get("lu", True)` : un message dont l'état est inconnu n'est PAS
+            # annoncé comme non lu — on ne réveille pas sur une supposition.
+            "non_lu": not bool(m.get("lu", True)),
+            # Une pub n'appelle pas de réponse. Le dire ici évite au modèle de
+            # proposer poliment de répondre à un catalogue d'automne.
+            "automatique": bool(m.get("expediteur_automatique")),
+            "interne": bool(m.get("expediteur_interne")),
         })
 
     fils = sum(1 for r in releve if r["reponse_dans_un_fil"])
@@ -454,6 +464,8 @@ async def check_mails(data: dict, user) -> dict:
             "message : l'expéditeur, l'objet, et UNE phrase de résumé tirée de "
             "l'extrait — jamais de ta mémoire. Mets EN PREMIER ceux marqués "
             "`reponse_dans_un_fil` : ce sont des échanges en cours. "
+            "N'en propose AUCUNE pour les messages marqués `automatique` : ce sont "
+            "des envois de masse, y répondre n'a pas de sens. "
             "Quand un message appelle visiblement une réponse (question posée, "
             "demande de devis, relance), propose une réponse courte en deux ou trois "
             "lignes, présentée comme une PROPOSITION à valider — n'envoie rien : "

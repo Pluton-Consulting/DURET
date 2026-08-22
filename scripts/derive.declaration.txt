@@ -30,7 +30,7 @@
 # Ces fichiers porteront toujours des valeurs differentes, meme apres
 # mutualisation : ils deviendront le theme charge par client.
 frontend/app/charte.css                 # les jetons --marque-* : le seul fichier de couleurs a changer
-frontend/components/nav/Logo.tsx        # trace du logo, propre au client (absent cote @MARQUE@ vert)
+frontend/components/nav/Logo.tsx        # trace du logo, propre au client — meme signature Logo({taille}) des deux cotes, ce qui rend nav/EnTete.tsx commun
 frontend/app/layout.tsx                 # polices d'enseigne (Plus Jakarta Sans + Inter / Inter seul)
 frontend/app/(auth)/login/page.tsx      # marque de l'ecran de connexion : image SVG d'un cote, composant Logo de l'autre
 frontend/app/(auth)/verify/page.tsx     # le meme signe d'enseigne sur l'ecran de verification
@@ -38,7 +38,6 @@ frontend/components/nav/TopNav.tsx      # le meme signe d'enseigne dans la barre
 frontend/lib/permissions.ts             # pastilles de role tirees du logo + libelles de metier des onglets
 frontend/app/(app)/parametres/SettingsClient.tsx  # nom affiche du produit dans l'en-tete d'administration
 frontend/components/blocks/business/DocCard.tsx   # la teinte du format DWG descend de la marque
-backend/routers/auth.py                 # gabarit d'e-mail : le logo y est redessine en cellules de tableau
 backend/bureautique/modele.py           # couleur de marque des documents produits, assombrie pour l'impression
 
 [identite]
@@ -51,6 +50,7 @@ backend/bureautique/modele.py           # couleur de marque des documents produi
 # ces deux lignes disparaitront.
 backend/agents/agent1.py                # SYSTEM_PROMPT : administratif @METIER@ / suivi de chantiers BTP
 backend/agents/agent2.py                # SYSTEM_PROMPT : conception et visuels / etudes et chiffrage
+backend/emails/marque.py                # nom, couleur, logo et expediteur des mails — le SEUL fichier de emails/ qui diverge
 backend/mail/skills.py                  # prompt de classement du courrier, formule selon le metier
 backend/scripts/seed_skills_catalogue.py  # catalogue de capacites metier livre a l'amorcage
 backend/scripts/test_e2e.py             # jeu d'essai metier (terrassement et plantation / ragreage et carrelage)
@@ -68,6 +68,7 @@ backend/nas/                            # acces bas niveau au @STOCKAGE@
 backend/skills/nas.py                   # skills exposant le @STOCKAGE@ a l'assistant
 backend/skills/visuels.py               # skills de rendu d'amenagement (offre @METIER@)
 backend/visuels/                        # generation de visuels Higgsfield, facturee a l'usage
+backend/routers/visuels.py              # sert les visuels generes (offre visuelle du client)
 backend/ingestion/connectors/synology.py  # ingestion depuis le @STOCKAGE@
 backend/ingestion/skills.py             # le geste qui fait ENTRER le @STOCKAGE@ en memoire : meme structure, source differente
 backend/ingestion/connectors/gmail.py   # ingestion du courrier Google Workspace
@@ -90,5 +91,3 @@ start-local.sh                          # chemin du projet sur le poste et utili
 backup.sh                               # utilisateur postgres de la sauvegarde
 README-DURET.md                         # note d'accueil propre au second client
 frontend/e2e/recette.json               # recette du brief : questions et attendus propres au client
-frontend/e2e/BRIEF.md                   # le brief client lui-meme, reproduit pour reference du banc
-frontend/e2e/fixtures/                  # pieces jointes de test (plan de masse, photos) propres au metier

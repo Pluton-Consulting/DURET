@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     # paliers qui rédigent) ; LIGHT garde ses modèles rapides, qui ne servent
     # qu'à orienter et dont la qualité de rédaction n'entre pas en jeu.
     llm_tete: str = ""
+    # Date de départ des indicateurs (AAAA-MM-JJ). Vide = tout l'historique.
+    kpi_depuis: str = ""
 
     # Vision (Agent 2) : ordre de préférence anthropic > groq. Désactivable.
     vision_enabled: bool = True

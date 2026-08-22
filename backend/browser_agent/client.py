@@ -11,7 +11,7 @@ import httpx
 
 from config import settings
 
-logger = logging.getLogger("symbiose.browser.client")
+logger = logging.getLogger("duret.browser.client")
 
 
 class NavigateurCoupe(RuntimeError):

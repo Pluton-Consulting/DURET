@@ -128,3 +128,52 @@ export function canAccess(role: string, tabKey: string): boolean {
   const tab = TABS.find((t) => t.key === tabKey)
   return tab ? tab.roles.includes(role) : false
 }
+
+// ════════════════════════════════════════════════════════════════════════
+//  NAVIGATION V2 — deux vues, un panneau, des experts.
+//
+//  L'en-tête ne porte plus un menu : trois bulles flottantes. Au centre un
+//  SWITCH à deux positions — le tableau de bord et le chat — parce que ce sont
+//  les deux seules choses qu'on ouvre dix fois par jour. Tout le reste vit
+//  derrière l'engrenage, dans un panneau qui glisse depuis la droite : ce qui
+//  se règle, se consulte rarement, ou ne concerne que qui administre.
+//
+//  Les onglets « par agent » disparaissent : ils n'affichaient que des
+//  maquettes. Leurs indicateurs RÉELS vivent dans le tableau de bord, une carte
+//  par EXPERT — c'est ainsi qu'on les nomme désormais à l'écran : un expert de
+//  quelque chose, pas un « agent ». Apprentissage et Savoir-faire, qui
+//  parlaient de la même chose, deviennent un seul onglet « Connaissances ».
+// ════════════════════════════════════════════════════════════════════════
+
+/** Les deux vues du switch central. */
+export const VUES = [
+  { key: "tableau", label: "Tableau de bord", href: "/accueil" },
+  { key: "chat",    label: "Chat",            href: "/chat" },
+] as const
+
+/** Ce qui vit derrière l'engrenage, dans l'ordre d'affichage. */
+export const SECTIONS: TabDef[] = [
+  { key: "connaissances", label: "Connaissances",
+    // « ce que l'assistant sait faire et ce qu'il apprend » : validations,
+    // débrief d'apprentissage, savoir-faire — réunis.
+    href: "/connaissances", roles: MANAGERS },
+  { key: "gestion",       label: "Pilotage",      href: "/gestion",     roles: ["super_admin", "direction"] },
+  { key: "parametres",    label: "Paramètres",    href: "/parametres",  roles: MANAGERS },
+  { key: "superviseur",   label: "Développeur",   href: "/superviseur", roles: ["super_admin"], dev: true },
+]
+
+export function getVisibleSections(role: string): TabDef[] {
+  return SECTIONS.filter((s) => s.roles.includes(role))
+}
+
+/** Les experts, tels qu'ils se nomment à l'écran. Propres à l'entreprise. */
+export const EXPERTS: { cle: string; nom: string; domaine: string; accent: string }[] = [
+  { cle: "agent1", nom: "Expert administratif & chantiers",
+    domaine: "suivi de chantiers, clients, mails, documents administratifs", accent: "primary" },
+  { cle: "agent2", nom: "Expert appels d'offres",
+    domaine: "analyse de DCE — CCTP, CCAP, RC, DPGF, métrés et chiffrage", accent: "leaf" },
+  { cle: "agent3", nom: "Expert savoir-faire",
+    domaine: "apprentissage — compétences, consignes, connaissances acquises", accent: "mid" },
+]
+
+export const MARQUE = { nom: "Duret & Sols", logo: "/duret-sols.svg", logoAlt: "Duret & Sols" }

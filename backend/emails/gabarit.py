@@ -1,0 +1,200 @@
+"""
+LE GABARIT DES MAILS — une seule structure, pour les deux clients.
+
+Ce fichier est du SOCLE : il est identique d'un projet à l'autre, au caractère
+près. Tout ce qui distingue une marque de l'autre — le nom, le logo, la
+couleur, l'expéditeur — vit dans `emails/marque.py`, et NULLE PART ailleurs.
+Changer de client, c'est remplacer ce seul fichier.
+
+POURQUOI CE DÉCOUPAGE. Les deux mails de connexion avaient dérivé chacun de
+leur côté : titres différents, expéditeurs différents, mise en page différente,
+l'un signé « PLUTON », l'autre du nom du client. Un destinataire ne pouvait pas
+reconnaître qu'il s'agissait du même produit, et corriger une faute obligeait à
+la corriger deux fois — donc à l'oublier une fois sur deux.
+
+TROIS CONTRAINTES DE MESSAGERIE, apprises à la dure et respectées ici :
+  1. pas de CSS externe ni de balise <style> — Gmail les jette : tout est en
+     attribut `style` sur chaque élément ;
+  2. pas d'image distante pour le logo — la plupart des clients bloquent les
+     images par défaut, et le destinataire verrait un cadre vide à la place de
+     la marque : le logo est DESSINÉ en cellules de tableau bordées, qui
+     s'affichent partout, Outlook compris ;
+  3. la mise en page est faite de <table>, pas de flex ni de grid — Outlook
+     rend encore avec le moteur de Word.
+
+L'APERÇU (le texte gris que la boîte de réception affiche après l'objet) n'est
+pas décoratif : sans lui, les clients de messagerie y recopient le début du
+HTML, c'est-à-dire n'importe quoi. On le pose donc explicitement, masqué en
+tête de corps.
+"""
+from __future__ import annotations
+
+from emails.marque import MARQUE
+
+# Les gris sont communs aux deux marques : seule la couleur d'accent change.
+# Les figer ici plutôt que dans `marque.py` évite qu'une duplication de projet
+# fasse dériver la lisibilité du texte en même temps que la charte.
+_FOND_PAGE = "#F4F6F8"
+_TEXTE = "#2E3742"
+_TEXTE_DOUX = "#6B7785"
+_TITRE = "#0B0E11"
+_BORDURE = "#E6EAEF"
+
+_ENVELOPPE = """<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:{fond_page};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+  <!-- Aperçu de la boîte de réception : masqué à l'écran, lu par le client de
+       messagerie. Les espaces insécables qui suivent l'empêchent d'aller
+       chercher la suite du HTML pour compléter la ligne. -->
+  <div style="display:none;font-size:1px;color:{fond_page};line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden">
+    {apercu}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+  </div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{fond_page};padding:40px 12px">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(11,14,17,0.08)">
+
+        <!-- ── En-tête : le SEUL endroit qui porte la marque ── -->
+        <tr>
+          <td style="background:{fond_marque};padding:28px 40px">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="vertical-align:middle;padding-right:14px">{logo}</td>
+                <td style="vertical-align:middle">
+                  <div style="color:#ffffff;font-size:18px;font-weight:800;letter-spacing:-0.3px;line-height:1.15">{nom}</div>
+                  <div style="color:{couleur_baseline};font-size:11px;font-weight:500;margin-top:4px">Assistant IA interne</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- ── Corps ── -->
+        <tr>
+          <td style="padding:36px 40px 8px">
+            <h1 style="margin:0 0 14px;font-size:22px;font-weight:700;color:{titre};letter-spacing:-0.4px;line-height:1.3">{titre_mail}</h1>
+            {corps}
+          </td>
+        </tr>
+
+        {bloc_cta}
+
+        <!-- ── Pied ── -->
+        <tr>
+          <td style="padding:8px 40px 32px">
+            <div style="border-top:1px solid {bordure};padding-top:20px">
+              {pied}
+            </div>
+          </td>
+        </tr>
+
+      </table>
+
+      <div style="max-width:520px;margin:18px auto 0;font-size:11px;color:{texte_doux};line-height:1.5;text-align:center">
+        {nom} · assistant interne — message automatique, merci de ne pas y répondre.
+      </div>
+
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+_CTA = """
+        <tr>
+          <td style="padding:20px 40px 28px">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="border-radius:10px;background:{couleur}">
+                  <a href="{url}" style="display:inline-block;padding:14px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px">{libelle}</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>"""
+
+
+def enveloppe(titre_mail: str, apercu: str, corps: str,
+              cta_libelle: str | None = None, cta_url: str | None = None,
+              pied: str = "") -> str:
+    """Assemble un mail complet à partir du gabarit commun.
+
+    `corps` et `pied` sont du HTML déjà rendu (paragraphes stylés). Le bouton
+    n'apparaît que si on lui donne une adresse : un mail purement informatif
+    utilise la même enveloppe, sans appel à l'action.
+    """
+    bloc_cta = ""
+    if cta_url and cta_libelle:
+        bloc_cta = _CTA.format(couleur=MARQUE["couleur"], url=cta_url, libelle=cta_libelle)
+    return _ENVELOPPE.format(
+        fond_page=_FOND_PAGE,
+        fond_marque=MARQUE["fond"],
+        couleur_baseline=MARQUE["baseline"],
+        logo=MARQUE["logo"],
+        nom=MARQUE["nom"],
+        titre=_TITRE,
+        titre_mail=titre_mail,
+        apercu=apercu,
+        corps=corps,
+        bloc_cta=bloc_cta,
+        pied=pied,
+        bordure=_BORDURE,
+        texte_doux=_TEXTE_DOUX,
+    )
+
+
+def paragraphe(html: str, doux: bool = False) -> str:
+    """Un paragraphe aux réglages du gabarit — pour ne pas réinventer la typo."""
+    couleur = _TEXTE_DOUX if doux else _TEXTE
+    taille = "13px" if doux else "15px"
+    return (f'<p style="margin:0 0 18px;font-size:{taille};color:{couleur};line-height:1.6">'
+            f'{html}</p>')
+
+
+def mail_connexion(lien: str, minutes: int) -> tuple[str, str, str]:
+    """Le mail de connexion : (objet, aperçu, html).
+
+    L'objet et l'aperçu sont les MÊMES pour tous les clients, au nom près : ce
+    que voit le destinataire dans sa boîte doit être reconnaissable d'un projet
+    à l'autre, c'est ce qui fait qu'un mail n'est pas pris pour du hameçonnage.
+    """
+    objet = f"Votre lien de connexion — {MARQUE['nom']}"
+    apercu = f"Lien à usage unique, valable {minutes} minutes."
+
+    corps = (
+        paragraphe("Bonjour,") +
+        paragraphe(
+            f"Vous avez demandé à vous connecter à <strong>{MARQUE['nom']}</strong>. "
+            f"Le bouton ci-dessous vous ouvre la session directement — il n'y a "
+            f"ni mot de passe à retenir, ni code à recopier."
+        ) +
+        paragraphe(
+            f"Ce lien est à <strong>usage unique</strong> et expire dans "
+            f"<strong>{minutes}&nbsp;minutes</strong>."
+        )
+    )
+
+    # Le lien en clair EN PLUS du bouton : certains clients d'entreprise
+    # réécrivent ou neutralisent les boutons, et le destinataire se retrouve
+    # alors sans aucun moyen d'entrer.
+    pied = (
+        paragraphe("Le bouton ne fonctionne pas ? Copiez cette adresse dans votre navigateur :", doux=True) +
+        f'<div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;'
+        f'color:{_TEXTE_DOUX};background:{_FOND_PAGE};border:1px solid {_BORDURE};'
+        f'border-radius:8px;padding:10px 12px;margin:0 0 16px;word-break:break-all">{lien}</div>' +
+        paragraphe(
+            "Vous n'êtes pas à l'origine de cette demande ? Ignorez ce message : "
+            "sans clic de votre part, le lien expire seul et aucune session n'est ouverte.",
+            doux=True)
+    )
+
+    html = enveloppe(
+        titre_mail="Votre lien de connexion",
+        apercu=apercu,
+        corps=corps,
+        cta_libelle="Ouvrir ma session",
+        cta_url=lien,
+        pied=pied,
+    )
+    return objet, apercu, html

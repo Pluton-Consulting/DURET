@@ -31,7 +31,7 @@ from database.connection import get_db
 from config import settings
 from agents.journal import libelle
 
-logger = logging.getLogger("symbiose.runtime")
+logger = logging.getLogger("duret.runtime")
 
 _graph = None
 

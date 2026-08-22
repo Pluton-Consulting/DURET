@@ -25,7 +25,7 @@ import logging
 import re
 from typing import Optional
 
-logger = logging.getLogger("symbiose.skills.protocol")
+logger = logging.getLogger("duret.skills.protocol")
 
 # Un bloc ```action ... ``` n'importe où dans la réponse.
 BLOC_ACTION_RE = re.compile(r"```action\s*(.*?)```", re.S)

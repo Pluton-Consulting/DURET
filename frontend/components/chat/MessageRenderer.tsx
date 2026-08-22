@@ -6,7 +6,7 @@ import { MessageActions, MessageAction, MessageResponse } from "@/components/ai-
 import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
 import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
 import {
-  QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, SiteApercu, FileCard, ContactCard, ProjectCard,
+  QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, SiteApercu, VisuelPaysager, FileCard, ContactCard, ProjectCard,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
   Callout, StatTile, Badge, BulletList, PlanEtapes,
@@ -110,6 +110,8 @@ const REQUIRED: Record<string, string[]> = {
   doc_apercu: ["extrait"],
   // Une page web se montre avec son adresse ; l'aperçu, lui, est facultatif.
   site: ["url"],
+  // Une planche de rendus générés : au moins une image, sinon rien à montrer.
+  visuel: ["images"],
   fichier: ["url"],
   contact: ["name"],
   project: ["name", "client"],
@@ -242,6 +244,7 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "doc":           return <DocCard {...p} />
     case "doc_apercu":    return <DocApercu {...p} />
     case "site":          return <SiteApercu url={p.url} titre={p.titre} apercu={p.apercu} apiUrl={acces?.apiUrl} backendToken={acces?.backendToken} />
+    case "visuel":        return <VisuelPaysager titre={p.titre} images={p.images} apiUrl={acces?.apiUrl} backendToken={acces?.backendToken} />
     // Le telechargement est controle cote serveur : le composant a besoin
     // du jeton, un lien nu partirait sans en-tete et serait refuse. La
     // visionneuse a le meme besoin — d'ou le detour par FichierAvecApercu,

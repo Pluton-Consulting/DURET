@@ -39,7 +39,7 @@ from pydantic import BaseModel
 from config import settings
 from database.connection import get_db
 
-logger = logging.getLogger("symbiose.navigateur.guichet")
+logger = logging.getLogger("duret.navigateur.guichet")
 
 router = APIRouter()
 

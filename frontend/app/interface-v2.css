@@ -1,0 +1,204 @@
+/* ════════════════════════════════════════════════════════════════════════
+   INTERFACE V2 — bulles d'en-tête, switch, piste des deux vues, panneau,
+   cartes du tableau de bord, contexte pré-inscrit dans le chat.
+
+   Tout est écrit avec les jetons de charte : la même feuille donne un
+   en-tête vert chez Symbiose et bleu chez Duret. Les animations suivent une
+   seule courbe — celle du « fluide Apple » (ease-out long, léger dépassement
+   retenu sur le curseur du switch) — pour que l'ensemble se lise comme un
+   seul mouvement et non comme une collection d'effets.
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+  --v2-courbe: cubic-bezier(.22, .8, .26, 1);
+  --v2-courbe-rebond: cubic-bezier(.34, 1.28, .5, 1);
+  --v2-verre: color-mix(in srgb, var(--marque-surface) 74%, transparent);
+  --v2-verre-bord: color-mix(in srgb, var(--marque-primary-mid) 20%, transparent);
+  --v2-reflet: inset 0 1px 0 rgba(255, 255, 255, .8);
+  --v2-ombre-bulle: 0 8px 28px -10px color-mix(in srgb, var(--marque-primary) 28%, transparent), 0 2px 6px rgba(24, 43, 22, .05);
+  --v2-degrade-marque: linear-gradient(135deg, var(--marque-primary) 0%, var(--marque-primary-mid) 62%, var(--marque-leaf) 100%);
+  --v2-degrade-doux: linear-gradient(180deg, color-mix(in srgb, var(--marque-primary-subtle) 65%, white) 0%, var(--marque-canvas) 100%);
+  --v2-entete-h: 58px;
+}
+
+/* ── L'en-tête : trois bulles qui ne touchent rien ───────────────────── */
+.v2-entete { position: fixed; top: 14px; left: 0; right: 0; z-index: 120;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 0 22px; pointer-events: none; }
+.v2-entete > * { pointer-events: auto; }
+.v2-bulle { height: var(--v2-entete-h); border-radius: var(--marque-radius-pill);
+  background: var(--v2-verre); border: 1px solid var(--v2-verre-bord);
+  box-shadow: var(--v2-reflet), var(--v2-ombre-bulle);
+  backdrop-filter: blur(22px) saturate(1.7); -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  display: inline-flex; align-items: center;
+  transition: transform .45s var(--v2-courbe), box-shadow .45s var(--v2-courbe); }
+.v2-bulle:hover { box-shadow: var(--v2-reflet), 0 14px 36px -12px color-mix(in srgb, var(--marque-primary) 36%, transparent), 0 2px 6px rgba(24, 43, 22, .06); }
+.v2-bulle-logo { padding: 0 18px 0 14px; gap: 10px; justify-self: start; text-decoration: none; }
+/* `img` OU `svg` : un projet sert son logotype en fichier, l'autre le
+   dessine en SVG inline. La bulle doit tenir les deux sans le savoir. */
+.v2-bulle-logo img, .v2-bulle-logo svg { height: 30px; width: auto; display: block; }
+.v2-bulle-logo span { font-weight: 800; font-size: 15px; letter-spacing: -.2px; color: var(--marque-text-primary); }
+.v2-bulle-engrenage { width: var(--v2-entete-h); justify-content: center; justify-self: end; cursor: pointer; }
+.v2-bulle-engrenage svg { transition: transform .6s var(--v2-courbe); color: var(--marque-text-primary); }
+.v2-bulle-engrenage:hover svg { transform: rotate(60deg); }
+.v2-bulle-engrenage[data-ouvert="oui"] svg { transform: rotate(180deg); }
+.v2-bulle-engrenage:focus-visible { outline: 2px solid var(--marque-primary-mid); outline-offset: 3px; }
+
+/* Le switch : deux positions, un curseur qui glisse. */
+.v2-switch { position: relative; padding: 5px; gap: 2px; justify-self: center; }
+.v2-switch-curseur { position: absolute; top: 5px; bottom: 5px; left: 5px; border-radius: var(--marque-radius-pill);
+  background: var(--v2-degrade-marque);
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--marque-primary) 60%, transparent), inset 0 1px 0 rgba(255, 255, 255, .18);
+  transition: transform .55s var(--v2-courbe-rebond), width .55s var(--v2-courbe-rebond); will-change: transform, width; }
+.v2-switch-bouton { position: relative; z-index: 1; border: none; background: transparent; cursor: pointer;
+  height: calc(var(--v2-entete-h) - 10px); padding: 0 22px; border-radius: var(--marque-radius-pill);
+  font-family: inherit; font-weight: 600; font-size: 14.5px; line-height: 1; letter-spacing: -.1px; color: var(--marque-text-body);
+  display: inline-flex; align-items: center; gap: 9px; white-space: nowrap;
+  transition: color .35s var(--v2-courbe), transform .35s var(--v2-courbe); }
+.v2-switch-bouton svg { opacity: .8; transition: opacity .3s, transform .45s var(--v2-courbe); }
+.v2-switch-bouton[aria-pressed="true"] { color: var(--marque-text-on-dark); }
+.v2-switch-bouton[aria-pressed="true"] svg { opacity: 1; transform: scale(1.08); }
+.v2-switch-bouton:not([aria-pressed="true"]):hover { color: var(--marque-primary); }
+.v2-switch-bouton:active { transform: scale(.97); }
+.v2-switch-bouton:focus-visible { outline: 2px solid var(--marque-primary-mid); outline-offset: 2px; }
+
+/* ── La piste : les deux vues côte à côte, l'inactive qui déborde ────── */
+.v2-scene { position: relative; height: 100vh; overflow: hidden; background: var(--v2-degrade-doux); }
+.v2-piste { position: absolute; inset: 0; display: flex; width: 200%;
+  transition: transform .7s var(--v2-courbe); will-change: transform; }
+.v2-scene[data-vue="chat"] .v2-piste { transform: translateX(-50%); }
+/* SEULES `transform` et `opacity` s'animent : le compositeur les porte sans
+   recalcul de mise en page. `padding` et `filter` étaient dans la transition
+   — un padding animé refait la mise en page de TOUTE la vue à chaque image,
+   un filtre repeint des millions de pixels : c'était ça, les saccades. Le
+   dégagement pour la vue qui déborde est désormais STATIQUE, posé en
+   permanence du côté du voisin. */
+.v2-vue { position: relative; width: 50%; height: 100%; padding: calc(var(--v2-entete-h) + 30px) 22px 18px;
+  box-sizing: border-box; will-change: transform;
+  transition: transform .7s var(--v2-courbe), opacity .7s var(--v2-courbe); }
+.v2-vue-tableau { padding-right: 62px; }
+.v2-vue-chat    { padding-left: 62px; }
+.v2-vue-cadre { height: 100%; border-radius: 26px; background: var(--marque-surface);
+  border: 1px solid color-mix(in srgb, var(--marque-border) 80%, transparent);
+  box-shadow: 0 24px 60px -28px color-mix(in srgb, var(--marque-primary) 35%, transparent), 0 2px 10px rgba(24, 43, 22, .05);
+  overflow: hidden; display: flex; flex-direction: column; }
+/* L'INACTIVE DÉBORDE, ET ELLE EST DERRIÈRE. La vue active laisse une marge
+   plus large du côté de sa voisine ; la voisine, reculée d'un cran (z-index
+   inférieur, légèrement réduite), y montre une cinquantaine de pixels de son
+   bord arrondi — assez pour dire « il y a une autre vue, là », assez pour
+   cliquer dessus. Mesuré à 1440 px : le cadre inactif apparaît à ~50 px du
+   bord, dans l'espace laissé libre. */
+.v2-vue { z-index: 1; }
+.v2-scene[data-vue="tableau"] .v2-vue-tableau, .v2-scene[data-vue="chat"] .v2-vue-chat { z-index: 2; }
+.v2-scene[data-vue="tableau"] .v2-vue-chat    { transform: translateX(-86px) scale(.965); opacity: .94; }
+.v2-scene[data-vue="chat"]    .v2-vue-tableau { transform: translateX(86px)  scale(.965); opacity: .94; }
+.v2-scene[data-vue="tableau"] .v2-vue-chat .v2-vue-cadre,
+.v2-scene[data-vue="chat"] .v2-vue-tableau .v2-vue-cadre { cursor: pointer; }
+.v2-vue-defile { flex: 1; min-height: 0; overflow: auto; }
+
+/* ── Le panneau derrière l'engrenage ─────────────────────────────────── */
+.v2-voile { position: fixed; inset: 0; z-index: 130; background: color-mix(in srgb, var(--marque-primary) 18%, transparent);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); opacity: 0; pointer-events: none; transition: opacity .45s var(--v2-courbe); }
+.v2-voile[data-ouvert="oui"] { opacity: 1; pointer-events: auto; }
+.v2-panneau { position: fixed; top: 10px; right: 10px; bottom: 10px; width: min(440px, 92vw); z-index: 140;
+  border-radius: 26px; background: var(--marque-surface); border: 1px solid var(--marque-border);
+  box-shadow: -24px 0 60px -30px color-mix(in srgb, var(--marque-primary) 45%, transparent), 0 10px 30px rgba(24, 43, 22, .08);
+  transform: translateX(calc(100% + 24px)); transition: transform .6s var(--v2-courbe);
+  display: flex; flex-direction: column; overflow: hidden; }
+.v2-panneau[data-ouvert="oui"] { transform: translateX(0); }
+.v2-panneau-tete { padding: 22px 22px 18px; background: var(--v2-degrade-marque); color: var(--marque-text-on-dark); }
+.v2-panneau-corps { flex: 1; overflow: auto; padding: 14px 14px 18px; display: flex; flex-direction: column; gap: 8px; }
+.v2-section { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 18px;
+  text-decoration: none; color: var(--marque-text-primary); background: var(--marque-canvas);
+  border: 1px solid transparent; cursor: pointer; font-family: inherit; text-align: left; width: 100%;
+  transition: transform .35s var(--v2-courbe), background .3s, border-color .3s, box-shadow .35s; }
+.v2-section:hover { background: var(--marque-surface); border-color: var(--marque-border); transform: translateX(-3px); box-shadow: var(--marque-shadow-card); }
+.v2-section[data-actif="oui"] { background: var(--marque-primary-subtle); border-color: var(--marque-primary-light); }
+.v2-section[data-dev="oui"] { color: var(--marque-dev); background: var(--marque-dev-bg); border-color: var(--marque-dev-border); }
+.v2-section-ico { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--marque-surface); box-shadow: var(--marque-shadow-card); flex-shrink: 0; }
+.v2-section[data-dev="oui"] .v2-section-ico { background: var(--marque-dev-bg); }
+.v2-section b { display: block; font-size: 14.5px; font-weight: 700; }
+.v2-section small { display: block; font-size: 12px; color: var(--marque-text-muted); margin-top: 1px; }
+
+/* ── Les cartes du tableau de bord ───────────────────────────────────── */
+.v2-grille { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; padding: 22px 24px 28px; }
+.v2-carte { background: var(--marque-surface); border-radius: 20px; border: 1px solid color-mix(in srgb, var(--marque-border) 85%, transparent);
+  box-shadow: var(--marque-shadow-card); padding: 18px 20px; min-width: 0;
+  transition: transform .45s var(--v2-courbe), box-shadow .45s var(--v2-courbe); }
+.v2-carte:hover { transform: translateY(-2px); box-shadow: 0 10px 28px -12px rgba(24, 43, 22, .18); }
+.v2-carte-titre { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.v2-carte-titre h3 { margin: 0; font-size: 15px; font-weight: 700; color: var(--marque-text-primary); letter-spacing: -.1px; }
+.v2-carte-titre small { font-size: 12px; color: var(--marque-text-muted); }
+.v2-roi { grid-column: span 4; background: var(--v2-degrade-marque); color: var(--marque-text-on-dark); border: none; position: relative; overflow: hidden; }
+.v2-roi::before { content: ""; position: absolute; right: -40px; top: -40px; width: 200px; height: 200px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, .18), transparent 70%); }
+.v2-roi .v2-carte-titre h3, .v2-roi .v2-carte-titre small { color: inherit; opacity: .92; }
+.v2-roi-chiffre { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; line-height: 1; margin: 6px 0 6px; font-variant-numeric: tabular-nums; }
+.v2-roi-sous { font-size: 13px; opacity: .9; }
+.v2-mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.v2-mini > div { background: var(--marque-primary-subtle); border-radius: 14px; padding: 10px 8px; text-align: center; }
+.v2-mini b { display: block; font-size: 20px; font-weight: 800; color: var(--marque-text-primary); letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.v2-mini span { display: block; font-size: 11px; color: var(--marque-text-muted); margin-top: 2px; line-height: 1.2; }
+.v2-expert-ico { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; color: var(--marque-text-on-dark);
+  background: var(--v2-degrade-marque); box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--marque-primary) 55%, transparent); flex-shrink: 0; }
+.v2-pastille { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; padding: 4px 10px;
+  border-radius: var(--marque-radius-pill); background: var(--marque-paid-bg); color: var(--marque-paid-text); white-space: nowrap; }
+.v2-pastille::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent); }
+.v2-pastille[data-ton="attente"] { background: var(--marque-pending-bg); color: var(--marque-pending-text); }
+.v2-pastille[data-ton="neutre"] { background: var(--marque-canvas); color: var(--marque-text-muted); }
+.v2-pastille[data-ton="erreur"] { background: var(--marque-error-bg); color: var(--marque-error-text); }
+.v2-bouton-doux { border: 1px solid var(--marque-border); background: var(--marque-surface); color: var(--marque-text-primary);
+  border-radius: var(--marque-radius-pill); padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit;
+  transition: transform .3s var(--v2-courbe), background .3s, border-color .3s; }
+.v2-bouton-doux:hover { background: var(--marque-primary-subtle); border-color: var(--marque-primary-light); transform: translateY(-1px); }
+.v2-bouton-plein { border: none; background: var(--marque-primary); color: var(--marque-text-on-dark); font-family: inherit;
+  border-radius: var(--marque-radius-pill); padding: 8px 14px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  transition: transform .3s var(--v2-courbe), filter .3s; }
+.v2-bouton-plein:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.v2-barres { display: flex; align-items: flex-end; gap: 5px; height: 64px; }
+.v2-barres i { flex: 1; border-radius: 4px 4px 2px 2px; background: var(--marque-primary-mid); min-height: 3px; opacity: .85; transition: height .8s var(--v2-courbe); }
+.v2-liste { display: flex; flex-direction: column; }
+.v2-liste > div { display: flex; gap: 12px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--marque-border); font-size: 13px; }
+.v2-liste > div:first-child { border-top: none; }
+.v2-liste time { font-variant-numeric: tabular-nums; color: var(--marque-text-muted); white-space: nowrap; font-size: 12px; min-width: 44px; }
+.v2-vide { padding: 18px 0; color: var(--marque-text-muted); font-size: 13px; text-align: center; }
+.v2-apparait { animation: v2Apparait .6s var(--v2-courbe) both; }
+@keyframes v2Apparait { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
+.v2-grille > *:nth-child(1) { animation-delay: .02s } .v2-grille > *:nth-child(2) { animation-delay: .07s }
+.v2-grille > *:nth-child(3) { animation-delay: .12s } .v2-grille > *:nth-child(4) { animation-delay: .17s }
+.v2-grille > *:nth-child(5) { animation-delay: .22s } .v2-grille > *:nth-child(6) { animation-delay: .27s }
+.v2-grille > *:nth-child(7) { animation-delay: .32s } .v2-grille > *:nth-child(8) { animation-delay: .37s }
+.v2-grille > *:nth-child(9) { animation-delay: .42s } .v2-grille > *:nth-child(10) { animation-delay: .47s }
+
+/* L'historique d'un expert (tiroir dans la carte). */
+.v2-historique { margin-top: 12px; border-top: 1px solid var(--marque-border); padding-top: 10px; max-height: 260px; overflow: auto; }
+.v2-historique button { display: block; width: 100%; text-align: left; border: none; background: transparent; cursor: pointer; font-family: inherit;
+  padding: 9px 10px; border-radius: 12px; color: var(--marque-text-primary); font-size: 13px; transition: background .25s, transform .3s var(--v2-courbe); }
+.v2-historique button:hover { background: var(--marque-primary-subtle); transform: translateX(2px); }
+.v2-historique button small { display: block; color: var(--marque-text-muted); font-size: 11.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Les pages « classiques » sous l'en-tête flottant. */
+.v2-page { padding-top: calc(var(--v2-entete-h) + 30px); min-height: 100vh; background: var(--v2-degrade-doux); }
+
+/* Le contexte pré-inscrit dans le chat : une petite carte au-dessus de la saisie. */
+.v2-contexte { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; margin: 0 24px 6px;
+  padding: 7px 10px 7px 12px; border-radius: 14px; background: var(--marque-primary-subtle);
+  border: 1px solid var(--marque-primary-light); font-size: 12.5px; color: var(--marque-text-primary);
+  animation: v2Apparait .45s var(--v2-courbe) both; }
+.v2-contexte b { font-weight: 700; white-space: nowrap; }
+.v2-contexte span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--marque-text-body); }
+.v2-contexte button { border: none; background: transparent; cursor: pointer; color: var(--marque-text-muted); font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 6px; font-family: inherit; }
+.v2-contexte button:hover { background: var(--marque-surface); color: var(--marque-text-primary); }
+
+@media (max-width: 900px) {
+  .v2-entete { grid-template-columns: auto 1fr auto; padding: 0 10px; gap: 8px; }
+  .v2-bulle-logo span { display: none; }
+  .v2-switch-bouton { padding: 0 12px; font-size: 13px; }
+  .v2-switch-bouton span { display: none; }
+  .v2-grille { grid-template-columns: 1fr; padding: 14px; }
+  .v2-grille > * { grid-column: span 1 !important; }
+  .v2-vue { padding: calc(var(--v2-entete-h) + 22px) 8px 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v2-piste, .v2-vue, .v2-panneau, .v2-voile, .v2-switch-curseur, .v2-bulle, .v2-carte, .v2-apparait, .v2-section, .v2-contexte { transition: none !important; animation: none !important; }
+}

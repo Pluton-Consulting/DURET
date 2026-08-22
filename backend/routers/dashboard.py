@@ -9,6 +9,18 @@ from config import settings
 
 router = APIRouter()
 
+# LE PLANCHER DES INDICATEURS (réglage `kpi_depuis`).
+#
+# Une remise à zéro qui ne supprime rien : les lignes restent en base, on cesse
+# de les compter. Réversible en effaçant le champ — ce qu'aucun DELETE ne
+# permet. Il s'applique aux VOLUMES et aux COÛTS, pas aux listes
+# opérationnelles : masquer les échecs des dernières 24 h ou les sessions en
+# cours n'aurait aucun sens, ce sont des états présents, pas de l'historique.
+def _plancher(colonne: str) -> str:
+    from llm.reglages import plancher_sql
+    return plancher_sql(colonne)
+
+
 
 def _exiger(role: str, feature: str) -> None:
     """Lève une 403 si le rôle ne dispose pas de la permission demandée."""
@@ -29,7 +41,7 @@ async def get_stats(current_user: User = Depends(get_current_user)):
     """Statistiques personnelles de l'utilisateur courant (threads + usage du jour)."""
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
         thread_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM threads WHERE user_id = $1",
+            f"SELECT COUNT(*) FROM threads WHERE user_id = $1{_plancher('created_at')}",
             current_user.id,
         )
         usage_today = await conn.fetchrow(
@@ -107,14 +119,14 @@ async def get_token_usage(current_user: User = Depends(get_current_user), days: 
         by_model = await conn.fetch(
             "SELECT model_used, COUNT(*) AS n, COALESCE(SUM(tokens_in),0) AS tokens_in, "
             "COALESCE(SUM(tokens_out),0) AS tokens_out, COALESCE(SUM(cost_eur),0) AS cost_eur "
-            "FROM audit_log WHERE created_at > NOW() - ($1::int * INTERVAL '1 day') "
+            f"FROM audit_log WHERE created_at > NOW() - ($1::int * INTERVAL '1 day'){_plancher('created_at')} "
             "AND model_used IS NOT NULL GROUP BY model_used ORDER BY tokens_in + tokens_out DESC",
             days,
         )
         totals = await conn.fetchrow(
             "SELECT COALESCE(SUM(tokens_in),0) AS tokens_in, COALESCE(SUM(tokens_out),0) AS tokens_out, "
             "COALESCE(SUM(cost_eur),0) AS cost_eur, COUNT(*) AS n FROM audit_log "
-            "WHERE created_at > NOW() - ($1::int * INTERVAL '1 day') AND model_used IS NOT NULL",
+            f"WHERE created_at > NOW() - ($1::int * INTERVAL '1 day'){_plancher('created_at')} AND model_used IS NOT NULL",
             days,
         )
     from optim.tokens import response_cache
@@ -199,22 +211,22 @@ async def get_costs(current_user: User = Depends(get_current_user)):
     """
     _exiger(current_user.role, "view_costs_global")
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
-        by_day = await conn.fetch("""
+        by_day = await conn.fetch(f"""
             SELECT date,
                    COALESCE(SUM(cost_eur), 0)      AS cost_eur,
                    COALESCE(SUM(request_count), 0) AS request_count,
                    COALESCE(SUM(tokens_total), 0)  AS tokens_total
             FROM api_usage_daily
-            WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+            WHERE date >= CURRENT_DATE - INTERVAL '30 days'{_plancher('date')}
             GROUP BY date
             ORDER BY date
         """)
-        current_month_total = await conn.fetchrow("""
+        current_month_total = await conn.fetchrow(f"""
             SELECT COALESCE(SUM(cost_eur), 0)      AS cost_eur,
                    COALESCE(SUM(request_count), 0) AS request_count,
                    COALESCE(SUM(tokens_total), 0)  AS tokens_total
             FROM api_usage_daily
-            WHERE date_trunc('month', date) = date_trunc('month', CURRENT_DATE)
+            WHERE date_trunc('month', date) = date_trunc('month', CURRENT_DATE){_plancher('date')}
         """)
         by_role = await conn.fetch("""
             SELECT u.role,
@@ -409,30 +421,30 @@ async def get_pilotage(current_user: User = Depends(get_current_user)):
     peut_journal = has_permission(current_user.role, "view_audit_log")
 
     async with get_db() as conn:
-        kpi = await conn.fetchrow("""
+        kpi = await conn.fetchrow(f"""
             SELECT
               (SELECT COALESCE(SUM(request_count), 0) FROM api_usage_daily
-                WHERE date >= CURRENT_DATE - INTERVAL '30 days')            AS requetes_30j,
+                WHERE date >= CURRENT_DATE - INTERVAL '30 days'{_plancher('date')})  AS requetes_30j,
               (SELECT COUNT(*) FROM audit_log
                 WHERE success = false AND created_at >= NOW() - INTERVAL '24 hours') AS erreurs_24h,
               (SELECT COALESCE(SUM(cost_eur), 0) FROM api_usage_daily
-                WHERE date_trunc('month', date) = date_trunc('month', CURRENT_DATE)) AS cout_mois_eur,
+                WHERE date_trunc('month', date) = date_trunc('month', CURRENT_DATE){_plancher('date')}) AS cout_mois_eur,
               (SELECT COUNT(DISTINCT user_id) FROM api_usage_daily
-                WHERE date >= CURRENT_DATE - INTERVAL '30 days')            AS personnes_actives_30j,
+                WHERE date >= CURRENT_DATE - INTERVAL '30 days'{_plancher('date')})  AS personnes_actives_30j,
               (SELECT COUNT(*) FROM validations WHERE status = 'pending')   AS accords_en_attente,
               (SELECT COUNT(*) FROM skills WHERE status IN ('validated','stable')
                                               AND COALESCE(enabled, true))   AS competences_actives
         """)
-        par_jour = await conn.fetch("""
+        par_jour = await conn.fetch(f"""
             SELECT date,
                    COALESCE(SUM(request_count), 0) AS requetes,
                    COALESCE(SUM(tokens_total), 0)  AS jetons,
                    COALESCE(SUM(cost_eur), 0)      AS cout_eur
             FROM api_usage_daily
-            WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+            WHERE date >= CURRENT_DATE - INTERVAL '30 days'{_plancher('date')}
             GROUP BY date ORDER BY date
         """)
-        par_personne = await conn.fetch("""
+        par_personne = await conn.fetch(f"""
             SELECT u.id, u.name, u.email, u.role,
                    COALESCE(SUM(d.request_count), 0) AS requetes,
                    COALESCE(SUM(d.tokens_total), 0)  AS jetons,
@@ -440,7 +452,7 @@ async def get_pilotage(current_user: User = Depends(get_current_user)):
                    MAX(d.date)                       AS derniere_activite
             FROM users u
             LEFT JOIN api_usage_daily d
-                   ON d.user_id = u.id AND d.date >= CURRENT_DATE - INTERVAL '30 days'
+                   ON d.user_id = u.id AND d.date >= CURRENT_DATE - INTERVAL '30 days'{_plancher('d.date')}
             WHERE COALESCE(u.actif, true)
             GROUP BY u.id, u.name, u.email, u.role
             ORDER BY requetes DESC, u.email

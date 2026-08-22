@@ -27,7 +27,7 @@ from security.audit import log_action
 from config import settings
 from browser_agent import client
 
-logger = logging.getLogger("symbiose.browser.api")
+logger = logging.getLogger("duret.browser.api")
 router = APIRouter()
 
 

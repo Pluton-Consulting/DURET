@@ -359,7 +359,7 @@ async def boites_visibles(user) -> list[str]:
 
 
 def resoudre_boite(demandee: str, visibles: list[str]) -> Optional[str]:
-    """« contact » → « contact@symbiose-paysage.fr », si c'est sans ambiguïté.
+    """« contact » → « contact@duret-sols.fr », si c'est sans ambiguïté.
 
     Personne n'écrit une adresse entière dans une phrase. Refuser un nom partiel
     que le système sait pourtant résoudre est la même erreur que refuser un

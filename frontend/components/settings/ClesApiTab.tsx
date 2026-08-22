@@ -44,6 +44,140 @@ const EXEMPLES: { libelle: string; valeur: string; aide: string }[] = [
     aide: "Le plus rapide pour la rédaction, quand sa clé est valide." },
 ]
 
+// LA DATE DE DÉPART DES INDICATEURS.
+//
+// « Repartir à zéro » sans rien supprimer. Les chiffres du tableau de bord sont
+// calculés à la volée depuis l'activité réelle : il n'existe aucun compteur
+// qu'on pourrait remettre à zéro, seulement des lignes qu'on peut cesser de
+// compter. Une date au lieu d'un DELETE, donc — c'est réversible, et sur un
+// serveur en phase de test client c'est la seule option qui ne fasse rien
+// perdre.
+//
+// L'inventaire n'est PAS concerné (documents connus, devis, clients) : il
+// décrit ce que l'outil sait aujourd'hui, et le remettre à zéro ferait mentir
+// l'écran sur des documents qui existent.
+function ReglageKpiDepuis({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [valeur, setValeur] = useState("")
+  const [origine, setOrigine] = useState<string | null>(null)
+  const [saisie, setSaisie] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/reglages`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const lignes = await res.json()
+      const d = (lignes || []).find((l: any) => l.cle === "kpi_depuis")
+      setValeur(d?.valeur || "")
+      setOrigine(d?.origine || null)
+      setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "chargement impossible")
+    }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  const enregistrer = async (v: string) => {
+    setBusy(true); setNote("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/reglages`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ cle: "kpi_depuis", valeur: v }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
+      setSaisie("")
+      setNote(v.trim()
+        ? "Enregistré. Le tableau de bord ne compte plus rien avant cette date."
+        : "Date retirée : les indicateurs comptent de nouveau tout l'historique.")
+      setErreur("")
+      await charger()
+    } catch (e: any) {
+      setErreur(e?.message || "enregistrement impossible")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const aujourdhui = new Date().toISOString().slice(0, 10)
+
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+            Indicateurs comptés depuis
+          </div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
+            Remet le tableau de bord à zéro <b>sans rien supprimer</b> : l&apos;activité
+            antérieure reste en base, elle n&apos;est plus comptée. Retirer la date rend
+            tout l&apos;historique.
+          </div>
+        </div>
+        <span style={{
+          background: valeur ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+          color: valeur ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+          padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
+          fontWeight: 600, whiteSpace: "nowrap",
+        }}>
+          {valeur ? `depuis le ${valeur}` : "tout l'historique"}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input
+          type="date" value={saisie} onChange={(e) => setSaisie(e.target.value)}
+          style={{
+            padding: "8px 12px", fontSize: 13,
+            border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)",
+            color: "var(--marque-text-body)", background: "var(--marque-surface)", outline: "none",
+          }} />
+        <button onClick={() => setSaisie(aujourdhui)}
+          className="sym-tap" title="Repartir de zéro à partir d'aujourd'hui"
+          style={{
+            padding: "8px 14px", borderRadius: "var(--marque-radius-pill)",
+            border: "1px solid var(--marque-border)", background: "var(--marque-canvas)",
+            color: "var(--marque-text-muted)", fontSize: 12.5, cursor: "pointer",
+          }}>
+          Aujourd&apos;hui
+        </button>
+        <button onClick={() => enregistrer(saisie)} disabled={busy || !saisie.trim()}
+          className="sym-tap" style={{
+            padding: "8px 16px", borderRadius: "var(--marque-radius-pill)", border: "none",
+            background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+            color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 600,
+            cursor: "pointer", opacity: saisie.trim() ? 1 : 0.5,
+          }}>
+          Appliquer
+        </button>
+        {origine === "parametres" && (
+          <button onClick={() => enregistrer("")} disabled={busy}
+            className="sym-tap" title="Recompter tout l'historique"
+            style={{
+              padding: "8px 14px", borderRadius: "var(--marque-radius-pill)",
+              border: "1px solid var(--marque-border)", background: "var(--marque-surface)",
+              color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+            }}>
+            Retirer
+          </button>
+        )}
+      </div>
+
+      {note && <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--marque-paid-text)" }}>{note}</div>}
+      {erreur && <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--marque-error-text)" }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
 function ReglageLlmTete({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
   const [valeur, setValeur] = useState("")
   const [origine, setOrigine] = useState<string | null>(null)
@@ -228,6 +362,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
 
   return (
     <div>
+      <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageLlmTete apiUrl={apiUrl} backendToken={backendToken} />
 
       <p style={{ margin: "0 0 6px", fontSize: 14, color: "var(--marque-text-body)",

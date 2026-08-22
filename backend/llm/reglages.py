@@ -26,7 +26,14 @@ logger = logging.getLogger("duret.llm.reglages")
 # pouvoir redéfinir n'importe quel attribut de la configuration.
 REGLAGES_CONNUS = (
     "llm_tete",
+    "kpi_depuis",   # AAAA-MM-JJ — les indicateurs ne comptent rien avant cette date
 )
+
+# Un réglage dont la valeur finit DANS du SQL doit être validé à l'écriture ET
+# à la lecture. La date est la seule valeur du genre aujourd'hui : on l'oblige à
+# n'être qu'un AAAA-MM-JJ, ce qui la rend inoffensive une fois insérée.
+import re
+_FORMAT_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 DUREE_CACHE_S = 30
 
@@ -86,6 +93,8 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     # doit rien ouvrir du tout, pas même une connexion.
     if nom not in REGLAGES_CONNUS:
         raise ValueError(f"Réglage inconnu : {nom}")
+    if nom == "kpi_depuis" and (brut or "").strip() and not _FORMAT_DATE.match((brut or "").strip()):
+        raise ValueError("Date attendue au format AAAA-MM-JJ (ex. 2026-08-22).")
     from database.connection import get_db
 
     v = (brut or "").strip()
@@ -115,3 +124,28 @@ async def etat() -> list[dict]:
             "origine": "parametres" if surcharge else ("env" if depuis_env else None),
         })
     return lignes
+
+
+def date_kpi() -> str | None:
+    """La date de départ des indicateurs, ou None si l'on compte tout.
+
+    Revalidée ICI, et pas seulement à l'écriture : une ligne posée à la main en
+    base ne doit pas pouvoir devenir du SQL. Une valeur mal formée est traitée
+    comme absente — un tableau de bord qui compte trop est un désagrément, un
+    tableau de bord qui tombe n'aide personne.
+    """
+    v = (valeur("kpi_depuis") or "").strip()
+    return v if _FORMAT_DATE.match(v) else None
+
+
+def plancher_sql(colonne: str) -> str:
+    """Fragment ` AND <colonne> >= DATE '...'`, ou rien du tout.
+
+    Rendu comme littéral et non comme paramètre : les requêtes du tableau de
+    bord sont assemblées par f-string avec un périmètre RLS déjà numéroté, et
+    y insérer un $N de plus obligerait à renuméroter une douzaine de requêtes
+    — c'est-à-dire à risquer un décalage silencieux. Le littéral est sûr parce
+    que la valeur ne peut être qu'un AAAA-MM-JJ (`_FORMAT_DATE`, deux fois).
+    """
+    d = date_kpi()
+    return f" AND {colonne} >= DATE '{d}'" if d else ""

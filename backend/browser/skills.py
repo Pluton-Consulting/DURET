@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("symbiose.browser.skills")
+logger = logging.getLogger("duret.browser.skills")
 
 
 async def chercher_web(data: dict, user) -> dict:
@@ -74,7 +74,7 @@ async def ouvrir_page(data: dict, user) -> dict:
     if not url:
         return {"erreur": "Donne l'adresse à ouvrir."}
     if not url.startswith(("http://", "https://")):
-        # Le modèle écrit souvent « symbiose-paysage.fr » sans protocole ; on le
+        # Le modèle écrit souvent « duret-sols.fr » sans protocole ; on le
         # complète plutôt que de refuser pour une raison qu'il ne comprendrait pas.
         url = "https://" + url
 

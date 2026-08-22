@@ -26,7 +26,7 @@ logger = logging.getLogger("duret.bureautique.atelier")
 
 # Emplacement des documents en cours et rendus. Volume du conteneur : ils
 # survivent à un redémarrage, le temps que la personne les télécharge.
-DOSSIER = os.environ.get("DOCUMENTS_DIR", "/tmp/symbiose-documents")
+DOSSIER = os.environ.get("DOCUMENTS_DIR", "/tmp/duret-documents")
 
 # Un document non téléchargé finit par disparaître : ce sont des données
 # d'entreprise, elles ne doivent pas s'accumuler indéfiniment sur le disque.

@@ -5,12 +5,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
-import httpx
 from database.connection import get_db
 from auth.jwt_handler import create_access_token, decode_access_token
 from auth.dependencies import get_current_user
 from database.models import User
 from security.audit import log_action
+from emails.envoi import envoyer
+from emails.gabarit import mail_connexion
 from config import settings
 
 _bearer = HTTPBearer()
@@ -30,138 +31,19 @@ class VerifyTokenRequest(BaseModel):
 
 
 async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
-    """Envoie le lien de connexion via l'API Resend. En debug, affiche AUSSI le lien en console."""
+    """Envoie le lien de connexion. En debug, l'affiche AUSSI en console.
+
+    Le contenu a quitté ce fichier : il vit dans `emails/`, gabarit commun aux
+    deux clients et marque isolée dans un seul module. Ce routeur ne connaît
+    plus ni HTML ni Resend — c'est ce qui garantit qu'une correction de mise en
+    page se pose des deux côtés d'un seul geste.
+    """
     if settings.debug:
         print(f"\nMAGIC LINK (dev) → {magic_link}\n")
-        # Pas de return : l'email est envoyé via Resend même en mode debug.
+        # Pas de return : l'email part quand même en mode debug.
 
-    html = f"""<!DOCTYPE html>
-<html lang="fr">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#F4F6F8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6F8;padding:40px 0">
-    <tr><td align="center">
-      <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.08)">
-
-        <!-- En-tête. Le logo est REDESSINÉ en cellules de tableau bordées :
-             les clients de messagerie n'affichent pas le SVG, et une image
-             distante serait bloquée par défaut chez la plupart — le
-             destinataire verrait un cadre vide à la place de la marque.
-             Des bordures, elles, s'affichent partout, Outlook compris.
-             La composition est celle du logo : jaune au-dessus du rouge à
-             gauche, grand carré bleu à droite. Fond noir, comme la marque. -->
-        <tr>
-          <td style="background:#0B0E11;padding:32px 40px">
-            <table cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td style="vertical-align:middle;padding-right:14px">
-                  <table cellpadding="0" cellspacing="0" border="0" style="font-size:0;line-height:0">
-                    <tr>
-                      <td style="width:24px"></td>
-                      <td style="padding-bottom:5px">
-                        <div style="width:8px;height:8px;border:3px solid #FFE202;font-size:0;line-height:0"></div>
-                      </td>
-                      <td rowspan="2" style="padding-left:7px;vertical-align:middle">
-                        <div style="width:32px;height:32px;border:3px solid #0687DA;font-size:0;line-height:0"></div>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td colspan="2">
-                        <div style="width:15px;height:15px;border:3px solid #F41122;font-size:0;line-height:0"></div>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-                <td style="vertical-align:middle">
-                  <div style="color:#ffffff;font-size:18px;font-weight:800;letter-spacing:-0.3px;line-height:1">Duret <span style="color:#0687DA">& Sols</span></div>
-                  <div style="color:#9DD1F2;font-size:11px;font-weight:500;margin-top:4px">Assistant IA interne</div>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- Corps -->
-        <tr>
-          <td style="padding:40px 40px 24px">
-            <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#0B0E11;letter-spacing:-0.4px">
-              Votre lien de connexion
-            </h1>
-            <p style="margin:0 0 32px;font-size:15px;color:#2E3742;line-height:1.6">
-              Bonjour,<br><br>
-              Vous avez demandé à vous connecter à <strong>Duret & Sols</strong>.<br>
-              Cliquez sur le bouton ci-dessous. Ce lien est à usage unique et expire dans <strong>{MAGIC_LINK_EXPIRE_MINUTES}&nbsp;minutes</strong>.
-            </p>
-
-            <!-- CTA -->
-            <table cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="border-radius:10px;background:#0A6FB4">
-                  <a href="{magic_link}"
-                     style="display:inline-block;padding:14px 32px;color:#ffffff;font-size:15px;
-                            font-weight:600;text-decoration:none;letter-spacing:-0.2px">
-                    Se connecter à Duret & Sols →
-                  </a>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- Lien de secours -->
-        <tr>
-          <td style="padding:0 40px 32px">
-            <p style="margin:24px 0 0;font-size:12px;color:#606B78;line-height:1.6">
-              Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br>
-              <a href="{magic_link}" style="color:#0A6FB4;word-break:break-all;font-size:11px">{magic_link}</a>
-            </p>
-          </td>
-        </tr>
-
-        <!-- Séparateur -->
-        <tr><td style="border-top:1px solid #DFE4EA"></td></tr>
-
-        <!-- Pied de page -->
-        <tr>
-          <td style="padding:20px 40px;background:#F4F6F8">
-            <p style="margin:0;font-size:12px;color:#606B78;line-height:1.6">
-              Si vous n'avez pas demandé ce lien, ignorez simplement cet email.<br>
-              Ce message est envoyé automatiquement, merci de ne pas y répondre.
-            </p>
-            <p style="margin:12px 0 0;font-size:11px;color:#606B78">
-              Duret & Sols · Assistant IA interne
-            </p>
-          </td>
-        </tr>
-
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>"""
-
-    try:
-        async with httpx.AsyncClient() as client:
-            res = await client.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {settings.resend_api_key}",
-                    "User-Agent": "python-httpx/0.27.0",
-                },
-                json={
-                    "from": settings.resend_from_email,
-                    "to": to_email,
-                    "subject": "Votre lien de connexion Duret & Sols",
-                    "html": html,
-                },
-                timeout=10.0,
-            )
-            res.raise_for_status()
-        logging.getLogger("duret.auth").info("Email de connexion envoyé via Resend à %s", to_email)
-    except Exception as e:
-        # Ne pas casser la connexion : le token est déjà créé (lien console dispo en debug).
-        detail = getattr(getattr(e, "response", None), "text", "")
-        logging.getLogger("duret.auth").warning("Échec envoi Resend à %s : %s %s", to_email, e, detail)
+    objet, _apercu, html = mail_connexion(magic_link, MAGIC_LINK_EXPIRE_MINUTES)
+    await envoyer(to_email, objet, html)
 
 
 @router.post("/magic-link/request")

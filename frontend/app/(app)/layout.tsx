@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth"
 import { redirect } from "next/navigation"
-import TopNav from "@/components/nav/TopNav"
+import EnTete from "@/components/nav/EnTete"
+import Corps from "@/components/nav/Corps"
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth()
@@ -13,10 +14,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--marque-canvas)" }}>
-      <TopNav role={role} email={email} name={name} />
-      <main className="sym-fade" style={{ paddingTop: 64, minHeight: "calc(100vh - 64px)" }}>
-        {children}
-      </main>
+      <EnTete role={role} email={email} name={name} />
+      <Corps>{children}</Corps>
     </div>
   )
 }

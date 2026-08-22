@@ -32,7 +32,7 @@ import httpx
 
 from config import settings
 
-logger = logging.getLogger("symbiose.navigateur")
+logger = logging.getLogger("duret.navigateur")
 
 
 @dataclass

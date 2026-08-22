@@ -31,7 +31,7 @@ from typing import Any, Optional
 from config import settings
 from optim.tokens import tier_max_tokens
 
-logger = logging.getLogger("symbiose.llm")
+logger = logging.getLogger("duret.llm")
 
 
 class LLMTier(Enum):

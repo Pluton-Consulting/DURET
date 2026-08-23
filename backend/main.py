@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from database.connection import init_db
-from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router, tasks as tasks_router, hooks as hooks_router, learning as learning_router, documents_produits, file_attente, navigateur_interne, tableau
+from routers import auth, users, chat, dashboard, validation, settings as settings_router, ingestion, browser, skills as skills_router, mail as mail_router, tasks as tasks_router, hooks as hooks_router, learning as learning_router, documents_produits, file_attente, navigateur_interne, tableau, google_perso as google_perso_router
 from agents.runtime import init_runtime, shutdown_runtime
 from config import settings
 
@@ -53,6 +53,11 @@ async def lifespan(app: FastAPI):
         # l'ouverture de la page.
         from llm.reglages import rafraichir as rafraichir_reglages
         await rafraichir_reglages(force=True)
+        # Les boîtes Google reliées par les utilisateurs : même piège que les
+        # clés — le connecteur (qui tourne dans des threads) ne lit qu'un
+        # cache, il faut le remplir dès le démarrage.
+        from mail.google_perso import rafraichir as rafraichir_google
+        await rafraichir_google(force=True)
     except Exception as e:
         logging.getLogger("duret").error("rafraichir_cles a échoué : %s", e)
     try:
@@ -139,6 +144,11 @@ app.include_router(ingestion.router, prefix="/api/ingestion", tags=["ingestion"]
 app.include_router(browser.router, prefix="/api/browser", tags=["browser"])
 app.include_router(skills_router.router, prefix="/api/skills", tags=["skills"])
 app.include_router(mail_router.router, prefix="/api/mail", tags=["mail"])
+# La connexion Google PERSONNELLE de chaque utilisateur (Paramètres > Ma boîte
+# Google). Le retour OAuth (/api/google/retour) est public par nature : c'est
+# le navigateur redirigé par Google qui y arrive, l'identité voyage dans le
+# state signé.
+app.include_router(google_perso_router.router, prefix="/api/google", tags=["google"])
 app.include_router(tasks_router.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(learning_router.router, prefix="/api/learning", tags=["learning"])
 app.include_router(documents_produits.router, prefix="/api/documents", tags=["documents"])

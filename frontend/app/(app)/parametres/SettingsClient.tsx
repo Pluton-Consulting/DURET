@@ -4,8 +4,9 @@ import { ROLE_LABELS, ROLE_COLORS } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
 import ClesApiTab from "@/components/settings/ClesApiTab"
+import GoogleTab from "@/components/settings/GoogleTab"
 
-type SubTab = "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
+type SubTab = "google" | "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
 type Role = "super_admin" | "direction" | "commercial" | "bureau_etudes" | "conducteur" | "administratif" | "terrain"
 type Agent = "agent1" | "agent2" | "agent3"
 
@@ -30,11 +31,17 @@ function canTogglePerm(mgr: string, _agent: Agent, target: Role): boolean {
   return false
 }
 
+// Paramètres est désormais ouvert à TOUS les rôles — pour la connexion Google
+// personnelle. Les onglets d'administration, eux, gardent leurs rôles : les
+// quatre premiers, jadis sans restriction, ne l'étaient que parce que la PAGE
+// filtrait à l'entrée (super_admin/direction) — la restriction descend ici.
 const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
-  { key: "utilisateurs", label: "Utilisateurs" },
-  { key: "plages", label: "Plages horaires" },
-  { key: "rbac", label: "Permissions RBAC" },
-  { key: "agents", label: "États des agents" },
+  // Sans `roles` : visible de chacun — l'onglet ne parle que de SA boîte.
+  { key: "google", label: "Ma boîte Google" },
+  { key: "utilisateurs", label: "Utilisateurs", roles: ["super_admin", "direction"] },
+  { key: "plages", label: "Plages horaires", roles: ["super_admin", "direction"] },
+  { key: "rbac", label: "Permissions RBAC", roles: ["super_admin", "direction"] },
+  { key: "agents", label: "États des agents", roles: ["super_admin", "direction"] },
   { key: "quotas", label: "Quotas", roles: ["super_admin"] },
   { key: "services", label: "Services connectés", roles: ["super_admin"] },
   { key: "import", label: "Import de données", roles: ["super_admin", "direction"] },
@@ -742,9 +749,11 @@ function ServicesTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: s
 
 /* ---------- MAIN COMPONENT ---------- */
 export default function SettingsClient({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
-  const [activeTab, setActiveTab] = useState<SubTab>("utilisateurs")
-
   const subTabs = ALL_SUB_TABS.filter((t) => !t.roles || t.roles.includes(currentRole))
+  // L'onglet d'ouverture : l'administration pour qui la voit (l'habitude), la
+  // boîte Google pour tous les autres — c'est leur seul onglet.
+  const [activeTab, setActiveTab] = useState<SubTab>(
+    subTabs.some((t) => t.key === "utilisateurs") ? "utilisateurs" : (subTabs[0]?.key ?? "google"))
 
   return (
     <div className="sym-page" style={{ padding: 32, maxWidth: 1300, margin: "0 auto" }}>
@@ -776,6 +785,9 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
         })}
       </div>
 
+      {activeTab === "google" && (
+        <GoogleTab apiUrl={apiUrl} backendToken={backendToken} currentRole={currentRole} />
+      )}
       {activeTab === "utilisateurs" && (
         <UsersTab initialUsers={initialUsers} backendToken={backendToken} currentRole={currentRole} apiUrl={apiUrl} />
       )}

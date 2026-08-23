@@ -253,6 +253,14 @@ class Settings(BaseSettings):
     # Secret partagé exigé dans l'en-tête X-Ingestion-Secret. Absent = endpoint désactivé.
     ingestion_webhook_secret: Optional[str] = None
 
+    # ── Connexion Google PERSONNELLE (Paramètres > Ma boîte Google) ──
+    # Un client OAuth « application Web » de la console Google Cloud, avec
+    # {APP_URL}/api/google/retour en URI de redirection autorisée. ⚠️ L'app
+    # doit être « interne » (Workspace) ou publiée en production si externe :
+    # restée « en test », Google révoque les refresh tokens au bout de 7 jours.
+    google_oauth_client_id: Optional[str] = None
+    google_oauth_client_secret: Optional[str] = None
+
     # Google Drive (voie API directe — alternative à Make). Voir SETUP_CONNECTEURS.md.
     google_credentials_file: str = "secrets/google_credentials.json"  # client OAuth (client_id/secret)
     google_token_file: str = "secrets/google_token.json"              # refresh token (1er consentement)

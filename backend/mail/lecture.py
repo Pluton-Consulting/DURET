@@ -178,6 +178,11 @@ async def _lire_gmail(boite: str, dossier: str, limite: int,
                       depuis: Optional[datetime]) -> tuple[list[dict], Optional[int]]:
     import asyncio
 
+    # Le cache des connexions personnelles se recharge ICI, tant qu'une boucle
+    # asyncio tourne encore : `_service` (dans le thread) ne sait que le lire.
+    from mail import google_perso
+    await google_perso.rafraichir()
+
     def _travail() -> tuple[list[dict], Optional[int]]:
         from ingestion.connectors.gmail import _service, _entete, _texte_du_message
         service = _service(boite)

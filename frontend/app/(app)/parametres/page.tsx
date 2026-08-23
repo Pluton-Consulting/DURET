@@ -19,12 +19,18 @@ export default async function ParametresPage() {
   const session = await auth()
   const user = (session as any)?.user
 
-  if (!["super_admin", "direction"].includes(user?.role || "")) {
-    redirect("/accueil")
+  // Paramètres est ouvert à TOUS les rôles connectés : chacun y relie sa
+  // boîte Google. Ce sont les ONGLETS qui portent les restrictions — un
+  // collaborateur ne voit que « Ma boîte Google », et le serveur revérifie de
+  // toute façon chaque endpoint d'administration.
+  if (!user) {
+    redirect("/login")
   }
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
   const backendToken = (session as any)?.backendToken || ""
+  // La liste des utilisateurs ne sert qu'aux onglets d'administration ; pour
+  // les autres rôles, l'endpoint refuse et la liste reste simplement vide.
   const users = await fetchUsers(apiUrl, backendToken)
 
   return (

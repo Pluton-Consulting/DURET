@@ -107,8 +107,10 @@ export const TABS: TabDef[] = [
   {
     key: "parametres",
     label: "Paramètres",
+    // Ouvert à TOUS : chacun y relie SA boîte Google (connexion personnelle).
+    // Les onglets d'administration restent filtrés par rôle dans la page.
     href: "/parametres",
-    roles: MANAGERS,
+    roles: ALL_ROLES,
   },
   // Console développeur — logs bruts en direct, super_admin uniquement.
   {
@@ -158,7 +160,9 @@ export const SECTIONS: TabDef[] = [
     // débrief d'apprentissage, savoir-faire — réunis.
     href: "/connaissances", roles: MANAGERS },
   { key: "gestion",       label: "Pilotage",      href: "/gestion",     roles: ["super_admin", "direction"] },
-  { key: "parametres",    label: "Paramètres",    href: "/parametres",  roles: MANAGERS },
+  // Ouvert à TOUS : chacun y relie SA boîte Google ; les onglets
+  // d'administration restent filtrés par rôle dans la page elle-même.
+  { key: "parametres",    label: "Paramètres",    href: "/parametres",  roles: ALL_ROLES },
   { key: "superviseur",   label: "Développeur",   href: "/superviseur", roles: ["super_admin"], dev: true },
 ]
 

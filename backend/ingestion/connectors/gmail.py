@@ -123,14 +123,26 @@ def _cle_compte_de_service() -> Optional[dict]:
 
 
 def _service(boite: str):
-    """Client Gmail empruntant l'identité de `boite`."""
+    """Client Gmail : la connexion PERSONNELLE de la boîte d'abord, l'emprunt
+    d'identité (compte de service, délégation domaine) ensuite.
+
+    L'ordre est une question de consentement : quand la personne a relié sa
+    boîte elle-même (Paramètres > Ma boîte Google), c'est SON autorisation qui
+    sert — l'emprunt d'identité reste le chemin des boîtes jamais reliées.
+    """
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
+
+    from mail import google_perso
+    perso = google_perso.credentials_pour_boite(boite)
+    if perso is not None:
+        return build("gmail", "v1", credentials=perso, cache_discovery=False)
 
     infos = _cle_compte_de_service()
     if infos is None:
         raise NotImplementedError(
-            "Google Workspace non configuré : collez la clé du compte de service "
+            f"La boîte {boite} n'est pas reliée (Paramètres > Ma boîte Google) "
+            "et aucun compte de service n'est configuré : collez la clé "
             f"dans GOOGLE_SA_JSON (une ligne) ou déposez-la dans "
             f"{settings.google_sa_file or 'GOOGLE_SA_FILE'}, puis autorisez la "
             "délégation domaine (console Admin > Sécurité > Contrôles des API > "
@@ -235,6 +247,17 @@ async def boites_a_synchroniser() -> list[str]:
         if "@" in adresse:
             boites.append(adresse)
 
+    # Les boîtes RELIÉES personnellement (Paramètres > Ma boîte Google) : une
+    # adresse Google peut différer du compte applicatif, elle doit quand même
+    # être synchronisée — et elle échappe au filtre de domaine ci-dessous,
+    # car elle n'emprunte aucune identité : la personne a consenti elle-même.
+    from mail import google_perso
+    await google_perso.rafraichir()
+    connectees = set(google_perso.emails_connectes())
+    for adresse in sorted(connectees):
+        if adresse not in boites:
+            boites.append(adresse)
+
     # Puis tout le domaine, si l'annuaire est accessible. L'ordre compte : les
     # comptes de l'application restent en tête, ce sont les plus utiles.
     if settings.gmail_decouvrir_domaine:
@@ -251,10 +274,12 @@ async def boites_a_synchroniser() -> list[str]:
     if domaine:
         # Garde-fou : ne jamais tenter d'emprunter une identité hors du domaine
         # de l'entreprise (un compte invité ne relève pas de la délégation).
-        hors = [b for b in boites if not b.endswith("@" + domaine)]
+        hors = [b for b in boites
+                if not b.endswith("@" + domaine) and b not in connectees]
         for b in hors:
             logger.info("Boîte ignorée (hors domaine %s) : %s", domaine, b)
-        boites = [b for b in boites if b.endswith("@" + domaine)]
+        boites = [b for b in boites
+                  if b.endswith("@" + domaine) or b in connectees]
     return boites
 
 

@@ -55,13 +55,25 @@ def fournisseur() -> str:
     #
     # `find_spec` ne charge rien, il regarde seulement si le module est
     # trouvable. Meme technique que le controle des connecteurs au demarrage.
-    if fichier and os.path.exists(fichier) and _module_present("ingestion.connectors.gmail"):
+    # Trois façons d'être « configuré côté Google » : la clé du compte de
+    # service en fichier, la même en variable, ou le client OAuth des
+    # connexions PERSONNELLES (Paramètres > Ma boîte Google) — ce dernier
+    # suffit : chaque boîte reliée porte son propre consentement.
+    google_pret = bool(
+        (fichier and os.path.exists(fichier))
+        or (getattr(settings, "google_sa_json", None) or "").strip()
+        or ((getattr(settings, "google_oauth_client_id", None) or "").strip()
+            and (getattr(settings, "google_oauth_client_secret", None) or "").strip())
+    )
+    if google_pret and _module_present("ingestion.connectors.gmail"):
         return "gmail"
 
     raise NotImplementedError(
         "Aucune messagerie configurée : renseignez les identifiants Microsoft 365 "
-        "(MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET) ou déposez la clé du "
-        "compte de service Google (GOOGLE_SA_FILE)."
+        "(MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET), déposez la clé du "
+        "compte de service Google (GOOGLE_SA_FILE / GOOGLE_SA_JSON), ou "
+        "configurez le client OAuth des connexions personnelles "
+        "(GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET)."
     )
 
 

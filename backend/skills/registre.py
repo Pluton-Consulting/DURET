@@ -44,6 +44,12 @@ class Declaration:
     # inconnu, on le reprend ici pour qu'un oubli verrouille au lieu d'ouvrir.
     effet: str = "externe"
     libelle: str = ""                      # « je … », affiché à l'écran
+    # L'EXPERT D'ÉCRAN À CRÉDITER quand ce skill travaille (« agent2 »…). Le
+    # graphe exécute presque tout dans agent1 : sans cette donnée, chaque tour
+    # était attribué à l'expert par défaut, la carte des autres experts restait
+    # à zéro et leur historique vide — alors que le travail, lui, était fait.
+    # Vide = pas d'avis : l'orientation du tour (classify) reste valable.
+    expert: str = ""
 
 
 _CACHE: Optional[dict[str, Declaration]] = None
@@ -119,6 +125,12 @@ def libelle(nom: str) -> Optional[str]:
     """Le libellé d'écran, ou None si inconnu du registre."""
     decl = collecte().get(nom)
     return decl.libelle or None if decl else None
+
+
+def expert(nom: str) -> Optional[str]:
+    """L'expert d'écran crédité pour ce skill (« agent2 »…), ou None."""
+    decl = collecte().get(nom)
+    return (decl.expert or None) if decl else None
 
 
 def catalogue_declare() -> dict[str, tuple[str, list[str], list[str]]]:

@@ -103,6 +103,18 @@ def effet_du_skill(name: str, ligne=None) -> str:
     return valeur or "externe"
 
 
+def expert_du_skill(name: str) -> str | None:
+    """L'expert d'écran à créditer quand ce skill travaille (« agent2 »…).
+
+    Presque tout s'exécute dans le graphe d'agent1 ; l'attribution d'écran,
+    elle, vit dans la déclaration du skill, à côté de son effet. None = pas
+    d'avis, l'orientation du tour reste valable. Pas de fail-closed ici : ne
+    rien déclarer n'ouvre aucun droit, cela ne touche que l'affichage.
+    """
+    from skills.registre import expert as expert_declare
+    return expert_declare(name)
+
+
 def _verifier_effet(name: str, data: dict, ligne, approbation: dict | None) -> str:
     """Verrou structurel des actions à effet externe.
 

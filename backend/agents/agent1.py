@@ -817,7 +817,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
 
     from security.anonymizer import anonymizer
     from skills.protocol import extraire_action
-    from skills.executor import execute_skill, hash_payload, SkillError, effet_du_skill
+    from skills.executor import execute_skill, hash_payload, SkillError, effet_du_skill, expert_du_skill
     from tasks.identity import charger_executant
 
     # Le rôle est transmis pour que la vue qui VALIDE soit exactement celle
@@ -960,7 +960,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
     effet = effet_du_skill(action["skill"])
     if effet == "externe":
         # JAMAIS exécuté ici. On arme la validation humaine du graphe parent.
-        return {
+        armement = {
             "llm_response": texte or f"Action « {action['skill']} » en attente de validation.",
             "pending_action": {"skill": action["skill"], "args": args,
                                "effet": effet, "payload_hash": empreinte},
@@ -970,6 +970,15 @@ async def tools_node(state: AgentState, config=None) -> dict:
                                    "payload_hash": empreinte},
             "tools_finished": True, "tool_iterations": iteration,
         }
+        # L'ATTRIBUTION D'ÉCRAN SUIT LE TRAVAIL, PAS LE GRAPHE. Un tirage de
+        # visuel s'exécute ici, dans agent1 — mais c'est un travail de
+        # conception : la demande d'accord, le tableau de bord et l'historique
+        # doivent le porter au crédit de l'expert que le skill déclare. Posé
+        # dès l'ARMEMENT, pour que la carte d'accord nomme le bon expert.
+        exp = expert_du_skill(action["skill"])
+        if exp:
+            armement["target_agent"] = exp
+        return armement
 
     # Identité RECHARGÉE au moment d'agir : un compte désactivé entre-temps ne
     # doit plus rien pouvoir faire, même si le tour a commencé avant.
@@ -1116,6 +1125,13 @@ async def tools_node(state: AgentState, config=None) -> dict:
            "entity_map": carte_maj}
     if ok:
         maj["relance_annonce"] = False
+        # MÊME ATTRIBUTION QU'À L'ARMEMENT : un skill qui déclare son expert
+        # crédite le tour à cet expert (préparer/essayer un visuel = travail de
+        # conception, même exécuté dans agent1). Seulement s'il a ABOUTI : un
+        # échec n'est pas un travail rendu.
+        exp = expert_du_skill(action["skill"])
+        if exp:
+            maj["target_agent"] = exp
     return maj
 
 

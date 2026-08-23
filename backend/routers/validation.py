@@ -283,6 +283,22 @@ async def resolve_validation(
             logging.getLogger("pluton.validation").warning(
                 "Réponse post-validation non persistée : %s", e)
 
+    # LE FIL EST CRÉDITÉ À L'EXPERT QUI A EXÉCUTÉ L'ACTION VALIDÉE : un tirage
+    # de visuel approuvé est un travail de conception, il doit apparaître dans
+    # l'historique de cet expert-là. Même montée que dans chat.py (jamais de
+    # retour vers agent1), même best-effort.
+    agent_apres = str((result or {}).get("agent_used") or "")
+    if agent_apres not in ("", "agent1") and fil and not fil.startswith(("file:", "task:")):
+        try:
+            async with get_db() as conn:
+                await conn.execute(
+                    """UPDATE threads SET agent_type = $2
+                       WHERE langgraph_thread_id = $1 AND agent_type IS DISTINCT FROM $2""",
+                    fil, agent_apres)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("duret.validation").warning(
+                "Attribution d'expert non enregistrée : %s", e)
+
     await log_action(
         action="validation_resolved",
         user_id=str(current_user.id),

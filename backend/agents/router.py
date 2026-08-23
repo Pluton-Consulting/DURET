@@ -162,7 +162,7 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                                    + "\n\n(Action refusée : rien n'a été exécuté.)").strip()}
 
     from tasks.identity import charger_executant
-    from skills.executor import execute_skill, hash_payload, SkillError
+    from skills.executor import execute_skill, hash_payload, SkillError, expert_du_skill
 
     utilisateur = await charger_executant(state.get("user_id"))
     if utilisateur is None:
@@ -211,6 +211,14 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     sortie = {"pending_action": None,
               "final_response": ((state.get("final_response") or "").rstrip()
                                  + f"\n\n{message}").strip()}
+    # L'ATTRIBUTION D'ÉCRAN SUIT LE TRAVAIL : un skill qui déclare son expert
+    # (un tirage de visuel = conception) crédite le tour à cet expert, pour que
+    # `agent_used`, le tableau de bord et l'historique du fil disent qui a
+    # réellement travaillé — la reprise après validation ne repasse pas par
+    # la boucle d'outils, il faut donc le redire ici.
+    exp = expert_du_skill(action["skill"])
+    if exp:
+        sortie["target_agent"] = exp
     # LA RÉFÉRENCE DE L'IMAGE VALIDÉE ENTRE DANS L'HISTORIQUE DU MODÈLE.
     # L'historique (`messages`) n'est écrit que par la réhydratation, AVANT la
     # décision humaine : le résultat d'une action validée n'y figurait jamais.

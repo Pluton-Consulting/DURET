@@ -69,6 +69,18 @@ async def _texte_piece_jointe(nom: Optional[str], b64: Optional[str],
         logger.warning("Lecture de la pièce jointe %s impossible : %s", nom, e)
         return None
 
+    # UN PLAN N'EST PAS UN DOCUMENT TEXTE. Un PDF de plan porte souvent quelques
+    # étiquettes vectorielles (cotes, légendes) : sa couche texte « existe », le
+    # fichier partait donc chez agent1 avec trois mots pour tout contenu — et la
+    # vision, seule capable de LIRE le dessin, n'était jamais sollicitée. Sous ce
+    # seuil, le texte extrait ne raconte rien : on rend None, le tour part à la
+    # vision (agent2). Les vrais documents texte (CCTP, courriers) le dépassent
+    # largement, et les tableaux ne sont pas concernés.
+    if (structure["kind"] != "tabulaire"
+            and ("pdf" in (mime or "").lower() or nom.lower().endswith(".pdf"))
+            and len((structure.get("text") or "").strip()) < 300):
+        return None
+
     if structure["kind"] == "tabulaire":
         lignes = structure["rows"]
         # Un classeur de 5 000 lignes ne tient pas dans une fenêtre de contexte :
@@ -200,6 +212,30 @@ async def _claim_thread(current_user: User, thread_id: str, query: str,
     return str(pk)
 
 
+async def _actualiser_expert(current_user: User, thread_pk: str, agent_used: str) -> None:
+    """Crédite le fil à l'expert qui a RÉELLEMENT travaillé ce tour.
+
+    `threads.agent_type` était figé à « agent1 » par `_claim_thread` et jamais
+    mis à jour : l'historique des autres experts (bouton « Historique » de leur
+    carte) restait vide pour toujours, même après une analyse de plan ou un
+    visuel. Montée seule (agent1 -> agent2/agent3), jamais l'inverse : un fil
+    qui a touché à la conception reste dans l'historique conception, même si la
+    conversation revient ensuite au devis. Best-effort : l'attribution ne fait
+    jamais échouer une réponse.
+    """
+    if agent_used in (None, "", "agent1"):
+        return
+    try:
+        async with get_rls_db(str(current_user.id), current_user.role) as conn:
+            await conn.execute(
+                """UPDATE threads SET agent_type = $2
+                   WHERE id = $1::uuid AND agent_type IS DISTINCT FROM $2""",
+                uuid.UUID(thread_pk), agent_used,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Attribution d'expert non enregistrée : %s", e)
+
+
 async def _persist_messages(current_user: User, thread_pk: str,
                             user_content: str, assistant_content: str) -> None:
     """Enregistre l'échange dans `messages` (historique rechargeable côté frontend).
@@ -276,6 +312,7 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
     duration_ms = int((time.monotonic() - start) * 1000)
 
     await _persist_messages(current_user, thread_pk, body.query, result.get("response") or "")
+    await _actualiser_expert(current_user, thread_pk, agent_used)
     await _increment_usage(current_user, tokens=tokens_in + tokens_out, cost=cost_eur)
     await log_action(
         action="chat_request",
@@ -410,8 +447,14 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
             attachment_name=data.get("attachment_name"),
             attachment_text=texte_joint,
         ):
-            if event.get("node") == "classify":
-                agent_used = (event.get("data") or {}).get("target_agent", agent_used)
+            # L'expert effectif se lit sur TOUS les nœuds, pas seulement sur
+            # `classify` : la boucle d'outils et `execute_action` réattribuent
+            # le tour quand un skill déclare son expert (un visuel = de la
+            # conception, même exécuté dans le graphe d'agent1). Le dernier
+            # avis du tour l'emporte.
+            cible = (event.get("data") or {}).get("target_agent")
+            if cible:
+                agent_used = cible
             if event.get("type") == "final":
                 final_response = event.get("response") or ""
                 # ON ÉCRIT AVANT D'ANNONCER, ET C'EST TOUT LE CORRECTIF.
@@ -481,6 +524,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     # que ne pas l'écrire — le fil afficherait la question en double.
     if not persistance_faite:
         await _persist_messages(user, thread_pk, data.get("query", ""), final_response)
+    await _actualiser_expert(user, thread_pk, agent_used)
     await _increment_usage(user, tokens=tokens, cost=0.0)
     await log_action(
         action="chat_request", user_id=str(user.id), agent_id=agent_used,

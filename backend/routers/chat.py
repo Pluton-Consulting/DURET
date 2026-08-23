@@ -370,6 +370,11 @@ async def get_thread_messages(thread_id: str, current_user: User = Depends(get_c
 _WS_TICKETS: dict[str, tuple[str, float]] = {}   # ticket -> (user_id, expiry_monotonic)
 _WS_TICKET_TTL_S = 30
 
+# Les tours dont la socket est partie mais qui finissent leur course : asyncio
+# ne garde qu'une référence FAIBLE sur les tâches — sans ce set, un tour
+# détaché pouvait être ramassé en plein vol, silencieusement.
+_TOURS_DETACHES: set[asyncio.Task] = set()
+
 
 @router.post("/ws-ticket")
 async def create_ws_ticket(current_user: User = Depends(get_current_user)):
@@ -398,6 +403,20 @@ async def _ws_authenticate(websocket: WebSocket) -> Optional[User]:
     return User(**dict(row)) if row else None
 
 
+async def _dire(websocket: WebSocket, payload: dict) -> bool:
+    """Envoie sur la socket si elle vit encore. Une socket partie N'EST PAS une
+    panne : l'utilisateur a navigué (Paramètres…), rafraîchi la page ou changé
+    d'application — le tour continue pour l'historique, et l'écran se
+    resynchronisera à son retour. Rendre l'échec au lieu de le lever, c'est ce
+    qui permet à la boucle du tour d'aller au bout sans personne au bout du fil.
+    """
+    try:
+        await websocket.send_json(payload)
+        return True
+    except Exception:  # noqa: BLE001 - socket fermée ou rompue : on continue sans elle
+        return False
+
+
 async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                          data: dict) -> None:
     """Un tour complet, dans une tâche À PART pour rester ANNULABLE.
@@ -412,7 +431,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         await _check_schedule(user)
         await _check_quota(user)
     except HTTPException as e:
-        await websocket.send_json({"type": "error", "detail": e.detail})
+        await _dire(websocket, {"type": "error", "detail": e.detail})
         return
 
     start = time.monotonic()
@@ -423,7 +442,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     try:
         thread_pk = await _claim_thread(user, thread_id, data.get("query", ""))
     except HTTPException as e:
-        await websocket.send_json({"type": "error", "detail": e.detail})
+        await _dire(websocket, {"type": "error", "detail": e.detail})
         return
 
     texte_joint = await _texte_piece_jointe(
@@ -480,7 +499,10 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                 await _persist_messages(user, thread_pk,
                                         data.get("query", ""), final_response)
                 persistance_faite = True
-            await websocket.send_json(event)
+            # `_dire` et non `send_json` : une socket partie (navigation,
+            # rafraîchissement) ne doit plus faire dérailler le tour — il va
+            # au bout, et sa réponse attend dans l'historique.
+            await _dire(websocket, event)
     except asyncio.CancelledError:
         # ARRÊT DEMANDÉ — pas une panne. Le verrou de fil se libère de lui-même
         # (`_Verrou.__exit__` s'exécute au passage de l'annulation), donc la
@@ -500,10 +522,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         if not persistance_faite:
             await _persist_messages(user, thread_pk, data.get("query", ""), mot)
             persistance_faite = True
-        try:
-            await websocket.send_json({"type": "arrete", "detail": mot})
-        except Exception:  # noqa: BLE001 - la socket peut déjà être fermée
-            pass
+        await _dire(websocket, {"type": "arrete", "detail": mot})
         await log_action(action="chat_interrompu", user_id=str(user.id),
                          agent_id=agent_used, success=True,
                          duration_ms=int((time.monotonic() - start) * 1000))
@@ -512,10 +531,10 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         # Refus délibéré, pas une panne : le client ne doit PAS se
         # rabattre sur le POST, qui retomberait sur le même fil occupé.
         # Un type distinct le lui dit.
-        await websocket.send_json({"type": "fil_occupe", "detail": str(e)})
+        await _dire(websocket, {"type": "fil_occupe", "detail": str(e)})
         return
     except Exception as e:  # noqa: BLE001
-        await websocket.send_json({"type": "error", "detail": str(e)})
+        await _dire(websocket, {"type": "error", "detail": str(e)})
         return
 
     duration_ms = int((time.monotonic() - start) * 1000)
@@ -592,8 +611,21 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
     except WebSocketDisconnect:
         pass
     finally:
-        # LA FERMETURE DE L'ONGLET ARRÊTE LE TOUR. Sans cela, un graphe
-        # continuait de tourner — et d'appeler des modèles payants — pour une
-        # socket que plus personne n'écoute.
+        # LA FERMETURE DE LA SOCKET N'ARRÊTE PLUS LE TOUR EN PLEIN VOL.
+        #
+        # L'ancienne règle annulait le tour dès la déconnexion, pour ne pas
+        # payer des modèles pour une socket que plus personne n'écoute. Mais
+        # naviguer vers Paramètres, rafraîchir la page ou changer d'application
+        # sur mobile ferment la socket SANS que quiconque ait voulu abandonner
+        # — et l'annulation jetait alors les appels déjà payés du tour. Depuis
+        # que la réponse est PERSISTÉE avant d'être annoncée, quelqu'un écoute
+        # toujours : l'historique. Le tour va donc au bout (borné par les
+        # budgets d'actions du graphe), ses envois tombent dans `_dire` qui
+        # tolère la socket absente, et sa réponse attend dans la conversation.
+        # L'arrêt VOULU reste le bouton « stop », traité dans la boucle
+        # ci-dessus. La référence est retenue : asyncio ne garde qu'une
+        # référence faible sur les tâches, un tour détaché sans ancre pouvait
+        # être ramassé en plein vol.
         if en_cours is not None and not en_cours.done():
-            en_cours.cancel()
+            _TOURS_DETACHES.add(en_cours)
+            en_cours.add_done_callback(_TOURS_DETACHES.discard)

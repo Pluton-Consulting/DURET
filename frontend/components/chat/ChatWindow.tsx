@@ -8,6 +8,7 @@ import { ReflexionEnCours } from "./ReflexionEnCours"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { apiRequest } from "@/lib/api"
 import { openChatSocket, sendQuery, sendStop, ChatEvent } from "@/lib/ws"
+import { detacherTour, majTourDetache, reprendreTour, terminerTourDetache, abonnerTour } from "@/lib/tourDetache"
 
 interface Message {
   id: string
@@ -168,18 +169,23 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const filSuspenduRef = useRef<string | null>(null)
   const tacheActiveRef = useRef<string | null>(null)
   tacheActiveRef.current = tacheActive
+  // Le fil courant, lisible au DÉMONTAGE (l'état React n'est plus fiable à ce
+  // moment-là) : c'est lui qui permet de détacher un tour en vol.
+  const threadIdRef = useRef<string | null>(initialThreadId)
 
   // Enregistre le thread courant (state + localStorage) dès qu'il est connu.
   const userKey = (session as any)?.user?.email || null
 
   const rememberThread = (tid: string) => {
     setThreadId(tid)
+    threadIdRef.current = tid
     try { if (typeof window !== "undefined") window.localStorage.setItem(storageKey(userKey), tid) } catch { /* no-op */ }
   }
 
   // Fil périmé (403 : il appartient à quelqu'un d'autre) -> on repart proprement.
   const forgetThread = () => {
     setThreadId(null)
+    threadIdRef.current = null
     try {
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(storageKey(userKey))
@@ -528,11 +534,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     return ancien
   }
 
-  useEffect(() => {
-    if (!token) return
-    const tid = initialThreadId || lireThreadMemorise()
-    if (!tid) return
-    setThreadId(tid)
+  const chargerHistorique = (tid: string) =>
     apiRequest<any[]>(`/api/chat/threads/${tid}/messages`, { token })
       .then((rows) =>
         setMessages(
@@ -543,10 +545,117 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           }))
         )
       )
+
+  // ── Re-brancher un tour détaché (retour de Paramètres ou d'ailleurs) ──
+  // Le démontage de ce composant ne tue plus un tour en vol : sa connexion et
+  // ses closures survivent dans le runtime, et le module `tourDetache` garde de
+  // quoi remettre l'écran exactement dans l'état qu'il aurait eu sans partir.
+  const adopterTourDetache = (tid: string) => {
+    const t = reprendreTour(tid)
+    if (!t) return
+    if (t.fini) {
+      // Terminé pendant l'absence : l'historique rechargé juste avant contient
+      // déjà l'échange (le serveur écrit AVANT d'annoncer). Rien à rejouer.
+      terminerTourDetache()
+      return
+    }
+    if (t.suspendu !== undefined) {
+      // Une action attend un accord. L'échange est déjà persisté (le tour
+      // s'est posé au human_gate), la carte vit dans la colonne de droite :
+      // on remet la bannière et le fil reste pris jusqu'à la décision.
+      if (t.suspendu) filSuspenduRef.current = t.suspendu
+      principalOccupeRef.current = true
+      setPrincipalOccupe(true)
+      terminerTourDetache()
+      pushAssistant("⏳ Une action attend votre accord : voir « En arrière-plan », à droite.", true)
+      rafraichirEtat()
+      return
+    }
+    // Le tour est encore en vol : question affichée, bannière d'activité, fil
+    // occupé, et la socket rendue au bouton d'arrêt. `cibleWsRef` est re-armé
+    // pour que ce composant-ci sache À SON TOUR qu'un tour vole — sans quoi une
+    // seconde navigation fermerait la socket adoptée au lieu de re-détacher.
+    const idQuestion = newId()
+    idDerniereQuestionRef.current = idQuestion
+    queryEnCoursRef.current = t.question
+    wsRef.current = t.ws ?? null
+    cibleWsRef.current = { carte: null }
+    principalOccupeRef.current = true
+    setPrincipalOccupe(true)
+    setLoading(true)
+    if (t.activite) setActivite(t.activite)
+    setMessages((prev) => [...prev, { id: idQuestion, role: "user", content: t.question }])
+    const desabonner = abonnerTour((tour) => {
+      if (!monteRef.current) { desabonner(); return }
+      if (tour.fini) {
+        desabonner()
+        terminerTourDetache()
+        cibleWsRef.current = null
+        principalOccupeRef.current = false
+        setPrincipalOccupe(false)
+        setLoading(false)
+        setThinkingNode(null)
+        // La réponse est déjà en base : on recharge le fil plutôt que de
+        // reconstruire l'échange à la main — une seule source de vérité.
+        chargerHistorique(tid).catch(() => {})
+      } else if (tour.suspendu !== undefined) {
+        desabonner()
+        terminerTourDetache()
+        cibleWsRef.current = null
+        if (tour.suspendu) filSuspenduRef.current = tour.suspendu
+        setLoading(false)
+        setThinkingNode(null)
+        pushAssistant("⏳ Une action attend votre accord : voir « En arrière-plan », à droite.", true)
+        rafraichirEtat()
+      } else if (tour.activite) {
+        setActivite(tour.activite)
+        setTraceReflexion((prev) =>
+          prev[prev.length - 1] === tour.activite ? prev : [...prev, tour.activite])
+      }
+    })
+    // Le tour a pu s'achever entre la lecture et l'abonnement : on revérifie.
+    if (t.fini) {
+      desabonner()
+      terminerTourDetache()
+      cibleWsRef.current = null
+      principalOccupeRef.current = false
+      setPrincipalOccupe(false)
+      setLoading(false)
+      chargerHistorique(tid).catch(() => {})
+    }
+  }
+
+  useEffect(() => {
+    if (!token) return
+    const tid = initialThreadId || lireThreadMemorise()
+    if (!tid) return
+    setThreadId(tid)
+    threadIdRef.current = tid
+    chargerHistorique(tid)
       .catch(() => {})
+      .finally(() => { if (monteRef.current) adopterTourDetache(tid) })
   }, [initialThreadId, token, userKey])
 
-  useEffect(() => () => { try { wsRef.current?.close() } catch { /* no-op */ } }, [])
+  useEffect(() => () => {
+    // LA NAVIGATION NE TUE PLUS LE TOUR. Fermer la socket ici faisait annuler
+    // le tour par le serveur (il lit la fermeture comme un abandon) — et le
+    // garde-fou anti-blocage relançait même la demande en double par POST, en
+    // aveugle. Constaté : « aller dans Paramètres stoppe la demande en cours ».
+    // Un tour en vol est désormais DÉTACHÉ : sa connexion et ses closures
+    // survivent dans le runtime de la SPA, le module `tourDetache` garde de
+    // quoi re-brancher l'écran au retour. Sans tour en vol, on ferme comme avant.
+    const enVol = cibleWsRef.current && cibleWsRef.current.carte === null
+    if (enVol && threadIdRef.current) {
+      detacherTour({
+        threadId: threadIdRef.current,
+        question: queryEnCoursRef.current,
+        activite: activiteRef.current,
+        ws: wsRef.current,
+      })
+      return
+    }
+    try { wsRef.current?.close() } catch { /* no-op */ }
+  }, [])
 
   // ── Ceder l'ecran du chat a une nouvelle demande ─────────────────────
   // La tache en cours glisse en carte dans la colonne de droite ; sa connexion
@@ -700,6 +809,15 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       settled = true
       clearStall()
       libérer()
+      if (!monteRef.current) {
+        // L'écran est parti (Paramètres…) pendant le tour. La réponse est déjà
+        // dans l'historique (le serveur écrit avant d'annoncer) : on signale
+        // seulement la fin au module de détachement, l'écran rechargera le fil
+        // à son retour.
+        majTourDetache({ fini: true })
+        closeWs()
+        return
+      }
       if (cible.carte) {
         // Le tour s'est termine dans sa carte : le resultat y attend le clic.
         majCarteLocale(cible.carte, {
@@ -730,6 +848,14 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       clearStall()
       closeWs()
       if (cibleWsRef.current === cible) cibleWsRef.current = null
+      if (!monteRef.current) {
+        // L'écran est absent : l'attente d'accord est notée au module de
+        // détachement, la bannière se remettra au retour. La carte, elle, vit
+        // déjà côté serveur (sondage des validations).
+        if (validationId) filSuspenduRef.current = validationId
+        majTourDetache({ suspendu: validationId ?? null })
+        return
+      }
       if (cible.carte) {
         majCarteLocale(cible.carte, { etat: "attente_validation",
                                       activite: "en attente de votre accord",
@@ -775,7 +901,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         if (res.thread_id) rememberThread(res.thread_id)
         const attend =
           res.status === "pending_validation" || res.status === "validation_required" || Boolean(res.validation_id)
-        if (cible.carte) {
+        if (!monteRef.current) {
+          // Le repli POST a abouti pendant l'absence : même contrat que le
+          // WebSocket — la fin (ou l'attente d'accord) va au module de
+          // détachement, la réponse est déjà dans l'historique.
+          if (attend) majTourDetache({ suspendu: res.validation_id ? String(res.validation_id) : null })
+          else majTourDetache({ fini: true })
+        } else if (cible.carte) {
           majCarteLocale(cible.carte, attend
             ? { etat: "attente_validation", activite: "en attente de votre accord",
                 validationId: res.validation_id ? String(res.validation_id) : undefined }
@@ -792,9 +924,11 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           // Fil occupe : la demande part en file plutot que d'echouer.
           libérer()
           lancerEnFile(text, false)
+          if (!monteRef.current) majTourDetache({ fini: true })
           return
         }
-        if (cible.carte) majCarteLocale(cible.carte, { etat: "echec", erreur: err?.message ?? "requête impossible" })
+        if (!monteRef.current) majTourDetache({ fini: true })
+        else if (cible.carte) majCarteLocale(cible.carte, { etat: "echec", erreur: err?.message ?? "requête impossible" })
         else pushAssistant(`Erreur : ${err?.message ?? "requête impossible"}`)
       } finally {
         libérer()
@@ -835,11 +969,18 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             closeWs()
             libérer()
             lancerEnFile(text, false)
+            if (!monteRef.current) majTourDetache({ fini: true })
           } else if (t === "error") {
             fallbackPost()
           } else if (t === "node" || event.node !== undefined) {
             const n = String(event.node ?? (event.data && event.data.node) ?? "")
             const libelle = typeof event.libelle === "string" ? event.libelle.trim() : ""
+            if (!monteRef.current) {
+              // L'écran est absent : la progression va au module de
+              // détachement, qui la resservira à l'écran remonté.
+              if (libelle) majTourDetache({ activite: libelle })
+              return
+            }
             if (cible.carte) {
               // La tache vit dans sa carte : c'est ELLE qui recoit le texte
               // vivant. La banniere du chat appartient a la tache suivante.

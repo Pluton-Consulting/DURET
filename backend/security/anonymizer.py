@@ -381,7 +381,19 @@ class _Anonymizer:
         (cohérence intra-`entity_map`, y compris entre plusieurs tours de
         conversation quand la map est partagée), sinon en crée un nouveau
         numéroté et met à jour `entity_map`, l'index inverse et les compteurs.
+
+        UNE VALEUR DÉJÀ MASQUÉE NE SE REMASQUE PAS. Relevé sur la conversation
+        du 23/08 : la carte du fil portait « [LOC_2] -> "[LOC_1]" » et
+        « [PER_7] -> "[PER_1] E-MAIL" ». Un texte DÉJÀ masqué — l'historique du
+        fil, la sortie d'un skill, un extrait rappelé — était repassé à
+        l'anonymiseur, et l'analyse prenait le jeton lui-même pour une entité.
+        Deux dégâts, et le second se voit à l'écran : la carte devient un
+        dictionnaire de jetons vers des jetons, et la réhydratation rend alors
+        « [LOC_1] » au lecteur — la tuyauterie, à la place de la donnée. Or un
+        jeton ne cache rien : il n'y a rien à masquer, on le laisse tel quel.
         """
+        if value and _RE_PLACEHOLDER.search(value):
+            return value
         if index is None:
             index = self._build_index(entity_map)
         existing = index.get(value)

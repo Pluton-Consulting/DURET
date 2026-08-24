@@ -52,6 +52,14 @@ async def mes_droits(data: dict, user) -> dict:
     connu = role in ROLE_ACCESS_LEVELS
 
     return {
+        # QUI PARLE. Le serveur le sait — c'est la session. Sans cette ligne,
+        # « une colonne avec MON mail » devenait une question posée à
+        # l'utilisateur, et le tour se terminait sans rien produire (relevé le
+        # 23/08). On ne demande pas à quelqu'un ce qu'on a déjà sous la main.
+        "identite": {
+            "nom": str(getattr(user, "name", "") or "").strip(),
+            "email": str(getattr(user, "email", "") or "").strip(),
+        },
         "role": role or "(inconnu)",
         "role_reconnu": connu,
         "acces_autorises": [{"niveau": n, "contenu": SENS_NIVEAUX.get(n, n)}

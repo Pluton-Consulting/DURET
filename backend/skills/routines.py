@@ -218,6 +218,79 @@ def _jeu_clients(existants: list):
 # ═══════════════════════════════════════════════════════════════════════════
 #  LISTE DES CLIENTS
 # ═══════════════════════════════════════════════════════════════════════════
+#
+#  L'EXPORT DOIT SAVOIR RÉPONDRE À LA DEMANDE ENTIÈRE. Relevé le 23/08 :
+#  « fais-moi un Excel avec une colonne pleine de tous les noms clients et une
+#  colonne avec mon mail sur toutes les lignes ». Le skill ne savait produire
+#  qu'un tableau figé (Client, Ville, Email, Téléphone) : le modèle a bien
+#  fabriqué le fichier, a constaté qu'il ne portait pas la seconde colonne, et
+#  s'est mis à DEMANDER l'adresse de son interlocuteur — deux tours de plus,
+#  puis un troisième, sans jamais rien livrer. Une adresse que le serveur
+#  connaît par la session, qui plus est.
+#
+#  Deux paramètres suffisent, et ils ne codent aucun métier :
+#    · `colonnes` — celles qu'on garde (« juste les noms ») ;
+#    · `ajouts`   — des colonnes CONSTANTES ({"E-mail": "@moi"}), où `@moi`
+#      vaut l'adresse de la personne connectée. On ne la demande donc jamais.
+_CLE_PAR_LIBELLE = {
+    "client": "nom", "clients": "nom", "nom": "nom", "noms": "nom",
+    "raison_sociale": "nom", "societe": "nom",
+    "ville": "ville", "villes": "ville", "commune": "ville",
+    "email": "email", "e_mail": "email", "mail": "email", "mails": "email",
+    "adresse_mail": "email", "courriel": "email",
+    "telephone": "telephone", "tel": "telephone", "portable": "telephone",
+}
+# « @moi », « mon mail »… : l'adresse de celui qui parle, connue du serveur.
+_C_EST_MOI = ("moi", "@moi", "mon_email", "mon_mail", "mon_adresse",
+              "mon_adresse_mail", "mon_courriel", "utilisateur", "moi_meme")
+
+
+def _colonnes_gardees(data: dict) -> list | None:
+    """Les colonnes demandées, ramenées aux clés connues. `None` = toutes.
+
+    Le nom reste TOUJOURS : une liste de clients sans les clients n'existe pas.
+    """
+    brut = data.get("colonnes")
+    if isinstance(brut, str):
+        brut = re.split(r"[,;/]| et ", brut)
+    if not isinstance(brut, (list, tuple)) or not brut:
+        return None
+    gardees = ["nom"]
+    for x in brut:
+        cle = _CLE_PAR_LIBELLE.get(_plat(x))
+        if cle and cle not in gardees:
+            gardees.append(cle)
+    return gardees
+
+
+def _colonnes_ajoutees(data: dict, user) -> list:
+    """Les colonnes constantes demandées en plus : `{"E-mail": "@moi"}`.
+
+    Bornées à trois : au-delà, ce n'est plus une liste de clients enrichie,
+    c'est un autre fichier — et il se fabrique avec l'atelier de documents.
+    """
+    import json as _j
+    brut = data.get("ajouts") if data.get("ajouts") is not None else data.get("colonnes_fixes")
+    if isinstance(brut, str):
+        try:
+            brut = _j.loads(brut)
+        except ValueError:
+            brut = None
+    if not isinstance(brut, dict):
+        return []
+    moi = str(getattr(user, "email", "") or "").strip()
+    sorties = []
+    for libelle, valeur in list(brut.items())[:3]:
+        titre = str(libelle or "").strip()[:40]
+        if not titre:
+            continue
+        texte = str("" if valeur is None else valeur).strip()
+        if _plat(texte) in _C_EST_MOI:
+            texte = moi
+        sorties.append((titre, texte[:200]))
+    return sorties
+
+
 async def liste_clients(data: dict, user) -> dict:
     """Qui sont les clients, combien, et de quoi les joindre. UN appel."""
     from database.connection import get_db
@@ -278,8 +351,10 @@ async def liste_clients(data: dict, user) -> dict:
     # quel fichier produit.
     veut_fichier = str(data.get("fichier") or data.get("format") or "").strip().lower() in (
         "1", "true", "oui", "vrai", "xlsx", "excel", "fichier", "csv", "complet", "tout")
+    gardees = _colonnes_gardees(data)
+    ajouts = _colonnes_ajoutees(data, user)
     if veut_fichier and clients:
-        return await _fichier_clients(clients, jeu, total, user)
+        return await _fichier_clients(clients, jeu, total, user, gardees, ajouts)
 
     # Pagination par initiale : « les clients en B », « la suite ».
     lettre = _plat(data.get("lettre") or "")[:1]
@@ -298,11 +373,13 @@ async def liste_clients(data: dict, user) -> dict:
 
     colonnes = ["Client"] + [t for t, c in (("Ville", "ville"), ("Email", "email"),
                                             ("Téléphone", "telephone"))
-                             if any(x[c] for x in clients)]
+                             if any(x[c] for x in clients)
+                             and (gardees is None or c in gardees)]
     cles = {"Client": "nom", "Ville": "ville", "Email": "email", "Téléphone": "telephone"}
     bloc = {"type": "table",
-            "columns": colonnes,
-            "rows": [[c[cles[t]] for t in colonnes] for c in clients]}
+            "columns": colonnes + [t for t, _ in ajouts],
+            "rows": [[c[cles[t]] for t in colonnes] + [v for _, v in ajouts]
+                     for c in clients]}
 
     n = len(clients)
     if lettre:
@@ -333,17 +410,22 @@ async def liste_clients(data: dict, user) -> dict:
     }
 
 
-async def _fichier_clients(clients: list, jeu: str, total: int, user) -> dict:
+async def _fichier_clients(clients: list, jeu: str, total: int, user,
+                           gardees: list | None = None, ajouts: list | None = None) -> dict:
     """Toute la liste dans un .xlsx produit par l'atelier, avec son bloc `fichier`."""
     import asyncio
     from bureautique.atelier import ouvrir, ajouter, terminer
     proprio = str(getattr(user, "id", "") or "")
+    ajouts = ajouts or []
     colonnes = [("Client", "nom"), ("Ville", "ville"), ("Email", "email"), ("Téléphone", "telephone")]
-    colonnes = [(t_, c) for t_, c in colonnes if c == "nom" or any(x.get(c) for x in clients)]
+    colonnes = [(t_, c) for t_, c in colonnes
+                if c == "nom" or (any(x.get(c) for x in clients)
+                                  and (gardees is None or c in gardees))]
     entete = {"titre": "Liste des clients", "format": "xlsx"}
     elements = [{"type": "feuille", "nom": "Clients",
-                 "entetes": [t_ for t_, _ in colonnes],
-                 "lignes": [[c.get(cle, "") for _, cle in colonnes] for c in clients]}]
+                 "entetes": [t_ for t_, _ in colonnes] + [t_ for t_, _ in ajouts],
+                 "lignes": [[c.get(cle, "") for _, cle in colonnes] + [v for _, v in ajouts]
+                            for c in clients]}]
 
     def _produire():
         jeton = ouvrir(entete, proprio)
@@ -358,10 +440,15 @@ async def _fichier_clients(clients: list, jeu: str, total: int, user) -> dict:
         raise SkillError("Le fichier des clients n'a pas pu être produit. Réessayez, ou "
                          "demandez la liste à l'écran (par initiale).")
 
+    # `titre` en plus du nom de fichier : c'est par lui que la réhydratation
+    # reconnaît, au tour suivant, une vignette inventée qui parle de CE
+    # fichier-là — et la remplace par le bloc réel (cf. `_designe_le_meme`).
     bloc = {"type": "fichier", "url": f"/api/documents/{jeton}", "nom": "clients.xlsx",
-            "format": "xlsx", "octets": fiche.get("octets")}
+            "titre": entete["titre"], "format": "xlsx", "octets": fiche.get("octets")}
+    entetes = [t_ for t_, _ in colonnes] + [t_ for t_, _ in ajouts]
     compte = (f"{total} client{'s' if total > 1 else ''}, la liste complète est dans le fichier "
-              f"Excel ci-dessous ({len(clients)} lignes).")
+              f"Excel ci-dessous ({len(clients)} lignes, colonnes : "
+              + ", ".join(entetes) + ").")
     return {
         "trouve": True, "source_type": jeu, "nombre": total, "affiches": len(clients),
         "fichier": bloc["url"], "bloc_ui": bloc, "message_final": compte,
@@ -646,8 +733,14 @@ SKILLS = {
             "« la liste entiere », un export, un Excel : passe `fichier: true` — le "
             "resultat est un fichier Excel avec apercu dans le chat, jamais une liste "
             "a recopier. Ne cherche JAMAIS sur le web pour cette question : les "
-            "clients sont une donnee interne"),
-        requis=[], optionnels=["lettre", "fichier"],
+            "clients sont une donnee interne. "
+            "LE FICHIER SE FACONNE ICI, en un seul appel : `colonnes` garde celles "
+            "qu'on demande (`[\"Client\"]` pour « juste les noms ») et `ajouts` ajoute "
+            "des colonnes CONSTANTES, repetees sur toutes les lignes "
+            "(`{\"E-mail\": \"@moi\"}`). `@moi` vaut l'adresse de la personne connectee : "
+            "elle est connue du serveur, ne la demande JAMAIS a l'utilisateur. "
+            "N'enchaine pas d'autre action apres : le fichier est produit, montre-le"),
+        requis=[], optionnels=["lettre", "fichier", "colonnes", "ajouts"],
         effet="lecture",
         libelle="je liste les clients"),
     "fiche_client": Declaration(

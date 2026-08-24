@@ -1200,6 +1200,189 @@ def _rendu_de_secours(resultats) -> str:
             return "\n\n".join(parties)
     return ""
 
+
+# ════════════════════════════════════════════════════════════════════════════
+#  UN LIVRABLE PRODUIT NE RESTE JAMAIS INVISIBLE
+#
+#  LE CONSTAT. Traces du 23/08, 13:05 : « fais-moi un Excel avec une colonne de
+#  tous les noms clients ». Le forceur appelle `liste_clients {fichier: true}`,
+#  le fichier est PRODUIT (477 lignes, 19 Ko, son bloc `fichier` prêt à
+#  l'emploi) — puis le modèle enchaîne deux actions sans rapport et termine par
+#  « Pour créer ce fichier Excel, j'ai besoin de votre adresse email ». Le
+#  fichier existait depuis deux minutes ; l'utilisateur ne l'a jamais vu. Deux
+#  tours plus tard, il en fabrique même une carte de son cru
+#  (`{"type":"doc","name":"Liste des clients"}`) : une vignette sans URL, que
+#  l'écran ne peut ni prévisualiser ni télécharger.
+#
+#  Le filet existant (`_rendu_de_secours`) ne pouvait rien ici : il ne se
+#  déclenche que sur une réponse VIDE ou sur une promesse, et une question
+#  posée à l'utilisateur n'en est pas une — à juste titre, elle appelle une
+#  réponse et doit rester.
+#
+#  D'où un filet distinct, et MÉCANIQUE : ce que le tour a réellement produit
+#  s'affiche, que le modèle ait pensé à le recopier ou non ; et ce qu'il
+#  invente à la place d'un fichier réel s'efface. Aucune consigne de plus au
+#  modèle : le dépôt a déjà payé pour apprendre qu'une règle de plus ne tient
+#  pas quand le prompt en porte trente autres.
+# ════════════════════════════════════════════════════════════════════════════
+
+import re as _re_livrables
+
+# Un bloc d'écran écrit par le modèle : ```ui { … }
+_BLOC_UI_RE = _re_livrables.compile(r"```ui\s*(\{.*?\})\s*```", _re_livrables.S)
+
+# Ce qui compte comme LIVRABLE : un objet produit, qui porte sa propre
+# référence (une URL de document, les clés d'une planche d'images). Une carte
+# `doc`, une table ou un `callout` décrivent quelque chose ; ils ne le portent
+# pas, et ne sont donc jamais restitués d'office.
+_TYPES_LIVRABLE = ("fichier", "visuel")
+
+
+def _reference_bloc(bloc) -> str:
+    """Ce qui identifie un livrable : l'URL du document, ou la clé de sa première image."""
+    if not isinstance(bloc, dict):
+        return ""
+    url = str(bloc.get("url") or "").strip()
+    if url:
+        return url
+    images = bloc.get("images")
+    if isinstance(images, list):
+        for img in images:
+            cle = str((img or {}).get("cle") or "").strip() if isinstance(img, dict) else ""
+            if cle:
+                return cle
+    return ""
+
+
+def _blocs_livrables(resultats) -> list[dict]:
+    """Les blocs d'écran des livrables produits par les skills de CE tour."""
+    import json as _j
+    blocs: list[dict] = []
+    for r in resultats or []:
+        if not isinstance(r, dict) or not r.get("ok"):
+            continue
+        brut = str(r.get("resultat_masque") or "")
+        i = brut.find("{")
+        if i < 0:
+            continue
+        try:
+            d = _j.loads(brut[i:])
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        bloc = d.get("bloc_ui")
+        if (isinstance(bloc, dict) and bloc.get("type") in _TYPES_LIVRABLE
+                and _reference_bloc(bloc)
+                and not any(_reference_bloc(b) == _reference_bloc(bloc) for b in blocs)):
+            blocs.append(bloc)
+    return blocs
+
+
+def fichiers_du_fil(state: AgentState) -> list[dict]:
+    """Les fichiers déjà produits dans CETTE conversation, le plus récent en dernier.
+
+    Lus dans l'historique, comme les images (`cles_images_du_fil`) : aucun champ
+    d'état à ajouter, rien à remettre à zéro, et cela survit au redémarrage.
+    C'est ce qui permet de répondre « montre-moi la liste » au tour suivant avec
+    le VRAI fichier plutôt qu'avec une vignette inventée.
+    """
+    import json as _j
+    vus: list[dict] = []
+    for m in (state.get("messages") or []):
+        contenu = getattr(m, "content", "")
+        if not isinstance(contenu, str):
+            contenu = str(contenu)
+        for brut in _BLOC_UI_RE.findall(contenu):
+            try:
+                bloc = _j.loads(brut)
+            except ValueError:
+                continue
+            if not isinstance(bloc, dict) or bloc.get("type") not in _TYPES_LIVRABLE:
+                continue
+            ref = _reference_bloc(bloc)
+            if not ref:
+                continue
+            vus = [b for b in vus if _reference_bloc(b) != ref]
+            vus.append(bloc)
+    return vus[-4:]
+
+
+def _plat_nom(valeur) -> str:
+    """Un nom réduit à ses lettres et chiffres, sans accent : « Liste des clients » -> « listedesclients »."""
+    import unicodedata
+    texte = unicodedata.normalize("NFD", str(valeur or "")).encode("ascii", "ignore").decode()
+    texte = _re_livrables.sub(r"\.(xlsx|xls|docx|doc|pdf|csv|pptx)$", "", texte.lower())
+    return _re_livrables.sub(r"[^a-z0-9]+", "", texte)
+
+
+def _designe_le_meme(carte: dict, reels: list[dict]) -> bool:
+    """La carte inventée par le modèle parle-t-elle d'un fichier qu'on a vraiment ?
+
+    Volontairement STRICT : une carte `doc` est aussi la façon normale de citer
+    un document trouvé par la recherche documentaire. On ne retire que celle
+    qui désigne, par son nom, un livrable qu'on tient sous la main — et qu'on
+    va donc remplacer par le vrai bloc, avec son aperçu et son téléchargement.
+    """
+    nom = _plat_nom(carte.get("name") or carte.get("nom") or carte.get("titre"))
+    if len(nom) < 5:
+        return False
+    for bloc in reels:
+        for candidat in (bloc.get("titre"), bloc.get("nom"), bloc.get("name")):
+            autre = _plat_nom(candidat)
+            if len(autre) >= 5 and (nom in autre or autre in nom):
+                return True
+    return False
+
+
+def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
+    """Le texte final, débarrassé des faux fichiers et complété des vrais."""
+    import json as _j
+    produits = _blocs_livrables(state.get("tool_results") or [])
+    du_fil = fichiers_du_fil(state)
+    connus = produits + [b for b in du_fil
+                         if not any(_reference_bloc(x) == _reference_bloc(b) for x in produits)]
+    if not connus:
+        return texte
+    references = {_reference_bloc(b) for b in connus}
+    invente = False
+
+    def _trier(m):
+        nonlocal invente
+        try:
+            bloc = _j.loads(m.group(1))
+        except ValueError:
+            return m.group(0)
+        if not isinstance(bloc, dict):
+            return m.group(0)
+        type_ = bloc.get("type")
+        # Un livrable dont la référence n'existe pas : le modèle l'a écrit de
+        # mémoire, l'écran n'en tirerait rien (URL morte, image absente).
+        if type_ in _TYPES_LIVRABLE and _reference_bloc(bloc) not in references:
+            invente = True
+            return ""
+        # Une vignette qui parle d'un fichier qu'on tient vraiment : on la
+        # remplace plus bas par le bloc réel, téléchargeable et prévisualisable.
+        if type_ == "doc" and not bloc.get("url") and _designe_le_meme(bloc, connus):
+            invente = True
+            return ""
+        return m.group(0)
+
+    texte = _BLOC_UI_RE.sub(_trier, texte).strip()
+
+    # Ce que le tour a produit s'affiche toujours ; si le modèle a inventé une
+    # carte à la place d'un fichier du fil, on restitue ce fichier-là.
+    a_montrer = list(produits)
+    if invente and not a_montrer and du_fil:
+        a_montrer = [du_fil[-1]]
+    for bloc in a_montrer:
+        if _reference_bloc(bloc) and _reference_bloc(bloc) in texte:
+            continue
+        logger.info("Livrable restitué à l'écran : %s", _reference_bloc(bloc))
+        texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()
+    return texte
+
+
 async def rehydrate_node(state: AgentState) -> dict:
     """Réinjecte les vraies entités dans la réponse via entity_map."""
     from security.anonymizer import anonymizer
@@ -1226,6 +1409,12 @@ async def rehydrate_node(state: AgentState) -> dict:
         if secours:
             logger.info("Rédaction absente ou promesse : rendu de secours depuis le dernier skill réussi")
             text = secours
+    # LE SECOND FILET, indépendant du premier : celui-ci ne juge pas la
+    # rédaction, il vérifie que ce qui a été PRODUIT est bien à l'écran. Posé
+    # AVANT la réhydratation, donc le bloc entre aussi dans l'historique du fil
+    # — c'est ainsi que le tour suivant retrouve le vrai fichier (URL et nom,
+    # aucune donnée personnelle) au lieu d'en réinventer une vignette.
+    text = _livrables_a_l_ecran(text, state)
     resultats_en_attente = None
     if not text:
         # DERNIER FILET, ET IL NE DOIT PAS ACCUSER L'UTILISATEUR.

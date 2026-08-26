@@ -103,14 +103,16 @@ async def interroger_donnees(data: dict, user) -> dict:
                 except _j.JSONDecodeError:
                     agreger = {"operation": "somme", "colonne": agreger}
             annee = str(data.get("annee") or "").strip()
-            if agreger or annee:
+            fragments = _fragments(data)
+            depuis = str(data.get("depuis") or data.get("periode") or "").strip()
+            if agreger or annee or depuis:
                 resultat = await _agreger(conn, niveaux, reel,
                                           agreger if isinstance(agreger, dict) else {},
-                                          annee, filtres)
-            elif not filtres:
+                                          annee, filtres, fragments, depuis)
+            elif not filtres and not fragments:
                 resultat = await _colonnes(conn, niveaux, reel)
             else:
-                resultat = await _filtrer(conn, niveaux, reel, filtres)
+                resultat = await _filtrer(conn, niveaux, reel, filtres, fragments)
             if reel != type_source:
                 resultat["source_type_demande"] = type_source
                 resultat["note_nom"] = (f"« {type_source} » a été compris comme « {reel} », "
@@ -123,6 +125,109 @@ async def interroger_donnees(data: dict, user) -> dict:
         # donnee n'existait pas, au lieu de dire que la lecture avait echoue.
         from skills.erreurs import SkillError
         raise SkillError("Les données importées sont momentanément indisponibles.")
+
+
+def _fragments(data: dict) -> dict:
+    """Les recherches PARTIELLES demandées : {colonne: bout de texte}.
+
+    POURQUOI CELA MANQUAIT, ET CE QUE ÇA COÛTAIT. `filtres` est une égalité
+    stricte (containment JSONB, indexé) : « combien de chantiers avec terrasse
+    bois » ne trouvait donc RIEN, parce que la colonne réelle contient des
+    phrases — « Création terrasse bois et allée », « Terrasse bois exotique +
+    massif ». Le zéro rendu était juste au sens du code et faux au sens de la
+    question, et rien ne signalait la différence. Or c'est la forme même des
+    questions qu'on pose à un assistant : un mot, pas une valeur exacte.
+    """
+    brut = data.get("contient") or data.get("contenant") or {}
+    if isinstance(brut, str):
+        import json
+        try:
+            brut = json.loads(brut)
+        except ValueError:
+            return {}
+    if not isinstance(brut, dict):
+        return {}
+    return {str(k): str(v) for k, v in brut.items() if str(k).strip() and str(v).strip()}
+
+
+def _clause_contient(fragments: dict, premier: int) -> tuple[str, list]:
+    """La condition SQL des recherches partielles, et ses paramètres.
+
+    Les noms de colonnes viennent du modèle : ils voyagent en PARAMÈTRE, jamais
+    dans le texte de la requête — même règle que partout ailleurs ici.
+    """
+    morceaux, params = [], []
+    for colonne, bout in fragments.items():
+        morceaux.append(
+            f"COALESCE(m.champs->>${premier}::text, m.data->>${premier}::text) "
+            f"ILIKE ${premier + 1}::text")
+        params += [colonne, f"%{bout}%"]
+        premier += 2
+    return (" AND ".join(morceaux) if morceaux else "TRUE"), params
+
+
+# ── La période, quand les dates sont du TEXTE ──────────────────────────────
+#
+# « Sur les 12 derniers mois » est la façon dont un dirigeant compte. Le code ne
+# connaissait que `annee`, sur quatre chiffres : la question devait être reposée
+# (« en 2026 »), et si le modèle passait quand même une période, le paramètre
+# était ignoré EN SILENCE — la moyenne portait alors sur tout l'historique et
+# était présentée comme celle de l'année. Un chiffre faux, rendu avec l'aplomb
+# d'un chiffre juste : le pire des deux mondes.
+#
+# Les dates importées sont des chaînes au format du logiciel d'origine. Plutôt
+# que de tenter de les convertir (et d'échouer sur la moitié), on énumère les
+# MOIS de la période et on les cherche sous leurs deux écritures courantes,
+# AAAA-MM et MM/AAAA. Ce qui n'est ni l'une ni l'autre n'entre pas dans la
+# période : on l'écarte, et on le DIT.
+_PERIODES = {"j": 1, "jour": 1, "jours": 1, "s": 7, "semaine": 7, "semaines": 7,
+             "m": 30, "mois": 30, "a": 365, "an": 365, "ans": 365, "annee": 365}
+
+
+def _jours_de(depuis: str) -> int | None:
+    """« 12m » → 365, « 30j » → 30, « 2025-01-01 » → le nombre de jours écoulés."""
+    import datetime
+    import re
+    texte = str(depuis or "").strip().lower()
+    if not texte:
+        return None
+    iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", texte)
+    if iso:
+        debut = datetime.date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+        return max(0, (datetime.date.today() - debut).days)
+    m = re.match(r"^(\d+)\s*([a-zéè]*)$", texte)
+    if m:
+        unite = _PERIODES.get(m.group(2) or "j")
+        return int(m.group(1)) * unite if unite else None
+    for mot, jours in (("semaine", 7), ("mois", 30), ("trimestre", 91),
+                       ("semestre", 182), ("annee", 365), ("année", 365), ("an", 365)):
+        if mot in texte:
+            return jours
+    return None
+
+
+def _motif_periode(jours: int) -> tuple[str, str]:
+    """Le motif des mois couverts, et le premier mois retenu.
+
+    LA GRANULARITÉ EST LE MOIS, ET C'EST DIT. On retient les mois ENTIERS que
+    la période traverse : « 12 derniers mois » au 26/08/2026 part d'août 2025
+    complet, pas du 26 août. Découper au jour exigerait de comparer des dates,
+    donc de les convertir, donc d'échouer sur les formats inattendus. Un mois
+    de marge annoncée vaut mieux qu'une exactitude qui perd des lignes en
+    silence — d'où le premier mois rendu ici, que la note recopie.
+    """
+    import datetime
+    debut = datetime.date.today() - datetime.timedelta(days=jours)
+    mois, curseur = [], datetime.date(debut.year, debut.month, 1)
+    fin = datetime.date.today()
+    while curseur <= fin:
+        mois.append((curseur.year, curseur.month))
+        curseur = (datetime.date(curseur.year + 1, 1, 1) if curseur.month == 12
+                   else datetime.date(curseur.year, curseur.month + 1, 1))
+    formes = []
+    for a, m in mois:
+        formes += [f"{a}-{m:02d}", f"{m:02d}/{a}"]
+    return "(" + "|".join(formes) + ")", f"{debut.year}-{debut.month:02d}"
 
 
 def _cle_comparaison(nom: str) -> str:
@@ -233,7 +338,8 @@ async def _colonnes(conn, niveaux: list[str], type_source: str) -> dict:
     }
 
 
-async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) -> dict:
+async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict,
+                   fragments: dict = None) -> dict:
     """Compte exact + échantillon d'enregistrements correspondants."""
     import json
 
@@ -241,8 +347,12 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
     # et ça évite toute construction de SQL à partir de noms fournis par le
     # modèle — les clés voyagent en PARAMÈTRE, jamais dans le texte de requête.
     critere = {str(k): str(v) for k, v in filtres.items() if str(k).strip()}
-    if not critere:
+    fragments = fragments or {}
+    if not critere and not fragments:
         return await _colonnes(conn, niveaux, type_source)
+    # Sans égalité stricte, le containment doit accepter TOUT : `{}` est contenu
+    # dans n'importe quel objet JSON, la condition devient donc neutre et seule
+    # la recherche partielle filtre.
     charge = json.dumps(critere, ensure_ascii=False)
 
     # Le filtre porte sur le vocabulaire COMMUN (`champs`) si les clés en font
@@ -261,28 +371,34 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict) ->
         type_source, niveaux)}
     colonne = "champs" if presents and all(k in presents for k in critere) else "data"
 
+    partiel, params_partiel = _clause_contient(fragments, 4)
+
     total = await conn.fetchval(
-        f"SELECT COUNT(*) FROM document_metadata "
+        f"SELECT COUNT(*) FROM document_metadata m "
         f"WHERE source_type = $1 AND access_level = ANY($2::text[]) "
-        f"AND {colonne} @> $3::jsonb",
-        type_source, niveaux, charge)
+        f"AND {colonne} @> $3::jsonb AND ({partiel})",
+        type_source, niveaux, charge, *params_partiel)
 
     if not total:
-        return {"source_type": type_source, "filtres": critere, "nombre": 0,
-                "message": ("Aucun enregistrement ne correspond EXACTEMENT à ces valeurs. "
-                            "Les filtres sont sensibles à l'orthographe : rappelle "
+        return {"source_type": type_source, "filtres": critere,
+                "contient": fragments or None, "nombre": 0,
+                "message": ("Aucun enregistrement ne correspond. Les `filtres` exigent la "
+                            "valeur EXACTE ; pour chercher un mot À L'INTÉRIEUR d'une "
+                            "colonne (« terrasse bois » dans une prestation rédigée en "
+                            "toutes lettres), passe plutôt `contient`. Rappelle "
                             "`interroger_donnees` avec le seul `source_type` pour voir "
                             "les valeurs réellement présentes.")}
 
     lignes = await conn.fetch(
-        f"SELECT title, data, champs, source_filename, ligne FROM document_metadata "
+        f"SELECT title, data, champs, source_filename, ligne FROM document_metadata m "
         f"WHERE source_type = $1 AND access_level = ANY($2::text[]) "
-        f"AND {colonne} @> $3::jsonb "
-        f"ORDER BY ligne NULLS LAST LIMIT $4",
-        type_source, niveaux, charge, MAX_ENREGISTREMENTS)
+        f"AND {colonne} @> $3::jsonb AND ({partiel}) "
+        f"ORDER BY ligne NULLS LAST LIMIT ${4 + len(params_partiel)}",
+        type_source, niveaux, charge, *params_partiel, MAX_ENREGISTREMENTS)
 
     return {
-        "source_type": type_source, "filtres": critere, "nombre": total,
+        "source_type": type_source, "filtres": critere,
+        "contient": fragments or None, "nombre": total,
         "enregistrements": [{"titre": l["title"], "valeurs": _jsonb(l["data"]),
                              "fichier": l["source_filename"], "ligne": l["ligne"]}
                             for l in lignes],
@@ -342,12 +458,19 @@ _SQL_NETTOYAGE = r"""
 
 
 async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
-                   annee: str, filtres: dict) -> dict:
+                   annee: str, filtres: dict, fragments: dict = None,
+                   depuis: str = "") -> dict:
     """Somme / moyenne / min / max d'une colonne numérique, avec filtre d'année
-    et regroupement facultatifs. Les clés voyagent en PARAMÈTRE, jamais dans le
-    texte SQL."""
+    ou de période glissante et regroupement facultatifs. Les clés voyagent en
+    PARAMÈTRE, jamais dans le texte SQL."""
     import json
-    demandee = str(agreger.get("operation") or "somme").strip().lower()
+    fragments = fragments or {}
+    # COMPTER EST UNE OPÉRATION, PAS UN OUBLI. Demander « les chantiers de
+    # 2026 » sans rien à sommer répondait « Précise agreger.colonne » : le
+    # défaut « somme » réclamait une colonne chiffrée pour une question qui
+    # n'en voulait aucune. Sans `agreger`, on compte.
+    demandee = str(agreger.get("operation")
+                   or ("somme" if agreger else "compte")).strip().lower()
     # UNE OPÉRATION INCONNUE N'EST PAS UNE SOMME. Relevé dans les traces du
     # 22/08 : le modèle a demandé {"operation": "liste", "colonne": "nom"} pour
     # obtenir les noms des clients, et a reçu… la SOMME de la colonne nom — un
@@ -376,11 +499,19 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
     # L'année se lit dans la colonne de date, texte brut : on cherche les quatre
     # chiffres entourés de non-chiffres (03/04/2024, 2024-04-03, « avril 2024 »).
     motif_annee = None
+    debut_periode = None
     if annee:
         if not annee.isdigit() or len(annee) != 4:
             return {"source_type": type_source,
                     "erreur": f"`annee` doit être sur quatre chiffres (reçu « {annee} »)."}
         motif_annee = f"(^|[^0-9]){annee}([^0-9]|$)"
+    elif depuis:
+        jours = _jours_de(depuis)
+        if jours is None:
+            return {"source_type": type_source,
+                    "erreur": (f"`depuis` n'est pas une période lisible (reçu « {depuis} »). "
+                               "Écris « 12m », « 30j », « 6 mois », ou une date AAAA-MM-JJ.")}
+        motif_annee, debut_periode = _motif_periode(jours)
 
     # Regroupement : par année (4 chiffres de la date), par mois (AAAA-MM, ou
     # MM/AAAA ramené à AAAA-MM), ou par la valeur brute d'une colonne.
@@ -395,6 +526,8 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
     else:
         sql_groupe = "NULL"
 
+    partiel, params_partiel = _clause_contient(fragments, 8)
+
     sql = f"""
         WITH base AS (
           SELECT COALESCE(m.champs->>$3::text, m.data->>$3::text) AS brut,
@@ -406,6 +539,7 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
           WHERE m.source_type = $1::text AND m.access_level = ANY($2::text[])
             AND ($4::text IS NULL OR COALESCE(m.champs->>$5::text, m.data->>$5::text) ~ $4)
             AND ($7::jsonb IS NULL OR m.champs @> $7::jsonb OR m.data @> $7::jsonb)
+            AND ({partiel})
         ), nettoyee AS (
           SELECT groupe, brut, ({_SQL_NETTOYAGE}) AS nettoye FROM base
         ), valeurs AS (
@@ -421,37 +555,55 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
     """
     param_groupe = par if par not in ("annee", "année", "mois", "") else colonne_date
     lignes = await conn.fetch(sql, type_source, niveaux, colonne or "_", motif_annee,
-                              colonne_date, param_groupe, charge)
+                              colonne_date, param_groupe, charge, *params_partiel)
+
+    # Ce que la période vaut, en clair : un chiffre daté sans ses bornes se
+    # recopie dans une réunion et n'y est plus vérifiable.
+    periode = (f"de {debut_periode} à aujourd'hui, mois entiers" if debut_periode
+               else (f"année {annee}" if annee else None))
 
     total_enr = sum(int(l["enregistrements"]) for l in lignes)
     total_lis = sum(int(l["lisibles"]) for l in lignes)
     if not total_enr:
         return {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
-                "annee": annee or None, "filtres": critere or None, "nombre": 0,
-                "message": ("Aucun enregistrement ne correspond (année ou filtres). Vérifie "
-                            "la colonne de date (`agreger.colonne_date`, par défaut « date ») "
-                            "et les valeurs réelles avec le seul `source_type`.")}
+                "annee": annee or None, "periode": periode, "filtres": critere or None,
+                "contient": fragments or None, "nombre": 0,
+                "message": ("Aucun enregistrement ne correspond (période, filtres ou "
+                            "recherche partielle). Vérifie la colonne de date "
+                            "(`agreger.colonne_date`, par défaut « date ») et les valeurs "
+                            "réelles avec le seul `source_type`."
+                            + (" Une période ne retient que les dates écrites AAAA-MM-JJ "
+                               "ou JJ/MM/AAAA : si le fichier les écrit autrement, "
+                               "interroge par `annee`." if debut_periode else ""))}
 
     def _num(v):
         return float(v) if v is not None else None
 
     groupes = [{"groupe": l["groupe"], "enregistrements": int(l["enregistrements"]),
                 "lisibles": int(l["lisibles"]), "resultat": _num(l["resultat"])} for l in lignes]
+    # COMPTER SANS COLONNE : le SQL compte les valeurs LISIBLES de la colonne
+    # (aucune, puisqu'il n'y en a pas). Ce qu'on veut compter, ce sont les
+    # enregistrements — c'est `enregistrements` qui les porte.
+    if operation == "COUNT" and not colonne:
+        for g in groupes:
+            g["resultat"] = float(g["enregistrements"])
+    commun = {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
+              "annee": annee or None, "periode": periode, "filtres": critere or None,
+              "contient": fragments or None}
     if not par:
         g = groupes[0]
-        sortie = {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
-                  "annee": annee or None, "filtres": critere or None,
-                  "enregistrements": g["enregistrements"], "valeurs_lisibles": g["lisibles"],
-                  "resultat": g["resultat"]}
+        sortie = dict(commun, enregistrements=g["enregistrements"],
+                      valeurs_lisibles=g["lisibles"], resultat=g["resultat"])
     else:
-        sortie = {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
-                  "par": par, "annee": annee or None, "filtres": critere or None,
-                  "groupes": groupes, "enregistrements": total_enr, "valeurs_lisibles": total_lis}
+        sortie = dict(commun, par=par, groupes=groupes, enregistrements=total_enr,
+                      valeurs_lisibles=total_lis)
     sortie["note"] = (
-        f"{total_enr} enregistrement(s) pris en compte, {total_lis} valeur(s) de "
+        (f"Période retenue : {periode}. " if periode else "")
+        + f"{total_enr} enregistrement(s) pris en compte, {total_lis} valeur(s) de "
         f"« {colonne or 'compte'} » lisibles comme nombres ({total_enr - total_lis} "
         "illisible(s) ou vide(s), ignorée(s)). Le résultat porte sur les valeurs lisibles "
         "UNIQUEMENT : dis-le si l'écart est notable. Les montants sont dans l'unité du "
         "fichier d'origine (souvent HT, en euros) : ne convertis pas, ne devine pas la TVA. "
-        "Réponds par une PHRASE qui dit ce qui est calculé, sur quoi, et avec quelle réserve.")
+        "Réponds par une PHRASE qui dit ce qui est calculé, sur quoi, et avec quelle réserve"
+        + (", en citant la période telle quelle." if periode else "."))
     return sortie

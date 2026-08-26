@@ -213,6 +213,26 @@ async def prechiffrage_node(state: AgentState) -> dict:
     if extracted:
         parts.append("Éléments extraits (à valider) :\n"
                      + json.dumps(extracted, ensure_ascii=False, indent=2))
+
+    # LE TRAVAIL DE RECHERCHE ÉTAIT FAIT, PUIS JETÉ.
+    #
+    # `similar_projects_node` interroge la mémoire pour trouver les chantiers et
+    # devis qui ressemblent à ce plan, et `browser_node` va chercher des prix
+    # publics quand la mémoire est vide. Tous deux remplissent `raw_chunks` — que
+    # ce nœud-ci, le seul qui écrive la réponse, ne lisait pas. Deux appels
+    # payés, deux résultats perdus, et une trame de pré-chiffrage sans le seul
+    # élément qui lui donnait de la valeur : « on a déjà fait ça, voilà où ».
+    #
+    # Les extraits sont bornés et RECOPIÉS TELS QUELS : rien n'est résumé ici,
+    # aucun modèle ne repasse derrière ce nœud. Ce qui vient du web porte déjà sa
+    # marque depuis `browser_node` ([SOURCE WEB]), elle est conservée.
+    comparables = [c for c in (state.get("raw_chunks") or []) if str(c).strip()][:5]
+    if comparables:
+        parts.append(
+            "Chantiers et devis comparables trouvés dans la mémoire de "
+            "l'entreprise (à recouper, ce ne sont pas des références de prix) :\n"
+            + "\n\n".join(f"- {str(c).strip()[:600]}" for c in comparables))
+
     summary = "\n\n".join(parts) if parts else (
         state.get("llm_response") or "Aucune analyse disponible pour ce document."
     )

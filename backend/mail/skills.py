@@ -130,9 +130,34 @@ def _rehydrater(valeur, carte: dict):
 
 # ── Skills ───────────────────────────────────────────────────────────
 
+async def _boite_du_triage(data: dict, user) -> Optional[str]:
+    """La boîte à créditer pour un message qu'on CLASSE, jamais qu'on lit.
+
+    Le cas courant n'est pas la lecture d'une boîte : c'est un mail COLLÉ dans
+    le chat (« voici ce que je viens de recevoir, classe-le »). Personne ne
+    nomme d'adresse dans cette phrase, et il n'y a aucune raison de le faire.
+    Or le contrôle de droits était appelé directement sur `data["mailbox"]` :
+    absente, il refusait « Aucune boîte mail précisée » et le classement
+    n'avait pas lieu. Le modèle en était réduit à inventer une adresse ou à
+    réclamer la sienne à l'utilisateur — les deux ont été observés.
+
+    On reprend donc le repli déjà en place pour la rédaction : la boîte de la
+    personne connectée. Et si elle n'en a aucune, on classe QUAND MÊME, sans
+    boîte : le texte vient de l'utilisateur, aucune messagerie n'est ouverte,
+    il n'y a rien à cloisonner. Le contrôle reste entier dès qu'une boîte est
+    NOMMÉE : nommer celle d'un collègue est refusé comme avant.
+    """
+    try:
+        return await verifier_acces(user, await _boite_a_lire(data, user))
+    except HTTPException:
+        if normaliser(data.get("mailbox")):
+            raise                      # une boîte a été nommée : le refus est un vrai refus
+        return None
+
+
 async def triage_email_entrant(data: dict, user) -> dict:
     """Classe et priorise un message reçu. Ne déclenche aucune action."""
-    boite = await verifier_acces(user, data.get("mailbox"))
+    boite = await _boite_du_triage(data, user)
     objet = (data.get("objet") or "").strip()
     corps = (data.get("corps") or "").strip()
     if not objet and not corps:
@@ -224,7 +249,9 @@ async def rediger_email(data: dict, user) -> dict:
 
 async def resumer_fil(data: dict, user) -> dict:
     """Résume un échange de plusieurs messages et en extrait les engagements."""
-    boite = await verifier_acces(user, data.get("mailbox"))
+    # Même raison qu'au triage : le fil est COLLÉ dans le chat, il ne se lit pas
+    # dans une boîte. Exiger une adresse ici bloquait un geste qui n'ouvre rien.
+    boite = await _boite_du_triage(data, user)
     fil = (data.get("fil") or "").strip()
     if not fil:
         raise MailSkillError("Fournissez `fil` : les messages de l'échange.")

@@ -196,6 +196,55 @@ def _euros(valeur: float) -> str:
     return f"{valeur:,.2f} €".replace(",", " ").replace(".", ",")
 
 
+_DATE_JMA = re.compile(r"\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})\b")
+_DATE_AMJ = re.compile(r"\b(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})\b")
+_MOIS = ("janv", "fevr", "mars", "avri", "mai", "juin", "juil", "aout",
+         "sept", "octo", "nove", "dece")
+
+
+def _date_triable(texte) -> str:
+    """« 12/03/2025 » → « 20250312 ». Rend "" sur ce qui n'est pas une date.
+
+    POURQUOI TRIER ICI ET PAS LÀ-HAUT. « Le dernier devis envoyé à X » est la
+    première question que pose un dirigeant, et un export métier est trié par
+    référence, jamais par date : la ligne la plus récente n'est pas la
+    dernière du fichier. Sans ce tri, c'est le modèle qui doit comparer des
+    dates écrites en toutes lettres pour désigner « la dernière » — exactement
+    le calcul que le prompt lui interdit, et qu'il fait quand même.
+
+    Les dates des fichiers importés sont du TEXTE, dans le format du logiciel
+    d'origine. On lit les trois formes rencontrées et on rend une clé
+    comparable ; ce qui n'est pas lisible se range en dernier, jamais en
+    premier — une date illisible ne doit pas se faire passer pour la plus
+    récente.
+    """
+    brut = str(texte or "").strip()
+    if not brut:
+        return ""
+    m = _DATE_AMJ.search(brut)
+    if m:
+        a, mo, j = m.group(1), m.group(2), m.group(3)
+        return f"{a}{int(mo):02d}{int(j):02d}"
+    m = _DATE_JMA.search(brut)
+    if m:
+        j, mo, a = m.group(1), m.group(2), m.group(3)
+        annee = int(a)
+        if annee < 100:                       # « 12/03/25 » — un export court
+            annee += 2000 if annee < 70 else 1900
+        return f"{annee:04d}{int(mo):02d}{int(j):02d}"
+    # « mars 2025 », « 12 mars 2025 » : le mois en toutes lettres.
+    plat = _plat(brut)
+    annee = re.search(r"\b(19|20)\d{2}\b", plat)
+    if annee:
+        for i, mois in enumerate(_MOIS, start=1):
+            if mois in plat:
+                jour = re.search(r"\b(\d{1,2})\b", plat)
+                return f"{annee.group(0)}{i:02d}{int(jour.group(1)):02d}" if jour \
+                    else f"{annee.group(0)}{i:02d}00"
+        return f"{annee.group(0)}0000"
+    return ""
+
+
 async def _jeux(conn, niveaux: list) -> list:
     lignes = await conn.fetch(
         "SELECT DISTINCT source_type FROM document_metadata "
@@ -462,6 +511,23 @@ async def _fichier_clients(clients: list, jeu: str, total: int, user,
 # ═══════════════════════════════════════════════════════════════════════════
 #  FICHE D'UN CLIENT
 # ═══════════════════════════════════════════════════════════════════════════
+def _champs_demandes(data: dict) -> list:
+    """Les informations nommément demandées (« SIRET », « décennale »…).
+
+    Le modèle les passe dans `champs` ; on accepte aussi une chaîne unique et
+    les synonymes qu'il emploie spontanément. Sans elles, la fiche reste ce
+    qu'elle a toujours été.
+    """
+    brut = data.get("champs") or data.get("informations") or data.get("champ") or []
+    if isinstance(brut, str):
+        brut = [m for m in re.split(r"[,;/]| et ", brut) if m.strip()]
+    if not isinstance(brut, (list, tuple)):
+        return []
+    # Bornées : la fiche reste lisible, et une liste interminable de trous
+    # n'apprend rien de plus qu'une liste courte.
+    return [str(x).strip() for x in brut if str(x).strip()][:8]
+
+
 async def fiche_client(data: dict, user) -> dict:
     """TOUT ce qu'on sait d'un client, à travers TOUS les jeux importés.
 
@@ -550,7 +616,13 @@ async def fiche_client(data: dict, user) -> dict:
             total_general += somme
             sources_ca.append(jeu)
         if any(mot in _plat(jeu) for mot in ("devis", "quote", "offre", "factur")):
-            for d in enregistrements[:MAX_LIGNES_PAR_JEU]:
+            # DU PLUS RÉCENT AU PLUS ANCIEN, et le tri passe AVANT la coupe :
+            # couper d'abord garderait les quarante premières lignes DU FICHIER,
+            # et le dernier devis d'un gros client tomberait hors de la fiche.
+            recents = sorted(enregistrements,
+                             key=lambda d: _date_triable(_valeur(d, "date")),
+                             reverse=True)
+            for d in recents[:MAX_LIGNES_PAR_JEU]:
                 detail_devis.append({
                     "jeu": jeu,
                     "reference": _valeur(d, "reference"),
@@ -558,6 +630,11 @@ async def fiche_client(data: dict, user) -> dict:
                     "statut": _valeur(d, "statut"),
                     "montant": _valeur(d, "montant"),
                 })
+
+    # Les jeux sont parcourus du plus fourni au moins fourni : sans ce dernier
+    # tri, les factures d'un client pourraient précéder ses devis et « la
+    # première ligne » ne serait plus « la plus récente ».
+    detail_devis.sort(key=lambda d: _date_triable(d.get("date")), reverse=True)
 
     # Sans jeu de facturation identifié, le total le plus élevé fait foi —
     # et on DIT d'où il vient, pour qu'un chiffre ne circule jamais sans source.
@@ -572,6 +649,37 @@ async def fiche_client(data: dict, user) -> dict:
         v = _valeur(identite, famille)
         if v:
             fiche[etiquette] = v
+
+    # ── CE QU'ON A DEMANDÉ ET QU'ON N'A PAS ────────────────────────────────
+    #
+    # « Quel est le SIRET de X ? », « son assurance décennale ? » : la fiche ne
+    # rendait que les colonnes qu'elle sait nommer, et le champ demandé
+    # disparaissait sans laisser de trace. Le modèle voyait une fiche complète
+    # et honnête — sur laquelle l'information manquante n'existait tout
+    # simplement pas — et devait deviner qu'elle manquait.
+    #
+    # C'est le contraire de la règle du prompt système : « ne l'omets pas en
+    # silence, ne la devine pas ». Une omission ne se voit pas ; un
+    # [À COMPLÉTER] se voit. Et c'est aussi la question qui décide de la
+    # confiance : un dirigeant qui voit l'assistant dire « je ne l'ai pas » le
+    # croit ensuite quand il donne un chiffre.
+    manquants = []
+    for libelle in _champs_demandes(data):
+        cible = _plat(libelle)
+        valeur = ""
+        for enregistrements in par_jeu.values():
+            for d in enregistrements:
+                for colonne, v in d.items():
+                    if cible in _plat(colonne) and str(v or "").strip():
+                        valeur = str(v).strip()
+                        break
+                if valeur:
+                    break
+            if valeur:
+                break
+        fiche[libelle.strip().capitalize()] = valeur or "[À COMPLÉTER]"
+        if not valeur:
+            manquants.append(libelle.strip())
     for r in resume:
         fiche[r["jeu"].capitalize()] = (f"{r['enregistrements']}"
                                         + (f" · {r['montant_total']}" if r["montant_total"] else ""))
@@ -582,6 +690,7 @@ async def fiche_client(data: dict, user) -> dict:
         "trouve": True,
         "client": fiche["Client"],
         "identite": identite,
+        "champs_manquants": manquants or None,
         "par_jeu": resume,
         "devis": detail_devis,
         "chiffre_affaires": _euros(total_general) if total_general else None,
@@ -591,13 +700,23 @@ async def fiche_client(data: dict, user) -> dict:
         "message_final": (f"Voici ce que je sais de {fiche['Client']} : "
                           + ", ".join(f"{r['enregistrements']} {r['jeu']}" for r in resume)
                           + (f", pour un chiffre d'affaires de {_euros(total_general)}."
-                             if total_general else ".")),
-        "a_faire": ("AFFICHE la fiche : insère un bloc ```ui contenant EXACTEMENT le "
+                             if total_general else ".")
+                          + (f" En revanche, {' et '.join(manquants)} : cette information "
+                             "ne figure dans aucun fichier importé."
+                             if manquants else "")),
+        "a_faire": (("Les champs marqués [À COMPLÉTER] ne figurent NULLE PART dans les "
+                     "données de l'entreprise : recopie-les tels quels, dis-le en une "
+                     "phrase, et ne va surtout pas chercher la valeur ailleurs : un "
+                     "SIRET trouvé sur le web n'est pas une donnée de l'entreprise. "
+                     if manquants else "")
+                    + "AFFICHE la fiche : insère un bloc ```ui contenant EXACTEMENT le "
                     "contenu de `bloc_ui`. Si `devis` n'est pas vide, ajoute un second "
                     "bloc ```ui de type `table` (champs `columns` et `rows`) avec les "
-                    "colonnes Référence, Date, Statut, Montant. Cite les chiffres TELS QUELS — ne les recalcule "
-                    "pas, ne les arrondis pas, et rappelle la source du chiffre "
-                    "d'affaires."),
+                    "colonnes Référence, Date, Statut, Montant. `devis` est trié du PLUS "
+                    "RÉCENT au plus ancien : pour « le dernier devis », c'est la PREMIÈRE "
+                    "ligne, ne compare pas les dates toi-même. Cite les chiffres TELS "
+                    "QUELS — ne les recalcule pas, ne les arrondis pas, et rappelle la "
+                    "source du chiffre d'affaires."),
     }
 
 
@@ -751,9 +870,13 @@ SKILLS = {
             "montants, statuts), factures, chantiers, chiffre d'affaires genere, "
             "coordonnees. C'est le skill a appeler des qu'une question porte sur un "
             "client nomme — « parle-moi de X », « combien de devis pour X », « quel "
-            "chiffre d'affaires avec X ». `nom` : le nom du client. Les chiffres "
-            "rendus sont EXACTS : cite-les tels quels, ne les recalcule pas"),
-        requis=["nom"], optionnels=[],
+            "chiffre d'affaires avec X ». `nom` : le nom du client. `champs` : la "
+            "LISTE des informations precises qu'on te demande (« SIRET », « assurance "
+            "decennale », « adresse ») — passe-la des qu'une question porte sur un "
+            "renseignement nomme : ce qui manque revient marque [A COMPLETER] au lieu "
+            "de disparaitre en silence. `devis` est trie du plus RECENT au plus ancien. "
+            "Les chiffres rendus sont EXACTS : cite-les tels quels, ne les recalcule pas"),
+        requis=["nom"], optionnels=["champs"],
         effet="lecture",
         libelle="je rassemble la fiche du client"),
     "check_mails": Declaration(

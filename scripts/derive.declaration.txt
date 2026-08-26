@@ -91,3 +91,4 @@ start-local.sh                          # chemin du projet sur le poste et utili
 backup.sh                               # utilisateur postgres de la sauvegarde
 README-DURET.md                         # note d'accueil propre au second client
 frontend/e2e/recette.json               # recette du brief : questions et attendus propres au client
+backend/scripts/test_demo.py             # cahier de demo : les dix questions promises a CE client, et leur jeu d'essai

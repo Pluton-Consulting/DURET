@@ -319,13 +319,16 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "d'un logiciel metier). OBLIGATOIRE des qu'on demande un nombre, un total, une "
         "liste par critere : la recherche semantique approxime et ne sait pas compter. "
         "Sans argument : les jeux de donnees disponibles. Avec source_type seul : ses "
-        "colonnes et leurs valeurs reelles. Avec filtres (objet {colonne: valeur}) : le "
-        "compte exact. Avec `agreger` {operation: somme|moyenne|min|max, colonne: "
-        "montant_ht, par: annee|mois|<colonne> (facultatif)} et `annee` (ex. \"2024\") : "
-        "le TOTAL ou la moyenne d'une colonne chiffree — chiffre d'affaires d'une "
-        "annee, panier moyen, montant par mois. Verifie TOUJOURS les valeurs reelles "
-        "avant de filtrer",
-        [], ["source_type", "filtres", "agreger", "annee"]),
+        "colonnes et leurs valeurs reelles. `filtres` {colonne: valeur} = egalite "
+        "EXACTE ; `contient` {colonne: mot} = le mot A L'INTERIEUR de la colonne — "
+        "c'est celui-la qu'il faut pour « les chantiers avec terrasse bois », une "
+        "prestation etant redigee en toutes lettres. `agreger` {operation: "
+        "somme|moyenne|min|max|compte, colonne: montant_ht, par: annee|mois|<colonne>} "
+        "donne le total ou la moyenne. La PERIODE : `annee` (\"2024\") ou `depuis` "
+        "(\"12m\", \"30j\", \"6 mois\", ou une date AAAA-MM-JJ) pour « les 12 derniers "
+        "mois ». Un seul appel rend le COMPTE et la moyenne. Verifie TOUJOURS les "
+        "valeurs reelles avant de filtrer",
+        [], ["source_type", "filtres", "contient", "agreger", "annee", "depuis"]),
     "lire_mails": (
         "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. "
         "`depuis` : une période (« 7j », « semaine », « mois ») ou une date "
@@ -341,8 +344,16 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "réponse, préfère `check_mails`",
         [], ["mailbox", "dossier", "limite", "depuis"]),
     "triage_email_entrant": (
-        "Classe et priorise un message reçu (catégorie, urgence, action suggérée)",
-        ["mailbox"], ["objet", "corps"]),
+        # `mailbox` ÉTAIT REQUIS ICI, et c'était un piège. Le cas normal est un
+        # message COLLÉ dans le chat (« voici ce que je viens de recevoir ») :
+        # aucune adresse n'y figure. Le modèle en inventait une, ou réclamait
+        # la sienne à l'utilisateur — qui n'a aucune raison de la donner.
+        "CLASSE un message reçu : categorie, urgence, action suggeree, delai. "
+        "A appeler des qu'on COLLE un mail dans le chat en demandant de le "
+        "trier, de le prioriser ou d'en dire l'urgence. Passe le texte tel quel "
+        "dans `objet` et `corps`. NE DEMANDE PAS d'adresse mail : sans "
+        "`mailbox`, c'est la boite de la personne connectee qui est creditee",
+        [], ["mailbox", "objet", "corps"]),
     "redaction_email": (
         "Rédige un BROUILLON de message (11 types : reponse, relance_devis, "
         "relance_impaye, envoi_devis, reclamation, information_chantier, "
@@ -350,8 +361,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "N'envoie jamais.",
         ["mailbox", "type_mail"], ["contexte", "message_recu", "destinataire"]),
     "resume_fil_email": (
-        "Résume un échange de mails et en extrait les engagements",
-        ["mailbox", "fil"], []),
+        "Résume un échange de mails et en extrait les engagements. `fil` : les "
+        "messages, colles tels quels. Meme regle qu'au triage : ne reclame "
+        "aucune adresse, `mailbox` est facultatif",
+        ["fil"], ["mailbox"]),
     "apprendre_style_email": (
         "Apprend le style d'écriture d'une boîte à partir de ses messages envoyés",
         [], ["mailbox"]),

@@ -181,7 +181,60 @@ async def nas_deposer(data: dict, user) -> dict:
 # renvoient vers les fonctions composées : ce sont elles, la voie normale.
 from skills.registre import Declaration
 
+
+async def nas_photos(data: dict, user) -> dict:
+    """LES PHOTOS d'un dossier du serveur, déposées et prêtes à l'écran.
+
+    « Montre-moi les photos de ce chantier » ne trouvait aucun geste : la
+    recherche documentaire rend du texte, et `nas_ouvrir` refuse les images.
+    Elles sont ici déposées comme un fichier produit, donc affichables et
+    téléchargeables dans le chat, sans qu'aucun lien ne sorte de l'application.
+    """
+    from outils.nas import photos
+    from nas.acces import verifier_role, NasRefuse
+    try:
+        verifier_role(user)
+    except NasRefuse as e:
+        _echec(str(e))
+    try:
+        resultat = await photos(
+            (data.get("dossier") or data.get("chemin") or "").strip() or None,
+            (data.get("motif") or data.get("nom") or "").strip() or None,
+            data.get("limite") or 6)
+    except NasRefuse as e:
+        _echec(str(e))
+    except Exception as e:  # noqa: BLE001 - un NAS injoignable n'est pas une panne du chat
+        _echec(_detail("Les photos n'ont pas pu être récupérées", e))
+    if resultat.get("bloc_ui"):
+        resultat["message_final"] = (
+            f"Voici {resultat['nombre']} photo(s)"
+            + (f" sur {resultat['disponibles']} trouvée(s)"
+               if resultat.get("disponibles", 0) > resultat["nombre"] else "")
+            + ((" ; " + str(resultat["trop_volumineuses"])
+                + " étaient trop volumineuse(s) pour être affichée(s)")
+               if resultat.get("trop_volumineuses") else "") + ".")
+        resultat["a_faire"] = (
+            "AFFICHE les photos : insère un bloc ```ui contenant EXACTEMENT le "
+            "contenu de `bloc_ui`. Ce sont de VRAIES photos du serveur, pas des "
+            "images générées : ne les présente jamais comme un rendu ou une "
+            "simulation. Ne colle aucune adresse d'image en texte.")
+    return resultat
+
+
 SKILLS = {
+    "nas_photos": Declaration(
+        fonction=nas_photos,
+        description=(
+            "MONTRE LES PHOTOS d'un dossier du serveur dans le chat : elles "
+            "sont affichees en planche et telechargeables. A utiliser des qu'on "
+            "demande de VOIR des images (« montre-moi les photos du chantier "
+            "X », « les visuels de ce dossier »). `dossier` : le chemin ou le "
+            "nom du dossier. `motif` : un bout de nom de fichier. `limite` : 1 a "
+            "12 (6 par defaut). Ce sont de VRAIES photos, jamais un rendu "
+            "genere : ne les presente pas comme une simulation"),
+        optionnels=["dossier", "motif", "limite"],
+        effet="lecture",
+        libelle="je vais chercher les photos"),
     "nas_lister": Declaration(
         fonction=nas_lister,
         description=("LISTE le detail d'un dossier du serveur. Sans `chemin`, "

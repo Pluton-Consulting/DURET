@@ -166,68 +166,19 @@ def _clause_contient(fragments: dict, premier: int) -> tuple[str, list]:
     return (" AND ".join(morceaux) if morceaux else "TRUE"), params
 
 
-# ── La période, quand les dates sont du TEXTE ──────────────────────────────
+# ── La période : elle se lit dans `skills/lecture.py` ─────────────────────
 #
-# « Sur les 12 derniers mois » est la façon dont un dirigeant compte. Le code ne
-# connaissait que `annee`, sur quatre chiffres : la question devait être reposée
-# (« en 2026 »), et si le modèle passait quand même une période, le paramètre
-# était ignoré EN SILENCE — la moyenne portait alors sur tout l'historique et
-# était présentée comme celle de l'année. Un chiffre faux, rendu avec l'aplomb
-# d'un chiffre juste : le pire des deux mondes.
+# Il y avait ici deux fonctions maison : une lecture de « 12m » en jours, et un
+# motif de MOIS ENTIERS cherché dans la colonne de date. Elles ont été retirées
+# pour deux raisons. La granularité du mois comptait un mois de trop sur « les
+# 12 derniers mois » ; et le motif ne connaissait que AAAA-MM et MM/AAAA, si
+# bien qu'un export datant « 5 sept. 25 » ou « 3 avril 2024 » sortait de la
+# période SANS QUE RIEN NE LE DISE — des lignes perdues en silence, ce qui est
+# la pire des deux erreurs possibles.
 #
-# Les dates importées sont des chaînes au format du logiciel d'origine. Plutôt
-# que de tenter de les convertir (et d'échouer sur la moitié), on énumère les
-# MOIS de la période et on les cherche sous leurs deux écritures courantes,
-# AAAA-MM et MM/AAAA. Ce qui n'est ni l'une ni l'autre n'entre pas dans la
-# période : on l'écarte, et on le DIT.
-_PERIODES = {"j": 1, "jour": 1, "jours": 1, "s": 7, "semaine": 7, "semaines": 7,
-             "m": 30, "mois": 30, "a": 365, "an": 365, "ans": 365, "annee": 365}
-
-
-def _jours_de(depuis: str) -> int | None:
-    """« 12m » → 365, « 30j » → 30, « 2025-01-01 » → le nombre de jours écoulés."""
-    import datetime
-    import re
-    texte = str(depuis or "").strip().lower()
-    if not texte:
-        return None
-    iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", texte)
-    if iso:
-        debut = datetime.date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
-        return max(0, (datetime.date.today() - debut).days)
-    m = re.match(r"^(\d+)\s*([a-zéè]*)$", texte)
-    if m:
-        unite = _PERIODES.get(m.group(2) or "j")
-        return int(m.group(1)) * unite if unite else None
-    for mot, jours in (("semaine", 7), ("mois", 30), ("trimestre", 91),
-                       ("semestre", 182), ("annee", 365), ("année", 365), ("an", 365)):
-        if mot in texte:
-            return jours
-    return None
-
-
-def _motif_periode(jours: int) -> tuple[str, str]:
-    """Le motif des mois couverts, et le premier mois retenu.
-
-    LA GRANULARITÉ EST LE MOIS, ET C'EST DIT. On retient les mois ENTIERS que
-    la période traverse : « 12 derniers mois » au 26/08/2026 part d'août 2025
-    complet, pas du 26 août. Découper au jour exigerait de comparer des dates,
-    donc de les convertir, donc d'échouer sur les formats inattendus. Un mois
-    de marge annoncée vaut mieux qu'une exactitude qui perd des lignes en
-    silence — d'où le premier mois rendu ici, que la note recopie.
-    """
-    import datetime
-    debut = datetime.date.today() - datetime.timedelta(days=jours)
-    mois, curseur = [], datetime.date(debut.year, debut.month, 1)
-    fin = datetime.date.today()
-    while curseur <= fin:
-        mois.append((curseur.year, curseur.month))
-        curseur = (datetime.date(curseur.year + 1, 1, 1) if curseur.month == 12
-                   else datetime.date(curseur.year, curseur.month + 1, 1))
-    formes = []
-    for a, m in mois:
-        formes += [f"{a}-{m:02d}", f"{m:02d}/{a}"]
-    return "(" + "|".join(formes) + ")", f"{debut.year}-{debut.month:02d}"
+# `skills/lecture.py` fait les deux, au jour près et sur tous les formats
+# rencontrés, et il DIT ce qu'il ne sait pas lire. Une seule implémentation,
+# testable sans base.
 
 
 def _cle_comparaison(nom: str) -> str:
@@ -409,61 +360,97 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict,
     }
 
 
-# ── Agrégation : sommer, moyenner, grouper ─────────────────────────────────
+# ── Agrégation : compter, sommer, moyenner, grouper ────────────────────────
 #
 # « Quel chiffre d'affaires avons-nous réalisé en 2024 ? » — et l'assistant
 # répondait, honnêtement, qu'il savait COMPTER les devis mais pas en TOTALISER
 # les montants. Relevé en production, avec 1 398 devis importés sous la main.
 # Compter sans sommer, c'est décrire un tableur sans savoir l'additionner.
 #
-# Les valeurs sont des chaînes telles qu'importées (« 12 500,00 € »,
-# « 03/04/2024 ») : le schéma d'import ne les type pas, à dessein. On les lit
-# donc ici avec prudence, et on DIT combien ont pu être lues : « sur 1 398
-# devis de 2024, 1 350 montants lisibles, total X » vaut mieux qu'un total
-# silencieusement faux.
+# POURQUOI CE CALCUL A QUITTÉ LE SQL.
+#
+# La première version agrégeait dans la requête : nettoyage des montants par
+# expressions régulières SQL, période par motif de mois cherché dans la colonne
+# de date. Cela tenait tant qu'on demandait une ANNÉE, sur des dates écrites
+# AAAA-MM-JJ ou JJ/MM/AAAA. Deux questions banales l'ont mise en défaut : « sur
+# les douze derniers mois » (le motif de mois ne sait pas couper au jour, et
+# comptait donc un mois de trop) et « depuis plus de quinze jours » (rien ne
+# comparait une date à aujourd'hui). Et tout export datant autrement — « 5 sept.
+# 25 », « 3 avril 2024 » — sortait de la période SANS QUE RIEN NE LE DISE.
+#
+# Écrire tout cela en SQL demandait une fonction Postgres et une migration ;
+# surtout, cela restait intestable ici, où aucune base ne tourne : une doublure
+# qui réimplémente le SQL en Python teste la doublure, pas le code livré. Le
+# calcul se fait donc en Python, sur les lignes que Postgres a filtrées avec ce
+# qu'il fait mieux que nous (source, droits, containment indexé, ILIKE).
+#
+# Ce sont des PME : quelques milliers de lignes par jeu. Le chargement est
+# borné, et la borne se DIT quand elle mord — un total tronqué en silence est
+# un total faux.
+MAX_LIGNES_AGREGEES = 50000
 
-_OPERATIONS = {"somme": "SUM", "total": "SUM", "moyenne": "AVG", "min": "MIN",
-               "minimum": "MIN", "max": "MAX", "maximum": "MAX", "compte": "COUNT"}
+_OPERATIONS = {"somme": "sum", "total": "sum", "moyenne": "avg", "min": "min",
+               "minimum": "min", "max": "max", "maximum": "max",
+               "compte": "count", "nombre": "count", "combien": "count"}
 
-# Une valeur textuelle → un nombre, ou NULL. Gère « 12 500,00 € », « 12.500,00 »,
-# « 1,234.50 », « 850 ». Jamais d'erreur : une chaîne illisible devient NULL.
-_SQL_NOMBRE = r"""
-    CASE
-      WHEN nettoye ~ '^-?[0-9]+(\.[0-9]+)?$' THEN nettoye::numeric
-      ELSE NULL
-    END
-"""
-_SQL_NETTOYAGE = r"""
-    CASE
-      WHEN brut IS NULL THEN NULL
-      -- virgule ET point : le dernier des deux est le séparateur décimal
-      WHEN brut ~ ',' AND brut ~ '\.' THEN
-        CASE WHEN position(',' in reverse(brut)) < position('.' in reverse(brut))
-             THEN replace(replace(regexp_replace(brut, '[^0-9,.-]', '', 'g'), '.', ''), ',', '.')
-             ELSE replace(regexp_replace(brut, '[^0-9,.-]', '', 'g'), ',', '') END
-      -- virgule seule : décimale à la française
-      WHEN brut ~ ',' THEN replace(regexp_replace(brut, '[^0-9,-]', '', 'g'), ',', '.')
-      -- plusieurs points : des milliers
-      WHEN (length(brut) - length(replace(brut, '.', ''))) > 1
-           THEN replace(regexp_replace(brut, '[^0-9.-]', '', 'g'), '.', '')
-      -- UN point suivi d'exactement trois chiffres, sans virgule : « 7.000 »,
-      -- « 12.500 € » — en français c'est un séparateur de milliers, pas une
-      -- décimale. Relevé au test : 7.000 lu 7,0, le total d'une année faux
-      -- de 6 993 €. « 1250.50 » ou « 1.5 » restent des décimales.
-      WHEN regexp_replace(brut, '[^0-9.-]', '', 'g') ~ '^-?[0-9]{1,3}\.[0-9]{3}$'
-           THEN replace(regexp_replace(brut, '[^0-9.-]', '', 'g'), '.', '')
-      ELSE regexp_replace(brut, '[^0-9.-]', '', 'g')
-    END
-"""
+
+def _valeur_de(ligne: dict, colonne: str) -> str:
+    """La valeur d'une colonne, cherchée dans le vocabulaire commun PUIS dans
+    les entêtes d'origine. C'est ce qui permet d'interroger « montant_ht » sans
+    savoir comment le logiciel exportateur l'appelait."""
+    if not colonne:
+        return ""
+    for source in ("champs", "data"):
+        d = ligne.get(source) or {}
+        if colonne in d and str(d[colonne] or "").strip():
+            return str(d[colonne])
+    # Dernier recours : une comparaison insensible à la casse et aux accents.
+    cible = _cle_comparaison(colonne)
+    for source in ("champs", "data"):
+        for k, v in (ligne.get(source) or {}).items():
+            if _cle_comparaison(k) == cible and str(v or "").strip():
+                return str(v)
+    return ""
+
+
+async def _charger(conn, niveaux: list[str], type_source: str, filtres: dict,
+                   fragments: dict) -> tuple[list, bool]:
+    """Les lignes d'un jeu, filtrées par ce que la base sait faire vite."""
+    import json
+    critere = {str(k): str(v) for k, v in (filtres or {}).items() if str(k).strip()}
+    charge = json.dumps(critere, ensure_ascii=False)
+    partiel, params = _clause_contient(fragments or {}, 4)
+    lignes = await conn.fetch(
+        f"SELECT data, champs FROM document_metadata m "
+        f"WHERE source_type = $1::text AND access_level = ANY($2::text[]) "
+        f"  AND (champs @> $3::jsonb OR data @> $3::jsonb) AND ({partiel}) "
+        f"LIMIT ${4 + len(params)}",
+        type_source, niveaux, charge, *params, MAX_LIGNES_AGREGEES + 1)
+    tronque = len(lignes) > MAX_LIGNES_AGREGEES
+    return ([{"data": _jsonb(l["data"]), "champs": _jsonb(l["champs"])}
+             for l in lignes[:MAX_LIGNES_AGREGEES]], tronque)
+
+
+def _groupe_de(ligne: dict, par: str, colonne_date: str):
+    """La clé de regroupement : une année, un mois, ou la valeur d'une colonne."""
+    from skills.lecture import lire_date
+    if par in ("annee", "année"):
+        d, _ = lire_date(_valeur_de(ligne, colonne_date))
+        return f"{d.year}" if d else None
+    if par == "mois":
+        d, _ = lire_date(_valeur_de(ligne, colonne_date))
+        return f"{d.year}-{d.month:02d}" if d else None
+    return _valeur_de(ligne, par) or None
 
 
 async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
                    annee: str, filtres: dict, fragments: dict = None,
                    depuis: str = "") -> dict:
-    """Somme / moyenne / min / max d'une colonne numérique, avec filtre d'année
-    ou de période glissante et regroupement facultatifs. Les clés voyagent en
-    PARAMÈTRE, jamais dans le texte SQL."""
-    import json
+    """Compte / somme / moyenne / min / max, avec période et regroupement."""
+    import datetime
+    from skills.lecture import (lire_date, lire_montant, est_un_nombre,
+                                fin_de_precision, debut_de_periode)
+
     fragments = fragments or {}
     # COMPTER EST UNE OPÉRATION, PAS UN OUBLI. Demander « les chantiers de
     # 2026 » sans rien à sommer répondait « Précise agreger.colonne » : le
@@ -474,8 +461,7 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
     # UNE OPÉRATION INCONNUE N'EST PAS UNE SOMME. Relevé dans les traces du
     # 22/08 : le modèle a demandé {"operation": "liste", "colonne": "nom"} pour
     # obtenir les noms des clients, et a reçu… la SOMME de la colonne nom — un
-    # résultat absurde, rendu avec l'assurance d'un calcul juste. On refuse, et
-    # on dit quel geste fait ce qu'il voulait.
+    # résultat absurde, rendu avec l'assurance d'un calcul juste.
     if demandee not in _OPERATIONS:
         return {"source_type": type_source, "erreur":
                 f"Opération « {demandee} » inconnue. Opérations possibles : "
@@ -484,126 +470,129 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
                 "appelle `liste_clients` / `fiche_client` s'il s'agit de clients."}
     operation = _OPERATIONS[demandee]
     colonne = str(agreger.get("colonne") or "").strip()
-    par = str(agreger.get("par") or "").strip()          # "annee", "mois" ou un nom de colonne
+    par = str(agreger.get("par") or "").strip()
     colonne_date = str(agreger.get("colonne_date") or "date").strip()
 
-    if operation != "COUNT" and not colonne:
+    if operation != "count" and not colonne:
         return {"source_type": type_source, "erreur":
                 "Précise `agreger.colonne` (la colonne à sommer/moyenner, ex. montant_ht). "
                 "Rappelle `interroger_donnees` avec le seul `source_type` pour voir les colonnes."}
 
-    # Filtres d'égalité éventuels (même logique que _filtrer).
-    critere = {str(k): str(v) for k, v in (filtres or {}).items() if str(k).strip()}
-    charge = json.dumps(critere, ensure_ascii=False) if critere else None
-
-    # L'année se lit dans la colonne de date, texte brut : on cherche les quatre
-    # chiffres entourés de non-chiffres (03/04/2024, 2024-04-03, « avril 2024 »).
-    motif_annee = None
-    debut_periode = None
+    # ── La période, au JOUR près ───────────────────────────────────────────
+    debut = fin = None
+    libelle_periode = None
     if annee:
         if not annee.isdigit() or len(annee) != 4:
             return {"source_type": type_source,
                     "erreur": f"`annee` doit être sur quatre chiffres (reçu « {annee} »)."}
-        motif_annee = f"(^|[^0-9]){annee}([^0-9]|$)"
+        debut = datetime.date(int(annee), 1, 1)
+        fin = datetime.date(int(annee), 12, 31)
+        libelle_periode = f"année {annee}"
     elif depuis:
-        jours = _jours_de(depuis)
-        if jours is None:
-            return {"source_type": type_source,
-                    "erreur": (f"`depuis` n'est pas une période lisible (reçu « {depuis} »). "
-                               "Écris « 12m », « 30j », « 6 mois », ou une date AAAA-MM-JJ.")}
-        motif_annee, debut_periode = _motif_periode(jours)
+        debut = debut_de_periode(depuis)
+        if debut is None:
+            return {"source_type": type_source, "erreur":
+                    f"`depuis` n'est pas une période lisible (reçu « {depuis} »). "
+                    "Écris « 12m », « 30j », « 6 mois », « 15 jours », « cette semaine », "
+                    "ou une date AAAA-MM-JJ. Ne devine pas : redemande-la."}
+        fin = datetime.date.today()
+        libelle_periode = f"du {debut.isoformat()} au {fin.isoformat()}"
 
-    # Regroupement : par année (4 chiffres de la date), par mois (AAAA-MM, ou
-    # MM/AAAA ramené à AAAA-MM), ou par la valeur brute d'une colonne.
-    if par in ("annee", "année"):
-        sql_groupe = "substring(COALESCE(m.champs->>$5::text, m.data->>$5::text) from '([0-9]{4})')"
-    elif par == "mois":
-        sql_groupe = ("COALESCE(substring(COALESCE(m.champs->>$5::text, m.data->>$5::text) from '([0-9]{4}-[0-9]{2})'), "
-                      "regexp_replace(substring(COALESCE(m.champs->>$5::text, m.data->>$5::text) from '([0-9]{2}/[0-9]{4})'), "
-                      r"'([0-9]{2})/([0-9]{4})', '\2-\1'))")
-    elif par:
-        sql_groupe = "COALESCE(m.champs->>$6::text, m.data->>$6::text)"
-    else:
-        sql_groupe = "NULL"
+    lignes, tronque = await _charger(conn, niveaux, type_source, filtres, fragments)
 
-    partiel, params_partiel = _clause_contient(fragments, 8)
+    # ── Le tri des lignes : dans la période, hors période, date illisible ──
+    retenues, hors_periode, sans_date = [], 0, 0
+    for ligne in lignes:
+        if debut is None:
+            retenues.append(ligne)
+            continue
+        brut = _valeur_de(ligne, colonne_date)
+        d, precision = lire_date(brut)
+        if not d:
+            sans_date += 1
+            continue
+        # Une date imprécise (« avril 2024 ») est retenue dès que sa PLAGE
+        # croise la période : c'est le seul choix qui ne perd pas de ligne, et
+        # le compte des imprécises est rendu pour qu'on puisse le dire.
+        if d <= fin and fin_de_precision(d, precision) >= debut:
+            retenues.append(ligne)
+        else:
+            hors_periode += 1
 
-    sql = f"""
-        WITH base AS (
-          SELECT COALESCE(m.champs->>$3::text, m.data->>$3::text) AS brut,
-                 {sql_groupe} AS groupe,
-                 -- $6 est cite ici meme quand le regroupement ne s'en sert pas :
-                 -- asyncpg ne sait pas typer un parametre absent de la requete.
-                 $6::text AS _groupe_param
-          FROM document_metadata m
-          WHERE m.source_type = $1::text AND m.access_level = ANY($2::text[])
-            AND ($4::text IS NULL OR COALESCE(m.champs->>$5::text, m.data->>$5::text) ~ $4)
-            AND ($7::jsonb IS NULL OR m.champs @> $7::jsonb OR m.data @> $7::jsonb)
-            AND ({partiel})
-        ), nettoyee AS (
-          SELECT groupe, brut, ({_SQL_NETTOYAGE}) AS nettoye FROM base
-        ), valeurs AS (
-          SELECT groupe, brut, ({_SQL_NOMBRE}) AS nombre FROM nettoyee
-        )
-        SELECT groupe,
-               COUNT(*)                         AS enregistrements,
-               COUNT(nombre)                    AS lisibles,
-               {operation}(nombre)              AS resultat
-        FROM valeurs
-        GROUP BY groupe
-        ORDER BY groupe NULLS LAST
-    """
-    param_groupe = par if par not in ("annee", "année", "mois", "") else colonne_date
-    lignes = await conn.fetch(sql, type_source, niveaux, colonne or "_", motif_annee,
-                              colonne_date, param_groupe, charge, *params_partiel)
+    if not retenues:
+        return {"source_type": type_source, "operation": operation, "colonne": colonne,
+                "annee": annee or None, "periode": libelle_periode,
+                "filtres": filtres or None, "contient": fragments or None, "nombre": 0,
+                "lignes_hors_periode": hors_periode or None,
+                "lignes_sans_date_lisible": sans_date or None,
+                "message": (
+                    "Aucun enregistrement ne correspond."
+                    + (f" {hors_periode} sont hors de la période." if hors_periode else "")
+                    + (f" {sans_date} n'ont pas de date lisible dans la colonne "
+                       f"« {colonne_date} » : vérifie `agreger.colonne_date`."
+                       if sans_date else "")
+                    + " Rappelle `interroger_donnees` avec le seul `source_type` pour "
+                      "voir les colonnes et leurs valeurs réelles.")}
 
-    # Ce que la période vaut, en clair : un chiffre daté sans ses bornes se
-    # recopie dans une réunion et n'y est plus vérifiable.
-    periode = (f"de {debut_periode} à aujourd'hui, mois entiers" if debut_periode
-               else (f"année {annee}" if annee else None))
+    # ── Le calcul ──────────────────────────────────────────────────────────
+    groupes: dict = {}
+    for ligne in retenues:
+        cle = _groupe_de(ligne, par, colonne_date) if par else None
+        g = groupes.setdefault(cle, {"enregistrements": 0, "valeurs": []})
+        g["enregistrements"] += 1
+        if colonne:
+            brut = _valeur_de(ligne, colonne)
+            if est_un_nombre(brut):
+                g["valeurs"].append(lire_montant(brut))
 
-    total_enr = sum(int(l["enregistrements"]) for l in lignes)
-    total_lis = sum(int(l["lisibles"]) for l in lignes)
-    if not total_enr:
-        return {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
-                "annee": annee or None, "periode": periode, "filtres": critere or None,
-                "contient": fragments or None, "nombre": 0,
-                "message": ("Aucun enregistrement ne correspond (période, filtres ou "
-                            "recherche partielle). Vérifie la colonne de date "
-                            "(`agreger.colonne_date`, par défaut « date ») et les valeurs "
-                            "réelles avec le seul `source_type`."
-                            + (" Une période ne retient que les dates écrites AAAA-MM-JJ "
-                               "ou JJ/MM/AAAA : si le fichier les écrit autrement, "
-                               "interroge par `annee`." if debut_periode else ""))}
+    def _resultat(g):
+        v = g["valeurs"]
+        if operation == "count":
+            # Compter les ENREGISTREMENTS, pas les valeurs lisibles d'une
+            # colonne qu'on n'a pas demandée : « combien de chantiers » ne
+            # dépend pas de la présence d'un montant.
+            return float(g["enregistrements"]) if not colonne else float(len(v))
+        if not v:
+            return None
+        return {"sum": sum(v), "avg": sum(v) / len(v),
+                "min": min(v), "max": max(v)}[operation]
 
-    def _num(v):
-        return float(v) if v is not None else None
+    sortie_groupes = [
+        {"groupe": cle, "enregistrements": g["enregistrements"],
+         "lisibles": len(g["valeurs"]), "resultat": _resultat(g)}
+        for cle, g in sorted(groupes.items(),
+                             key=lambda x: (x[0] is None, str(x[0] or "")))]
+    total_enr = sum(g["enregistrements"] for g in sortie_groupes)
+    total_lis = sum(g["lisibles"] for g in sortie_groupes)
 
-    groupes = [{"groupe": l["groupe"], "enregistrements": int(l["enregistrements"]),
-                "lisibles": int(l["lisibles"]), "resultat": _num(l["resultat"])} for l in lignes]
-    # COMPTER SANS COLONNE : le SQL compte les valeurs LISIBLES de la colonne
-    # (aucune, puisqu'il n'y en a pas). Ce qu'on veut compter, ce sont les
-    # enregistrements — c'est `enregistrements` qui les porte.
-    if operation == "COUNT" and not colonne:
-        for g in groupes:
-            g["resultat"] = float(g["enregistrements"])
-    commun = {"source_type": type_source, "operation": operation.lower(), "colonne": colonne,
-              "annee": annee or None, "periode": periode, "filtres": critere or None,
-              "contient": fragments or None}
+    commun = {"source_type": type_source, "operation": operation, "colonne": colonne,
+              "annee": annee or None, "periode": libelle_periode,
+              "filtres": filtres or None, "contient": fragments or None,
+              "lignes_hors_periode": hors_periode or None,
+              "lignes_sans_date_lisible": sans_date or None}
     if not par:
-        g = groupes[0]
+        g = sortie_groupes[0]
         sortie = dict(commun, enregistrements=g["enregistrements"],
                       valeurs_lisibles=g["lisibles"], resultat=g["resultat"])
     else:
-        sortie = dict(commun, par=par, groupes=groupes, enregistrements=total_enr,
-                      valeurs_lisibles=total_lis)
+        sortie = dict(commun, par=par, groupes=sortie_groupes,
+                      enregistrements=total_enr, valeurs_lisibles=total_lis)
+
     sortie["note"] = (
-        (f"Période retenue : {periode}. " if periode else "")
-        + f"{total_enr} enregistrement(s) pris en compte, {total_lis} valeur(s) de "
-        f"« {colonne or 'compte'} » lisibles comme nombres ({total_enr - total_lis} "
-        "illisible(s) ou vide(s), ignorée(s)). Le résultat porte sur les valeurs lisibles "
-        "UNIQUEMENT : dis-le si l'écart est notable. Les montants sont dans l'unité du "
-        "fichier d'origine (souvent HT, en euros) : ne convertis pas, ne devine pas la TVA. "
-        "Réponds par une PHRASE qui dit ce qui est calculé, sur quoi, et avec quelle réserve"
-        + (", en citant la période telle quelle." if periode else "."))
+        (f"Période retenue : {libelle_periode}, bornes comprises. " if libelle_periode else "")
+        + f"{total_enr} enregistrement(s) pris en compte"
+        + (f", {total_lis} valeur(s) de « {colonne} » lisibles comme nombres "
+           f"({total_enr - total_lis} ignorée(s))" if colonne else "")
+        + "."
+        + (f" {hors_periode} enregistrement(s) écarté(s) car hors période."
+           if hors_periode else "")
+        + (f" ATTENTION : {sans_date} enregistrement(s) n'ont AUCUNE date lisible dans "
+           f"« {colonne_date} » et n'ont pas pu être comptés — dis-le, et propose de "
+           f"vérifier la colonne de date." if sans_date else "")
+        + (f" ATTENTION : le jeu dépasse {MAX_LIGNES_AGREGEES} lignes, le calcul ne "
+           "porte que sur les premières — dis-le." if tronque else "")
+        + " Les montants sont dans l'unité du fichier d'origine (souvent HT, en euros) : "
+          "ne convertis pas, ne devine pas la TVA. Réponds par une PHRASE qui dit ce qui "
+          "est calculé, sur quoi, et avec quelle réserve"
+        + (", en citant la période telle quelle." if libelle_periode else "."))
     return sortie

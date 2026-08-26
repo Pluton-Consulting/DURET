@@ -15,12 +15,16 @@ Une question fréquente mérite un skill qui la répond d'un coup, avec le bloc
 d'écran déjà prêt. Moins d'appels au modèle, c'est moins de latence ET moins
 d'occasions de se tromper.
 
-TROIS ROUTINES :
-  · `liste_clients`  — qui sont les clients, combien, avec quoi les joindre ;
-  · `fiche_client`   — TOUT ce qu'on sait d'un client : devis, montants,
-                       chiffre d'affaires, chantiers, contact — d'un seul appel
-                       et à travers TOUS les jeux de données importés ;
-  · `check_mails`    — le point sur le courrier récent, prêt à être résumé.
+LES ROUTINES :
+  · `liste_clients`       — qui sont les clients, combien, avec quoi les joindre ;
+  · `fiche_client`        — TOUT ce qu'on sait d'un client : devis, montants,
+                            chiffre d'affaires, chantiers, contact — d'un seul
+                            appel et à travers TOUS les jeux importés ;
+  · `dossiers_en_attente` — ceux qui attendent une réponse depuis plus de N
+                            jours, du plus ancien : le suivi, pas la recherche ;
+  · `prix_observes`       — ce que la maison a DÉJÀ facturé pour un poste, avec
+                            sa fourchette et ses sources. Un relevé, pas un tarif ;
+  · `check_mails`         — le point sur le courrier récent, prêt à être résumé.
 
 ELLES NE SAVENT RIEN DU MÉTIER. Aucun nom de colonne n'est codé en dur : les
 imports viennent de fichiers Excel ou CSV faits par le client, dont les
@@ -161,88 +165,37 @@ def _fusion(ligne) -> dict:
     return {**champs, **_jsonb(ligne["data"])}
 
 
-_NOMBRE = re.compile(r"-?\d[\d\s  .,]*")
-
-
 def _montant(texte) -> float:
     """« 12 450,50 € » → 12450.5. Rend 0.0 sur tout ce qui n'est pas un nombre.
 
-    Les exports comptables français mélangent espaces insécables, virgules
-    décimales et séparateurs de milliers. Un parseur naïf lit « 12 450,50 »
-    comme 12, et le chiffre d'affaires d'un client devient faux sans que rien
-    ne le signale — c'est le genre d'erreur qui ne se voit qu'en réunion.
+    L'implémentation vit dans `skills/lecture.py`, avec la lecture des dates :
+    elles avaient le même problème (du TEXTE écrit par un humain ou par un
+    logiciel de gestion) et en avaient deux réponses différentes, dont une en
+    SQL. Une seule règle, un seul endroit où la corriger.
     """
-    m = _NOMBRE.search(str(texte or ""))
-    if not m:
-        return 0.0
-    brut = m.group(0)
-    for espace in (" ", " ", " "):
-        brut = brut.replace(espace, "")
-    # Le dernier séparateur rencontré est le décimal ; les autres sont des
-    # milliers. « 1.234,56 » et « 1,234.56 » se lisent donc tous les deux.
-    if "," in brut and "." in brut:
-        decimal = "," if brut.rindex(",") > brut.rindex(".") else "."
-        millier = "." if decimal == "," else ","
-        brut = brut.replace(millier, "").replace(decimal, ".")
-    elif "," in brut:
-        brut = brut.replace(",", ".")
-    try:
-        return float(brut)
-    except ValueError:
-        return 0.0
+    from skills.lecture import lire_montant
+    return lire_montant(texte)
 
 
 def _euros(valeur: float) -> str:
     return f"{valeur:,.2f} €".replace(",", " ").replace(".", ",")
 
 
-_DATE_JMA = re.compile(r"\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})\b")
-_DATE_AMJ = re.compile(r"\b(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})\b")
-_MOIS = ("janv", "fevr", "mars", "avri", "mai", "juin", "juil", "aout",
-         "sept", "octo", "nove", "dece")
-
-
 def _date_triable(texte) -> str:
-    """« 12/03/2025 » → « 20250312 ». Rend "" sur ce qui n'est pas une date.
+    """« 12/03/2025 » → « 20250312 ». Chaîne vide si la date est illisible.
 
-    POURQUOI TRIER ICI ET PAS LÀ-HAUT. « Le dernier devis envoyé à X » est la
-    première question que pose un dirigeant, et un export métier est trié par
-    référence, jamais par date : la ligne la plus récente n'est pas la
-    dernière du fichier. Sans ce tri, c'est le modèle qui doit comparer des
-    dates écrites en toutes lettres pour désigner « la dernière » — exactement
-    le calcul que le prompt lui interdit, et qu'il fait quand même.
+    POURQUOI TRIER. « Le dernier devis envoyé à X » est la première question
+    que pose un dirigeant, et un export métier est trié par référence, jamais
+    par date : la ligne la plus récente n'est pas la dernière du fichier. Sans
+    ce tri, c'est le modèle qui doit comparer des dates écrites en toutes
+    lettres pour désigner « la dernière » — exactement le calcul que le prompt
+    lui interdit, et qu'il fait quand même.
 
-    Les dates des fichiers importés sont du TEXTE, dans le format du logiciel
-    d'origine. On lit les trois formes rencontrées et on rend une clé
-    comparable ; ce qui n'est pas lisible se range en dernier, jamais en
-    premier — une date illisible ne doit pas se faire passer pour la plus
-    récente.
+    Ce qui est illisible se range en DERNIER, jamais en premier : une date
+    qu'on ne sait pas lire ne doit pas se faire passer pour la plus récente.
     """
-    brut = str(texte or "").strip()
-    if not brut:
-        return ""
-    m = _DATE_AMJ.search(brut)
-    if m:
-        a, mo, j = m.group(1), m.group(2), m.group(3)
-        return f"{a}{int(mo):02d}{int(j):02d}"
-    m = _DATE_JMA.search(brut)
-    if m:
-        j, mo, a = m.group(1), m.group(2), m.group(3)
-        annee = int(a)
-        if annee < 100:                       # « 12/03/25 » — un export court
-            annee += 2000 if annee < 70 else 1900
-        return f"{annee:04d}{int(mo):02d}{int(j):02d}"
-    # « mars 2025 », « 12 mars 2025 » : le mois en toutes lettres.
-    plat = _plat(brut)
-    annee = re.search(r"\b(19|20)\d{2}\b", plat)
-    if annee:
-        for i, mois in enumerate(_MOIS, start=1):
-            if mois in plat:
-                jour = re.search(r"\b(\d{1,2})\b", plat)
-                return f"{annee.group(0)}{i:02d}{int(jour.group(1)):02d}" if jour \
-                    else f"{annee.group(0)}{i:02d}00"
-        return f"{annee.group(0)}0000"
-    return ""
+    from skills.lecture import cle_triable
+    return cle_triable(texte)
 
 
 async def _jeux(conn, niveaux: list) -> list:
@@ -837,6 +790,359 @@ async def check_mails(data: dict, user) -> dict:
 # ── Déclarations : tout ce que le système doit savoir, ICI ──────────────────
 from skills.registre import Declaration
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  LES DOSSIERS QUI ATTENDENT — le suivi actif
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# « Liste-moi tous les dossiers clients où on attend une réponse depuis plus de
+# quinze jours. » C'est la question du suivi : elle ne demande pas de retrouver
+# un document, elle demande de REGARDER LE TEMPS PASSER. Aucun geste ne savait
+# la traiter, parce qu'il fallait croiser deux choses qu'on ne savait pas lire
+# ensemble : un statut (le dossier attend-il quelque chose ?) et une ancienneté
+# (depuis combien de temps ?).
+#
+# CE QUI REND CE GESTE POSSIBLE, c'est `skills/lecture.py` : les dates des
+# fichiers importés sont du TEXTE, dans le format du logiciel d'origine, et
+# rien ne les comparait à aujourd'hui.
+#
+# IL NE CODE AUCUN MÉTIER. Les statuts « en attente » sont reconnus par
+# famille de synonymes, comme les colonnes le sont partout ailleurs ici, et la
+# liste se surcharge (`statuts`) pour une maison qui écrirait autrement. Ce qui
+# est CLOS, en revanche, ce sont les statuts qui mettent fin à l'attente :
+# signé, refusé, payé. Un dossier signé n'attend plus rien, et le compter
+# ferait passer un carnet de commandes pour une pile de relances.
+
+# Ce qui attend. Comparé sur la forme aplatie, donc « En attente » et
+# « EN_ATTENTE » se valent, et un préfixe suffit (« envoy » couvre « envoyé »,
+# « envoye », « envoyée le 12/03 »).
+STATUTS_EN_ATTENTE = ("envoy", "attente", "relanc", "en cours", "encours",
+                      "transmis", "propos", "devis", "a_relancer", "a relancer",
+                      "etude", "chiffrage", "pending", "sent")
+# Ce qui n'attend plus. PRIORITAIRE sur la liste ci-dessus : un statut
+# « devis signé » contient « devis », mais il est clos.
+STATUTS_CLOS = ("sign", "accept", "valid", "gagn", "refus", "perdu", "annul",
+                "abandon", "sold", "pay", "regl", "termin", "clotur", "facture",
+                "won", "lost", "closed")
+
+# Le seuil par défaut, quand personne ne le précise. Quinze jours est la
+# formulation du brief client ; ce n'est pas une règle du métier, c'est un
+# défaut raisonnable, et il est DIT dans la réponse pour qu'on puisse le
+# contredire.
+JOURS_PAR_DEFAUT = 15
+MAX_DOSSIERS_AFFICHES = 40
+
+
+def _statut_attend(valeur: str, personnalises=None) -> bool:
+    """Ce dossier attend-il encore quelque chose ?
+
+    Sans statut du tout, on répond OUI : un dossier dont on ignore l'état est
+    précisément celui qu'il faut aller regarder. L'inverse — le taire — ferait
+    disparaître de la liste les lignes les moins bien tenues, c'est-à-dire
+    celles qui posent problème.
+    """
+    plat = _plat(valeur)
+    # DES STATUTS EXPLICITES SONT UNE LISTE FERMÉE. Quand la personne nomme les
+    # statuts qui l'intéressent, une ligne sans statut n'en fait partie
+    # d'aucun : la retenir « par précaution » lui rendrait tout le fichier
+    # alors qu'elle a demandé trois statuts. La précaution ci-dessous ne vaut
+    # que pour la liste PAR DÉFAUT, où l'on ignore le vocabulaire de la maison.
+    if personnalises:
+        return bool(plat) and any(_plat(s) in plat for s in personnalises)
+    if not plat:
+        return True
+    if any(mot in plat for mot in STATUTS_CLOS):
+        return False
+    return any(mot in plat for mot in STATUTS_EN_ATTENTE)
+
+
+async def dossiers_en_attente(data: dict, user) -> dict:
+    """Les dossiers sans réponse depuis plus de N jours, du plus ancien."""
+    from database.connection import get_db
+    from security.acces import niveaux_visibles
+    from skills.erreurs import SkillError
+    from skills.lecture import age_en_jours
+
+    seuil = data.get("jours", data.get("depuis_jours"))
+    try:
+        seuil = int(str(seuil).strip()) if str(seuil or "").strip() else JOURS_PAR_DEFAUT
+    except ValueError:
+        seuil = JOURS_PAR_DEFAUT
+    seuil = max(0, min(seuil, 3650))
+    demande_jeu = str(data.get("source_type") or data.get("jeu") or "").strip()
+    statuts = data.get("statuts") or None
+    if isinstance(statuts, str):
+        statuts = [s.strip() for s in statuts.split(",") if s.strip()]
+
+    niveaux = sorted(niveaux_visibles(getattr(user, "role", "")))
+    try:
+        async with get_db() as conn:
+            existants = await _jeux(conn, niveaux)
+            # Sans jeu précisé : tous ceux qui portent des affaires en cours.
+            # On ne devine pas « devis » : un client peut appeler cela
+            # « propositions », « offres » ou « affaires ».
+            if demande_jeu:
+                jeux = [j for j in existants if _plat(demande_jeu) in _plat(j)] \
+                    or [demande_jeu]
+            else:
+                jeux = [j for j in existants
+                        if any(m in _plat(j) for m in
+                               ("devis", "offre", "proposition", "affaire", "quote",
+                                "chantier", "dossier", "commande"))]
+            if not jeux:
+                return {
+                    "trouve": False, "jeux_de_donnees": existants,
+                    "message": ("Aucun jeu de données ne ressemble à des devis ou à des "
+                                "affaires en cours. Jeux importés : "
+                                + (", ".join(existants) or "aucun") + "."),
+                    "a_faire": ("Dis-le sans détour, et demande DANS QUEL FICHIER se "
+                                "trouvent les dossiers à suivre. N'invente aucune ligne."),
+                }
+            lignes = []
+            for jeu in jeux:
+                for l in await conn.fetch(
+                        "SELECT data, champs FROM document_metadata "
+                        "WHERE source_type = $1 AND access_level = ANY($2::text[]) "
+                        "LIMIT $3",
+                        jeu, niveaux, MAX_CLIENTS):
+                    lignes.append((jeu, _fusion(l)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Suivi des dossiers impossible : %s", e)
+        raise SkillError("Les données des dossiers sont momentanément indisponibles.")
+
+    en_attente, sans_date, clos = [], 0, 0
+    for jeu, d in lignes:
+        if not _statut_attend(_valeur(d, "statut"), statuts):
+            clos += 1
+            continue
+        age = age_en_jours(_valeur(d, "date"))
+        if age is None:
+            sans_date += 1
+            continue
+        if age >= seuil:
+            en_attente.append({
+                "jeu": jeu,
+                "client": _nom_complet(d) or _valeur(d, "nom"),
+                "reference": _valeur(d, "reference"),
+                "date": _valeur(d, "date"),
+                "jours": age,
+                "statut": _valeur(d, "statut"),
+                "montant": _valeur(d, "montant"),
+            })
+
+    # DU PLUS ANCIEN AU PLUS RÉCENT : celui qui attend depuis le plus longtemps
+    # est celui qu'il faut rappeler aujourd'hui. C'est l'ordre dans lequel on
+    # décroche le téléphone, donc l'ordre dans lequel la liste doit sortir.
+    en_attente.sort(key=lambda x: -x["jours"])
+    total = len(en_attente)
+    montres = en_attente[:MAX_DOSSIERS_AFFICHES]
+
+    if not total:
+        return {
+            "trouve": True, "nombre": 0, "seuil_jours": seuil,
+            "dossiers_examines": len(lignes), "dossiers_clos": clos,
+            "sans_date_lisible": sans_date or None,
+            "message_final": (f"Aucun dossier n'attend depuis plus de {seuil} jours "
+                              f"(sur {len(lignes)} examinés, {clos} déjà clos)."
+                              + (f" Attention : {sans_date} n'ont pas de date lisible."
+                                 if sans_date else "")),
+            "a_faire": "Dis-le en une phrase, avec le seuil employé. N'invente aucune ligne.",
+        }
+
+    return {
+        "trouve": True, "nombre": total, "seuil_jours": seuil,
+        "dossiers_examines": len(lignes), "dossiers_clos": clos,
+        "sans_date_lisible": sans_date or None,
+        "dossiers": montres,
+        "bloc_ui": {
+            "type": "table",
+            "titre": f"Dossiers sans réponse depuis plus de {seuil} jours",
+            "columns": ["Client", "Référence", "Date", "Attente", "Statut", "Montant"],
+            "rows": [[d["client"] or "[À COMPLÉTER]", d["reference"], d["date"],
+                      f"{d['jours']} j", d["statut"] or "[À COMPLÉTER]", d["montant"]]
+                     for d in montres],
+        },
+        "message_final": (
+            f"{total} dossier(s) attendent une réponse depuis plus de {seuil} jours"
+            + (f", le plus ancien depuis {montres[0]['jours']} jours." if montres else ".")
+            + (f" {sans_date} dossier(s) n'ont pas de date lisible et n'ont pas pu être "
+               f"examinés." if sans_date else "")),
+        "a_faire": (
+            "AFFICHE la liste : insère un bloc ```ui contenant EXACTEMENT le contenu de "
+            "`bloc_ui`. Elle est triée du plus ancien au plus récent, c'est l'ordre dans "
+            "lequel il faut rappeler. Les âges sont EXACTS, cite-les tels quels. Ne "
+            "propose PAS d'envoyer les relances toi-même sans qu'on te le demande."
+            + (f" Signale les {sans_date} dossier(s) sans date lisible." if sans_date else "")),
+    }
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  LES PRIX DÉJÀ PRATIQUÉS — ce que la maison a facturé pour ce poste
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# « Prépare-moi une trame de pré-devis avec les postes et les quantités » : on
+# rendait les postes et les surfaces, et pas un chiffre. C'était prudent et
+# c'était insuffisant — un dirigeant qui demande un pré-devis attend des ordres
+# de grandeur, et à défaut il ira les chercher ailleurs.
+#
+# LA SEULE SOURCE ACCEPTABLE EST L'HISTORIQUE DE LA MAISON. Pas un prix public,
+# pas une moyenne du marché, pas une estimation du modèle : ce que CETTE
+# entreprise a réellement facturé pour ce poste-là, avec le nombre
+# d'observations, la fourchette et les affaires d'où cela sort. Un prix sans
+# ces trois choses est une invention polie.
+#
+# CE GESTE NE CHIFFRE RIEN. Il observe. C'est la différence entre « vos huit
+# derniers chantiers de terrasse bois vont de 9 250 à 18 400 € HT, médiane
+# 11 900 » et « comptez environ 12 000 € » : la première phrase se vérifie, la
+# seconde engage l'entreprise sur un chiffre que personne n'a décidé.
+
+MIN_OBSERVATIONS = 2
+MAX_OBSERVATIONS_CITEES = 8
+
+# Les colonnes où un poste se décrit. On ne cherche PAS dans les montants, les
+# dates ni les références : « 2024 » se retrouverait dans un numéro de devis, et
+# le prix moyen d'un poste inexistant serait rendu avec le plus grand sérieux.
+FAMILLES_DESCRIPTIVES = ("prestation", "description", "designation", "désignation",
+                         "libelle", "libellé", "objet", "poste", "travaux",
+                         "nature", "intitule", "intitulé", "chantier", "commentaire")
+
+
+def _mediane(valeurs: list) -> float:
+    ordonnees = sorted(valeurs)
+    milieu = len(ordonnees) // 2
+    if len(ordonnees) % 2:
+        return ordonnees[milieu]
+    return (ordonnees[milieu - 1] + ordonnees[milieu]) / 2
+
+
+async def prix_observes(data: dict, user) -> dict:
+    """Ce que l'entreprise a facturé pour un poste, d'après ses propres affaires."""
+    from database.connection import get_db
+    from security.acces import niveaux_visibles
+    from skills.erreurs import SkillError
+    from skills.lecture import lire_montant, est_un_nombre, lire_date
+
+    poste = " ".join(str(data.get("poste") or data.get("prestation")
+                         or data.get("recherche") or "").split())
+    if len(poste) < 3:
+        raise SkillError(
+            "Quel poste ? Donne-le dans `poste`, avec les mots du métier "
+            "(« terrasse bois », « engazonnement », « clôture »). Un mot trop "
+            "court ramènerait n'importe quoi.")
+
+    niveaux = sorted(niveaux_visibles(getattr(user, "role", "")))
+    demande_jeu = str(data.get("source_type") or "").strip()
+
+    try:
+        async with get_db() as conn:
+            existants = await _jeux(conn, niveaux)
+            lignes = await conn.fetch(
+                "SELECT source_type, data, champs FROM document_metadata "
+                "WHERE access_level = ANY($1::text[]) "
+                "  AND (data::text ILIKE $2 OR champs::text ILIKE $2) "
+                "LIMIT 2000",
+                niveaux, f"%{poste}%")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Relevé des prix impossible : %s", e)
+        raise SkillError("Les données des affaires sont momentanément indisponibles.")
+
+    cible = _plat(poste)
+    observations = []
+    for l in lignes:
+        jeu = l["source_type"]
+        if demande_jeu and _plat(demande_jeu) not in _plat(jeu):
+            continue
+        # Les prix se lisent dans ce qui porte des montants d'affaires. Un
+        # fichier de contacts qui mentionnerait « terrasse » n'a pas de prix.
+        if not any(m in _plat(jeu) for m in
+                   ("devis", "chantier", "factur", "offre", "vente", "commande",
+                    "affaire", "proposition")):
+            continue
+        d = _fusion(l)
+        # LE POSTE DOIT ÊTRE DANS UNE COLONNE QUI LE DÉCRIT. Le ILIKE ratisse
+        # toute la ligne : sans ce contrôle, un commentaire « voir terrasse bois
+        # du lot 3 » ferait entrer le montant d'un tout autre poste dans la
+        # moyenne — le même piège que la fiche client, payé une fois déjà.
+        colonne_trouvee = None
+        for colonne, valeur in d.items():
+            if cible in _plat(valeur) and any(f in _plat(colonne)
+                                              for f in FAMILLES_DESCRIPTIVES):
+                colonne_trouvee = colonne
+                break
+        if not colonne_trouvee:
+            continue
+        brut = _valeur(d, "montant")
+        if not est_un_nombre(brut):
+            continue
+        montant = lire_montant(brut)
+        if montant <= 0:
+            continue
+        observations.append({
+            "jeu": jeu, "montant": montant, "montant_ecrit": brut,
+            "designation": str(d[colonne_trouvee])[:120],
+            "reference": _valeur(d, "reference"),
+            "date": _valeur(d, "date"),
+            "client": _nom_complet(d),
+        })
+
+    if len(observations) < MIN_OBSERVATIONS:
+        return {
+            "trouve": False, "poste": poste, "observations": len(observations),
+            "jeux_de_donnees": existants,
+            "message": (
+                f"Trop peu d'affaires passées mentionnent « {poste} » pour en tirer un "
+                f"ordre de prix ({len(observations)} trouvée(s), il en faut au moins "
+                f"{MIN_OBSERVATIONS})."),
+            "a_faire": (
+                "Dis-le franchement et n'avance AUCUN chiffre : ni un prix de marché, ni "
+                "une estimation, ni un ordre de grandeur « habituel ». Propose de "
+                "chercher le poste sous un autre nom, ou de laisser la ligne à chiffrer "
+                "à la main dans le devis."),
+        }
+
+    montants = [o["montant"] for o in observations]
+    dates = [d for d in (lire_date(o["date"])[0] for o in observations) if d]
+    periode = (f"de {min(dates).isoformat()} à {max(dates).isoformat()}"
+               if dates else None)
+    # Les plus récentes d'abord : un prix de l'an dernier vaut mieux qu'un prix
+    # d'il y a cinq ans, et c'est celui qu'on veut citer en exemple.
+    observations.sort(key=lambda o: _date_triable(o["date"]), reverse=True)
+
+    return {
+        "trouve": True, "poste": poste,
+        "observations": len(observations),
+        "minimum": _euros(min(montants)),
+        "median": _euros(_mediane(montants)),
+        "maximum": _euros(max(montants)),
+        "periode": periode,
+        "sources": sorted({o["jeu"] for o in observations}),
+        "exemples": observations[:MAX_OBSERVATIONS_CITEES],
+        "bloc_ui": {
+            "type": "keyvalue",
+            "rows": [["Poste", poste],
+                     ["Affaires observées", str(len(observations))],
+                     ["Plus bas", _euros(min(montants))],
+                     ["Médiane", _euros(_mediane(montants))],
+                     ["Plus haut", _euros(max(montants))]]
+                    + ([["Période", periode]] if periode else [])
+                    + [["Source", ", ".join(sorted({o["jeu"] for o in observations}))]],
+        },
+        "message_final": (
+            f"Sur {len(observations)} affaire(s) passée(s) mentionnant « {poste} », les "
+            f"montants vont de {_euros(min(montants))} à {_euros(max(montants))}, "
+            f"médiane {_euros(_mediane(montants))}"
+            + (f" ({periode})." if periode else ".")),
+        "a_faire": (
+            "AFFICHE le relevé : insère un bloc ```ui contenant EXACTEMENT le contenu de "
+            "`bloc_ui`. Ce sont des prix DÉJÀ PRATIQUÉS par l'entreprise, pas un tarif : "
+            "présente-les comme une FOURCHETTE et cite le nombre d'affaires observées. "
+            "N'en déduis JAMAIS un prix unique, ne calcule pas de prix au mètre carré à "
+            "partir de ces chiffres, et rappelle que le chiffrage final revient à un "
+            "humain."),
+    }
+
+
 SKILLS = {
     "liste_clients": Declaration(
         fonction=liste_clients,
@@ -879,6 +1185,38 @@ SKILLS = {
         requis=["nom"], optionnels=["champs"],
         effet="lecture",
         libelle="je rassemble la fiche du client"),
+    "dossiers_en_attente": Declaration(
+        fonction=dossiers_en_attente,
+        description=(
+            "LES DOSSIERS QUI ATTENDENT UNE REPONSE depuis plus de N jours, du "
+            "plus ancien au plus recent, avec l'anciennete EXACTE de chacun. "
+            "C'est le geste du SUIVI : « les dossiers ou on attend une reponse "
+            "depuis plus de 15 jours », « qui faut-il relancer », « les devis "
+            "sans nouvelles ». `jours` : le seuil (15 par defaut, dis toujours "
+            "lequel a servi). `source_type` : le fichier a examiner, sinon tous "
+            "ceux qui portent des affaires en cours. `statuts` : les statuts qui "
+            "comptent comme « en attente », si la maison a son propre "
+            "vocabulaire. Le resultat donne un bloc ```ui a inserer TEL QUEL. "
+            "N'envoie AUCUNE relance : ce geste ne fait que regarder"),
+        requis=[], optionnels=["jours", "source_type", "statuts"],
+        effet="lecture",
+        libelle="je regarde les dossiers en attente"),
+    "prix_observes": Declaration(
+        fonction=prix_observes,
+        description=(
+            "CE QUE L'ENTREPRISE A DEJA FACTURE pour un poste : le nombre "
+            "d'affaires observees, le montant le plus bas, la mediane, le plus "
+            "haut, la periode et les affaires d'ou cela sort. A appeler des "
+            "qu'on demande un ordre de prix, un pre-chiffrage ou « combien on "
+            "facture d'habitude pour X ». `poste` : le poste avec les mots du "
+            "metier (« terrasse bois », « engazonnement »). C'est un RELEVE, "
+            "pas un tarif : cite la fourchette et le nombre d'affaires, ne "
+            "deduis jamais un prix unique, et n'invente aucun montant si le "
+            "releve est vide. Ne cherche JAMAIS un prix sur le web pour "
+            "chiffrer une affaire : ce ne sont pas les prix de la maison"),
+        requis=["poste"], optionnels=["source_type"],
+        effet="lecture",
+        libelle="je relève les prix déjà pratiqués"),
     "check_mails": Declaration(
         fonction=check_mails,
         description=(

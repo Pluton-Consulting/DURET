@@ -998,25 +998,9 @@ async def tools_node(state: AgentState, config=None) -> dict:
         exp = expert_du_skill(action["skill"])
         if exp:
             armement["target_agent"] = exp
-        # ON N'APPROUVE PAS UN PLAN QU'ON N'A PAS LU.
-        #
-        # Le brouillon présenté à l'humain est le TEXTE du modèle : pour une
-        # action ordinaire (envoyer un devis) il décrit ce qui va partir, et
-        # cela suffit. Pour un plan, ce qu'il faut lire EST le plan — et le
-        # skill n'est pas encore exécuté, donc son bloc n'existe pas. On le
-        # construit ici, mécaniquement, à partir des arguments approuvés :
-        # aucun modèle ne repasse, ce qui est montré est exactement ce dont
-        # l'empreinte est vérifiée.
-        if action["skill"] == "proposer_plan":
-            try:
-                import json as _json
-                from skills.plan import bloc_du_plan
-                armement["llm_response"] = (
-                    (texte or "Voici comment je compte procéder.").rstrip()
-                    + "\n\n```ui\n"
-                    + _json.dumps(bloc_du_plan(args), ensure_ascii=False) + "\n```")
-            except Exception as e:  # noqa: BLE001 — un plan sans son bloc reste lisible
-                logger.info("Bloc du plan non construit : %s", e)
+        apercu = _apercu_avant_accord(action["skill"], args, texte)
+        if apercu:
+            armement["llm_response"] = apercu
         return armement
 
     # Identité RECHARGÉE au moment d'agir : un compte désactivé entre-temps ne
@@ -1710,6 +1694,50 @@ def cles_images_du_fil(state: AgentState) -> list[str]:
     if cle_jointe and cle_jointe not in vues:
         vues.append(cle_jointe)
     return vues[-6:]
+
+
+def _apercu_avant_accord(skill: str, args: dict, texte: str) -> str:
+    """CE QUE L'ON APPROUVE DOIT SE VOIR, pas seulement se lire en creux.
+
+    Le brouillon présenté à l'humain est le TEXTE du modèle. Pour une action
+    ordinaire (envoyer un devis rédigé plus haut), il décrit ce qui va partir et
+    cela suffit. Pour deux d'entre elles, non :
+
+      · un PLAN — ce qu'il faut lire EST le plan, et le skill n'étant pas encore
+        exécuté, son bloc n'existe pas ;
+      · une RETOUCHE d'image — on approuve une dépense sur une photo précise, et
+        rien ne montrait LAQUELLE. « Approuver ? » sans image, c'est un clic à
+        l'aveugle, et un clic à l'aveugle finit par être donné sans lire.
+
+    Les blocs sont construits MÉCANIQUEMENT à partir des arguments dont
+    l'empreinte est vérifiée : aucun modèle ne repasse entre l'affichage et
+    l'exécution, donc ce qui est montré est exactement ce qui sera fait.
+
+    Ne lève jamais : un aperçu manquant laisse le brouillon tel quel, et la
+    porte fonctionne comme avant.
+    """
+    import json as _json
+    try:
+        if skill == "proposer_plan":
+            from skills.plan import bloc_du_plan
+            return ((texte or "Voici comment je compte procéder.").rstrip()
+                    + "\n\n```ui\n" + _json.dumps(bloc_du_plan(args),
+                                                  ensure_ascii=False) + "\n```")
+        if skill == "modifier_visuel" and args.get("image"):
+            changements = args.get("changements") or args.get("modifications") or ""
+            if isinstance(changements, (list, tuple)):
+                changements = "; ".join(str(c) for c in changements)
+            bloc = {"type": "visuel", "titre": "Image de départ",
+                    "images": [{"cle": str(args["image"]),
+                                "legende": "La photo qui sera retouchée"}]}
+            return ((texte or "Voici la retouche que je vais produire.").rstrip()
+                    + (f"\n\nCe qui change : {str(changements)[:300]}."
+                       if changements else "")
+                    + "\n\nLe reste de la scène est conservé à l'identique."
+                    + "\n\n```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```")
+    except Exception as e:  # noqa: BLE001 — un aperçu manquant n'empêche rien
+        logger.info("Aperçu avant accord non construit (%s) : %s", skill, e)
+    return ""
 
 
 def _consigne_plan(state: AgentState) -> str:

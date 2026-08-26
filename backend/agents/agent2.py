@@ -39,11 +39,27 @@ VISION_PROMPT = (
 # Taille max d'image envoyée au modèle vision (coût / limites API).
 _MAX_IMG_WIDTH = 1568
 
+# COMBIEN DE PAGES D'UN PDF PARTENT À LA VISION.
+#
+# Une seule, jusqu'ici : `load_page(0)`. Or un dossier de plans, c'est un plan
+# de masse, des coupes, des façades, parfois un descriptif — et l'assistant
+# n'en voyait que la première feuille tout en répondant comme s'il avait tout
+# lu. Rien ne signalait le reste : ni l'utilisateur ni le modèle ne pouvaient
+# le savoir.
+#
+# Cinq est un compromis assumé : chaque page est une image de plus dans la
+# requête, donc un coût et une latence de plus, et les modèles de vision se
+# dégradent quand on les noie. Au-delà, on prend les cinq premières et ON LE
+# DIT — une troncature annoncée est une information ; silencieuse, c'est une
+# erreur.
+MAX_PAGES_PDF = 5
+
 
 # ── Nœuds ────────────────────────────────────────────────────────────
 
 async def preprocess_attachment_node(state: AgentState) -> dict:
-    """Prétraitement : PDF→image (1re page), et suppression EXIF/GPS des photos (Pillow)."""
+    """Prétraitement : PDF → images (jusqu'à MAX_PAGES_PDF pages), et
+    suppression EXIF/GPS des photos (Pillow)."""
     b64 = state.get("attachment_b64")
     mime = (state.get("attachment_mime") or "").lower()
     if not b64:
@@ -54,14 +70,19 @@ async def preprocess_attachment_node(state: AgentState) -> dict:
     except Exception:
         return {"error": "attachment_base64_invalide"}
 
-    # PDF → rendre la première page en image (PyMuPDF, import optionnel).
+    # PDF → rendre ses pages en images (PyMuPDF, import optionnel).
+    pages_brutes, pages_totales = [], 0
     if "pdf" in mime:
         try:
             import fitz  # PyMuPDF
             doc = fitz.open(stream=raw, filetype="pdf")
-            page = doc.load_page(0)
-            pix = page.get_pixmap(dpi=150)
-            raw = pix.tobytes("png")
+            pages_totales = doc.page_count
+            for numero in range(min(pages_totales, MAX_PAGES_PDF)):
+                pix = doc.load_page(numero).get_pixmap(dpi=150)
+                pages_brutes.append(pix.tobytes("png"))
+            if not pages_brutes:
+                return {"error": "pdf_sans_page"}
+            raw = pages_brutes[0]
             mime = "image/png"
         except ImportError:
             return {"error": "pdf_non_supporte_installer_pymupdf",
@@ -70,17 +91,37 @@ async def preprocess_attachment_node(state: AgentState) -> dict:
             return {"error": f"pdf_illisible_{type(e).__name__}"}
 
     # Image → ré-encodage Pillow (retire EXIF/GPS) + downscale.
-    try:
+    def _nettoyer(donnees: bytes) -> bytes:
         from PIL import Image
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        img = Image.open(io.BytesIO(donnees)).convert("RGB")
         if img.width > _MAX_IMG_WIDTH:
             ratio = _MAX_IMG_WIDTH / img.width
             img = img.resize((_MAX_IMG_WIDTH, int(img.height * ratio)))
         out = io.BytesIO()
         img.save(out, format="JPEG", quality=80)  # nouvel encodage = sans métadonnées EXIF
+        return out.getvalue()
+
+    try:
+        octets = _nettoyer(raw)
+        # Les pages SUIVANTES du PDF, nettoyées et redimensionnées comme la
+        # première. Une page illisible n'interrompt pas l'analyse des autres :
+        # mieux vaut quatre pages sur cinq qu'un échec entier.
+        pages = [octets]
+        for suivante in pages_brutes[1:]:
+            try:
+                pages.append(_nettoyer(suivante))
+            except Exception as e:  # noqa: BLE001
+                logger.info("Page de PDF illisible, ignorée : %s", e)
         return {
-            "attachment_b64": base64.b64encode(out.getvalue()).decode(),
+            "attachment_b64": base64.b64encode(octets).decode(),
             "attachment_mime": "image/jpeg",
+            # Toutes les pages retenues, la première comprise : c'est ce que la
+            # vision recevra. Une seule page ⇒ liste d'un élément, aucun cas
+            # particulier plus loin.
+            "attachment_pages": [base64.b64encode(p).decode() for p in pages],
+            "pages_totales": pages_totales or None,
+            "pages_ignorees": (max(0, pages_totales - len(pages))
+                               if pages_totales else 0) or None,
         }
     except Exception as e:
         return {"error": f"image_illisible_{type(e).__name__}"}
@@ -104,9 +145,29 @@ async def vision_node(state: AgentState, config=None) -> dict:
 
     mime = state.get("attachment_mime") or "image/jpeg"
     demande = state.get("query") or "Décris ce document pour préparer un chiffrage de travaux de sols."
-    message = HumanMessage(content=[
-        {"type": "text", "text": f"{VISION_PROMPT}\n\nDemande de l'utilisateur : {demande}"},
-        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+
+    # TOUTES LES PAGES RETENUES, pas seulement la première. Un dossier de plans
+    # tient rarement sur une feuille, et l'assistant répondait sur la seule
+    # page 1 comme s'il avait tout vu. On dit au modèle combien il en reçoit et
+    # combien ont été laissées de côté : sans cela, il conclurait de la
+    # dernière page qu'il a fait le tour du dossier.
+    pages = state.get("attachment_pages") or [b64]
+    total = state.get("pages_totales") or 0
+    ignorees = state.get("pages_ignorees") or 0
+    entete = f"{VISION_PROMPT}\n\nDemande de l'utilisateur : {demande}"
+    if len(pages) > 1:
+        entete += (f"\n\nCe document comporte {total or len(pages)} page(s) ; "
+                   f"les {len(pages)} premières te sont montrées, dans l'ordre. "
+                   "Analyse-les ENSEMBLE : un plan de masse, ses coupes et ses "
+                   "façades décrivent le même projet. Dis à quelle page se "
+                   "trouve chaque élément que tu relèves.")
+    if ignorees:
+        entete += (f"\n\nATTENTION : {ignorees} page(s) n'ont PAS été analysées. "
+                   "Signale-le dans ta réponse, et ne conclus rien sur ce que tu "
+                   "n'as pas vu.")
+    message = HumanMessage(content=[{"type": "text", "text": entete}] + [
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{page}"}}
+        for page in pages
     ])
     # LES CANDIDATS SE SUCCÈDENT, comme dans la cascade texte. Un seul essai
     # laissait l'agent aveugle dès que le premier modèle répondait 404 — relevé

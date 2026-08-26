@@ -216,6 +216,12 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # laisser filer ferait passer une vieille photo pour « celle qu'on
         # vient d'envoyer ». Elle est reposée par la vision si une image arrive.
         "attachment_visuel_cle": None,
+        # Les pages du PDF du tour précédent non plus : la vision les
+        # relirait, et l'assistant décrirait un dossier qu'on ne lui a pas
+        # montré. Même famille de piège que la référence de photo ci-dessus.
+        "attachment_pages": None,
+        "pages_totales": None,
+        "pages_ignorees": None,
         "trigger_kind": trigger_kind,
         "thread_id": thread_id,
         "session_id": thread_id,

@@ -68,7 +68,6 @@ backend/nas/                            # acces bas niveau au @STOCKAGE@
 backend/skills/nas.py                   # skills exposant le @STOCKAGE@ a l'assistant
 backend/skills/visuels.py               # skills de rendu d'amenagement (offre @METIER@)
 backend/visuels/                        # generation et retouche d'images (Nano Banana), offre propre au client
-backend/routers/visuels.py              # sert les visuels generes (offre visuelle du client)
 backend/ingestion/connectors/synology.py  # ingestion depuis le @STOCKAGE@
 backend/ingestion/skills.py             # le geste qui fait ENTRER le @STOCKAGE@ en memoire : meme structure, source differente
 backend/ingestion/connectors/gmail.py   # ingestion du courrier Google Workspace
@@ -78,8 +77,6 @@ backend/scripts/test_microsoft.py       # verification du raccordement Microsoft
 backend/skills/outils.py                # perimetres de lecture : dossiers Drive / partages @STOCKAGE@
 backend/outils/__init__.py              # registre des outils reellement branches chez ce client
 backend/routers/ingestion.py            # liste des sources proposees a l'ecran de synchronisation
-backend/llm/cles.py                     # cles d'API des services souscrits par ce client
-frontend/components/settings/ClesApiTab.tsx  # les memes cles, cote ecran de reglages
 
 [deploiement]
 # Ce qui installe l'application chez CE client : depot, base, chemins, notes

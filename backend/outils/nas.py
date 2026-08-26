@@ -621,3 +621,101 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
             "note": ("Document finalisé ET déposé sur le serveur. Montre-le "
                      "avec un bloc ```ui `doc_apercu` portant `titre`, "
                      "`format` et `extrait` (recopié TEL QUEL).")}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  LES PHOTOS D'UN CHANTIER, MONTRÉES DANS LE CHAT
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# « Montre-moi les photos de ce chantier » ne trouvait aucun geste : la
+# recherche documentaire rend du texte, et `nas_ouvrir` refuse les formats non
+# textuels. Or le nécessaire était déjà là, à un maillon près — le dépôt
+# (`visuels/depot.py`) range n'importe quels octets sous une clé et les sert
+# par `/api/visuels/{clé}` avec le jeton de session, et le bloc d'écran
+# `visuel` sait afficher une planche téléchargeable. Il manquait le geste qui
+# va CHERCHER les images et les dépose. C'est celui-ci.
+#
+# CE QU'IL NE FAIT PAS : sortir des dossiers autorisés (`dossiers_autorises`
+# borne la recherche, comme pour tous les gestes du NAS), ni ramener autre
+# chose que des images, ni télécharger un fichier énorme.
+
+MAX_PHOTOS = 12
+MAX_OCTETS_PHOTO = 12 * 1024 * 1024
+_EXTENSIONS_IMAGE = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif")
+
+
+async def photos(dossier: Optional[str] = None, motif: Optional[str] = None,
+                 limite: int = 6) -> dict:
+    """Les photos d'un dossier du NAS, rangées au dépôt et prêtes à l'écran."""
+    from nas.acces import connexion, _chercher_ouvert, NasRefuse
+    from ingestion.connectors import synology as c
+    from visuels.depot import deposer_octets
+
+    limite = max(1, min(int(limite or 6), MAX_PHOTOS))
+    # Sans motif, on cherche les extensions d'image une à une : la recherche
+    # DSM travaille sur un masque de nom, elle ne connaît pas les types.
+    motifs = [motif] if motif else list(_EXTENSIONS_IMAGE)
+
+    trouves, vus = [], set()
+    async with connexion() as (client, base, sid):
+        for m in motifs:
+            if len(trouves) >= limite * 2:
+                break
+            try:
+                res = await _chercher_ouvert(client, base, sid, m, dossier)
+            except NasRefuse:
+                raise
+            except Exception as e:  # noqa: BLE001 — une racine muette n'annule pas le reste
+                logger.warning("NAS : recherche de photos « %s » échouée : %s", m, e)
+                continue
+            for f in res.get("resultats") or []:
+                chemin = f.get("chemin")
+                if (not chemin or f.get("dossier") or chemin in vus
+                        or not chemin.lower().endswith(_EXTENSIONS_IMAGE)):
+                    continue
+                vus.add(chemin)
+                trouves.append(f)
+
+        if not trouves:
+            ou = f"« {dossier} »" if dossier else "les dossiers ouverts"
+            return {
+                "photos": [], "nombre": 0,
+                "message": (f"Aucune image dans {ou}"
+                            + (f" dont le nom contienne « {motif} »" if motif else "")
+                            + ". Ce n'est pas une preuve qu'il n'y en a pas : elles "
+                              "peuvent être ailleurs, ou hors du périmètre autorisé."),
+            }
+
+        images, trop_gros = [], 0
+        for f in trouves:
+            if len(images) >= limite:
+                break
+            try:
+                octets = await c._telecharger(client, base, sid, f["chemin"])
+                if not octets:
+                    continue
+                if len(octets) > MAX_OCTETS_PHOTO:
+                    trop_gros += 1
+                    continue
+                cle = deposer_octets(octets, "image/jpeg")
+                if cle:
+                    images.append({"cle": cle, "legende": f.get("nom") or "photo",
+                                   "chemin": f["chemin"]})
+            except Exception as e:  # noqa: BLE001
+                logger.info("NAS : photo « %s » non récupérée : %s", f.get("nom"), e)
+
+    if not images:
+        return {"photos": [], "nombre": 0,
+                "message": ("Des images existent mais aucune n'a pu être "
+                            "récupérée (format, taille ou droits).")}
+
+    return {
+        "photos": images,
+        "nombre": len(images),
+        "disponibles": len(trouves),
+        "trop_volumineuses": trop_gros or None,
+        "bloc_ui": {"type": "visuel",
+                    "titre": (dossier or motif or "Photos du serveur")[:80],
+                    "images": [{"cle": i["cle"], "legende": i["legende"]}
+                               for i in images]},
+    }

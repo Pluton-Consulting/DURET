@@ -23,6 +23,12 @@ class AgentState(TypedDict):
     # c'est elle qui permet de RETOUCHER l'image plus tard (même maison,
     # quelques détails changés) au lieu d'en générer une autre.
     attachment_visuel_cle: Optional[str]
+    # LES PAGES D'UN PDF, toutes celles qui partent à la vision. Une seule page
+    # était rendue jusqu'ici, et l'assistant répondait sur elle comme s'il avait
+    # lu le dossier entier.
+    attachment_pages: Optional[List[str]]
+    pages_totales: Optional[int]
+    pages_ignorees: Optional[int]
     vision_analysis: Optional[str]  # description brute produite par le modèle vision (Agent 2)
     extracted_data: Optional[dict]  # extraction structurée (postes, surfaces, contraintes)
 

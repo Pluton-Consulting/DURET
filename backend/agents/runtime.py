@@ -211,6 +211,11 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "attachment_mime": attachment_mime,
         "attachment_name": attachment_name,
         "attachment_text": attachment_text,
+        # La référence de la photo du tour PRÉCÉDENT n'a rien à faire dans
+        # celui-ci : depuis qu'elle entre dans les images connues du fil, la
+        # laisser filer ferait passer une vieille photo pour « celle qu'on
+        # vient d'envoyer ». Elle est reposée par la vision si une image arrive.
+        "attachment_visuel_cle": None,
         "trigger_kind": trigger_kind,
         "thread_id": thread_id,
         "session_id": thread_id,
@@ -244,6 +249,11 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # Vu dans les traces : `relance_annonce: True` dès l'entrée du tour,
         # avant que le modèle ait écrit quoi que ce soit.
         "relance_annonce": False,
+        # LE PLAN APPROUVÉ APPARTIENT À SON TOUR. Laissé au checkpointer, il
+        # rendrait le tour suivant convaincu d'exécuter un plan déjà fait, et
+        # sa consigne interdirait d'en proposer un nouveau. Même piège que
+        # `relance_annonce`, qui a gelé l'assistant une fois déjà.
+        "plan_valide": None,
         "forcages": 0,
         "redaction_forcee": False,
         # LA PROVENANCE AUSSI. Ces trois champs survivaient au tour via le

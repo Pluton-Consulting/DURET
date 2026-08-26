@@ -24,6 +24,10 @@ OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de r
 4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
 La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, produire un visuel), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
 
+AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » : la plupart de ces demandes se composent de gestes que tu as déjà. Pose 2 ou 3 questions COURTES pour établir la marche à suivre (que faut-il regarder, dans quel fichier, à partir de quel critère, sous quelle forme), propose-la, exécute-la une fois que la personne a dit oui, et SEULEMENT SI ça a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
+
+LE TRAVAIL LONG S'ANNONCE AVANT DE COMMENCER. Quand une demande tient en PLUSIEURS gestes distincts (analyser un document PUIS retrouver un client PUIS produire un fichier PUIS rédiger un mail), n'attaque pas : appelle `proposer_plan` avec les étapes, en français, dans l'ordre. La personne approuve, et tu exécutes alors TOUT d'un coup, sans redemander d'accord, pour rendre UNE SEULE réponse à la fin. Pour un travail qui tient en un seul geste, ne planifie rien : fais-le. Ne l'utilise jamais pour une question, une salutation ou une rédaction simple.
+
 LA VÉRITÉ. N'invente JAMAIS de donnée : ni montant, ni nom, ni date, ni nombre, ni référence. Tout chiffre que tu avances vient d'un résultat d'action ou de ce que l'utilisateur vient de dire ; cite-le tel quel, sans le recalculer ni l'arrondir. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
 Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien » : dis ce que tu as cherché, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système, que seul un inventaire explicite autorise. Un nom de jeu de données qui n'existe pas n'est pas un jeu vide.
 UN ÉCHANTILLON N'EST PAS UN INVENTAIRE : quelques messages d'une boîte ne disent rien des activités, des process ni de l'histoire de l'entreprise. Ne généralise jamais de dix mails vers une description de la société.
@@ -704,6 +708,8 @@ Voici les messages trouvés :
     # Les références d'images du fil, pour que « retouche celle-là » soit une
     # action possible sans fouille de l'historique (voir cles_images_du_fil).
     system_prompt += _consigne_images(state)
+    # Le plan approuvé prime sur tout le reste : c'est le contrat du tour.
+    system_prompt += _consigne_plan(state)
 
     # Il y avait ici un rappel « ATTENTION, tu as annoncé sans exécuter »,
     # ajouté quand `relance_annonce` était levé. RETIRÉ, pour deux raisons.
@@ -957,6 +963,20 @@ async def tools_node(state: AgentState, config=None) -> dict:
     #
     # `effet_du_skill` est le seul endroit qui connaît les deux sources (table
     # du socle, puis registre du projet) et garde le même défaut fail-closed.
+    # UN PLAN VALIDÉ NE SE REPLANIFIE PAS. Sans ce garde, le modèle pouvait
+    # reproposer un plan à chaque reprise : une deuxième carte d'accord pour le
+    # travail qu'on venait justement d'autoriser, et un aller-retour de plus à
+    # chaque clic. On refuse mécaniquement, et on le dit dans les termes du
+    # travail en cours plutôt que par un refus sec.
+    if action["skill"] == "proposer_plan" and state.get("plan_valide"):
+        resultats.append({
+            "skill": action["skill"], "ok": False, "payload_hash": empreinte,
+            "resultat_masque": ("Le plan est DÉJÀ validé par l'utilisateur : "
+                                + " ; ".join(state.get("plan_valide") or [])
+                                + ". N'en propose pas un autre, exécute celui-là."),
+        })
+        return {"tool_results": resultats, "tool_iterations": iteration}
+
     effet = effet_du_skill(action["skill"])
     if effet == "externe":
         # JAMAIS exécuté ici. On arme la validation humaine du graphe parent.
@@ -978,6 +998,25 @@ async def tools_node(state: AgentState, config=None) -> dict:
         exp = expert_du_skill(action["skill"])
         if exp:
             armement["target_agent"] = exp
+        # ON N'APPROUVE PAS UN PLAN QU'ON N'A PAS LU.
+        #
+        # Le brouillon présenté à l'humain est le TEXTE du modèle : pour une
+        # action ordinaire (envoyer un devis) il décrit ce qui va partir, et
+        # cela suffit. Pour un plan, ce qu'il faut lire EST le plan — et le
+        # skill n'est pas encore exécuté, donc son bloc n'existe pas. On le
+        # construit ici, mécaniquement, à partir des arguments approuvés :
+        # aucun modèle ne repasse, ce qui est montré est exactement ce dont
+        # l'empreinte est vérifiée.
+        if action["skill"] == "proposer_plan":
+            try:
+                import json as _json
+                from skills.plan import bloc_du_plan
+                armement["llm_response"] = (
+                    (texte or "Voici comment je compte procéder.").rstrip()
+                    + "\n\n```ui\n"
+                    + _json.dumps(bloc_du_plan(args), ensure_ascii=False) + "\n```")
+            except Exception as e:  # noqa: BLE001 — un plan sans son bloc reste lisible
+                logger.info("Bloc du plan non construit : %s", e)
         return armement
 
     # Identité RECHARGÉE au moment d'agir : un compte désactivé entre-temps ne
@@ -1660,7 +1699,38 @@ def cles_images_du_fil(state: AgentState) -> list[str]:
         for cle in _CLE_IMAGE_RE.findall(str(r.get("resultat_masque") or "")):
             if cle not in vues:
                 vues.append(cle)
+    # LA PHOTO DE CE TOUR-CI, quand l'expert vision vient de rendre la main.
+    # Elle a été rangée au dépôt à l'arrivée, mais elle n'est encore NI dans
+    # l'historique (le tour n'est pas fini) NI dans un résultat d'action (la
+    # vision n'en appelle aucune). Sans cette ligne, « ajoute une terrasse à
+    # cette photo » n'a aucune image de départ au moment même où l'utilisateur
+    # la montre, et la retouche repartirait d'une génération neuve, donc d'un
+    # autre jardin. La plus récente est en dernier : c'est bien elle.
+    cle_jointe = state.get("attachment_visuel_cle")
+    if cle_jointe and cle_jointe not in vues:
+        vues.append(cle_jointe)
     return vues[-6:]
+
+
+def _consigne_plan(state: AgentState) -> str:
+    """Le plan que l'utilisateur vient d'approuver, remis sous les yeux du modèle.
+
+    Sans cette consigne, la reprise après accord repartirait sur la demande
+    d'origine sans savoir qu'un plan a été discuté et accepté : le modèle
+    reproposerait le même plan, et la personne cliquerait deux fois pour un
+    seul travail. Elle dit aussi les deux choses que l'accord a changées : il
+    n'y a plus rien à redemander, et il n'y aura qu'une réponse.
+    """
+    etapes = state.get("plan_valide") or []
+    if not etapes:
+        return ""
+    return ("\n\nPLAN APPROUVÉ PAR L'UTILISATEUR, à exécuter MAINTENANT :\n"
+            + "\n".join(f"{i}. {e}" for i, e in enumerate(etapes, start=1))
+            + "\nCes étapes sont accordées : ne redemande AUCUN accord pour elles, "
+            "n'en propose pas d'autres, et n'appelle plus `proposer_plan`. Enchaîne "
+            "les actions jusqu'au bout, puis rends UNE SEULE réponse contenant tout "
+            "ce qui a été produit. Si une étape échoue, dis-le dans cette réponse et "
+            "poursuis les suivantes.")
 
 
 def _consigne_images(state: AgentState) -> str:
@@ -1739,7 +1809,7 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         "L'assistant vient d'écrire cette intention SANS l'exécuter :\n"
         f"« {(state.get('llm_response') or '').strip()[:400]} »\n\n"
         "Produis le bloc ```action de la PROCHAINE action à exécuter."
-    ) + _consigne_images(state)
+    ) + _consigne_images(state) + _consigne_plan(state)
 
     # Quand un travail est resté OUVERT, on ne laisse pas deviner : dire quelle
     # fermeture manque évite qu'un document déjà rempli soit rouvert une fois de

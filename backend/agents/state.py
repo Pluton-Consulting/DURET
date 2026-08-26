@@ -108,3 +108,8 @@ class AgentState(TypedDict):
     # Résultats d'actions d'un tour dont la rédaction a échoué : portés au tour
     # suivant, pour que « présente le résultat » puisse être tenu.
     resultats_en_attente: Optional[list]
+    # LE PLAN QUE L'UTILISATEUR A APPROUVÉ, et qu'il reste à exécuter. Posé par
+    # `execute_action_node` quand `proposer_plan` est validé, il fait deux
+    # choses : il ramène le tour dans l'assistant (le travail commence), et il
+    # remet les étapes sous les yeux du modèle pour qu'il n'en repropose pas.
+    plan_valide: Optional[list]

@@ -38,6 +38,9 @@ LIBELLES = {
     "vision": "j'analyse l'image ou le plan",
     "extraction": "j'extrais les éléments du document",
     "prechiffrage": "je prépare le pré-chiffrage",
+    # La main revient à l'assistant après la vision : sans libellé, l'écran
+    # garderait « je prépare le pré-chiffrage » pendant tout le travail qui suit.
+    "passer_la_main": "je reprends la demande avec ce que j'ai vu",
     "similar_projects": "je cherche des projets comparables",
     # LES NŒUDS QUI RESTAIENT MUETS.
     #

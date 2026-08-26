@@ -194,14 +194,15 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                 "final_response": "Action annulée : le contenu approuvé ne correspond pas "
                                   "à l'action demandée."}
 
+    resultat = None
     try:
-        await execute_skill(
+        resultat = await execute_skill(
             action["skill"], action.get("args") or {}, user=utilisateur,
             approbation={"payload_hash": approuve,
                          "validated_by": state.get("validated_by")},
             trigger={"type": "resume", "id": state.get("thread_id")},
         )
-        message = f"Action « {action['skill']} » exécutée après validation."
+        message = _message_apres_action(action["skill"], resultat)
     except SkillError as e:
         message = f"Action non exécutée : {e}"
     except Exception as e:  # noqa: BLE001
@@ -219,6 +220,21 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     exp = expert_du_skill(action["skill"])
     if exp:
         sortie["target_agent"] = exp
+    # UN PLAN APPROUVÉ N'EST PAS UN TRAVAIL FAIT : c'est un travail AUTORISÉ.
+    #
+    # Les autres actions à effet externe se terminent ici — le devis est parti,
+    # l'image est tirée, il n'y a plus rien à faire. Le plan, lui, ne fait
+    # qu'ouvrir la porte : ce que la personne vient d'approuver doit maintenant
+    # être exécuté. On repasse donc la main à l'assistant, avec les étapes en
+    # consigne, et c'est LUI qui rendra la réponse unique promise.
+    if action["skill"] == "proposer_plan" and isinstance(resultat, dict):
+        etapes = ((resultat.get("output") or {}) or {}).get("plan") or []
+        if etapes:
+            sortie["plan_valide"] = list(etapes)
+            # La réponse finale sera écrite par l'assistant au bout du plan :
+            # celle-ci n'est qu'un accusé, elle ne doit pas rester en travers.
+            sortie["final_response"] = None
+            sortie["llm_response"] = None
     # LA RÉFÉRENCE DE L'IMAGE VALIDÉE ENTRE DANS L'HISTORIQUE DU MODÈLE.
     # L'historique (`messages`) n'est écrit que par la réhydratation, AVANT la
     # décision humaine : le résultat d'une action validée n'y figurait jamais.
@@ -232,12 +248,51 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
         from langchain_core.messages import AIMessage
         bloc = ((resultat or {}).get("output") or {}).get("bloc_ui") \
             if isinstance((resultat or {}).get("output"), dict) else None
-        if isinstance(bloc, dict) and bloc.get("type") == "visuel":
+        # Le PLAN approuvé y entre pour la même raison, et pour une de plus :
+        # la réponse de ce tour sera écrite plus loin, par l'assistant. Sans
+        # cette ligne, le plan que la personne vient d'approuver disparaîtrait
+        # de la conversation au moment même où le travail commence.
+        if isinstance(bloc, dict) and bloc.get("type") in ("visuel", "plan"):
             sortie["messages"] = [AIMessage(
-                content="```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```")]
+                content=(str(message).strip() + "\n\n" if bloc.get("type") == "plan" else "")
+                + "```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```")]
     except Exception:  # noqa: BLE001 - l'historique n'est pas vital
         pass
     return sortie
+
+
+def _message_apres_action(skill: str, resultat: dict) -> str:
+    """Ce que l'utilisateur LIT après une action validée.
+
+    Le nœud disait « Action exécutée après validation » et JETAIT la sortie du
+    skill : un document produit, une image tirée n'atteignaient jamais l'écran,
+    la seule trace en étant une phrase administrative. Corrigé chez le premier
+    client le 22/08 ; ce projet-ci n'avait reçu que la moitié du correctif, et
+    la variable `resultat` y était même LUE plus bas sans avoir jamais été
+    écrite — un NameError avalé par le `except` qui suit, donc un bloc d'écran
+    qui n'entrait jamais dans l'historique, en silence.
+
+    Aucun modèle ne repasse ici (la reprise rend la main telle quelle) : le
+    contrat est donc MÉCANIQUE. Un skill qui veut parler à l'utilisateur rend
+    `message_final` (du texte) et, s'il a quelque chose à MONTRER, `bloc_ui`
+    (l'objet d'un bloc ```ui) : le nœud les restitue tels quels, et l'écran
+    fait le reste. Sans eux, la phrase générique demeure.
+    """
+    import json as _json
+    sortie = (resultat or {}).get("output") or {}
+    if not isinstance(sortie, dict):
+        return f"Action « {skill} » exécutée après validation."
+    # `message_final` d'abord (le skill parle à l'utilisateur), puis `message`
+    # (un échec expliqué : quota, crédit, service coupé) : sans ce repli, une
+    # action qui échouait APRÈS validation affichait « exécutée après
+    # validation » — un mensonge par omission.
+    message = str(sortie.get("message_final") or "").strip() \
+        or str(sortie.get("message") or "").strip() \
+        or f"Action « {skill} » exécutée après validation."
+    bloc = sortie.get("bloc_ui")
+    if isinstance(bloc, dict) and bloc.get("type"):
+        message += "\n\n```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```"
+    return message
 
 
 def route_apres_gate(state: AgentState) -> str:
@@ -246,6 +301,76 @@ def route_apres_gate(state: AgentState) -> str:
             and (state.get("pending_action") or {}).get("skill")):
         return "execute_action"
     return "fin"
+
+
+def route_apres_execution(state: AgentState) -> str:
+    """Après une action validée : le travail est fait, sauf si c'était un plan."""
+    return "agent1" if state.get("plan_valide") else "fin"
+
+
+# ── La main revient à l'assistant après la vision ─────────────────────
+#
+# UN PLAN ANALYSÉ N'EST PAS UNE DEMANDE SATISFAITE.
+#
+# Dès qu'une image ou un plan est joint, le tour part à l'expert vision — et
+# s'arrêtait là. Or cet agent-ci ne sait que REGARDER : il n'appelle aucune
+# action, ne lit aucune fiche client, ne produit aucun document, n'écrit aucun
+# mail. « Le client m'envoie ce plan et demande un chiffrage : analyse-le,
+# retrouve son historique et prépare-moi le pré-devis et le mail » recevait
+# donc une analyse, et rien d'autre. La demande était lue en entier et honorée
+# au quart, sans que rien ne le dise.
+#
+# On rend donc la main : l'analyse devient un élément du contexte, et
+# l'assistant reprend la demande d'origine avec ses gestes sous la main. Le
+# départ se fait sur ce que la demande RÉCLAME, pas sur ce que l'image
+# contient : « c'est quoi cette plante ? » n'a besoin de personne d'autre.
+_SUITE_ATTENDUE = (
+    "devis", "chiffr", "estim", "budget", "prix", "cout", "coût", "tarif",
+    "mail", "message", "courrier", "réponse", "reponse", "répond", "repond",
+    "client", "historique", "dossier", "fiche", "document", "rapport", "pdf",
+    "docx", "excel", "compte rendu", "prépare", "prepare", "rédige", "redige",
+    "produis", "génère", "genere", "fais-moi", "fais moi", "sors-moi",
+)
+
+
+async def passer_la_main_node(state: AgentState) -> dict:
+    """Prépare le passage de l'expert vision à l'assistant.
+
+    L'analyse est déposée comme un TEXTE JOINT : c'est le canal qu'`agent1`
+    consomme déjà pour une pièce jointe lisible (`rag_node`), donc aucun
+    chemin nouveau. On retire en revanche l'image elle-même : la vision a fait
+    son travail, la repasser ferait repartir un second appel multimodal pour
+    rien. Et on efface la réponse de la vision : c'est l'assistant qui rédigera
+    la réponse du tour, une seule fois, à la fin.
+    """
+    analyse = state.get("vision_analysis") or state.get("final_response") or ""
+    nom = state.get("attachment_name") or "plan joint"
+    return {
+        # `target_agent` N'EST PAS TOUCHÉ, ET C'EST VOLONTAIRE. Il ne sert plus
+        # au routage à ce stade (on entre dans l'assistant par un edge direct) :
+        # il ne sert qu'à dire QUI a travaillé, sur la carte du tour et dans
+        # l'historique. Or le plan a bien été lu par l'expert plans & visuels ;
+        # rendre le tour à l'assistant effacerait ce travail de son compteur, et
+        # l'attribution qu'on venait de réparer le 23/08 repartirait à zéro.
+        "attachment_b64": None,
+        "attachment_text": (f"ANALYSE DU DOCUMENT JOINT ({nom}), faite par l'expert "
+                            f"plans & visuels :\n{analyse}"),
+        "final_response": None,
+        "llm_response": None,
+        # La lecture du plan n'a demandé aucun accord ; ce qui suivra le
+        # demandera si un geste l'exige, par le chemin habituel.
+        "requires_validation": False,
+    }
+
+
+def route_apres_agent2(state: AgentState) -> str:
+    """La vision suffit-elle, ou la demande réclame-t-elle la suite ?"""
+    if not (state.get("vision_analysis") or state.get("final_response")):
+        return "human_gate"                 # l'analyse a échoué : rien à enchaîner
+    if state.get("plan_valide"):
+        return "human_gate"                 # on exécute déjà un plan : pas de rebond
+    demande = (state.get("query") or "").lower()
+    return "agent1" if any(m in demande for m in _SUITE_ATTENDUE) else "human_gate"
 
 
 def route_to_agent(state: AgentState) -> str:
@@ -275,12 +400,21 @@ async def build_main_graph(checkpointer):
         route_to_agent,
         {"agent1": "agent1", "agent2": "agent2", "agent3": "agent3"},
     )
+    graph.add_node("passer_la_main", passer_la_main_node)
+
     graph.add_edge("agent1", "human_gate")
-    graph.add_edge("agent2", "human_gate")
+    # L'expert vision rend la main à l'assistant quand la demande va au-delà de
+    # la lecture du document (voir route_apres_agent2).
+    graph.add_conditional_edges("agent2", route_apres_agent2,
+                                {"agent1": "passer_la_main", "human_gate": "human_gate"})
+    graph.add_edge("passer_la_main", "agent1")
     graph.add_edge("agent3", "human_gate")
     # Après la décision humaine : exécuter l'action approuvée, sinon terminer.
     graph.add_conditional_edges("human_gate", route_apres_gate,
                                 {"execute_action": "execute_action", "fin": END})
-    graph.add_edge("execute_action", END)
+    # Un plan approuvé rouvre le travail : l'assistant exécute ce qui vient
+    # d'être autorisé. Toute autre action validée termine le tour.
+    graph.add_conditional_edges("execute_action", route_apres_execution,
+                                {"agent1": "agent1", "fin": END})
 
     return graph.compile(checkpointer=checkpointer)

@@ -1,4 +1,5 @@
 import logging
+import re as _re_logs
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -7,10 +8,67 @@ from routers import auth, users, chat, dashboard, validation, settings as settin
 from agents.runtime import init_runtime, shutdown_runtime
 from config import settings
 
+# ── AUCUNE CLÉ NE DOIT SE RETROUVER DANS LES JOURNAUX ────────────────────
+#
+# Relevé le 27/08 en lisant `docker compose logs backend` : httpx journalise en
+# INFO chaque requête avec son URL COMPLÈTE, et les API Google portent la clé
+# dans la query string. La clé s'affichait donc en clair, lisible par quiconque
+# ouvre les journaux ou en poste une capture d'écran. Aucune ligne de code ne
+# l'écrivait : c'est la bibliothèque HTTP qui la recopiait.
+#
+# Deux protections, dans cet ordre :
+#   1. un FILTRE sur la racine, qui masque le secret quel que soit le logger —
+#      httpx aujourd'hui, une autre bibliothèque demain ;
+#   2. httpx et httpcore remontés à WARNING : leur ligne par requête n'apprend
+#      rien en exploitation, et c'est une source de fuite en moins.
+#
+# Le filtre garde les SIX DERNIERS caractères : c'est ce qui permet de dire
+# « c'est bien la clé du fichier de configuration, pas celle de la base » sans
+# jamais livrer la clé elle-même.
+_SECRETS = _re_logs.compile(
+    r"(?i)\b(key|api[_-]?key|access[_-]?token|token|apikey|password|secret)"
+    r"(=|%3D|\"?\s*:\s*\"?)([A-Za-z0-9._\-]{12,})")
+
+
+def _masquer(texte: str) -> str:
+    def _remplacer(m):
+        valeur = m.group(3)
+        return f"{m.group(1)}{m.group(2)}***{valeur[-6:]}"
+    return _SECRETS.sub(_remplacer, texte)
+
+
+class _FiltreSecrets(logging.Filter):
+    """Masque toute valeur qui ressemble à une clé, message ET arguments.
+
+    On réécrit `msg` et `args` plutôt que le message formaté : le formatage
+    n'a pas encore eu lieu quand le filtre passe, et une clé arrivée par `%s`
+    échapperait à un filtre qui ne regarderait que `msg`.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if isinstance(record.msg, str) and "=" in record.msg or ":" in str(record.msg):
+                record.msg = _masquer(str(record.msg))
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {k: _masquer(v) if isinstance(v, str) else v
+                                   for k, v in record.args.items()}
+                else:
+                    record.args = tuple(_masquer(a) if isinstance(a, str) else a
+                                        for a in record.args)
+        except Exception:  # noqa: BLE001 — un journal ne fait jamais tomber l'app
+            pass
+        return True
+
+
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
+logging.getLogger().addFilter(_FiltreSecrets())
+for _bavard in ("httpx", "httpcore"):
+    logging.getLogger(_bavard).setLevel(logging.WARNING)
+    logging.getLogger(_bavard).addFilter(_FiltreSecrets())
 
 
 @asynccontextmanager

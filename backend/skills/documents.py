@@ -85,19 +85,30 @@ async def rechercher_documents(data: dict, user) -> dict:
         return {
             "requete": requete, "resultats": [], "nombre": 0,
             "inventaire_memoire": inventaire,
+            # DEUX PUBLICS, DEUX CHAMPS. `message` est ce que la personne LIT
+            # quand le modèle ne rédige pas ; `a_faire` est la consigne au
+            # modèle. Confondus, ils ont mis « Ne dis donc PAS qu'elle est
+            # vide » et un nom de skill sous les yeux d'un utilisateur, à la
+            # question 8 du cahier de démo (27/08).
+            #
+            # L'INVENTAIRE RESTE CÔTÉ HUMAIN : savoir que la mémoire contient
+            # 1 398 devis alors que la recherche ne rend rien, c'est une
+            # information, pas de la tuyauterie.
             "message": (
-                "Aucun document ne correspond à CETTE recherche. "
-                + ("La mémoire est effectivement vide pour les types consultés : "
-                   "tu peux le dire." if not inventaire else
-                   f"La mémoire contient pourtant : {inventaire}. "
-                   "Ne dis donc PAS qu'elle est vide : dis que tu n'as rien trouvé "
-                   "sur ce point précis. "
-                   + ("Des connaissances DÉJÀ APPRISES existent : appelle "
-                      "`connaissances_acquises` pour les lire. NE PROPOSE PAS de lancer "
-                      "une campagne d'enrichissement, elle a déjà tourné."
-                      if appris else
-                      "Propose des termes plus concrets (un nom de client, un numéro "
-                      "de dossier, une période)."))),
+                "Aucun document ne correspond à cette recherche."
+                + ("" if not inventaire else
+                   f" La mémoire contient pourtant : {inventaire}.")),
+            "a_faire": (
+                "La mémoire est effectivement vide pour les types consultés : "
+                "tu peux le dire." if not inventaire else
+                "Ne dis PAS que la mémoire est vide : dis que tu n'as rien trouvé "
+                "sur ce point précis. "
+                + ("Des connaissances DÉJÀ APPRISES existent : appelle "
+                   "`connaissances_acquises` pour les lire. NE PROPOSE PAS de lancer "
+                   "une campagne d'enrichissement, elle a déjà tourné."
+                   if appris else
+                   "Propose des termes plus concrets (un nom de client, un numéro "
+                   "de dossier, une période).")),
         }
 
     return {"requete": requete, "nombre": len(resultats), "resultats": resultats}

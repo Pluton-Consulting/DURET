@@ -67,7 +67,14 @@ TUYAUTERIE = ["`", "source_type", "interroger_donnees", "agreger.", "payload_has
 IMPERATIFS = ["reformule", "rappelle ", "ne conclus pas", "passe plutôt", "vérifie `",
               "insère un bloc", "n'écris pas", "affiche la liste"]
 
-FICHIERS = ["skills/donnees.py", "skills/routines.py"]
+# TOUS les skills, pas deux fichiers choisis a la main : le defaut est reparu
+# dans `documents.py` le jour meme ou on le corrigeait dans `donnees.py`. Un
+# banc qui ne regarde que la ou l'on a deja cherche ne trouve jamais rien.
+FICHIERS = sorted(
+    str(p.relative_to(racine))
+    for d in ("skills", "mail")
+    for p in (racine / d).glob("*.py")
+) if racine.exists() else []
 
 print("\n\x1b[1mCE QUE LA PERSONNE LIT NE DOIT PAS ÊTRE UNE CONSIGNE AU MODÈLE\x1b[0m\n")
 

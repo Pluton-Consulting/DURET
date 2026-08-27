@@ -358,8 +358,18 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "Rédige un BROUILLON de message (11 types : reponse, relance_devis, "
         "relance_impaye, envoi_devis, reclamation, information_chantier, "
         "confirmation_rdv, demande_information, remerciement, refus, interne). "
-        "N'envoie jamais.",
-        ["mailbox", "type_mail"], ["contexte", "message_recu", "destinataire"]),
+        "N'envoie jamais. Meme regle qu'au triage : ne reclame aucune adresse, "
+        "`mailbox` est facultatif (defaut : la boite de la personne connectee).",
+        # `mailbox` ETAIT REQUIS ICI, et c'etait le dernier verrou du meme piege.
+        # Le skill `rediger_email` a bien son repli sur la boite de la personne
+        # -- son commentaire le dit -- mais le CATALOGUE exigeait l'adresse, donc
+        # le bloc action etait refuse AVANT d'atteindre le skill, et le modele en
+        # revenait a reclamer « quelle est votre adresse professionnelle ? ».
+        # Observe le 27/08 sur la question 4 : le classement et l'urgence
+        # tombaient juste, puis la redaction s'arretait sur cette question.
+        # Le controle de droits reste entier : nommer la boite d'un collegue est
+        # refuse comme avant, et l'envoi exige toujours l'ecriture sur la boite.
+        ["type_mail"], ["mailbox", "contexte", "message_recu", "destinataire"]),
     "resume_fil_email": (
         "Résume un échange de mails et en extrait les engagements. `fil` : les "
         "messages, colles tels quels. Meme regle qu'au triage : ne reclame "

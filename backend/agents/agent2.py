@@ -35,7 +35,15 @@ VISION_PROMPT = (
     "Ne devine JAMAIS une mesure non lisible : dis « non lisible ». Réponds en français, structuré. "
     "Ne commence pas par une salutation : entre directement dans l'analyse, "
     "sauf si la demande te salue elle-même. "
-    "Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt une virgule, un deux-points, une parenthèse ou un point."
+    "Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt une virgule, un deux-points, une parenthèse ou un point. "
+    # LA REGLE CI-DESSUS A EU UN EFFET DE BORD, VISIBLE A L'ECRAN.
+    # Privé de tiret, le modèle a pris le deux-points pour puce, et chaque
+    # ligne de liste sortait ainsi : « : Maison : 120 m2. » — deux fois le
+    # même signe, une fois comme puce, une fois comme séparateur. Relevé en
+    # recette le 27/08 sur toutes les analyses de plan. L'interdit ne visait
+    # que les tirets LONGS ; le tiret simple reste la bonne puce.
+    "Pour une liste, commence chaque ligne par un tiret simple suivi d'une "
+    "espace, jamais par un deux-points."
 )
 
 # Taille max d'image envoyée au modèle vision (coût / limites API).

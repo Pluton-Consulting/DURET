@@ -274,7 +274,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     try {
       const res = await apiRequest<{
         taches: { id: string; query: string; status: string; progress: string
-                  node: string; error: string | null; validation_id: string | null }[]
+                  node: string; error: string | null; validation_id: string | null
+                  // Ce que l'assistant a produit AVANT de demander l'accord :
+                  // pour une retouche, l'aperçu de la photo de départ.
+                  response?: string | null }[]
         validations: { id: string; reason: string | null; skill: string | null
                        args: Record<string, any> | null }[]
       }>("/api/file/etat", { token })
@@ -346,7 +349,24 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           setTacheActive(null)
           setLoading(false)
           setThinkingNode(null)
-          pushAssistant("⏳ Une action attend votre accord : voir « En arrière-plan », à droite.", true)
+          // CE QU'ON APPROUVE DOIT SE VOIR.
+          //
+          // Le backend construit, AVANT de demander l'accord, un aperçu de ce
+          // qui sera fait : pour une retouche, la photo de départ et la liste
+          // des changements. Il arrive ici dans `response`. On ne l'affichait pas,
+          // et la personne lisait « une action attend votre accord » sans rien
+          // voir — puis approuvait un tirage facturé à l'aveugle. Relevé le
+          // 27/08 sur « génère une simulation avant/après ».
+          //
+          // L'aperçu remplace la phrase générique quand il existe ; il porte
+          // déjà l'invitation à trancher. La bulle reste « vivante » : le tour
+          // n'est pas fini, il attend une décision.
+          const apercu = (active.response || "").trim()
+          pushAssistant(
+            apercu
+              ? `${apercu}\n\n⏳ Votre accord est nécessaire : voir « En arrière-plan », à droite.`
+              : "⏳ Une action attend votre accord : voir « En arrière-plan », à droite.",
+            true)
         }
       }
     } catch { /* un sondage rate n'affiche rien : le suivant corrigera */ }

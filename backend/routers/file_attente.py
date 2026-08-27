@@ -256,7 +256,17 @@ async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
             # SUSPENDUE, pas terminée : le graphe attend dans le checkpointer.
             # La carte de validation prend le relais à l'écran ; la reprise, à
             # l'approbation, remettra cette ligne à jour (routers/validation.py).
+            # L'APERÇU SURVIT À LA SUSPENSION.
+            #
+            # `reponse_finale` porte ici ce que le backend a construit AVANT de
+            # demander l'accord — pour une retouche, la photo de départ et la
+            # liste des changements (`_apercu_avant_accord`). On ne l'écrivait
+            # pas : la file suspendait la tâche sans réponse, et l'écran se
+            # rabattait sur « une action attend votre accord », sans rien
+            # montrer. La personne approuvait donc un tirage facturé à
+            # l'aveugle. Relevé le 27/08 sur « génère une simulation ».
             await _terminer(tache_id, "attente_validation",
+                            reponse=reponse_finale or "",
                             validation_id=validation_id,
                             progress="en attente de votre accord")
             return
@@ -435,7 +445,7 @@ async def etat(current_user: User = Depends(get_current_user)):
         # arrivées depuis. Le contrat est qu'ils RESTENT tant qu'on n'a pas
         # tranché — une limite qui les évince le romprait en silence.
         taches = await conn.fetch(
-            """SELECT id, query, status, progress, error, validation_id, created_at
+            """SELECT id, query, status, progress, error, validation_id, response, created_at
                FROM taches_differees
                WHERE user_id = $1
                  AND (status IN ('en_cours', 'attente_validation')
@@ -464,6 +474,10 @@ async def etat(current_user: User = Depends(get_current_user)):
             "node": vivante.get("node") or "",
             "error": t["error"],
             "validation_id": str(t["validation_id"]) if t["validation_id"] else None,
+            # Ce que l'assistant a produit AVANT de demander l'accord : pour une
+            # retouche, l'aperçu de la photo de départ. L'écran l'affiche à la
+            # place du message générique.
+            "response": t["response"] or "",
             "created_at": t["created_at"].isoformat() if t["created_at"] else None,
         })
 

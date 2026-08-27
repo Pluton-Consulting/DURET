@@ -18,7 +18,7 @@ import json
 import logging
 import re
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from agents.state import AgentState
 from llm.router import get_llm, LLMTier
@@ -263,6 +263,115 @@ async def similar_projects_node(state: AgentState) -> dict:
     return {"raw_chunks": existing}
 
 
+# ── L'extraction, en blocs d'écran plutôt qu'en accolades ─────────────
+
+# Les clés que la vision rend le plus souvent. Ce n'est PAS une liste fermée :
+# ce qui n'est pas reconnu n'est pas affiché du tout, plutôt que reversé en
+# accolades faute de mieux.
+_CLES_SURFACES = ("surfaces_m2", "surfaces", "surface_m2", "surfaces_m²")
+_CLES_POSTES = ("postes_travaux", "postes", "travaux")
+_CLES_ELEMENTS = ("elements", "zones", "elements_identifies", "zones_identifiees")
+
+# CE QUI N'EST PAS LISIBLE VAUT CE QUI L'EST — et se perdait.
+# La première version de cet affichage ne rendait que les surfaces, les postes
+# et les éléments : les réserves de la vision (« cote du muret non lisible »,
+# « dénivelé : non lisible ») retournaient au silence, alors qu'elles sont
+# exactement ce qui empêche un chiffrage d'être pris pour un devis. Le banc de
+# la démo l'a dit tout de suite — « les incertitudes sont dites, pas gommées ».
+_CLES_RESERVES = (("contraintes", "À vérifier sur place"),
+                  ("incertitudes", "Incertitudes de lecture"),
+                  ("reserves", "Réserves"))
+
+
+def _bloc(type_: str, **champs) -> str:
+    """Un bloc d'écran, au format que `MessageRenderer` sait lire."""
+    return "```ui\n" + json.dumps({"type": type_, **champs}, ensure_ascii=False) + "\n```"
+
+
+def _libelle(cle) -> str:
+    """« terrasse_bois » -> « Terrasse bois » : la clé technique ne s'affiche pas."""
+    mot = str(cle).replace("_", " ").strip()
+    return (mot[:1].upper() + mot[1:]) if mot else ""
+
+
+def _valeur_texte(v) -> str:
+    if isinstance(v, (int, float)):
+        return f"{v:g}"
+    return str(v).strip()
+
+
+def _blocs_extraction(extracted) -> str:
+    """Rend l'extraction de la vision en composants, jamais en JSON.
+
+    LE JSON ÉTAIT RECOPIÉ TEL QUEL DANS LA RÉPONSE. Un pavé d'accolades occupait
+    la moitié de l'écran, au-dessus d'un texte français qui disait déjà la même
+    chose — relevé en recette le 27/08 sur « analyse ce plan » et sur la question
+    d'interconnexion. Personne ne lit des accolades ; le dirigeant à qui on montre
+    l'outil y voit une fuite de tuyauterie.
+
+    Ce qui est reconnu devient un tableau ou une liste. Ce qui ne l'est pas n'est
+    PAS rendu : l'analyse en prose, juste au-dessus, porte déjà l'information, et
+    une extraction inattendue vaut mieux tue qu'en JSON.
+    """
+    if not isinstance(extracted, dict):
+        return ""
+    morceaux = []
+
+    for cle in _CLES_SURFACES:
+        surfaces = extracted.get(cle)
+        if isinstance(surfaces, dict) and surfaces:
+            lignes = [[_libelle(k), _valeur_texte(v)] for k, v in surfaces.items()
+                      if _valeur_texte(v)]
+            if lignes:
+                morceaux.append(_bloc("table", titre="Surfaces relevées",
+                                      columns=["Poste", "Surface"], rows=lignes))
+            break
+
+    for cle in _CLES_POSTES:
+        postes = extracted.get(cle)
+        if not isinstance(postes, list) or not postes:
+            continue
+        # Deux formes rencontrées en production : une liste de phrases, ou une
+        # liste d'objets (description + quantité + montant) quand la vision a
+        # déjà chiffré. Le tableau n'a de sens que dans le second cas.
+        if all(isinstance(p, dict) for p in postes):
+            lignes = []
+            for p in postes:
+                desc = _valeur_texte(p.get("description") or p.get("poste") or "")
+                qte = next((f"{_valeur_texte(p[k])}" for k in
+                            ("surface_m2", "longueur_ml", "quantite", "qte") if p.get(k)), "")
+                montant = next((f"{_valeur_texte(p[k])} €" for k in
+                                ("montant_euros", "montant", "total") if p.get(k)), "")
+                if desc:
+                    lignes.append([desc, qte, montant])
+            if lignes:
+                morceaux.append(_bloc("table", titre="Postes de travaux",
+                                      columns=["Poste", "Quantité", "Montant estimé"],
+                                      rows=lignes))
+        else:
+            items = [_valeur_texte(p) for p in postes if _valeur_texte(p)]
+            if items:
+                morceaux.append(_bloc("list", titre="Postes de travaux", items=items))
+        break
+
+    for cle in _CLES_ELEMENTS:
+        elements = extracted.get(cle)
+        if isinstance(elements, list) and elements:
+            items = [_valeur_texte(e) for e in elements if _valeur_texte(e)]
+            if items:
+                morceaux.append(_bloc("list", titre="Éléments identifiés", items=items))
+            break
+
+    for cle, titre in _CLES_RESERVES:
+        reserves = extracted.get(cle)
+        if isinstance(reserves, list) and reserves:
+            items = [_valeur_texte(r) for r in reserves if _valeur_texte(r)]
+            if items:
+                morceaux.append(_bloc("list", titre=titre, items=items))
+
+    return "\n\n".join(morceaux)
+
+
 async def prechiffrage_node(state: AgentState) -> dict:
     """Assemble une synthèse + prépare le pré-chiffrage — TOUJOURS validé par un humain."""
     analysis = state.get("vision_analysis")
@@ -272,8 +381,9 @@ async def prechiffrage_node(state: AgentState) -> dict:
     if analysis:
         parts.append(analysis)
     if extracted:
-        parts.append("Éléments extraits (à valider) :\n"
-                     + json.dumps(extracted, ensure_ascii=False, indent=2))
+        apercu = _blocs_extraction(extracted)
+        if apercu:
+            parts.append(apercu)
 
     # LE TRAVAIL DE RECHERCHE ÉTAIT FAIT, PUIS JETÉ.
     #
@@ -317,11 +427,63 @@ async def prechiffrage_node(state: AgentState) -> dict:
                 "vérifier et valider par un humain avant tout usage commercial. "
                 "Rien n'a été envoyé ni engagé._")
 
+    # CE QUE LA VISION A LU DOIT RESTER DANS LA MÉMOIRE DU FIL.
+    #
+    # Ce nœud écrit la réponse, l'écran l'affiche, la table `messages` la garde
+    # pour le rechargement — mais `state["messages"]` n'était jamais alimenté.
+    # Or c'est de LÀ que la mémoire de conversation tire la fenêtre récente. Un
+    # tour traité par la vision ne laissait donc RIEN au modèle : au tour
+    # suivant, « prépare le pré-devis à partir de ce plan » recevait « je n'ai
+    # pas accès à cette analyse », alors que l'analyse était à l'écran, juste
+    # au-dessus. Relevé en recette le 27/08 (Q6 puis Q9).
+    #
+    # Le commentaire de la référence photo, plus haut, PROMETTAIT déjà ce
+    # chemin — « elle entre ainsi dans l'historique du fil, d'où l'autre agent
+    # la relira » : la promesse portait sur un mécanisme qui n'existait pas.
+    #
+    # On écrit du texte MASQUÉ, comme agent1 : aucune PII ne dort dans le
+    # checkpoint. Le masquage est CPU-bound (spaCy) : il sort de la boucle
+    # événementielle. La carte du fil est cumulative — repartir de celle de
+    # l'état garde le même jeton pour la même valeur d'un tour à l'autre.
+    import asyncio
+    from security.anonymizer import anonymizer
+
+    # LA QUESTION AUSSI DOIT ÊTRE MASQUÉE, et c'est ici que ça se joue.
+    #
+    # Le graphe de la vision n'a AUCUN nœud d'anonymisation — contrairement à
+    # celui d'agent1, où `anonymize_node` ouvre le tour. `anonymized_query` y
+    # est donc toujours vide, et reprendre la question brute reviendrait à
+    # coucher « le plan de M. Untel » dans le checkpoint : exactement ce que le
+    # reste du projet s'interdit, et ce que le commentaire d'agent1 promet.
+    #
+    # Les deux textes passent par le MÊME appel : une même valeur y reçoit le
+    # même jeton dans la question et dans l'analyse, et la carte du fil — qui
+    # est cumulative — reste exacte pour la réhydratation des tours suivants.
+    question = state.get("anonymized_query") or state.get("query") or ""
+    try:
+        masques, carte = await asyncio.to_thread(
+            anonymizer.anonymize_chunks, [question, summary],
+            state.get("entity_map") or {})
+        question, resume_masque = masques[0], masques[1]
+    except Exception as e:  # noqa: BLE001
+        # Une mémoire est un confort, pas une condition : si le masquage tombe,
+        # on rend l'analyse sans l'archiver plutôt que de perdre le tour.
+        logger.warning("Analyse non mémorisée (masquage indisponible) : %s", e)
+        return {
+            "final_response": summary,
+            "requires_validation": False,
+            "validation_reason": None,
+            "validation_payload": None,
+        }
+
     return {
         "final_response": summary,
         "requires_validation": False,
         "validation_reason": None,
         "validation_payload": None,
+        "messages": [HumanMessage(content=question),
+                     AIMessage(content=resume_masque)],
+        "entity_map": carte,
     }
 
 

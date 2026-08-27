@@ -86,8 +86,13 @@ async def nas_lister(data: dict, user) -> dict:
     if not chemin:
         racines = dossiers_autorises()
         return {"dossiers_autorises": racines,
-                "message": ("Voici les dossiers ouverts. Rappelle `nas_lister` avec "
-                            "l'un d'eux." if racines else
+                # `a_faire` porte la consigne au modele ; `message` est ce que la
+                # personne LIT quand le modele ne redige pas. Confondus, ils ont
+                # mis des noms de skills a l'ecran (releve le 27/08 cote Symbiose,
+                # meme defaut ici).
+                "a_faire": ("Rappelle `nas_lister` avec l'un des dossiers autorises."
+                            if racines else ""),
+                "message": ("Voici les dossiers ouverts." if racines else
                             "Aucun dossier du NAS n'est ouvert à l'assistant. Un "
                             "administrateur doit renseigner SYNOLOGY_FOLDERS avec les "
                             "partages precis a ouvrir (ex. /chantiers,/devis). "

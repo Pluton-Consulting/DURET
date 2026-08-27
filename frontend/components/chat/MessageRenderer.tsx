@@ -68,14 +68,51 @@ function lire(brut: string): any {
   const t = brut.trim()
   try { return JSON.parse(t) } catch { /* on répare */ }
   let s = t
-  for (let essai = 0; essai < 40 && s.length > 2; essai++) {
+  for (let essai = 0; essai < 200 && s.length > 2; essai++) {
     try { return JSON.parse(fermer(s)) } catch { /* on recule */ }
     const virgule = s.lastIndexOf(",")
     const ouvre = Math.max(s.lastIndexOf("["), s.lastIndexOf("{"))
     if (virgule <= 0 && ouvre <= 0) break
-    s = virgule > ouvre ? s.slice(0, virgule) : s.slice(0, ouvre + 1)
+    const suivant = virgule > ouvre ? s.slice(0, virgule) : s.slice(0, ouvre + 1)
+    // LE RECUL DOIT RECULER.
+    //
+    // `slice(0, ouvre + 1)` GARDE le crochet ouvrant — c'est voulu, on referme
+    // ensuite. Mais quand ce crochet est le DERNIER caractère, la coupe ne
+    // retire rien : `s` est identique au tour suivant, `lastIndexOf` retrouve
+    // le même crochet, et les essais s'épuisent sur une chaîne qui ne bouge
+    // plus. La réparation renonçait alors, et le bloc partait au rendu
+    // markdown : le JSON s'affichait EN CLAIR dans le chat, ce qu'aucun
+    // utilisateur ne devrait voir. Relevé le 27/08 sur un `keyvalue` de devis
+    // dont le modèle avait écrit une virgule de trop au milieu.
+    //
+    // Un caractère de moins suffit à débloquer : la boucle progresse toujours,
+    // donc elle se termine toujours.
+    s = suivant.length < s.length ? suivant : s.slice(0, -1)
   }
   return null
+}
+
+/** Retire des lignes ce que la réparation n'a pas pu sauver.
+ *
+ *  `lire()` promet de ne faire que RETIRER ce qui est incomplet ; elle le fait
+ *  au caractère près, donc il lui arrive de laisser un résidu à la place d'une
+ *  ligne — une chaîne vide, ou une ligne à une seule cellule là où il en faut
+ *  deux. Le composant l'affichait alors comme une ligne vide au milieu d'une
+ *  fiche devis. On enlève ces restes ici, une fois le type connu : c'est le
+ *  seul endroit où l'on sait combien de cellules une ligne doit porter.
+ *
+ *  Si plus rien ne tient debout, `rows` devient vide — `present()` refuse
+ *  alors le composant, et rien ne s'affiche. C'est le bon résultat : le JSON,
+ *  lui, a déjà quitté le texte.
+ */
+function nettoyer(bloc: any): any {
+  const lignes = bloc?.rows
+  if (!Array.isArray(lignes)) return bloc
+  const largeur = Array.isArray(bloc.columns) && bloc.columns.length
+    ? bloc.columns.length
+    : 2                              // keyvalue : une étiquette et une valeur
+  bloc.rows = lignes.filter((l: any) => Array.isArray(l) && l.length >= largeur)
+  return bloc
 }
 
 function parse(content: string): Part[] {
@@ -89,7 +126,7 @@ function parse(content: string): Part[] {
     // modèle montre volontairement. On le laisse tel quel dans le texte.
     if (!bloc || typeof bloc.type !== "string") continue
     if (m.index > last) parts.push({ kind: "text", text: content.slice(last, m.index) })
-    parts.push({ kind: "ui", block: bloc })
+    parts.push({ kind: "ui", block: nettoyer(bloc) })
     last = re.lastIndex
   }
   if (last < content.length) parts.push({ kind: "text", text: content.slice(last) })

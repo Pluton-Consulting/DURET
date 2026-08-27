@@ -22,7 +22,7 @@ vérifié sur son ARBRE : ce qu'il retourne vraiment, pas ce qu'on en espère.
 Les deux jeux d'essai ci-dessous sont les extractions RÉELLEMENT observées en
 recette — l'une sans chiffrage (Q6), l'autre avec (Q10).
 """
-import sys, ast, json, pathlib
+import sys, ast, json, types, pathlib
 
 BACKEND = sys.argv[1] if len(sys.argv) > 1 else "backend"
 SOURCE = pathlib.Path(BACKEND) / "agents" / "agent2.py"
@@ -173,6 +173,52 @@ if noeud:
              "except" in src and src.count("return") >= 2)
     controle("le JSON brut a bien quitté la réponse",
              "Éléments extraits" not in src and "indent=2" not in src)
+
+print("\n\x1b[1mQUAND SORT-ON SUR LE WEB — l'ordre et le motif\x1b[0m\n")
+
+# `should_use_browser` fait « from config import settings » : on lui en donne un.
+faux = types.ModuleType("config")
+faux.settings = types.SimpleNamespace(browser_enabled=True)
+sys.modules["config"] = faux
+espace_g = {"AgentState": dict, "types": types}
+for n in arbre.body:
+    if isinstance(n, ast.FunctionDef) and n.name == "should_use_browser":
+        exec(compile(ast.Module([n], []), str(SOURCE), "exec"), espace_g)
+    if isinstance(n, ast.Assign) and any(
+            isinstance(c, ast.Name) and c.id == "_MOTS_CHIFFRAGE" for c in n.targets):
+        exec(compile(ast.Module([n], []), str(SOURCE), "exec"), espace_g)
+garde = espace_g.get("should_use_browser")
+controle("la garde du navigateur existe", garde is not None)
+
+if garde:
+    # LE CAS QUI A ÉTÉ RELEVÉ : une lecture de plan, sans un mot d'argent.
+    controle("« analyse ce plan » ne sort PAS sur le web",
+             garde({"query": "Analyse ce plan : surfaces, zones et postes.",
+                    "raw_chunks": []}) == "prechiffrage")
+    controle("une demande de chiffrage sans mémoire interne sort, elle",
+             garde({"query": "Prépare-moi un chiffrage de ce plan",
+                    "raw_chunks": []}) == "browser")
+    controle("une demande de chiffrage AVEC mémoire interne ne sort pas",
+             garde({"query": "Prépare-moi un chiffrage", "raw_chunks": ["un chantier"]})
+             == "prechiffrage")
+    controle("on ne sort jamais deux fois",
+             garde({"query": "combien ça coûte", "raw_chunks": [],
+                    "browser_used": True}) == "prechiffrage")
+
+# L'ORDRE DES ARÊTES : la condition « le RAG est vide » n'a de sens qu'après le RAG.
+src_tout = SOURCE.read_text(encoding="utf-8")
+i_rag = src_tout.find('graph.add_edge("extraction", "similar_projects")')
+i_cond = src_tout.find('graph.add_conditional_edges(')
+controle("la mémoire de la maison est interrogée AVANT le web",
+         i_rag != -1 and i_cond != -1 and i_rag < i_cond,
+         "le navigateur passait avant le RAG, la garde était donc toujours vraie")
+controle("le web n'est plus branché en amont de la recherche interne",
+         'graph.add_edge("browser", "similar_projects")' not in src_tout)
+controle("toute sortie de la garde correspond à un nœud du graphe",
+         all(f'"{c}"' in src_tout for c in ("browser", "prechiffrage")))
+
+controle("le prompt de la vision interdit la salutation non sollicitée",
+         "Ne commence pas par une salutation" in src_tout)
 
 print()
 if echecs:

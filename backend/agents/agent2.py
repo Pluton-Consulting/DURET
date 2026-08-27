@@ -33,6 +33,8 @@ VISION_PROMPT = (
     "seuils), niveaux, contraintes techniques (accès, réservations, existant à déposer, chape). "
     "Repère les informations utiles au métré (surfaces en m², longueurs de plinthes en ml, quantités). "
     "Ne devine JAMAIS une mesure non lisible : dis « non lisible ». Réponds en français, structuré. "
+    "Ne commence pas par une salutation : entre directement dans l'analyse, "
+    "sauf si la demande te salue elle-même. "
     "Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt une virgule, un deux-points, une parenthèse ou un point."
 )
 
@@ -489,16 +491,44 @@ async def prechiffrage_node(state: AgentState) -> dict:
 
 # ── Edges conditionnels ───────────────────────────────────────────────
 
+# CE QUI FAIT SORTIR SUR LE WEB — et rien d'autre.
+# Le navigateur cherche des PRIX publics quand la memoire de l'entreprise n'en
+# a pas. Une demande qui ne parle pas d'argent n'a aucune raison de sortir.
+_MOTS_CHIFFRAGE = ("chiffr", "prix", "tarif", "cout", "coût", "budget", "devis",
+                   "estimation", "estimer", "combien", "euro", "montant")
+
+
 def should_use_browser(state: AgentState) -> str:
-    """Browser = dernier recours : uniquement si le RAG interne est vide."""
+    """Le web, seulement quand la maison ne sait pas ET qu'on parle d'argent.
+
+    DEUX DEFAUTS TENAIENT DANS CETTE ARETE.
+
+    1. L'ORDRE MENTAIT. Le graphe allait « extraction -> browser ->
+       similar_projects » : le navigateur passait AVANT la recherche interne.
+       `raw_chunks` etait donc vide par construction a ce moment-la, et la
+       garde « uniquement si le RAG interne est vide » etait toujours vraie.
+       Le dernier recours etait le premier reflexe. L'arete est desormais
+       posee APRES `similar_projects`, ce qui rend la condition exacte.
+
+    2. LIRE N'EST PAS CHIFFRER. « Analyse ce plan » partait sur le web et
+       revenait avec trois sources, affichees comme telles sous une lecture de
+       plan ou elles n'avaient rien a faire. Le navigateur sert a trouver des
+       PRIX publics quand la memoire n'en a pas ; il n'a aucun role dans une
+       simple description. On ne sort donc que si la demande parle d'argent.
+
+    Releve en recette le 27/08 sur la question 6.
+    """
     from config import settings
 
     if state.get("browser_used"):
-        return "similar_projects"
+        return "prechiffrage"
     if not settings.browser_enabled:
-        return "similar_projects"
+        return "prechiffrage"
+    demande = (state.get("query") or "").lower()
+    if not any(m in demande for m in _MOTS_CHIFFRAGE):
+        return "prechiffrage"
     no_internal = len(state.get("raw_chunks") or []) == 0
-    return "browser" if no_internal else "similar_projects"
+    return "browser" if no_internal else "prechiffrage"
 
 
 # ── Graph ─────────────────────────────────────────────────────────────
@@ -516,13 +546,16 @@ def build_agent2_graph():
     graph.set_entry_point("preprocess")
     graph.add_edge("preprocess", "vision")
     graph.add_edge("vision", "extraction")
+    # LA MEMOIRE DE LA MAISON D'ABORD, LE WEB ENSUITE — c'est tout l'objet du
+    # correctif : la condition « le RAG interne est vide » ne peut etre vraie
+    # que si le RAG a deja parle.
+    graph.add_edge("extraction", "similar_projects")
     graph.add_conditional_edges(
-        "extraction",
+        "similar_projects",
         should_use_browser,
-        {"browser": "browser", "similar_projects": "similar_projects"},
+        {"browser": "browser", "prechiffrage": "prechiffrage"},
     )
-    graph.add_edge("browser", "similar_projects")
-    graph.add_edge("similar_projects", "prechiffrage")
+    graph.add_edge("browser", "prechiffrage")
     graph.add_edge("prechiffrage", END)
 
     return graph.compile()

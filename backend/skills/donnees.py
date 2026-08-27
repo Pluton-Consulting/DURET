@@ -89,8 +89,15 @@ async def interroger_donnees(data: dict, user) -> dict:
                 return {
                     "source_type_demande": type_source, "nombre": 0,
                     "jeux_de_donnees": existants,
-                    "message": (f"Il n'existe aucun jeu de données nommé « {type_source} ». "
-                                f"Ce n'est PAS un jeu vide : ce nom n'existe pas. "
+                    # DEUX PUBLICS, DEUX CHAMPS. `message` est ce que la personne
+                    # LIT quand le modèle ne rédige pas (repli d'affichage, cf.
+                    # `_message_apres_action`) ; `a_faire` est la consigne au
+                    # modèle. Les confondre a mis « Reformule avec l'un de ces
+                    # noms » et des noms de skills sous les yeux d'un utilisateur.
+                    "message": (f"Il n'existe pas de jeu de données nommé "
+                                f"« {type_source} ». Jeux disponibles : "
+                                f"{', '.join(existants) or 'aucun'}."),
+                    "a_faire": (f"Ce n'est PAS un jeu vide : ce nom n'existe pas. "
                                 f"Disponibles : {', '.join(existants) or 'aucun'}. "
                                 "Reformule avec l'un de ces noms."),
                 }
@@ -246,8 +253,8 @@ async def _colonnes(conn, niveaux: list[str], type_source: str) -> dict:
         # nuance est tout l'écart entre un problème de droits et une absence.
         return {"source_type": type_source, "enregistrements": 0,
                 "message": (f"Le jeu de données « {type_source} » existe, mais aucun "
-                            "de ses enregistrements n'est visible à ce profil. "
-                            "C'est une question de droits d'accès, pas une absence "
+                            "de ses enregistrements n'est accessible avec vos droits."),
+                "a_faire": ("C'est une question de droits d'accès, pas une absence "
                             "de données : ne conclus pas qu'il n'y en a pas.")}
 
     lignes = await conn.fetch(
@@ -333,12 +340,12 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict,
     if not total:
         return {"source_type": type_source, "filtres": critere,
                 "contient": fragments or None, "nombre": 0,
-                "message": ("Aucun enregistrement ne correspond. Les `filtres` exigent la "
-                            "valeur EXACTE ; pour chercher un mot À L'INTÉRIEUR d'une "
-                            "colonne (« terrasse bois » dans une prestation rédigée en "
-                            "toutes lettres), passe plutôt `contient`. Rappelle "
-                            "`interroger_donnees` avec le seul `source_type` pour voir "
-                            "les valeurs réellement présentes.")}
+                "message": "Aucun enregistrement ne correspond à ces critères.",
+                "a_faire": ("Les `filtres` exigent la valeur EXACTE ; pour chercher un "
+                            "mot À L'INTÉRIEUR d'une colonne (« terrasse bois » dans une "
+                            "prestation rédigée en toutes lettres), passe plutôt "
+                            "`contient`. Rappelle `interroger_donnees` avec le seul "
+                            "`source_type` pour voir les valeurs réellement présentes.")}
 
     lignes = await conn.fetch(
         f"SELECT title, data, champs, source_filename, ligne FROM document_metadata m "
@@ -525,13 +532,16 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
                 "filtres": filtres or None, "contient": fragments or None, "nombre": 0,
                 "lignes_hors_periode": hors_periode or None,
                 "lignes_sans_date_lisible": sans_date or None,
+                # Ce que la personne lit garde les COMPTES — ils expliquent le
+                # vide, et c'est une information, pas de la tuyauterie.
                 "message": (
                     "Aucun enregistrement ne correspond."
                     + (f" {hors_periode} sont hors de la période." if hors_periode else "")
                     + (f" {sans_date} n'ont pas de date lisible dans la colonne "
-                       f"« {colonne_date} » : vérifie `agreger.colonne_date`."
-                       if sans_date else "")
-                    + " Rappelle `interroger_donnees` avec le seul `source_type` pour "
+                       f"« {colonne_date} »." if sans_date else "")),
+                "a_faire": (
+                    (f"Vérifie `agreger.colonne_date`. " if sans_date else "")
+                    + "Rappelle `interroger_donnees` avec le seul `source_type` pour "
                       "voir les colonnes et leurs valeurs réelles.")}
 
     # ── Le calcul ──────────────────────────────────────────────────────────

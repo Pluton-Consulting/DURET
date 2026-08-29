@@ -37,7 +37,13 @@ CHANTIERS = [
     {"Chantier": "Résidence du Port", "Client": "Mairie de La Teste",
      "Commentaire": "accès par la parcelle de SCI Les Tilleuls"},
 ]
-BASE = {"CLIENTS 2025": CLIENTS, "devis": DEVIS, "factures": FACTURES, "chantiers": CHANTIERS}
+FOURNISSEURS = [
+    {"Raison sociale": "Scierie VALLET", "Ville": "Mios", "Email": "contact@scierie-vallet.fr"},
+    {"Raison sociale": "Pepinieres du Born", "Ville": "Sanguinet", "Téléphone": "05 58 00 00 00"},
+]
+
+BASE = {"CLIENTS 2025": CLIENTS, "devis": DEVIS, "factures": FACTURES, "chantiers": CHANTIERS,
+        "Fournisseurs": FOURNISSEURS}
 
 
 def _normalise(d):
@@ -209,6 +215,42 @@ async def principal():
     verifier("le nombre exact est imposé au modèle", str(r.get("nombre")) in (r.get("a_faire") or ""), r.get("a_faire"))
     verifier("le web est explicitement exclu",
              "web" in (routines.SKILLS["liste_clients"].description or "").lower())
+
+    # ── 2ter. Liste des fournisseurs : le même annuaire, l'autre jeu ─────
+    print("\n2ter. Liste des fournisseurs")
+    rf = await routines.liste_fournisseurs({}, User())
+    verifier("le jeu fournisseurs est trouvé", rf.get("trouve"), rf.get("message"))
+    verifier("le compte est exact", rf.get("nombre") == 2, rf.get("nombre"))
+    verifier("la colonne d'identité s'appelle Fournisseur",
+             (rf.get("bloc_ui") or {}).get("columns", [None])[0] == "Fournisseur", rf.get("bloc_ui"))
+    verifier("le compte parle de fournisseurs, pas de clients",
+             "fournisseur" in rf["message_final"] and "client" not in rf["message_final"],
+             rf["message_final"])
+
+    class _Direction(User):
+        email = "direction@entreprise.fr"
+
+    rf3 = await routines.liste_fournisseurs(
+        {"fichier": True, "colonnes": ["Fournisseur"], "ajouts": {"E-mail": "@moi"}},
+        _Direction())
+    verifier("`fichier: true` rend fournisseurs.xlsx",
+             (rf3.get("bloc_ui") or {}).get("nom") == "fournisseurs.xlsx", rf3.get("bloc_ui"))
+    verifier("le titre du fichier est « Liste des fournisseurs »",
+             ATELIER["entete"]["titre"] == "Liste des fournisseurs", ATELIER["entete"])
+    lignes_f = ATELIER["elements"][0]["lignes"]
+    verifier("la colonne @moi porte l'adresse de la session sur CHAQUE ligne",
+             lignes_f and all(l[-1] == "direction@entreprise.fr" for l in lignes_f), lignes_f)
+    verifier("« Fournisseur » est reconnu comme colonne d'identité",
+             ATELIER["elements"][0]["entetes"][0] == "Fournisseur", ATELIER["elements"][0]["entetes"])
+
+    # Jeu absent : le message parle de fournisseurs, jamais de clients.
+    sauve_f = dict(BASE)
+    BASE.clear(); BASE.update({"devis": DEVIS})
+    rf0 = await routines.liste_fournisseurs({}, User())
+    verifier("jeu absent : le skill dit que le NOM fournisseur n'existe pas",
+             rf0.get("trouve") is False and "fournisseur" in (rf0.get("message") or ""),
+             rf0.get("message"))
+    BASE.clear(); BASE.update(sauve_f)
 
     # ── 3. Aucun jeu client : ne jamais répondre « zéro » ────────────────
     print("\n3. Jeu de clients absent")

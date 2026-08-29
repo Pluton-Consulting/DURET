@@ -231,6 +231,12 @@ verifier("une valeur littérale reste littérale",
 verifier("les ajouts passés en JSON (LongCat sait faire ça) sont lus",
          ajoutees({"ajouts": '{"E-mail": "@moi"}'}, _Moi()) == [("E-mail", _Moi.email)])
 verifier("pas d'ajouts → rien", ajoutees({}, _Moi()) == [])
+verifier("un jeton orphelin sur une colonne mail retombe sur l'adresse de la session",
+         ajoutees({"ajouts": {"E-mail": "[EMAIL_2]"}}, _Moi()) == [("E-mail", _Moi.email)],
+         str(ajoutees({"ajouts": {"E-mail": "[EMAIL_2]"}}, _Moi())))
+verifier("un jeton orphelin ailleurs laisse la cellule vide, jamais la balise",
+         ajoutees({"ajouts": {"Source": "[PER_3]"}}, _Moi()) == [("Source", "")],
+         str(ajoutees({"ajouts": {"Source": "[PER_3]"}}, _Moi())))
 verifier("un ajout borné à trois colonnes",
          len(ajoutees({"ajouts": {"a": "1", "b": "2", "c": "3", "d": "4"}}, _Moi())) == 3)
 

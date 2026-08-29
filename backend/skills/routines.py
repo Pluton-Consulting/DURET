@@ -217,6 +217,15 @@ def _jeu_clients(existants: list):
     return None
 
 
+def _jeu_fournisseurs(existants: list):
+    """Le jeu de données qui contient les fournisseurs, quel que soit son nom."""
+    for candidat in existants:
+        plat = _plat(candidat)
+        if "fournisseur" in plat or "supplier" in plat or "vendor" in plat:
+            return candidat
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  LISTE DES CLIENTS
 # ═══════════════════════════════════════════════════════════════════════════
@@ -236,6 +245,7 @@ def _jeu_clients(existants: list):
 #      vaut l'adresse de la personne connectée. On ne la demande donc jamais.
 _CLE_PAR_LIBELLE = {
     "client": "nom", "clients": "nom", "nom": "nom", "noms": "nom",
+    "fournisseur": "nom", "fournisseurs": "nom",
     "raison_sociale": "nom", "societe": "nom",
     "ville": "ville", "villes": "ville", "commune": "ville",
     "email": "email", "e_mail": "email", "mail": "email", "mails": "email",
@@ -289,12 +299,40 @@ def _colonnes_ajoutees(data: dict, user) -> list:
         texte = str("" if valeur is None else valeur).strip()
         if _plat(texte) in _C_EST_MOI:
             texte = moi
+        # Un jeton d'anonymisation resté orphelin (« [EMAIL_2] ») n'est pas une
+        # valeur : dans un fichier remis à quelqu'un, il n'a rien à faire. Sur
+        # une colonne de mail, la seule lecture honnête est l'adresse de la
+        # session — celle que « mon mail » désignait ; ailleurs, la cellule
+        # reste vide plutôt que d'écrire une balise technique.
+        if re.fullmatch(r"\[[A-Z]+_\d+\]", texte):
+            texte = moi if _CLE_PAR_LIBELLE.get(_plat(titre)) == "email" else ""
         sorties.append((titre, texte[:200]))
     return sorties
 
 
 async def liste_clients(data: dict, user) -> dict:
     """Qui sont les clients, combien, et de quoi les joindre. UN appel."""
+    return await _lister_annuaire(data, user, _jeu_clients, "client",
+                                  "liste_clients", "fiche_client")
+
+
+async def liste_fournisseurs(data: dict, user) -> dict:
+    """Qui sont les fournisseurs, combien, et de quoi les joindre. UN appel.
+
+    Relevé le 29/08 : « fais-moi un excel avec les noms fournisseurs » n'avait
+    aucun geste — l'assistant proposait d'exporter la liste tout en disant ne
+    pas y avoir accès. Un annuaire de fournisseurs se lit comme celui des
+    clients : mêmes colonnes d'identité (raison sociale, société, nom), même
+    export Excel. Une seule mécanique, deux jeux de données.
+    """
+    return await _lister_annuaire(data, user, _jeu_fournisseurs, "fournisseur",
+                                  "liste_fournisseurs", None)
+
+
+async def _lister_annuaire(data: dict, user, chercher_jeu, metier: str,
+                           skill_nom: str, skill_fiche) -> dict:
+    """Le corps commun des annuaires (clients, fournisseurs) : qui, combien,
+    et de quoi les joindre — à l'écran ou en fichier Excel."""
     from database.connection import get_db
     from security.acces import niveaux_visibles
     from skills.erreurs import SkillError
@@ -303,22 +341,22 @@ async def liste_clients(data: dict, user) -> dict:
     try:
         async with get_db() as conn:
             existants = await _jeux(conn, niveaux)
-            jeu = _jeu_clients(existants)
+            jeu = chercher_jeu(existants)
             if not jeu:
-                # NE PAS RÉPONDRE « AUCUN CLIENT ». Un jeu de données absent et
-                # un jeu vide se ressemblent dans une réponse, et l'assistant a
-                # déjà conclu « les données ne sont pas importées » alors
-                # qu'elles l'étaient sous un autre nom.
+                # NE PAS RÉPONDRE « AUCUN ». Un jeu de données absent et un jeu
+                # vide se ressemblent dans une réponse, et l'assistant a déjà
+                # conclu « les données ne sont pas importées » alors qu'elles
+                # l'étaient sous un autre nom.
                 return {
                     "trouve": False,
                     "jeux_de_donnees": existants,
                     "message": (
-                        "Aucun jeu de données ne porte de nom de client. Ce n'est PAS "
-                        "« il n'y a pas de clients » : c'est que rien n'a été importé "
+                        f"Aucun jeu de données ne porte de nom de {metier}. Ce n'est PAS "
+                        f"« il n'y a pas de {metier}s » : c'est que rien n'a été importé "
                         "sous ce nom. Jeux disponibles : "
                         + (", ".join(existants) if existants else "aucun") + "."),
                     "a_faire": ("Dis-le tel quel à l'utilisateur, propose d'importer le "
-                                "fichier des clients depuis Paramètres > Import de "
+                                f"fichier des {metier}s depuis Paramètres > Import de "
                                 "données, et n'invente AUCUN nom."),
                 }
 
@@ -332,18 +370,18 @@ async def liste_clients(data: dict, user) -> dict:
                 "ORDER BY ligne NULLS LAST LIMIT $3",
                 jeu, niveaux, MAX_CLIENTS)
     except Exception as e:  # noqa: BLE001
-        logger.warning("Liste des clients impossible : %s", e)
-        raise SkillError("La base des clients est momentanément indisponible.")
+        logger.warning("Liste des %ss impossible : %s", metier, e)
+        raise SkillError(f"La base des {metier}s est momentanément indisponible.")
 
-    clients = []
+    fiches = []
     for l in lignes:
         d = _fusion(l)
         nom = _nom_complet(d)
         if not nom:
             continue
-        clients.append({"nom": nom, "ville": _valeur(d, "ville"),
-                        "email": _valeur(d, "email"), "telephone": _valeur(d, "telephone")})
-    clients.sort(key=lambda c: _plat(c["nom"]))
+        fiches.append({"nom": nom, "ville": _valeur(d, "ville"),
+                       "email": _valeur(d, "email"), "telephone": _valeur(d, "telephone")})
+    fiches.sort(key=lambda c: _plat(c["nom"]))
 
     # LA LISTE COMPLÈTE, C'EST UN FICHIER. Relevé le 22/08 : « il dit qu'il
     # affiche tout, il n'affiche jamais de grosse quantité ». Un bloc d'écran
@@ -355,41 +393,42 @@ async def liste_clients(data: dict, user) -> dict:
         "1", "true", "oui", "vrai", "xlsx", "excel", "fichier", "csv", "complet", "tout")
     gardees = _colonnes_gardees(data)
     ajouts = _colonnes_ajoutees(data, user)
-    if veut_fichier and clients:
-        return await _fichier_clients(clients, jeu, total, user, gardees, ajouts)
+    if veut_fichier and fiches:
+        return await _fichier_annuaire(fiches, jeu, total, user, gardees, ajouts, metier)
 
     # Pagination par initiale : « les clients en B », « la suite ».
     lettre = _plat(data.get("lettre") or "")[:1]
     if lettre:
-        clients = [c for c in clients if _plat(c["nom"])[:1] == lettre]
-    total_filtre = len(clients)
+        fiches = [c for c in fiches if _plat(c["nom"])[:1] == lettre]
+    total_filtre = len(fiches)
     tronque_ecran = total_filtre > MAX_AFFICHES
-    clients = clients[:MAX_AFFICHES]
+    fiches = fiches[:MAX_AFFICHES]
 
-    if not clients:
+    if not fiches:
         return {"trouve": False, "source_type": jeu, "nombre": 0,
                 "message": (f"Le jeu « {jeu} » existe ({total} enregistrement(s)) mais "
-                            "aucun nom de client n'a pu y être lu. Les colonnes ne "
+                            f"aucun nom de {metier} n'a pu y être lu. Les colonnes ne "
                             "portent peut-être pas un nom reconnu."),
                 "a_faire": "Propose d'appeler `interroger_donnees` pour voir les colonnes réelles."}
 
-    colonnes = ["Client"] + [t for t, c in (("Ville", "ville"), ("Email", "email"),
+    identite = metier.capitalize()
+    colonnes = [identite] + [t for t, c in (("Ville", "ville"), ("Email", "email"),
                                             ("Téléphone", "telephone"))
-                             if any(x[c] for x in clients)
+                             if any(x[c] for x in fiches)
                              and (gardees is None or c in gardees)]
-    cles = {"Client": "nom", "Ville": "ville", "Email": "email", "Téléphone": "telephone"}
+    cles = {identite: "nom", "Ville": "ville", "Email": "email", "Téléphone": "telephone"}
     bloc = {"type": "table",
             "columns": colonnes + [t for t, _ in ajouts],
             "rows": [[c[cles[t]] for t in colonnes] + [v for _, v in ajouts]
-                     for c in clients]}
+                     for c in fiches]}
 
-    n = len(clients)
+    n = len(fiches)
     if lettre:
-        compte = (f"{total_filtre} client{'s' if total_filtre > 1 else ''} dont le nom "
+        compte = (f"{total_filtre} {metier}{'s' if total_filtre > 1 else ''} dont le nom "
                   f"commence par « {lettre.upper()} » (sur {total} au total)"
                   + (f", les {n} premiers affichés." if tronque_ecran else ", tous affichés."))
     else:
-        compte = (f"{total} client{'s' if total > 1 else ''} en base"
+        compte = (f"{total} {metier}{'s' if total > 1 else ''} en base"
                   + (f", les {n} premiers affichés par ordre alphabétique." if tronque_ecran
                      else ", tous affichés."))
     return {
@@ -398,7 +437,7 @@ async def liste_clients(data: dict, user) -> dict:
         "nombre": total,
         "affiches": n,
         "lettre": lettre.upper() or None,
-        "clients": clients,
+        "clients": fiches,
         "bloc_ui": bloc,
         "message_final": compte,
         "a_faire": ("Commence par cette phrase, mot pour mot : « " + compte + " ». "
@@ -406,28 +445,30 @@ async def liste_clients(data: dict, user) -> dict:
                     "le contenu de `bloc_ui` — n'écris PAS les noms toi-même en texte, ne "
                     "dis pas un autre nombre que " + str(n) + " pour les affichés ni que "
                     + str(total) + " pour le total. "
-                    + ("Pour la suite, rappelle `liste_clients` avec `lettre` (une initiale). "
+                    + (f"Pour la suite, rappelle `{skill_nom}` avec `lettre` (une initiale). "
                        if tronque_ecran else "")
-                    + "Pour le détail d'UN client, c'est `fiche_client`."),
+                    + (f"Pour le détail d'UN {metier}, c'est `{skill_fiche}`."
+                       if skill_fiche else "")),
     }
 
 
-async def _fichier_clients(clients: list, jeu: str, total: int, user,
-                           gardees: list | None = None, ajouts: list | None = None) -> dict:
+async def _fichier_annuaire(fiches: list, jeu: str, total: int, user,
+                            gardees: list | None, ajouts: list, metier: str) -> dict:
     """Toute la liste dans un .xlsx produit par l'atelier, avec son bloc `fichier`."""
     import asyncio
     from bureautique.atelier import ouvrir, ajouter, terminer
     proprio = str(getattr(user, "id", "") or "")
     ajouts = ajouts or []
-    colonnes = [("Client", "nom"), ("Ville", "ville"), ("Email", "email"), ("Téléphone", "telephone")]
+    identite = metier.capitalize()
+    colonnes = [(identite, "nom"), ("Ville", "ville"), ("Email", "email"), ("Téléphone", "telephone")]
     colonnes = [(t_, c) for t_, c in colonnes
-                if c == "nom" or (any(x.get(c) for x in clients)
+                if c == "nom" or (any(x.get(c) for x in fiches)
                                   and (gardees is None or c in gardees))]
-    entete = {"titre": "Liste des clients", "format": "xlsx"}
-    elements = [{"type": "feuille", "nom": "Clients",
+    entete = {"titre": f"Liste des {metier}s", "format": "xlsx"}
+    elements = [{"type": "feuille", "nom": f"{identite}s",
                  "entetes": [t_ for t_, _ in colonnes] + [t_ for t_, _ in ajouts],
                  "lignes": [[c.get(cle, "") for _, cle in colonnes] + [v for _, v in ajouts]
-                            for c in clients]}]
+                            for c in fiches]}]
 
     def _produire():
         jeton = ouvrir(entete, proprio)
@@ -437,22 +478,22 @@ async def _fichier_clients(clients: list, jeu: str, total: int, user,
     try:
         jeton, fiche = await asyncio.to_thread(_produire)
     except Exception as e:  # noqa: BLE001
-        logger.warning("Excel des clients impossible : %s", e)
+        logger.warning("Excel des %ss impossible : %s", metier, e)
         from skills.erreurs import SkillError
-        raise SkillError("Le fichier des clients n'a pas pu être produit. Réessayez, ou "
+        raise SkillError(f"Le fichier des {metier}s n'a pas pu être produit. Réessayez, ou "
                          "demandez la liste à l'écran (par initiale).")
 
     # `titre` en plus du nom de fichier : c'est par lui que la réhydratation
     # reconnaît, au tour suivant, une vignette inventée qui parle de CE
     # fichier-là — et la remplace par le bloc réel (cf. `_designe_le_meme`).
-    bloc = {"type": "fichier", "url": f"/api/documents/{jeton}", "nom": "clients.xlsx",
+    bloc = {"type": "fichier", "url": f"/api/documents/{jeton}", "nom": f"{metier}s.xlsx",
             "titre": entete["titre"], "format": "xlsx", "octets": fiche.get("octets")}
     entetes = [t_ for t_, _ in colonnes] + [t_ for t_, _ in ajouts]
-    compte = (f"{total} client{'s' if total > 1 else ''}, la liste complète est dans le fichier "
-              f"Excel ci-dessous ({len(clients)} lignes, colonnes : "
+    compte = (f"{total} {metier}{'s' if total > 1 else ''}, la liste complète est dans le fichier "
+              f"Excel ci-dessous ({len(fiches)} lignes, colonnes : "
               + ", ".join(entetes) + ").")
     return {
-        "trouve": True, "source_type": jeu, "nombre": total, "affiches": len(clients),
+        "trouve": True, "source_type": jeu, "nombre": total, "affiches": len(fiches),
         "fichier": bloc["url"], "bloc_ui": bloc, "message_final": compte,
         "a_faire": ("Dis : « " + compte + " », puis insère un bloc ```ui contenant EXACTEMENT "
                     "le contenu de `bloc_ui` (type `fichier`) : l'écran affiche l'aperçu du "
@@ -1168,6 +1209,28 @@ SKILLS = {
         requis=[], optionnels=["lettre", "fichier", "colonnes", "ajouts"],
         effet="lecture",
         libelle="je liste les clients"),
+    "liste_fournisseurs": Declaration(
+        fonction=liste_fournisseurs,
+        description=(
+            "LISTE les fournisseurs de l'entreprise en UN SEUL appel : le nombre "
+            "exact, les noms, et le contact quand il est connu. C'est le skill a "
+            "appeler pour « la liste des fournisseurs », « combien de fournisseurs », "
+            "« qui sont nos fournisseurs » — PAS `interroger_donnees` ni "
+            "`rechercher_documents`. Le resultat donne un bloc ```ui a inserer TEL "
+            "QUEL (60 noms au plus par appel ; `lettre` = une initiale pour la "
+            "suite). Pour la liste COMPLETE, ou des qu'on demande « tous », un "
+            "export, un Excel : passe `fichier: true` — le resultat est un fichier "
+            "Excel avec apercu dans le chat, jamais une liste a recopier. Ne "
+            "cherche JAMAIS sur le web : les fournisseurs sont une donnee interne. "
+            "LE FICHIER SE FACONNE ICI, en un seul appel : `colonnes` garde celles "
+            "qu'on demande et `ajouts` ajoute des colonnes CONSTANTES "
+            "(`{\"E-mail\": \"@moi\"}`). `@moi` vaut l'adresse de la personne "
+            "connectee : elle est connue du serveur, ne la demande JAMAIS a "
+            "l'utilisateur. N'enchaine pas d'autre action apres : le fichier est "
+            "produit, montre-le"),
+        requis=[], optionnels=["lettre", "fichier", "colonnes", "ajouts"],
+        effet="lecture",
+        libelle="je liste les fournisseurs"),
     "fiche_client": Declaration(
         fonction=fiche_client,
         description=(

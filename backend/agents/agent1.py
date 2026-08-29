@@ -36,6 +36,7 @@ LA VÉRITÉ. N'invente JAMAIS de donnée : ni montant, ni nom, ni date, ni nombr
 Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien » : dis ce que tu as cherché, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système, que seul un inventaire explicite autorise. Un nom de jeu de données qui n'existe pas n'est pas un jeu vide.
 UN ÉCHANTILLON N'EST PAS UN INVENTAIRE : quelques messages d'une boîte ne disent rien des activités, des process ni de l'histoire de l'entreprise. Ne généralise jamais de dix mails vers une description de la société.
 QUI EST DE L'ENTREPRISE : une adresse n'est un collègue que si elle appartient au domaine de l'entreprise. Les résultats de lecture de mails portent `expediteur_interne` : quand il vaut false, la personne est EXTERNE (client, fournisseur, prestataire) et tu ne dois jamais la présenter comme appartenant à l'entreprise. `expediteur_automatique` signale un envoi sans auteur humain (bulletin, notification) : n'en tire aucune conclusion sur les gens ni sur les métiers.
+QUI TE PARLE EST CONNU DU SERVEUR : `mes_droits` rend le nom et l'adresse e-mail de la personne connectée, et `@moi` vaut cette adresse partout où un skill l'accepte (colonnes `ajouts` de `liste_clients`). Ne demande JAMAIS à quelqu'un sa propre adresse ou son propre nom, et ne réponds jamais que tu ne les connais pas : c'est faux. Plus largement, avant d'écrire « je ne sais pas » ou de poser une question, vérifie qu'aucune de tes actions ne détient déjà l'information.
 DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un récapitulatif ou un modèle et qu'une information ne figure nulle part, écris exactement [À COMPLÉTER] à sa place. Ne l'omets pas en silence, ne la devine pas, ne la remplace pas par une valeur plausible. Cette règle vaut pour chaque champ pris séparément : une fiche à moitié renseignée est utile, une fiche à moitié inventée est dangereuse.
 Certaines valeurs peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. Conserve-les telles quelles et ne CRÉE jamais toi-même de balise entre crochets : elles proviennent UNIQUEMENT des documents fournis.
 
@@ -1362,17 +1363,44 @@ def _designe_le_meme(carte: dict, reels: list[dict]) -> bool:
     return False
 
 
+def _meme_livrable(a: dict, b: dict) -> bool:
+    """Deux blocs désignent-ils le MÊME livrable, sous deux références ?
+
+    Le jeton d'un document est tiré au hasard à chaque production : le même
+    Excel refait dans le tour (autres colonnes, seconde passe du forceur) porte
+    une autre URL. Aux yeux de la personne c'est pourtant le même fichier, et
+    l'afficher deux fois est un doublon — vu en production le 29/08.
+    """
+    nom_a = _plat_nom(a.get("titre") or a.get("nom") or a.get("name"))
+    nom_b = _plat_nom(b.get("titre") or b.get("nom") or b.get("name"))
+    return len(nom_a) >= 5 and len(nom_b) >= 5 and (nom_a in nom_b or nom_b in nom_a)
+
+
 def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
-    """Le texte final, débarrassé des faux fichiers et complété des vrais."""
+    """Le texte final, débarrassé des faux fichiers et des doublons, complété des vrais."""
     import json as _j
     produits = _blocs_livrables(state.get("tool_results") or [])
-    du_fil = fichiers_du_fil(state)
+    # Le même livrable produit deux fois dans le tour : seule la DERNIÈRE
+    # version compte (cf. _meme_livrable) — les références plus anciennes
+    # sortent aussi de `references`, donc du texte, via _trier.
+    derniers: list[dict] = []
+    for bloc in produits:
+        derniers = [b for b in derniers if not _meme_livrable(b, bloc)]
+        derniers.append(bloc)
+    produits = derniers
+    # Et une version ANTÉRIEURE du même livrable, produite à un tour passé,
+    # ne légitime plus son affichage : recopiée par le modèle, elle céderait
+    # la place à celle de ce tour-ci.
+    du_fil = [b for b in fichiers_du_fil(state)
+              if not any(_meme_livrable(b, p) and _reference_bloc(b) != _reference_bloc(p)
+                         for p in produits)]
     connus = produits + [b for b in du_fil
                          if not any(_reference_bloc(x) == _reference_bloc(b) for x in produits)]
     if not connus:
         return texte
     references = {_reference_bloc(b) for b in connus}
     invente = False
+    affiches: set[str] = set()  # les livrables GARDÉS dans le texte, par référence
 
     def _trier(m):
         nonlocal invente
@@ -1383,11 +1411,19 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
         if not isinstance(bloc, dict):
             return m.group(0)
         type_ = bloc.get("type")
-        # Un livrable dont la référence n'existe pas : le modèle l'a écrit de
-        # mémoire, l'écran n'en tirerait rien (URL morte, image absente).
-        if type_ in _TYPES_LIVRABLE and _reference_bloc(bloc) not in references:
-            invente = True
-            return ""
+        if type_ in _TYPES_LIVRABLE:
+            ref = _reference_bloc(bloc)
+            # Un livrable dont la référence n'existe pas : le modèle l'a écrit
+            # de mémoire (URL morte, image absente) ou c'est une version
+            # périmée de ce que le tour vient de refaire. On l'efface.
+            if ref not in references:
+                invente = True
+                return ""
+            # Le MÊME fichier écrit deux fois par le modèle : un seul aperçu.
+            if ref in affiches:
+                return ""
+            affiches.add(ref)
+            return m.group(0)
         # Une vignette qui parle d'un fichier qu'on tient vraiment : on la
         # remplace plus bas par le bloc réel, téléchargeable et prévisualisable.
         if type_ == "doc" and not bloc.get("url") and _designe_le_meme(bloc, connus):
@@ -1403,9 +1439,14 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     if invente and not a_montrer and du_fil:
         a_montrer = [du_fil[-1]]
     for bloc in a_montrer:
-        if _reference_bloc(bloc) and _reference_bloc(bloc) in texte:
+        ref = _reference_bloc(bloc)
+        # `affiches` et non une sous-chaîne : un modèle qui échappe les barres
+        # obliques (`\/api\/documents\/…`, JSON valide) rendait l'URL introuvable
+        # dans le texte brut, et le même fichier s'affichait DEUX fois.
+        if ref and (ref in affiches or ref in texte):
             continue
-        logger.info("Livrable restitué à l'écran : %s", _reference_bloc(bloc))
+        logger.info("Livrable restitué à l'écran : %s", ref)
+        affiches.add(ref)
         texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()
     return texte
 

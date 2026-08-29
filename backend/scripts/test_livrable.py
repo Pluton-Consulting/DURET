@@ -77,7 +77,7 @@ espace = {"logger": _Journal(), "AgentState": dict}
 extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
           "_blocs_livrables", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
-          "_livrables_a_l_ecran"}, espace)
+          "_meme_livrable", "_livrables_a_l_ecran"}, espace)
 livrables = espace["_livrables_a_l_ecran"]
 fichiers_du_fil = espace["fichiers_du_fil"]
 
@@ -149,6 +149,55 @@ verifier("un visuel produit s'affiche aussi", "79800c896bd4e138b125d2d0" in r, r
 vus = fichiers_du_fil({"messages": [_Msg("Voici l'essai.\n\n" + bloc_ui(visuel))]})
 verifier("un bloc imbriqué est lu en entier",
          len(vus) == 1 and vus[0].get("images"), str(vus))
+
+# ── le doublon du 29/08 : un même Excel affiché deux fois ──────────────────
+print()
+
+# 10. Le skill rappelé dans le tour (autres colonnes) : deux jetons, UN fichier.
+V1 = dict(FICHIER, url="/api/documents/PREMIER-JET")
+V2 = dict(FICHIER, url="/api/documents/SECOND-JET")
+r = livrables("La liste est prête.",
+              {"tool_results": [res("liste_clients", dict(SORTIE, bloc_ui=V1, fichier=V1["url"])),
+                                res("liste_clients", dict(SORTIE, bloc_ui=V2, fichier=V2["url"]))],
+               "messages": []})
+verifier("le même livrable produit deux fois ne s'affiche qu'une fois, dernière version",
+         r.count('"type": "fichier"') == 1 and V2["url"] in r and V1["url"] not in r, r[:300])
+
+# 11. Le modèle recopie le bloc en échappant les barres obliques (JSON valide) :
+#     la sous-chaîne de l'URL est introuvable dans le texte brut, le filet
+#     ajoutait le bloc une seconde fois.
+echappe = "```ui\n" + json.dumps(FICHIER, ensure_ascii=False).replace("/", "\\/") + "\n```"
+r = livrables("478 clients.\n\n" + echappe,
+              {"tool_results": [res("liste_clients", SORTIE)], "messages": []})
+verifier("un bloc recopié avec des barres échappées n'est pas doublé",
+         r.count('"type": "fichier"') == 1, r[:300])
+
+# 12. Le modèle écrit le même bloc DEUX fois : un seul aperçu.
+r = livrables("478 clients.\n\n" + bloc_ui(FICHIER) + "\n\n" + bloc_ui(FICHIER),
+              {"tool_results": [res("liste_clients", SORTIE)], "messages": []})
+verifier("le même bloc écrit deux fois par le modèle est dédoublonné",
+         r.count('"type": "fichier"') == 1, r[:300])
+
+# 13. Une version ANTÉRIEURE (tour passé) recopiée depuis l'historique, alors
+#     que le tour vient d'en produire une neuve : la vieille cède la place.
+vieille = dict(FICHIER, url="/api/documents/VERSION-D-HIER")
+r = livrables("Voici la liste.\n\n" + bloc_ui(vieille),
+              {"tool_results": [res("liste_clients", dict(SORTIE, bloc_ui=V2, fichier=V2["url"]))],
+               "messages": [_Msg(bloc_ui(vieille))]})
+verifier("une version antérieure du fil cède la place à celle du tour",
+         V2["url"] in r and "VERSION-D-HIER" not in r and r.count('"type": "fichier"') == 1,
+         r[:300])
+
+# 14. Deux livrables DIFFÉRENTS produits dans le tour s'affichent tous les deux.
+devis = {"type": "fichier", "url": "/api/documents/DEVIS-77", "nom": "devis.xlsx",
+         "titre": "Devis du mois", "format": "xlsx"}
+r = livrables("Les deux fichiers sont prêts.",
+              {"tool_results": [res("liste_clients", SORTIE),
+                                res("produire_document", {"trouve": True, "bloc_ui": devis})],
+               "messages": []})
+verifier("deux livrables différents ne sont pas fusionnés",
+         FICHIER["url"] in r and devis["url"] in r, r[:300])
+
 
 # ── routines : la colonne demandée, et le mail qu'on ne demande pas ────────
 espace_r = {"logging": __import__("logging"), "re": __import__("re"),

@@ -89,5 +89,16 @@ async def connaissances_acquises(data: dict, user) -> dict:
         "procedures": procedures,
         "note": (f"{len(connaissances)} connaissance(s) et {len(procedures)} manière(s) "
                  f"de faire, les plus récentes d'abord (au plus {MAX_ELEMENTS}). "
-                 "Ce sont des ACQUIS : présente-les, ne relance pas de campagne."),
+                 "Ce sont des ACQUIS : présente-les, ne relance pas de campagne. "
+                 # « Toutes les informations sur l'entreprise » ne se résume PAS
+                 # à cet inventaire distillé : relevé le 30/08, un Word bâti sur
+                 # lui seul faisait quatre pages maigres alors que la mémoire
+                 # porte des milliers de documents et tous les comptes exacts.
+                 "ATTENTION, ceci n'est que le SAVOIR DISTILLÉ des campagnes "
+                 "d'apprentissage — une petite partie de la mémoire. Pour un "
+                 "PANORAMA de l'entreprise (rapport, document « tout ce que tu "
+                 "sais »), croise avec `interroger_donnees` (comptes exacts : "
+                 "clients, devis, fournisseurs, chiffre d'affaires) et "
+                 "plusieurs `rechercher_documents` ciblés (activité, équipe, "
+                 "chantiers, tarifs) : c'est là que vit l'essentiel."),
     }

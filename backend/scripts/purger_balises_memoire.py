@@ -22,8 +22,15 @@ USAGE (dans le conteneur, comme les migrations) :
     docker compose exec backend python scripts/purger_balises_memoire.py --purger   # remplace
 """
 import asyncio
+import os
 import re
 import sys
+
+# Lancé par « python scripts/purger_balises_memoire.py », Python met
+# `scripts/` dans son chemin — pas la racine du backend, où vivent les
+# modules. On l'ajoute nous-mêmes : le script doit marcher tel quel, sans
+# exiger de connaître PYTHONPATH (l'oubli a déjà coûté un aller-retour).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BALISE = re.compile(r"\[[A-Z]{2,10}_\d+\]")
 TYPES = ("apprentissage", "procedure")

@@ -65,13 +65,22 @@ verifier("UN SEUL commercial → direction_only (le niveau commercial_plus "
          N(perms("com@ex.fr"), ANNUAIRE) == "direction_only")
 verifier("direction seule → direction_only",
          N(perms("direction@ex.fr"), ANNUAIRE) == "direction_only")
-verifier("une adresse EXTERNE n'élargit rien",
-         N(perms("client@ailleurs.com"), ANNUAIRE) == "direction_only")
 verifier("externe + domaine : le domaine décide → all",
          N(perms("client@ailleurs.com", types=["domain"]), ANNUAIRE) == "all")
-verifier("aucun partage lisible → le plus restrictif", N([], ANNUAIRE) == "direction_only")
-verifier("un groupe non résolu n'élargit pas l'accès",
-         N([{"type": "group", "emailAddress": "equipe@ex.fr"}], ANNUAIRE) == "direction_only")
+# LES TROIS CAS « ON NE SAIT PAS », leçon du premier lancement en prod (430
+# documents TOUS partis en direction seule) : Drive ne montre la liste
+# complète des partages qu'aux propriétaires — un compte lecteur ne voit que
+# sa propre entrée. Ne rien reconnaître rend None (→ niveau stocké), jamais
+# « le plus restrictif ».
+verifier("une adresse EXTERNE seule → on ne sait pas dire (None)",
+         N(perms("client@ailleurs.com"), ANNUAIRE) is None)
+verifier("le compte de synchronisation, seule entrée visible → None",
+         N(perms("benitez.sync@gmail.com"), ANNUAIRE) is None)
+verifier("aucun partage lisible → None", N([], ANNUAIRE) is None)
+verifier("un groupe non résolu, seul → None",
+         N([{"type": "group", "emailAddress": "equipe@ex.fr"}], ANNUAIRE) is None)
+verifier("« direction seule » exige une identification POSITIVE",
+         N(perms("direction@ex.fr", "client@ailleurs.com"), ANNUAIRE) == "direction_only")
 
 # ── 2. la mécanique de campagne ────────────────────────────────────────────
 print("\n2. Les lots et le classement")

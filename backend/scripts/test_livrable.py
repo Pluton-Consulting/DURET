@@ -73,13 +73,22 @@ def res(skill, sortie, ok=True):
 
 
 # ── agent1 : le livrable à l'écran ─────────────────────────────────────────
-espace = {"logger": _Journal(), "AgentState": dict}
+# `reclame_un_prealable` vit dans annonce.py (importable seul : il ne dépend
+# que de `re`) ; on le charge comme le fait test_annonce.py, et on le donne au
+# namespace où les fonctions d'agent1 iront le chercher.
+import importlib.util
+_spec = importlib.util.spec_from_file_location("annonce", racine / "agents" / "annonce.py")
+_annonce = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_annonce)
+
+espace = {"logger": _Journal(), "AgentState": dict,
+          "reclame_un_prealable": _annonce.reclame_un_prealable}
 extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
           "_blocs_livrables", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
-          "_meme_livrable", "_livrables_a_l_ecran"}, espace)
+          "_meme_livrable", "_livrables_a_l_ecran", "_redaction_dement_le_livrable"}, espace)
 livrables = espace["_livrables_a_l_ecran"]
 fichiers_du_fil = espace["fichiers_du_fil"]
+dement = espace["_redaction_dement_le_livrable"]
 
 FICHIER = {"type": "fichier", "url": "/api/documents/8UZRq9I-WO-KNO90pS8G2dzQvxjbuh4q",
            "nom": "clients.xlsx", "titre": "Liste des clients", "format": "xlsx",
@@ -197,6 +206,47 @@ r = livrables("Les deux fichiers sont prêts.",
                "messages": []})
 verifier("deux livrables différents ne sont pas fusionnés",
          FICHIER["url"] in r and devis["url"] in r, r[:300])
+
+# ── le démenti du 30/08 : la question périmée au-dessus d'un fichier produit ─
+print()
+
+# La réponse EXACTE lue en production le 30/08 (vieille conversation, LongCat
+# recopiait sa réponse d'avant le correctif du 29/08). L'Excel était produit,
+# avec la bonne adresse — et ce texte s'affichait au-dessus.
+PERIMEE = ('Pour créer ce fichier, j\'ai besoin de votre adresse email '
+           'professionnelle exacte. "" est une balise masquée, pas un email réel.\n\n'
+           'Quel est votre email ?\n\n'
+           'Une fois communiqué, je créerai un fichier Excel avec :\n'
+           '- Colonne A : les 90 noms de fournisseurs\n'
+           '- Colonne B : votre email répété sur toutes les lignes')
+FOURN = {"type": "fichier", "url": "/api/documents/FOURNISSEURS-90",
+         "nom": "fournisseurs.xlsx", "titre": "Liste des fournisseurs", "format": "xlsx"}
+SORTIE_F = {"trouve": True, "nombre": 90, "bloc_ui": FOURN,
+            "message_final": "90 fournisseurs, la liste complète est dans le fichier Excel ci-dessous."}
+
+# 15. Le cas réel : livrable produit, texte qui réclame un préalable → démenti.
+verifier("la question périmée du 30/08 est reconnue comme un démenti",
+         dement(PERIMEE, [res("liste_fournisseurs", SORTIE_F)]))
+
+# 16. Sans livrable produit, la même question est LÉGITIME : on n'y touche pas.
+verifier("la même question sans livrable produit reste légitime",
+         not dement(PERIMEE, []))
+
+# 17. Le modèle montre le fichier ET pose une question : il a fait son travail.
+verifier("un texte qui MONTRE le livrable n'est jamais remplacé",
+         not dement("Voici la liste. Merci de me communiquer vos retours.\n\n"
+                    + bloc_ui(FOURN), [res("liste_fournisseurs", SORTIE_F)]))
+
+# 18. Une suite proposée n'est pas un préalable réclamé.
+verifier("« voulez-vous que je l'envoie par mail ? » n'est pas un démenti",
+         not dement("90 fournisseurs trouvés. Voulez-vous que je l'envoie par mail ?",
+                    [res("liste_fournisseurs", SORTIE_F)]))
+
+# 19. Le branchement existe dans le code livré : le filet est câblé, pas
+#     seulement défini.
+_src = (racine / "agents" / "agent1.py").read_text(encoding="utf-8")
+verifier("rehydrate_node passe par le démenti du livrable",
+         "elif _redaction_dement_le_livrable(text" in _src)
 
 
 # ── routines : la colonne demandée, et le mail qu'on ne demande pas ────────

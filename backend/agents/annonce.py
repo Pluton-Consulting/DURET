@@ -211,6 +211,47 @@ def promesse_sans_suite(texte: str) -> bool:
     return t.endswith(":") or t.endswith(" :") or t.endswith("…") or t.endswith("...")
 
 
+# ── LA QUESTION QUI DÉMENT LE TRAVAIL FAIT ──────────────────────────────────
+# Relevé en production le 30/08 : « fais-moi un excel des fournisseurs avec mon
+# mail ». Le skill tourne, l'Excel sort avec la bonne adresse — et la rédaction
+# finale RECOPIE une vieille réponse de l'historique : « j'ai besoin de votre
+# adresse email exacte… Une fois communiqué, je créerai un fichier Excel. » Le
+# fichier s'affichait (filet des livrables), mais SOUS un texte qui promettait
+# de le créer plus tard et réclamait une information déjà utilisée.
+#
+# Une question posée à l'utilisateur est légitime en général — `est_une_annonce`
+# refuse d'y voir une promesse, à juste titre. Mais une question qui réclame un
+# PRÉALABLE (« j'ai besoin de », « quel est votre », « une fois communiqué »)
+# ne l'est plus quand le tour vient de LIVRER ce travail : elle dément un fait.
+# Ce prédicat ne juge donc JAMAIS seul : l'appelant ne s'en sert que si un
+# livrable réel a été produit à ce tour et n'apparaît pas dans la rédaction —
+# c'est alors la sortie du skill qui s'affiche (rendu de secours), pas la
+# question périmée.
+_PREALABLE = re.compile(
+    r"j['’]ai besoin d|j['’]aurais besoin d"
+    r"|il me (?:faut|manque)"
+    r"|je ne (?:peux|pourrai) pas (?:creer|produire|generer|faire|fabriquer"
+    r"|etablir|remplir|completer)"
+    r"|je ne connais pas votre|je ne dispose pas de votre"
+    r"|quel(?:le)? est votre"
+    r"|(?:pouvez-vous|veuillez|merci de) (?:me |m['’])?"
+    r"(?:communiquer|fournir|donner|transmettre|indiquer|preciser)"
+    r"|une fois (?:communique|fourni|recu|transmis|renseigne)",
+    re.IGNORECASE)
+
+
+def reclame_un_prealable(texte: str) -> bool:
+    """Le texte réclame-t-il à l'utilisateur un PRÉALABLE au travail ?
+
+    Volontairement étroit : chaque motif exige que la phrase demande quelque
+    chose POUR faire, pas qu'elle pose une question quelconque. « Voulez-vous
+    que je l'envoie par mail ? » n'en est pas un — c'est une suite proposée.
+    """
+    if not isinstance(texte, str) or not texte:
+        return False
+    return bool(_PREALABLE.search(_sans_accent(texte)))
+
+
 def cloture_attendue(resultats) -> str | None:
     """L'action de fermeture qui manque, si un travail est resté ouvert.
 

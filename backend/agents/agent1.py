@@ -143,7 +143,7 @@ PLAFOND_RESULTAT_GENEREUX = 12000
 # insisterait sur un modèle qui ne veut pas, et la note de sortie explique alors
 # honnêtement pourquoi rien n'a été fait.
 from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_suite,
-                            options_proposees)
+                            options_proposees, reclame_un_prealable)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -1455,6 +1455,45 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     return texte
 
 
+def _redaction_dement_le_livrable(texte: str, resultats) -> bool:
+    """La rédaction réclame un préalable à un travail que le tour vient de LIVRER ?
+
+    LE CAS DU 30/08, sur le code pourtant corrigé du 29 : « excel des
+    fournisseurs avec mon mail », dans une VIEILLE conversation (66 messages)
+    pleine des réponses ratées d'avant le correctif. Le skill tourne, l'Excel
+    sort avec la bonne adresse — et la rédaction finale recopie mot pour mot
+    une vieille réponse de l'historique : « j'ai besoin de votre adresse email
+    professionnelle exacte… Une fois communiqué, je créerai un fichier Excel. »
+    Le filet des livrables affichait bien le fichier, mais SOUS ce texte qui le
+    dément — l'utilisateur lit une contradiction, et la question périmée entre
+    à nouveau dans l'historique, prête à être imitée au tour suivant.
+
+    Trois conditions, TOUTES nécessaires — c'est ce qui rend le filet sûr :
+      1. le texte réclame un préalable (`reclame_un_prealable`, motifs étroits) ;
+      2. un livrable RÉEL a été produit à ce tour (`_blocs_livrables`) ;
+      3. la rédaction ne montre PAS ce livrable (sinon le modèle a fait son
+         travail, et sa prose — même imparfaite — accompagne le fichier).
+    Alors la sortie du skill remplace la rédaction (rendu de secours) : c'est
+    elle qui va à l'écran ET dans l'historique, et l'historique guérit au lieu
+    de s'empoisonner.
+    """
+    import json as _j
+    if not reclame_un_prealable(texte):
+        return False
+    produits = _blocs_livrables(resultats)
+    if not produits:
+        return False
+    montres = set()
+    for brut in _BLOC_UI_RE.findall(texte or ""):
+        try:
+            bloc = _j.loads(brut)
+        except ValueError:
+            continue
+        if isinstance(bloc, dict):
+            montres.add(_reference_bloc(bloc))
+    return not any(_reference_bloc(p) in montres for p in produits)
+
+
 async def rehydrate_node(state: AgentState) -> dict:
     """Réinjecte les vraies entités dans la réponse via entity_map."""
     from security.anonymizer import anonymizer
@@ -1480,6 +1519,15 @@ async def rehydrate_node(state: AgentState) -> dict:
         secours = _rendu_de_secours(state.get("tool_results") or [])
         if secours:
             logger.info("Rédaction absente ou promesse : rendu de secours depuis le dernier skill réussi")
+            text = secours
+    elif _redaction_dement_le_livrable(text, state.get("tool_results") or []):
+        # LE DÉMENTI DU TRAVAIL FAIT : la rédaction réclame un préalable
+        # (« j'ai besoin de votre adresse ») alors que le livrable est produit
+        # et absent du texte. La question est périmée — souvent recopiée de
+        # l'historique — et la sortie du skill dit, elle, ce qui a été fait.
+        secours = _rendu_de_secours(state.get("tool_results") or [])
+        if secours:
+            logger.info("La rédaction réclamait un préalable alors que le livrable est produit : rendu de secours")
             text = secours
     # LE SECOND FILET, indépendant du premier : celui-ci ne juge pas la
     # rédaction, il vérifie que ce qui a été PRODUIT est bien à l'écran. Posé

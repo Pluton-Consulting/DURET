@@ -195,6 +195,9 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         # est reconnu comme définitif, l'essai ne coûte plus qu'un aller-retour.
         chain = [
             ("deepseek", s.model_deepseek_flash),          # tête tant que le petit Groq est indisponible
+            # Gemini léger : ~1 s au sondage du 30/08, et la seule clé encore
+            # vivante ce jour-là. Derrière DeepSeek (mesuré), devant le reste.
+            ("google", s.model_google_texte_leger),
             ("groq", s.model_groq_light),                  # le plus rapide quand la clé y donne accès
             ("openrouter", s.model_or_deepseek_flash),     # même modèle via la passerelle
             ("openrouter", s.model_or_free_a),
@@ -227,6 +230,10 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         chain = [
             ("groq", s.model_groq_large),
             ("deepseek", s.model_deepseek_flash),
+            # Gemini : rapide, français correct, et il TIENT le protocole
+            # d'action — le 30/08, seul LongCat restait et il n'y arrivait
+            # plus (livraisons fantômes, forçages sans bloc).
+            ("google", s.model_google_texte),
             ("openrouter", s.model_or_deepseek_flash),
             ("longcat", s.model_longcat),
             ("openrouter", s.model_primary),               # LongCat via la passerelle
@@ -246,6 +253,7 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
             ("deepseek", s.model_deepseek),                # V4 Pro — raisonnement
             ("openrouter", s.model_or_deepseek_pro),
             ("anthropic", s.model_anthropic_vision),
+            ("google", s.model_google_texte),
             ("groq", s.model_groq_large),
             ("longcat", s.model_longcat),
             ("openrouter", s.model_or_free_b),

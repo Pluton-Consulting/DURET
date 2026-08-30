@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # Second candidat Google, plus leger : au test, le premier a repondu 503
     # « forte demande » pendant que celui-ci lisait le plan en une seconde.
     model_google_vision_secours: str = "gemini-3.1-flash-lite"
+    # Gemini en TEXTE (cascade LIGHT/STANDARD/COMPLEX). Ajoute le 30/08, le jour
+    # ou TOUTES les autres cles etaient mortes (Groq 403 des la liste des
+    # modeles, OpenRouter 401, DeepSeek et Anthropic absentes) : la cle Google,
+    # elle, servait deja les visuels, la vision et les embeddings — et la sonde
+    # texte repondait en une seconde. Gemini suit le protocole d'action bien
+    # mieux que le dernier secours (LongCat) ; le disjoncteur gere 429 et 503.
+    model_google_texte: str = "gemini-flash-latest"
+    model_google_texte_leger: str = "gemini-flash-lite-latest"
 
     # Anthropic (optionnel) — vision agent 2 / palier COMPLEX si clé fournie
     anthropic_api_key: Optional[str] = None

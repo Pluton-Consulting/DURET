@@ -281,6 +281,72 @@ verifier("une invention qui désigne un fichier du fil est remplacée par le vra
          and "n'a pas été réellement produit" not in r, r[:300])
 
 
+# ── la livraison fantôme atteint le FORCEUR — le routage lui-même ──────────
+#    Trois tours de suite le 30/08 : le modèle prétend AU PASSÉ avoir produit
+#    le Word (« c'est bon, il est téléchargeable ») sans appeler un seul
+#    skill. `est_une_annonce` couvre le futur ; le passé doit partir au
+#    forceur, qui repart d'un contexte neuf.
+print()
+
+import re as _re
+import types as _types
+faux_proto = _types.ModuleType("skills.protocol")
+faux_proto.BLOC_ACTION_RE = _re.compile(r"```action\s*\{.*?\}\s*```", _re.S)
+faux_proto.BLOC_NATIF_RE = _re.compile(r"(?!x)x")
+faux_proto.BLOC_ACTION_TRONQUE_RE = _re.compile(r"(?!x)x")
+faux_proto.BALISAGE_OUTIL_RE = _re.compile(r"(?!x)x")
+sys.modules.setdefault("skills", _types.ModuleType("skills"))
+sys.modules["skills.protocol"] = faux_proto
+
+espace2 = dict(espace)
+espace2.update({
+    "est_une_annonce": _annonce.est_une_annonce,
+    "promesse_sans_suite": _annonce.promesse_sans_suite,
+    "cloture_attendue": _annonce.cloture_attendue,
+    "pretend_avoir_livre": _annonce.pretend_avoir_livre,
+    "demande_une_production": _annonce.demande_une_production,
+    "MAX_FORCAGES_PAR_TOUR": 2,
+})
+extraire(racine / "agents" / "agent1.py",
+         {"route_apres_llm", "_texte_visible", "_montre_un_fichier_du_fil"}, espace2)
+route = espace2["route_apres_llm"]
+
+# 22. Le tour exact : demande de production, prétention au passé, zéro action.
+verifier("« j'ai créé le document » sans production part au FORCEUR",
+         route({"llm_response": "C'est bon, le document Word a été créé et le "
+                                "fichier est téléchargeable.",
+                "query": "fais un word avec toutes les infos de l'entreprise",
+                "tool_results": [], "forcages": 0,
+                "messages": fil_fournisseurs}) == "forcer")
+
+# 23. La remontrance honnête : un VRAI fichier du fil sous la prétention.
+verifier("« voici le fichier » avec le vrai bloc du fil ne force RIEN",
+         route({"llm_response": "Voici le fichier demandé.\n\n" + bloc_ui(FOURN),
+                "query": "remontre-moi la liste des fournisseurs",
+                "tool_results": [], "forcages": 0,
+                "messages": fil_fournisseurs}) == "rehydrate")
+
+# 24. La clarification légitime sur une demande de production.
+verifier("une question de clarification n'est pas forcée",
+         route({"llm_response": "Quelles informations voulez-vous dans le document ?",
+                "query": "fais un word avec toutes les infos de l'entreprise",
+                "tool_results": [], "forcages": 0, "messages": []}) == "rehydrate")
+
+# 25. La vraie production : un livrable est sorti, rien à forcer.
+verifier("une production réelle passe sans forçage",
+         route({"llm_response": "Voici le fichier.\n\n" + bloc_ui(FOURN),
+                "query": "fais un excel des fournisseurs",
+                "tool_results": [res("liste_fournisseurs", SORTIE_F)],
+                "forcages": 0, "messages": []}) == "rehydrate")
+
+# 26. Le budget de forçage borne tout : pas de boucle infinie.
+verifier("budget épuisé : le tour se termine au lieu de boucler",
+         route({"llm_response": "Le document a été créé et est téléchargeable.",
+                "query": "fais un word avec les infos",
+                "tool_results": [], "forcages": 2,
+                "messages": []}) == "rehydrate")
+
+
 # ── routines : la colonne demandée, et le mail qu'on ne demande pas ────────
 espace_r = {"logging": __import__("logging"), "re": __import__("re"),
             "unicodedata": __import__("unicodedata")}

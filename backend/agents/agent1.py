@@ -143,7 +143,8 @@ PLAFOND_RESULTAT_GENEREUX = 12000
 # insisterait sur un modèle qui ne veut pas, et la note de sortie explique alors
 # honnêtement pourquoi rien n'a été fait.
 from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_suite,
-                            options_proposees, reclame_un_prealable)
+                            options_proposees, reclame_un_prealable,
+                            pretend_avoir_livre, demande_une_production)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -1475,6 +1476,28 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     return texte
 
 
+def _montre_un_fichier_du_fil(texte: str, state) -> bool:
+    """La réponse remontre-t-elle un VRAI fichier de la conversation ?
+
+    Sert à distinguer la remontrance honnête (« remontre-moi la liste » → le
+    bloc réel du fil, avec sa vraie référence) de la livraison fantôme : une
+    prétention accompagnée d'un fichier du fil est légitime, la même phrase
+    sans rien derrière ne l'est pas.
+    """
+    import json as _j
+    refs = {_reference_bloc(b) for b in fichiers_du_fil(state)} - {""}
+    if not refs:
+        return False
+    for brut in _BLOC_UI_RE.findall(texte or ""):
+        try:
+            bloc = _j.loads(brut)
+        except ValueError:
+            continue
+        if isinstance(bloc, dict) and _reference_bloc(bloc) in refs:
+            return True
+    return False
+
+
 def _redaction_dement_le_livrable(texte: str, resultats) -> bool:
     """La rédaction réclame un préalable à un travail que le tour vient de LIVRER ?
 
@@ -2138,7 +2161,31 @@ def route_apres_llm(state: AgentState) -> str:
     # La détection doit vivre ICI et nulle part ailleurs : sans bloc d'action,
     # `tools` n'est JAMAIS appelé, donc un contrôle placé là-bas ne s'exécute
     # pas — il en avait tout l'air, et c'est ce qui l'a rendu difficile à voir.
-    if est_une_annonce(texte) or promesse_sans_suite(texte) or not _texte_visible(texte):
+    # LA LIVRAISON FANTÔME. Relevée le 30/08, trois tours de suite : « fais un
+    # word avec toutes les infos de l'entreprise » → aucun skill appelé, et
+    # une réponse AU PASSÉ (« voici le document », « il est téléchargeable »)
+    # — au pire avec un VRAI fichier du fil collé en guise de preuve, l'Excel
+    # de la veille déguisé en Word. `est_une_annonce` couvre le futur ; le
+    # passé ne l'était pas, et le forceur — l'outil exact de ce défaut, qui
+    # repart d'un contexte NEUF, immunisé contre un historique rempli de
+    # fausses réussites que le modèle imite — ne se déclenchait jamais.
+    #
+    # Deux signaux, tous deux soumis à « RIEN n'a été produit ce tour » :
+    #   · la demande réclamait la CRÉATION d'un fichier et il n'existe pas —
+    #     sauf question de clarification (elle attend une réponse) ;
+    #   · la réponse PRÉTEND livrer — sauf si elle remontre honnêtement un
+    #     fichier réel du fil (« remontre-moi la liste » reste légitime).
+    visible = _texte_visible(texte)
+    fantome = (
+        not _blocs_livrables(state.get("tool_results") or [])
+        and not state.get("pending_action")
+        and ((demande_une_production(state.get("query") or "") and "?" not in visible)
+             or (pretend_avoir_livre(visible)
+                 and not _montre_un_fichier_du_fil(visible, state))))
+    if fantome:
+        logger.info("Livraison fantôme : la réponse prétend livrer sans production — forçage")
+
+    if est_une_annonce(texte) or promesse_sans_suite(texte) or not visible or fantome:
         # L'ORDRE COMPTE, ET IL A ÉTÉ FAUX UNE SOIRÉE. Première version : une
         # annonce après un résultat réussi allait droit à la rédaction. Or
         # l'annonce porte souvent sur l'étape SUIVANTE (« je lance le tirage »
@@ -2148,7 +2195,7 @@ def route_apres_llm(state: AgentState) -> str:
         # rédige que quand forcer n'est plus permis, et seulement s'il y a
         # quelque chose à rédiger. Une réponse VIDE après un résultat compte
         # comme une promesse : elle n'a rien montré non plus.
-        if _texte_visible(texte) and (state.get("forcages") or 0) < MAX_FORCAGES_PAR_TOUR:
+        if visible and (state.get("forcages") or 0) < MAX_FORCAGES_PAR_TOUR:
             return "forcer"
         if any(r.get("ok") for r in (state.get("tool_results") or [])):
             return "rediger"

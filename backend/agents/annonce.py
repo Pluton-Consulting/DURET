@@ -252,6 +252,72 @@ def reclame_un_prealable(texte: str) -> bool:
     return bool(_PREALABLE.search(_sans_accent(texte)))
 
 
+# ── LA LIVRAISON FANTÔME ─────────────────────────────────────────────────────
+# Relevé en production le 30/08, trois tours de suite : « fais un word avec
+# toutes les infos de l'entreprise » → le modèle répond AU PASSÉ (« voici le
+# document », « il est téléchargeable ») sans avoir appelé le moindre skill.
+# `est_une_annonce` ne pouvait rien y faire : elle reconnaît le futur (« je
+# vais créer »), pas la prétention d'avoir déjà fait. Le forceur — l'outil
+# exact de ce défaut, qui repart d'un contexte NEUF, immunisé contre un
+# historique plein de fausses réussites — ne se déclenchait donc jamais.
+#
+# Deux prédicats complémentaires, et NI L'UN NI L'AUTRE ne juge seul :
+# l'appelant exige en plus qu'AUCUN livrable n'ait été produit au tour
+# (`_blocs_livrables`) — une vraie livraison ne déclenche rien.
+#
+#   · `pretend_avoir_livre` — le texte AFFIRME qu'un fichier existe. Motifs
+#     volontairement stricts (un nom de fichier ou « télécharger » exigé) :
+#     « il est disponible mardi » parle d'un rendez-vous, pas d'un document.
+#   · `demande_une_production` — la DEMANDE du tour réclame la création d'un
+#     fichier. C'est le seul signal qui attrape le pire cas observé : le
+#     modèle colle un VRAI fichier du fil (l'Excel de la veille) en le
+#     faisant passer pour le Word demandé — bloc réel, prétention réelle,
+#     production nulle. Aucun examen de la réponse ne peut le voir ; la
+#     demande, si.
+# Chaque motif du passé EXIGE un nom de fichier : « voici la liste » est
+# aussi la phrase normale d'un tableau à l'écran, « je l'ai fait » peut
+# répondre à n'importe quoi — les compter ferait forcer des tours justes.
+_NOM_FICHIER = r"(?:documents?|fichiers?|word|excel|pdf|rapports?|docx|xlsx)"
+_PRETEND_LIVRE = re.compile(
+    rf"voici (?:le|la|votre|ton|un|une) [^.!?\n]{{0,40}}?{_NOM_FICHIER}"
+    rf"|{_NOM_FICHIER}\b[^.!?\n]{{0,60}}?(?:est|sont) "
+    r"(?:pret|prete|prets|disponible|telechargeable|cree|genere"
+    r"|produit|termine|finalise)"
+    rf"|{_NOM_FICHIER}\b[^.!?\n]{{0,40}}?(?:a|ont) ete "
+    r"(?:cree|genere|produit|finalise|prepare|redige)"
+    rf"|j['’]ai (?:cree|genere|produit|prepare|finalise|redige)"
+    rf" [^.!?\n]{{0,30}}?{_NOM_FICHIER}"
+    r"|vous pouvez (?:le|la|les) telecharger"
+    r"|pret[es]* a etre telecharge",
+    re.IGNORECASE)
+
+_DEMANDE_PRODUCTION = re.compile(
+    r"\b(?:fais|faire|cree|creer|produis|produire|genere|generer|redige"
+    r"|rediger|prepare|preparer|etablis|etablir|exporte|exporter)\b"
+    r"[^.!?\n]{0,80}?\b(?:word|docx|excel|xlsx|pdf|documents?|fichiers?"
+    r"|rapports?|tableur)\b",
+    re.IGNORECASE)
+
+
+def pretend_avoir_livre(texte: str) -> bool:
+    """Le texte affirme-t-il qu'un fichier existe ou est téléchargeable ?"""
+    if not isinstance(texte, str) or not texte:
+        return False
+    return bool(_PRETEND_LIVRE.search(_sans_accent(texte)))
+
+
+def demande_une_production(texte: str) -> bool:
+    """La demande réclame-t-elle la CRÉATION d'un fichier ?
+
+    Volontairement bornée aux noms de fichiers : « sors-moi la liste des
+    clients » se répond très bien par un tableau à l'écran, et forcer une
+    production là-dessus changerait un comportement qui convient.
+    """
+    if not isinstance(texte, str) or not texte:
+        return False
+    return bool(_DEMANDE_PRODUCTION.search(_sans_accent(texte)))
+
+
 def cloture_attendue(resultats) -> str | None:
     """L'action de fermeture qui manque, si un travail est resté ouvert.
 

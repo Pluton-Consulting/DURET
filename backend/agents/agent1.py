@@ -1170,6 +1170,74 @@ async def tools_node(state: AgentState, config=None) -> dict:
 
 
 
+async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> str:
+    """Fait ÉCRIRE la réponse par le MODÈLE à partir des résultats des skills.
+
+    RÈGLE DE NOA DU 30/08, posée après l'avoir vue échouer en production :
+    l'assistant ne parle JAMAIS avec des phrases écrites dans le code — même
+    en secours, même après validation. Un texte préécrit qui dit « c'est
+    prêt » au-dessus d'un tour qui a échoué est pire qu'un silence : il
+    maquille. Les mécaniques gardent DEUX territoires : les blocs d'écran
+    (aperçus, fichiers — des composants, pas des phrases) et le routage
+    (forceur). Toute prose vient d'ici.
+
+    Contexte volontairement RÉDUIT (comme le forceur) : la demande, les
+    résultats MASQUÉS, une consigne au passé composé — pas l'historique du
+    fil, qui est précisément ce qui apprend au modèle à mentir. Rend "" si
+    aucun fournisseur ne répond : l'appelant affiche alors les blocs seuls,
+    sans texte — jamais une phrase de remplacement.
+    """
+    from llm.router import get_llm, LLMTier as _T
+    from langchain_core.messages import HumanMessage as _H
+
+    lignes = []
+    for r in (resultats or []):
+        if not isinstance(r, dict):
+            continue
+        brut = str(r.get("resultat_masque") or "")[:800]
+        lignes.append(f"- {r.get('skill') or '?'} : "
+                      f"{'réussie' if r.get('ok') else 'EN ÉCHEC'}\n  {brut}")
+
+    if lignes:
+        consigne = (
+            "Tu rédiges la réponse FINALE d'un assistant d'entreprise, en "
+            "français. Les actions ci-dessous ont DÉJÀ été exécutées : écris au "
+            "passé composé ce qui a été fait et ce que montrent les résultats — "
+            "chiffres, comptes et noms recopiés EXACTEMENT des résultats, "
+            "balises [XXX_n] recopiées telles quelles. N'annonce rien, ne "
+            "promets rien, n'invente ni fichier ni référence, ne propose pas la "
+            "suite. Si une action a ÉCHOUÉ, dis-le simplement avec sa raison. "
+            "N'écris AUCUN bloc de code ni ```ui : les aperçus et fichiers sont "
+            "ajoutés automatiquement sous ton texte. 2 à 6 phrases, sans "
+            "salutation.")
+        corps = (f"Demande de l'utilisateur :\n{demande}\n\n"
+                 "Actions exécutées à ce tour, et leurs résultats :\n"
+                 + "\n".join(lignes))
+    else:
+        # Rien n'a abouti et rien n'a été rédigé : le modèle le DIT, dans ses
+        # mots — pas une excuse préécrite qui accuse la demande.
+        consigne = (
+            "Tu rédiges la réponse d'un assistant d'entreprise, en français. "
+            "Ce tour-ci, la demande n'a pas pu être traitée : aucune action n'a "
+            "abouti et aucune réponse n'a pu être formulée. Dis-le honnêtement "
+            "en une ou deux phrases, sans accuser l'utilisateur ni t'excuser "
+            "platement, et sans promettre quoi que ce soit.")
+        corps = f"Demande de l'utilisateur :\n{demande}"
+
+    try:
+        reponse = await get_llm(_T.STANDARD).ainvoke(
+            [_H(content=consigne + "\n\n" + corps)])
+        texte = _texte_visible(str(getattr(reponse, "content", "") or ""))
+        # Un modèle qui répond ici par une promesse ou une question n'a pas
+        # fait le travail : on préfère les blocs seuls à une rechute.
+        if texte and not est_une_annonce(texte) and not promesse_sans_suite(texte):
+            return texte
+    except Exception as e:  # noqa: BLE001 — le secours ne casse jamais un tour
+        logger.info("Rédaction de secours par le modèle indisponible (%s) : %s",
+                    cause or "?", str(e)[:120])
+    return ""
+
+
 def _tracer_filet(state, filet: str, cause: str, **details) -> None:
     """Trace un FILET MÉCANIQUE dans l'audit — visible en Console développeur.
 
@@ -1214,12 +1282,13 @@ def _rendu_de_secours(resultats) -> str:
     une réponse acceptée, et le tour suivant l'imite — chaque échec enseigne le
     suivant. Le docstring du forceur l'avait prédit ; les traces le confirment.
 
-    On cesse donc de dépendre du modèle pour MONTRER. Les skills fréquents
-    produisent déjà leur propre affichage (`message_final`, `bloc_ui`, une
-    liste de messages) : c'est le contrat des actions validées, qu'on étend
-    ici aux actions de lecture. Si la dernière passe de rédaction n'est qu'une
-    promesse ou du vide, on rend la sortie du dernier skill réussi, telle
-    quelle — et c'est ELLE qui va dans l'historique, pas la promesse.
+    On cesse donc de dépendre du modèle pour MONTRER. Depuis le 30/08 (règle
+    de Noa : aucune phrase préécrite dans le chat), cette fonction ne rend
+    plus QUE les BLOCS d'écran du dernier skill réussi — tableaux, cartes
+    mail, planches — sans une ligne de prose : le `message_final` et les
+    comptes du skill servent d'ENTRÉE à `_rediger_par_le_modele`, qui écrit
+    le texte, et n'atteignent plus jamais l'écran tels quels. C'est ce
+    couple (prose du modèle + blocs mécaniques) qui va dans l'historique.
     """
     import json as _j
     for r in reversed(list(resultats or [])):
@@ -1237,17 +1306,7 @@ def _rendu_de_secours(resultats) -> str:
             continue
         if not isinstance(d, dict):
             continue
-        # Un refus HONNÊTE du skill (« ce nom n'existe pas », « quota épuisé »)
-        # vaut mieux qu'une promesse : on le rend tel quel.
-        if d.get("trouve") is False or d.get("genere") is False:
-            texte = str(d.get("message") or "").strip()
-            if texte:
-                return texte
-            continue
         parties = []
-        texte = str(d.get("message_final") or d.get("compte") or d.get("message") or "").strip()
-        if texte:
-            parties.append(texte)
         bloc = d.get("bloc_ui")
         if isinstance(bloc, dict) and bloc.get("type"):
             parties.append("```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```")
@@ -1599,21 +1658,29 @@ async def rehydrate_node(state: AgentState) -> dict:
     # réussi : on montre la sortie du skill (voir _rendu_de_secours). C'est
     # aussi ce texte-là qui entrera dans l'historique — jamais la promesse.
     if not text or est_une_annonce(text) or promesse_sans_suite(text):
-        secours = _rendu_de_secours(state.get("tool_results") or [])
-        if secours:
-            logger.info("Rédaction absente ou promesse : rendu de secours depuis le dernier skill réussi")
-            _tracer_filet(state, "rendu_de_secours", "redaction_absente_ou_promesse")
-            text = secours
+        besoin = "redaction_absente_ou_promesse"
     elif _redaction_dement_le_livrable(text, state.get("tool_results") or []):
         # LE DÉMENTI DU TRAVAIL FAIT : la rédaction réclame un préalable
         # (« j'ai besoin de votre adresse ») alors que le livrable est produit
         # et absent du texte. La question est périmée — souvent recopiée de
-        # l'historique — et la sortie du skill dit, elle, ce qui a été fait.
-        secours = _rendu_de_secours(state.get("tool_results") or [])
-        if secours:
-            logger.info("La rédaction réclamait un préalable alors que le livrable est produit : rendu de secours")
-            _tracer_filet(state, "rendu_de_secours", "la_redaction_dement_le_livrable")
-            text = secours
+        # l'historique.
+        besoin = "la_redaction_dement_le_livrable"
+    if besoin:
+        # RÈGLE DE NOA DU 30/08 : la prose de remplacement vient du MODÈLE
+        # (`_rediger_par_le_modele`, contexte réduit, résultats masqués) — la
+        # mécanique n'apporte que les BLOCS d'écran. Si aucun fournisseur ne
+        # répond, les blocs s'affichent seuls : jamais une phrase préécrite.
+        resultats = state.get("tool_results") or []
+        prose = await _rediger_par_le_modele(
+            state.get("anonymized_query") or state.get("query", ""),
+            resultats, besoin)
+        blocs = _rendu_de_secours(resultats)
+        if prose or blocs:
+            logger.info("Rendu de secours (%s) : prose du modèle %s, blocs %s",
+                        besoin, "oui" if prose else "non", "oui" if blocs else "non")
+            _tracer_filet(state, "rendu_de_secours", besoin,
+                          prose_modele=bool(prose), blocs=bool(blocs))
+            text = (prose + ("\n\n" + blocs if blocs else "")).strip()
     # LE SECOND FILET, indépendant du premier : celui-ci ne juge pas la
     # rédaction, il vérifie que ce qui a été PRODUIT est bien à l'écran. Posé
     # AVANT la réhydratation, donc le bloc entre aussi dans l'historique du fil
@@ -1631,27 +1698,32 @@ async def rehydrate_node(state: AgentState) -> dict:
         # dit ce qui EXISTE — un document produit se retrouve dans l'historique
         # du fil, encore faut-il savoir qu'il est là.
         faits = [r for r in (state.get("tool_results") or []) if r.get("ok")]
+        demande = state.get("anonymized_query") or state.get("query", "")
         if faits:
-            text = (f"J'ai bien mené les {len(faits)} actions de cette demande, "
-                    "mais je n'ai pas réussi à en rédiger le compte rendu. "
-                    "Demandez-moi de vous présenter le résultat : le travail, lui, "
-                    "est fait.")
+            # RÈGLE DE NOA DU 30/08 : plus de phrase préécrite ici non plus —
+            # le MODÈLE écrit le compte rendu depuis les résultats masqués ;
+            # à défaut, les blocs des skills s'affichent seuls.
+            text = (await _rediger_par_le_modele(
+                        demande, faits, "aucune_redaction_malgre_actions_reussies")
+                    or _rendu_de_secours(faits))
             _tracer_filet(state, "compte_rendu_indisponible",
                           "aucune_redaction_malgre_actions_reussies",
-                          actions_reussies=len(faits))
-            # LA PROMESSE DOIT ÊTRE TENABLE. Ce message disait « demandez-moi le
-            # résultat » alors que les résultats d'outils ne vivent que le temps
-            # d'un tour : au « présente le résultat » suivant, le modèle n'avait
-            # rien à présenter, et montrait autre chose — relevé en production,
-            # une liste de clients demandée, trois documents sans rapport rendus.
-            # On porte donc ces résultats (masqués, taillés) au tour suivant.
+                          actions_reussies=len(faits), prose_modele=bool(text))
+            # LA PROMESSE DOIT ÊTRE TENABLE : les résultats d'outils ne vivent
+            # que le temps d'un tour — relevé en production, une liste de
+            # clients demandée, trois documents sans rapport rendus au tour
+            # suivant. On porte donc ces résultats (masqués, taillés) au tour
+            # suivant.
             resultats_en_attente = [
                 {"skill": r.get("skill"), "args": r.get("args") or {},
                  "resultat_masque": str(r.get("resultat_masque") or "")[:6000]}
                 for r in faits[-4:]]
         else:
-            text = ("Je n'ai pas réussi à formuler de réponse pour cette demande. "
-                    "Pouvez-vous la reformuler ?")
+            # Rien n'a abouti, rien n'a été rédigé : l'aveu vient du modèle,
+            # dans ses mots — pas d'une excuse préécrite qui accuse la demande.
+            text = await _rediger_par_le_modele(demande, [], "aucune_reponse")
+            _tracer_filet(state, "aveu_d_echec", "aucune_action_aucune_redaction",
+                          prose_modele=bool(text))
 
     entity_map = state.get("entity_map") or {}
     # Restreint aux jetons envoyés ce tour-ci (cf. turn_placeholders dans llm_node).

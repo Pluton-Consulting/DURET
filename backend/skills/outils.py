@@ -187,8 +187,11 @@ SKILLS = {
     "nas_deposer_document": Declaration(
         fonction=nas_deposer_document,
         description=("FINALISE un document en cours et le DEPOSE sur le serveur, "
-                     "en un geste. `dossier` accepte le NOM (ex. « Drive »). "
-                     "Ecrit sur le serveur : demande une validation humaine"),
+                     "en un geste — UNIQUEMENT si on demande de le RANGER sur le "
+                     "serveur. Pour donner ou telecharger un document dans le "
+                     "chat, `terminer_document` suffit : le fichier y est deja. "
+                     "`dossier` accepte le NOM (ex. « Drive »). Ecrit sur le "
+                     "serveur : demande une validation humaine"),
         requis=["document_id", "dossier"], optionnels=["nom"],
         # Le depot ecrit sur le serveur de l'entreprise : effet EXTERNE, donc
         # validation humaine — composer deux gestes ne compose pas les droits.

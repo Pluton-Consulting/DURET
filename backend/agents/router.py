@@ -157,9 +157,12 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     """
     action = state.get("pending_action") or {}
     if state.get("validation_status") != "approved" or not action.get("skill"):
+        # Refus : AUCUNE phrase n'est ajoutée (règle de Noa, 30/08 — pas de
+        # message préécrit dans le chat). La carte de validation porte déjà
+        # l'état « refusée » à l'écran, et le texte du modèle qui proposait
+        # l'action reste tel quel.
         return {"pending_action": None,
-                "final_response": ((state.get("final_response") or "").rstrip()
-                                   + "\n\n(Action refusée : rien n'a été exécuté.)").strip()}
+                "final_response": (state.get("final_response") or "").strip() or None}
 
     from tasks.identity import charger_executant
     from skills.executor import execute_skill, hash_payload, SkillError, expert_du_skill
@@ -202,12 +205,13 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                          "validated_by": state.get("validated_by")},
             trigger={"type": "resume", "id": state.get("thread_id")},
         )
-        message = _message_apres_action(action["skill"], resultat)
+        message = await _reponse_apres_action(state, action["skill"], resultat)
     except SkillError as e:
-        message = f"Action non exécutée : {e}"
+        message = await _reponse_apres_echec(state, action["skill"], str(e))
     except Exception as e:  # noqa: BLE001
         logger.warning("Échec de l'action %s : %s", action.get("skill"), e)
-        message = f"Action non exécutée : {getattr(e, 'detail', None) or e}"
+        message = await _reponse_apres_echec(
+            state, action["skill"], str(getattr(e, "detail", None) or e))
 
     sortie = {"pending_action": None,
               "final_response": ((state.get("final_response") or "").rstrip()
@@ -261,38 +265,100 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     return sortie
 
 
-def _message_apres_action(skill: str, resultat: dict) -> str:
+async def _reponse_apres_action(state: AgentState, skill: str, resultat: dict) -> str:
     """Ce que l'utilisateur LIT après une action validée.
 
-    Le nœud disait « Action exécutée après validation » et JETAIT la sortie du
-    skill : un document produit, une image tirée n'atteignaient jamais l'écran,
-    la seule trace en étant une phrase administrative. Corrigé chez le premier
-    client le 22/08 ; ce projet-ci n'avait reçu que la moitié du correctif, et
-    la variable `resultat` y était même LUE plus bas sans avoir jamais été
-    écrite — un NameError avalé par le `except` qui suit, donc un bloc d'écran
-    qui n'entrait jamais dans l'historique, en silence.
+    Deux époques. D'abord le nœud jetait la sortie du skill (« Action exécutée
+    après validation ») : un visuel facturé n'atteignait jamais l'écran. Puis
+    le `message_final` du skill s'affichait tel quel — une phrase écrite dans
+    le code. Règle de Noa du 30/08 : la PROSE vient du MODÈLE, la mécanique
+    n'apporte que le BLOC d'écran, qui reste restitué tel quel (c'est lui, la
+    preuve de ce qui a été fait — un composant, pas une phrase).
 
-    Aucun modèle ne repasse ici (la reprise rend la main telle quelle) : le
-    contrat est donc MÉCANIQUE. Un skill qui veut parler à l'utilisateur rend
-    `message_final` (du texte) et, s'il a quelque chose à MONTRER, `bloc_ui`
-    (l'objet d'un bloc ```ui) : le nœud les restitue tels quels, et l'écran
-    fait le reste. Sans eux, la phrase générique demeure.
+    La sortie d'un skill validé n'est PAS masquée (elle n'est jamais partie au
+    modèle) : on la MASQUE donc avec la carte cumulative du fil avant l'appel,
+    et la prose revient réhydratée — même aller-retour que le reste du
+    système, mêmes garde-fous (un jeton orphelin devient [À COMPLÉTER]).
+    Si aucun fournisseur ne répond, le bloc s'affiche seul.
     """
     import json as _json
+    from security.anonymizer import anonymizer
+    from agents.agent1 import _rediger_par_le_modele
+
     sortie = (resultat or {}).get("output") or {}
     if not isinstance(sortie, dict):
-        return f"Action « {skill} » exécutée après validation."
-    # `message_final` d'abord (le skill parle à l'utilisateur), puis `message`
-    # (un échec expliqué : quota, crédit, service coupé) : sans ce repli, une
-    # action qui échouait APRÈS validation affichait « exécutée après
-    # validation » — un mensonge par omission.
-    message = str(sortie.get("message_final") or "").strip() \
-        or str(sortie.get("message") or "").strip() \
-        or f"Action « {skill} » exécutée après validation."
+        sortie = {}
     bloc = sortie.get("bloc_ui")
+
+    prose = ""
+    if skill == "proposer_plan":
+        # Un plan approuvé rouvre le travail et sa réponse est aussitôt
+        # remplacée (final_response remis à None plus haut) : payer un appel
+        # modèle pour une prose jetée serait du gâchis — le bloc suffit.
+        import json as _json2
+        if isinstance(bloc, dict) and bloc.get("type"):
+            return "```ui\n" + _json2.dumps(bloc, ensure_ascii=False) + "\n```"
+        return ""
+    try:
+        # Les champs adressés au modèle rédacteur ou à l'écran ne sont pas des
+        # faits à raconter : on les écarte avant de masquer.
+        donnees = {k: v for k, v in sortie.items()
+                   if k not in ("bloc_ui", "a_faire", "note", "a_savoir")}
+        brut = _json.dumps(donnees, ensure_ascii=False, default=str)[:1200]
+        carte = dict(state.get("entity_map") or {})
+        masque, carte = anonymizer.anonymize(brut, carte)
+        prose = await _rediger_par_le_modele(
+            state.get("anonymized_query") or "",
+            [{"skill": skill, "ok": True, "resultat_masque": masque}],
+            "action_validee")
+        if prose:
+            prose = anonymizer.rehydrate(prose, carte)
+            for jeton in anonymizer.find_placeholders(prose):
+                prose = prose.replace(jeton, "[À COMPLÉTER]")
+    except Exception as e:  # noqa: BLE001 — la rédaction ne casse jamais la reprise
+        logger.info("Prose post-validation indisponible (%s) : %s", skill, str(e)[:120])
+        prose = ""
+
+    message = prose
     if isinstance(bloc, dict) and bloc.get("type"):
-        message += "\n\n```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```"
+        message = ((message + "\n\n") if message else "") \
+            + "```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```"
+    if not message:
+        # MÊME EXCEPTION ASSUMÉE que pour l'échec : une action EXTERNE validée
+        # a eu lieu (un mail est parti, un fichier est déposé) — son issue DOIT
+        # se lire, même cascade morte. Sans prose et sans bloc, le compte
+        # rendu du skill est le dernier témoin ; l'invisible serait un
+        # mensonge par omission.
+        message = str(sortie.get("message_final") or sortie.get("message") or "").strip()
     return message
+
+
+async def _reponse_apres_echec(state: AgentState, skill: str, erreur: str) -> str:
+    """L'échec d'une action validée, dit par le MODÈLE — avec un repli, lui.
+
+    Seule exception assumée à « aucun texte hors modèle » : si toute la
+    cascade est morte, l'erreur BRUTE du skill s'affiche quand même. Un tirage
+    facturé qui a échoué, un dépôt refusé, un envoi impossible DOIVENT se
+    lire — un échec invisible est pire qu'une phrase imparfaite.
+    """
+    from security.anonymizer import anonymizer
+    from agents.agent1 import _rediger_par_le_modele
+
+    try:
+        carte = dict(state.get("entity_map") or {})
+        masque, carte = anonymizer.anonymize(str(erreur)[:400], carte)
+        prose = await _rediger_par_le_modele(
+            state.get("anonymized_query") or "",
+            [{"skill": skill, "ok": False, "resultat_masque": masque}],
+            "echec_apres_validation")
+        if prose:
+            prose = anonymizer.rehydrate(prose, carte)
+            for jeton in anonymizer.find_placeholders(prose):
+                prose = prose.replace(jeton, "[À COMPLÉTER]")
+            return prose
+    except Exception as e:  # noqa: BLE001
+        logger.info("Prose d'échec indisponible (%s) : %s", skill, str(e)[:120])
+    return str(erreur)
 
 
 def route_apres_gate(state: AgentState) -> str:

@@ -263,9 +263,13 @@ SKILLS = {
         libelle="je cherche un fichier sur le serveur"),
     "nas_deposer": Declaration(
         fonction=nas_deposer,
-        description=("DEPOSE sur le serveur un fichier deja produit. Ecrit sur "
-                     "le serveur : validation humaine. N'ecrase jamais. Aucune "
-                     "suppression ni renommage n'est possible : ne le promets pas"),
+        description=("DEPOSE sur le serveur un fichier deja produit, UNIQUEMENT "
+                     "pour le RANGER dans le classement de l'entreprise. Un "
+                     "document produit est DEJA telechargeable dans le chat : ne "
+                     "depose JAMAIS pour « donner », « montrer » ou « telecharger » "
+                     "un fichier. Ecrit sur le serveur : validation humaine. "
+                     "N'ecrase jamais. Aucune suppression ni renommage n'est "
+                     "possible : ne le promets pas"),
         requis=["dossier", "document_id"], optionnels=["nom"],
         # Écrire sur le serveur de l'entreprise sort du périmètre de
         # l'application : effet EXTERNE, validation humaine obligatoire.

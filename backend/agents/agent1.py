@@ -1403,11 +1403,10 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     if not connus:
         return texte
     references = {_reference_bloc(b) for b in connus}
-    invente = False
+    inventes: list[dict] = []   # les blocs effacés, GARDÉS pour juger le repli
     affiches: set[str] = set()  # les livrables GARDÉS dans le texte, par référence
 
     def _trier(m):
-        nonlocal invente
         try:
             bloc = _j.loads(m.group(1))
         except ValueError:
@@ -1421,7 +1420,7 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
             # de mémoire (URL morte, image absente) ou c'est une version
             # périmée de ce que le tour vient de refaire. On l'efface.
             if ref not in references:
-                invente = True
+                inventes.append(bloc)
                 return ""
             # Le MÊME fichier écrit deux fois par le modèle : un seul aperçu.
             if ref in affiches:
@@ -1431,17 +1430,38 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
         # Une vignette qui parle d'un fichier qu'on tient vraiment : on la
         # remplace plus bas par le bloc réel, téléchargeable et prévisualisable.
         if type_ == "doc" and not bloc.get("url") and _designe_le_meme(bloc, connus):
-            invente = True
+            inventes.append(bloc)
             return ""
         return m.group(0)
 
     texte = _BLOC_UI_RE.sub(_trier, texte).strip()
 
     # Ce que le tour a produit s'affiche toujours ; si le modèle a inventé une
-    # carte à la place d'un fichier du fil, on restitue ce fichier-là.
+    # carte à la place d'un fichier du fil, on restitue ce fichier-là — MAIS
+    # SEULEMENT si l'invention le DÉSIGNE. Relevé en production le 30/08,
+    # 13:34 : « fais un word avec les infos de l'entreprise » — aucun skill
+    # n'a tourné (routage à terre), le modèle a prétendu l'avoir fait avec un
+    # bloc inventé, et le repli, écrit pour « remontre-moi cette liste », a
+    # restitué le DERNIER fichier du fil : l'Excel des fournisseurs, sans
+    # aucun rapport. Corroborer une invention avec le mauvais fichier est
+    # pire que ne rien montrer.
     a_montrer = list(produits)
-    if invente and not a_montrer and du_fil:
-        a_montrer = [du_fil[-1]]
+    if inventes and not a_montrer and du_fil:
+        correspondants = [b for b in du_fil
+                          if any(_meme_livrable(b, inv) for inv in inventes)]
+        if correspondants:
+            a_montrer = [correspondants[-1]]
+        else:
+            # L'invention ne désigne RIEN qu'on tienne : le fichier annoncé
+            # n'existe pas. On le dit — sinon la prose du modèle continue de
+            # promettre un document que l'écran ne montre pas.
+            logger.info("Livrable inventé sans équivalent réel : %s",
+                        [str(i.get("nom") or i.get("name") or i.get("titre") or "?")[:60]
+                         for i in inventes])
+            texte = (texte + "\n\nLe fichier annoncé ci-dessus n'a pas été "
+                     "réellement produit : rien n'a été créé à ce tour. "
+                     "Redemandez-le en un message (« produis ce document ») "
+                     "et il sera créé pour de vrai.").strip()
     for bloc in a_montrer:
         ref = _reference_bloc(bloc)
         # `affiches` et non une sous-chaîne : un modèle qui échappe les barres

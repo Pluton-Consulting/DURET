@@ -249,6 +249,38 @@ verifier("rehydrate_node passe par le démenti du livrable",
          "elif _redaction_dement_le_livrable(text" in _src)
 
 
+# ── le mauvais fichier du 30/08, 13:34 : une invention ne se corrige pas ───
+#    avec N'IMPORTE quel fichier. « Fais un word avec les infos de
+#    l'entreprise » : rien n'a été produit (routage à terre), le modèle a
+#    prétendu l'avoir fait avec un bloc inventé, et le repli a restitué le
+#    dernier fichier du fil — l'Excel des fournisseurs, sans aucun rapport.
+print()
+
+fil_fournisseurs = [_Msg("90 fournisseurs.\n\n" + bloc_ui(FOURN))]
+
+# 20. Le cas réel : l'invention ne désigne rien qu'on tienne → RIEN ne
+#     s'affiche, et l'écran dit que le fichier n'existe pas.
+menteur = ("Voici le document avec toutes les informations de l'entreprise :\n\n"
+           + bloc_ui({"type": "fichier", "url": "/api/documents/INVENTE",
+                      "nom": "infos_entreprise.docx",
+                      "titre": "Informations de l'entreprise"}))
+r = livrables(menteur, {"tool_results": [], "messages": fil_fournisseurs})
+verifier("une invention sans rapport ne restitue PAS le dernier fichier du fil",
+         FOURN["url"] not in r and "INVENTE" not in r, r[:300])
+verifier("et l'écran DIT que rien n'a été produit",
+         "n'a pas été réellement produit" in r, r[:300])
+
+# 21. « Remontre-moi la liste » : l'invention désigne LE MÊME fichier — le
+#     repli d'origine reste entier, le vrai fichier revient.
+meme = ("La voici :\n\n"
+        + bloc_ui({"type": "fichier", "url": "/api/documents/URL-REINVENTEE",
+                   "nom": "fournisseurs.xlsx", "titre": "Liste des fournisseurs"}))
+r = livrables(meme, {"tool_results": [], "messages": fil_fournisseurs})
+verifier("une invention qui désigne un fichier du fil est remplacée par le vrai",
+         FOURN["url"] in r and "URL-REINVENTEE" not in r
+         and "n'a pas été réellement produit" not in r, r[:300])
+
+
 # ── routines : la colonne demandée, et le mail qu'on ne demande pas ────────
 espace_r = {"logging": __import__("logging"), "re": __import__("re"),
             "unicodedata": __import__("unicodedata")}

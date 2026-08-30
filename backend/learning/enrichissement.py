@@ -239,8 +239,13 @@ async def _lire_lot(boite: str, messages: list[str],
     from learning.debrief import _extraire_json, _nettoyer
 
     # Fail-closed RGPD, comme partout ailleurs : sans anonymiseur, le corpus de
-    # l'entreprise ne part pas vers un modèle externe.
-    if settings.block_external_llm_without_ner and not anonymizer.spacy_available:
+    # l'entreprise ne part pas vers un modèle externe. SAUF si l'anonymisation
+    # a été COUPÉE volontairement (réglage `anonymisation`, Paramètres) : le
+    # verrou protégeait contre une anonymisation en panne, pas contre une
+    # décision — exiger spaCy pour un masquage qu'on a choisi de ne pas faire
+    # bloquait la campagne pour rien.
+    if (settings.block_external_llm_without_ner and not anonymizer.spacy_available
+            and not anonymizer.desactivee()):
         raise RuntimeError("Anonymisation indisponible : campagne interrompue.")
 
     masques, carte = await asyncio.to_thread(anonymizer.anonymize_chunks, messages, {})

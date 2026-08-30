@@ -21,14 +21,89 @@ Le compromis est assumé : le quota journalier de Groq est limité là où LongC
 n'en a pas. Le jour où il s'épuise, la tâche échoue avec un message clair, et
 `BROWSER_LLM_PROVIDER=longcat` la rétablit — plus lente, mais sans plafond.
 """
+import logging
 import os
+import urllib.request
 
 import wconfig
 
+logger = logging.getLogger("browser-worker.llm")
+
+# ── LE FOURNISSEUR CONFIGURÉ PEUT ÊTRE MORT, ET ÇA SE VOIT TROP TARD ────────
+#
+# Relevé en production le 30/08 : BROWSER_LLM_PROVIDER pointait un compte Groq
+# révoqué (403 dès la liste des modèles). La clé étant PRÉSENTE, la fabrique
+# construisait le client sans broncher — et chaque étape de navigation brûlait
+# son délai sur un 403, cinq étapes en trois minutes, tour coupé. L'utilisateur
+# lisait « le site est sans doute trop long à parcourir » : faux, c'était la
+# clé.
+#
+# La vivacité se SONDE donc à la construction — un GET /models d'une seconde,
+# le même geste qui a permis le diagnostic — et un fournisseur mort cède sa
+# place au premier VIVANT de l'ordre de repli. LongCat d'abord (le modèle de
+# la maison, sans plafond de quota), Gemini ensuite (rapide, function-calling
+# propre), puis les autres. Le repli est journalisé : une clé morte doit se
+# lire dans les logs, pas se déduire d'une navigation qui rampe.
+
+_SONDES = {
+    "deepseek":   ("DEEPSEEK_API_KEY",   "https://api.deepseek.com/models"),
+    "groq":       ("GROQ_API_KEY",       "https://api.groq.com/openai/v1/models"),
+    "openrouter": ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1/models"),
+    "longcat":    ("LONGCAT_API_KEY",    "https://api.longcat.chat/openai/v1/models"),
+    "google":     ("GOOGLE_API_KEY",
+                   "https://generativelanguage.googleapis.com/v1beta/openai/models"),
+}
+_MODELES_DEFAUT = {
+    "deepseek": "deepseek-chat",
+    "groq": "llama-3.3-70b-versatile",
+    "openrouter": "deepseek/deepseek-v4-flash",
+    "longcat": "LongCat-2.0",
+    "google": "gemini-flash-latest",
+}
+_ORDRE_REPLI = ("longcat", "google", "deepseek", "openrouter", "groq")
+
+
+def _vivant(provider: str) -> bool:
+    """Le fournisseur répond-il avec CETTE clé ? Une seconde, pas plus."""
+    env, url = _SONDES.get(provider, (None, None))
+    if not env or not os.environ.get(env):
+        return False
+    try:
+        req = urllib.request.Request(
+            url, headers={"Authorization": "Bearer " + os.environ[env]})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            return 200 <= r.status < 300
+    except Exception as e:  # noqa: BLE001 — mort ou injoignable : même verdict
+        logger.warning("Fournisseur navigateur %s écarté : %s", provider, str(e)[:120])
+        return False
+
+
+def _resoudre() -> tuple[str, str]:
+    """Le couple (fournisseur, modèle) réellement utilisable."""
+    configure = wconfig.LLM_PROVIDER
+    if configure == "openai" or _vivant(configure):
+        return configure, wconfig.LLM_MODEL
+    for p in _ORDRE_REPLI:
+        if p != configure and _vivant(p):
+            logger.warning("BROWSER_LLM_PROVIDER=%s injoignable — repli sur %s",
+                           configure, p)
+            return p, _MODELES_DEFAUT[p]
+    # Personne ne répond : on garde la configuration, et l'échec dira la clé.
+    return configure, wconfig.LLM_MODEL
+
 
 def build_llm():
-    provider = wconfig.LLM_PROVIDER
-    model = wconfig.LLM_MODEL
+    provider, model = _resoudre()
+
+    if provider == "google":
+        # Point d'entrée OpenAI-compatible de Google : function-calling propre,
+        # réponses en quelques secondes — le même chemin que la vision du backend.
+        from browser_use import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            api_key=_require("GOOGLE_API_KEY"),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
 
     if provider == "deepseek":
         from browser_use import ChatDeepSeek

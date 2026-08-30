@@ -70,9 +70,14 @@ async def ouvrir_page(data: dict, user) -> dict:
     """Ouvre une adresse précise et en rend le texte."""
     from browser.tools import fetch_url
 
-    url = str(data.get("url") or "").strip()
+    # Les alias d'abord : le modèle écrit `url`, mais aussi `lien`, `adresse`,
+    # `site` ou `page` — refuser pour un nom de champ est le piège déjà payé
+    # sur la mailbox du triage. Le refus, s'il reste, dit QUOI passer.
+    url = str(data.get("url") or data.get("lien") or data.get("adresse")
+              or data.get("site") or data.get("page") or "").strip()
     if not url:
-        return {"erreur": "Donne l'adresse à ouvrir."}
+        return {"erreur": "Donne l'adresse à ouvrir, dans le paramètre `url` "
+                          "(ex. duret-sols.fr)."}
     if not url.startswith(("http://", "https://")):
         # Le modèle écrit souvent « duret-sols.fr » sans protocole ; on le
         # complète plutôt que de refuser pour une raison qu'il ne comprendrait pas.

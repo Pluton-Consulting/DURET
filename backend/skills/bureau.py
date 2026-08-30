@@ -246,6 +246,9 @@ async def terminer_document(data: dict, user) -> dict:
         "note": ("Le fichier est prêt : sa carte de téléchargement est ajoutée "
                  "AUTOMATIQUEMENT sous ta réponse. N'écris AUCUN bloc ```ui "
                  "pour ce fichier — ni `fichier`, ni `doc_apercu` — et "
-                 "n'invente jamais son adresse. Le lien vaut 24 h et n'est "
+                 "n'invente jamais son adresse. Ta réponse : UNE ou deux "
+                 "phrases sur le CONTENU du document. Ne cite JAMAIS le "
+                 "document_id, le nombre d'éléments, d'octets ou de pages : "
+                 "la carte porte déjà tout cela. Le lien vaut 24 h et n'est "
                  "utilisable que par la personne."),
     }

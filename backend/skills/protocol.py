@@ -415,11 +415,18 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "cite les adresses, ne la presente jamais comme une donnee interne",
         ["requete"], ["nombre"]),
     "ouvrir_page": (
+        # `url` ETAIT REQUIS AU CATALOGUE, et c'etait le meme piege que la
+        # `mailbox` du triage (27/08) : le modele ecrivait `lien` ou `adresse`,
+        # l'action etait refusee AVANT d'atteindre le skill — « parametres
+        # obligatoires manquants » — alors que le skill sait tolerer les alias
+        # et expliquer ce qui manque. Releve en production le 30/08 sur « va
+        # sur le site de l'entreprise ».
         "OUVRE UNE ADRESSE PRECISE et en rend le texte. A employer quand on te "
         "donne un lien, ou quand tu connais deja la page a consulter (le site "
-        "d'une entreprise, une fiche produit). Meme regle : information "
-        "EXTERNE, cite l'adresse",
-        ["url"], ["motif"]),
+        "d'une entreprise, une fiche produit). Passe l'adresse dans `url` "
+        "(« duret-sols.fr » suffit, le protocole est ajoute). Meme "
+        "regle : information EXTERNE, cite l'adresse",
+        [], ["url", "motif"]),
     "naviguer": (
         "NAVIGATEUR LIBRE : il VOIT la page, CLIQUE, suit les liens, franchit "
         "les bannieres. A employer quand `ouvrir_page` ne suffit pas — un site "

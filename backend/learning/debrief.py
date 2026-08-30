@@ -251,7 +251,17 @@ async def enregistrer(propositions: dict, entity_map: dict, prefixe_source: str,
     def _vrai(texte: str) -> str:
         # Les propositions viennent d'un modèle nourri au texte MASQUÉ : on remet
         # les vraies valeurs, sinon la mémoire ne contiendrait que des balises.
-        return anonymizer.rehydrate(texte or "", carte)
+        rendu = anonymizer.rehydrate(texte or "", carte)
+        # UN JETON ORPHELIN NE SE GRAVE PAS DANS LA MÉMOIRE. Les campagnes de
+        # l'époque où la carte se corrompait (« [LOC_2] → "[LOC_1]" », corrigé
+        # le 23/08) ont écrit des balises que plus personne ne saura résoudre —
+        # relevées le 30/08 dans un Word produit depuis ces connaissances. Ce
+        # qui reste masqué après réhydratation devient « [À COMPLÉTER] » : la
+        # donnée est perdue, l'écriture le dit, et la balise technique ne
+        # ressortira plus dans un document remis à quelqu'un.
+        for jeton in anonymizer.find_placeholders(rendu):
+            rendu = rendu.replace(jeton, "[À COMPLÉTER]")
+        return rendu
 
     chunks = memorise = 0
     echecs: list[str] = []

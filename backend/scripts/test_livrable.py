@@ -258,8 +258,10 @@ print()
 
 fil_fournisseurs = [_Msg("90 fournisseurs.\n\n" + bloc_ui(FOURN))]
 
-# 20. Le cas réel : l'invention ne désigne rien qu'on tienne → RIEN ne
-#     s'affiche, et l'écran dit que le fichier n'existe pas.
+# 20. Le cas réel : l'invention ne désigne rien qu'on tienne → le bloc
+#     s'efface, RIEN ne le remplace, et AUCUNE phrase toute faite n'est
+#     ajoutée (règle de Noa : pas de message déterministe dans le chat —
+#     c'est le forceur, en amont, qui fait produire pour de vrai).
 menteur = ("Voici le document avec toutes les informations de l'entreprise :\n\n"
            + bloc_ui({"type": "fichier", "url": "/api/documents/INVENTE",
                       "nom": "infos_entreprise.docx",
@@ -267,8 +269,9 @@ menteur = ("Voici le document avec toutes les informations de l'entreprise :\n\n
 r = livrables(menteur, {"tool_results": [], "messages": fil_fournisseurs})
 verifier("une invention sans rapport ne restitue PAS le dernier fichier du fil",
          FOURN["url"] not in r and "INVENTE" not in r, r[:300])
-verifier("et l'écran DIT que rien n'a été produit",
-         "n'a pas été réellement produit" in r, r[:300])
+verifier("et aucune phrase mécanique n'est ajoutée au chat",
+         "réellement produit" not in r and r.strip().startswith("Voici le document"),
+         r[:300])
 
 # 21. « Remontre-moi la liste » : l'invention désigne LE MÊME fichier — le
 #     repli d'origine reste entier, le vrai fichier revient.

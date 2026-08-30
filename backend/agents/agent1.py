@@ -1454,15 +1454,18 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
             a_montrer = [correspondants[-1]]
         else:
             # L'invention ne désigne RIEN qu'on tienne : le fichier annoncé
-            # n'existe pas. On le dit — sinon la prose du modèle continue de
-            # promettre un document que l'écran ne montre pas.
-            logger.info("Livrable inventé sans équivalent réel : %s",
+            # n'existe pas, le bloc s'efface, et RIEN ne le remplace. Une
+            # première version ajoutait ici une phrase toute faite
+            # (« redemandez-le en un message… ») : règle de Noa, AUCUN message
+            # déterministe ni mécanique de question-réponse dans le chat — et
+            # cette phrase a créé exactement la boucle qu'elle prétendait
+            # éviter. La vraie réponse au tour qui prétend sans produire est
+            # en AMONT : la livraison fantôme part au forceur
+            # (route_apres_llm), qui fait produire pour de vrai. Ici, on ne
+            # fait que refuser de corroborer — et on le journalise.
+            logger.info("Livrable inventé sans équivalent réel, effacé : %s",
                         [str(i.get("nom") or i.get("name") or i.get("titre") or "?")[:60]
                          for i in inventes])
-            texte = (texte + "\n\nLe fichier annoncé ci-dessus n'a pas été "
-                     "réellement produit : rien n'a été créé à ce tour. "
-                     "Redemandez-le en un message (« produis ce document ») "
-                     "et il sera créé pour de vrai.").strip()
     for bloc in a_montrer:
         ref = _reference_bloc(bloc)
         # `affiches` et non une sous-chaîne : un modèle qui échappe les barres

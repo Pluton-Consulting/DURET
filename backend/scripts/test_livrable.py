@@ -452,5 +452,34 @@ verifier("une vraie entité est toujours masquée",
 verifier("aucune valeur de carte ne contient de jeton",
          not any("[" in str(v) for v in carte.values()), str(carte))
 
+# ── l'interrupteur d'anonymisation (réglage `anonymisation`, 30/08) ────────
+print()
+faux_reg = _types.ModuleType("llm.reglages")
+faux_reg.valeur = lambda nom: "desactivee" if nom == "anonymisation" else None
+sys.modules.setdefault("llm", _types.ModuleType("llm"))
+sys.modules["llm.reglages"] = faux_reg
+
+MAIL = "Contactez benjamin@exemple-paysage.fr pour le devis."
+texte, carte_d = anonymizer.anonymize(MAIL, {})
+verifier("désactivée : le texte part tel quel, la carte ne bouge pas",
+         texte == MAIL and carte_d == {}, texte)
+chunks, _ = anonymizer.anonymize_chunks([MAIL], {})
+verifier("désactivée : les chunks aussi", chunks == [MAIL], str(chunks))
+verifier("désactivée, la réhydratation résout ENCORE les anciens jetons",
+         anonymizer.rehydrate("Bonjour [PER_9]", {"[PER_9]": "Dupont"}) == "Bonjour Dupont")
+
+faux_reg.valeur = lambda nom: None   # réglage retiré : le défaut est la protection
+texte, carte_a = anonymizer.anonymize(MAIL, {})
+verifier("réglage retiré : le masquage reprend (le défaut est la protection)",
+         "benjamin@exemple-paysage.fr" not in texte and carte_a, texte)
+
+# ── la carte fichier des documents est MÉCANIQUE (saga du Word, 30/08) ─────
+verifier("terminer_document rend sa carte fichier sans dépendre du modèle",
+         '"bloc_ui": {"type": "fichier"'
+         in (racine / "skills" / "bureau.py").read_text(encoding="utf-8"))
+verifier("produire_document aussi",
+         '"bloc_ui": {"type": "fichier"'
+         in (racine / "outils" / "documents.py").read_text(encoding="utf-8"))
+
 print(f"\n═══ {len(echecs)} échec(s)" + (f" : {', '.join(echecs)}" if echecs else " — tout passe"))
 sys.exit(1 if echecs else 0)

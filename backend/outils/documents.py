@@ -124,14 +124,21 @@ async def produire(titre: str, blocs: list, proprietaire: str,
         "url": f"/api/documents/{jeton}",
         # Le début RÉEL du fichier, pour l'aperçu dans le chat.
         "extrait": fiche.get("extrait") or "",
+        # LA CARTE FICHIER EST MÉCANIQUE (même leçon que terminer_document,
+        # 30/08) : un fichier réel dont la carte dépend du modèle finit
+        # invisible ou avec une URL inventée. `_livrables_a_l_ecran` garantit
+        # l'affichage depuis ce bloc.
+        "bloc_ui": {"type": "fichier", "url": f"/api/documents/{jeton}",
+                    "nom": f"{en_tete['titre']}.{en_tete['format']}",
+                    "titre": en_tete["titre"], "format": en_tete["format"],
+                    "octets": fiche["octets"]},
         "note": (f"Le document est TERMINÉ : {pages or '?'} page(s) estimées, "
                  f"{retenus} bloc(s). Il ne peut plus être rallongé : ce geste "
-                 "finalise. ANNONCE-LE MAINTENANT avec UN SEUL bloc ```ui : un "
-                 "`fichier` portant `url`, `nom`, `format` et `octets`. "
-                 "N'ajoute PAS de `doc_apercu` : la carte `fichier` affiche déjà "
-                 "le document lui-même sous le bouton. Ne produis pas un second "
-                 "DOCUMENT : s'il est plus court que demandé, dis-le "
-                 "franchement plutôt que de recommencer. "
+                 "finalise. Sa carte de téléchargement est ajoutée "
+                 "AUTOMATIQUEMENT sous ta réponse : n'écris AUCUN bloc ```ui "
+                 "pour ce fichier et n'invente jamais son adresse. Ne produis "
+                 "pas un second DOCUMENT : s'il est plus court que demandé, "
+                 "dis-le franchement plutôt que de recommencer. "
                  + (f"{ignores} bloc(s) écarté(s) : type inconnu ou vide."
                     if ignores else "")),
     }

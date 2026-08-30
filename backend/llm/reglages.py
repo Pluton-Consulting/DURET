@@ -27,6 +27,12 @@ logger = logging.getLogger("duret.llm.reglages")
 REGLAGES_CONNUS = (
     "llm_tete",
     "kpi_depuis",   # AAAA-MM-JJ — les indicateurs ne comptent rien avant cette date
+    # L'anonymisation PII se coupe d'un clic (demande de Noa, 30/08 : elle
+    # cassait des flux réels — adresse tapée masquée en boucle, balises dans
+    # les mails). Valeurs admises : « active » (défaut) ou « desactivee ».
+    # La RÉHYDRATATION, elle, reste toujours en service : les jetons déjà
+    # posés dans l'historique doivent continuer de se résoudre.
+    "anonymisation",
 )
 
 # Un réglage dont la valeur finit DANS du SQL doit être validé à l'écriture ET
@@ -103,6 +109,9 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom == "kpi_depuis" and (brut or "").strip() and not _FORMAT_INSTANT.match((brut or "").strip()):
         raise ValueError("Date attendue au format AAAA-MM-JJ, éventuellement "
                          "suivie de HH:MM (ex. 2026-08-22 ou 2026-08-22 18:30).")
+    if nom == "anonymisation" and (brut or "").strip() \
+            and (brut or "").strip().lower() not in ("active", "desactivee"):
+        raise ValueError("Valeur attendue : « active » ou « desactivee ».")
     from database.connection import get_db
 
     v = (brut or "").strip()

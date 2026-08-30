@@ -517,6 +517,28 @@ class _Anonymizer:
         masked = self._apply_spacy(masked, entity_map, counters, index)
         return self._apply_regex(masked, entity_map, counters, post, index)
 
+    @staticmethod
+    def desactivee() -> bool:
+        """L'anonymisation est-elle COUPÉE par le réglage `anonymisation` ?
+
+        Demande de Noa du 30/08 : le masquage cassait des flux réels — une
+        adresse tapée par l'utilisateur masquée en boucle, des balises
+        « E-MAIL » dans les comptes rendus de mails — et il doit pouvoir se
+        couper d'un clic (Paramètres → réglage `anonymisation=desactivee`),
+        sans redéploiement.
+
+        Ne lève jamais, et le DÉFAUT EST LA PROTECTION : sans base, sans
+        cache, ou sur un poste de banc, le masquage reste ACTIF — couper une
+        protection ne peut être que la lecture explicite d'une décision.
+        Seul le MASQUAGE se coupe : `rehydrate` reste toujours en service,
+        les jetons déjà posés dans l'historique doivent se résoudre.
+        """
+        try:
+            from llm.reglages import valeur
+            return (valeur("anonymisation") or "").strip().lower() == "desactivee"
+        except Exception:  # noqa: BLE001 — jamais une panne, jamais une fuite
+            return False
+
     def anonymize(self, text: str, entity_map: Optional[dict] = None) -> tuple[str, dict]:
         """
         Anonymise `text` et retourne `(texte_masqué, entity_map)`.
@@ -536,6 +558,8 @@ class _Anonymizer:
         entity_map = dict(entity_map) if entity_map else {}
         if not text or not isinstance(text, str):
             return (text if isinstance(text, str) else "", entity_map)
+        if self.desactivee():
+            return text, entity_map
 
         counters = self._sync_counters(entity_map)
         index = self._build_index(entity_map)
@@ -554,6 +578,8 @@ class _Anonymizer:
         masqués et l'`entity_map` global (entrée + nouvelles entités).
         """
         entity_map = dict(entity_map) if entity_map else {}
+        if self.desactivee():
+            return [c if isinstance(c, str) else "" for c in chunks], entity_map
         counters = self._sync_counters(entity_map)
         index = self._build_index(entity_map)
         post = _REGEX_POST_WITH_AMOUNTS if _mask_amounts() else _REGEX_POST_BASE

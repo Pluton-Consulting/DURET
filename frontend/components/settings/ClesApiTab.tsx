@@ -314,6 +314,100 @@ function ReglageLlmTete({ apiUrl, backendToken }: { apiUrl: string; backendToken
   )
 }
 
+// L'anonymisation PII se coupe et se rallume EN UN CLIC (demande de Noa,
+// 30/08 : le masquage cassait des flux réels — une adresse tapée masquée en
+// boucle, des balises dans les comptes rendus de mails). Le réglage vit en
+// base (`anonymisation`), effet immédiat, sans redéploiement. Seul le
+// MASQUAGE se coupe : les jetons déjà posés dans l'historique continuent de
+// se résoudre.
+function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [desactivee, setDesactivee] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/reglages`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const lignes = await res.json()
+      const r = (lignes || []).find((l: any) => l.cle === "anonymisation")
+      setDesactivee((r?.valeur || "").trim().toLowerCase() === "desactivee")
+      setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "chargement impossible")
+    }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  const basculer = async () => {
+    setBusy(true); setNote("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/reglages`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        // Vider la valeur retire la surcharge : « active » redevient le défaut.
+        body: JSON.stringify({ cle: "anonymisation", valeur: desactivee ? "" : "desactivee" }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
+      setNote(desactivee
+        ? "Anonymisation réactivée : les données personnelles sont masquées avant tout envoi aux modèles."
+        : "Anonymisation désactivée : les textes partent tels quels aux modèles. Les balises déjà présentes dans les anciennes conversations restent lisibles.")
+      setErreur("")
+      await charger()
+    } catch (e: any) {
+      setErreur(e?.message || "enregistrement impossible")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+            Anonymisation des données personnelles
+          </div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
+            Masque noms, e-mails et coordonnées avant tout envoi aux modèles externes.
+            Désactivée, les textes partent tels quels — à réserver aux fournisseurs de confiance.
+          </div>
+        </div>
+        <span style={{
+          background: desactivee ? "var(--marque-late-bg)" : "var(--marque-paid-bg)",
+          color: desactivee ? "var(--marque-late-text)" : "var(--marque-paid-text)",
+          padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
+          fontWeight: 600, whiteSpace: "nowrap",
+        }}>
+          {desactivee ? "Désactivée" : "Active"}
+        </span>
+        <button onClick={basculer} disabled={busy}
+          className="sym-tap" style={{
+            padding: "8px 16px", borderRadius: "var(--marque-radius-pill)",
+            border: desactivee ? "none" : "1px solid var(--marque-border)",
+            background: desactivee
+              ? "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))"
+              : "var(--marque-canvas)",
+            color: desactivee ? "var(--marque-text-on-dark)" : "var(--marque-text-body)",
+            fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}>
+          {busy ? "…" : desactivee ? "Réactiver" : "Désactiver"}
+        </button>
+      </div>
+      {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
+      {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
 export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
   const [cles, setCles] = useState<Cle[]>([])
   const [saisies, setSaisies] = useState<Record<string, string>>({})
@@ -364,6 +458,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
     <div>
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageLlmTete apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
 
       <p style={{ margin: "0 0 6px", fontSize: 14, color: "var(--marque-text-body)",
                   maxWidth: "72ch", lineHeight: 1.55 }}>

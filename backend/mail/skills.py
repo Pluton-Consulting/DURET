@@ -247,6 +247,59 @@ async def rediger_email(data: dict, user) -> dict:
     return resultat
 
 
+async def envoyer_email(data: dict, user) -> dict:
+    """ENVOIE réellement un message. Effet EXTERNE : n'arrive ici qu'après accord.
+
+    Le pendant de `rediger_email`, qui s'arrête au brouillon et le dit. Ici le
+    message PART : c'est pourquoi le skill est déclaré `externe` — l'accord
+    humain porte sur le destinataire, l'objet et le corps exacts, vérifiés par
+    empreinte, et `_apercu_avant_accord` les montre avant le clic.
+
+    Mêmes règles que le reste du courrier : sans `mailbox`, la boîte de la
+    personne connectée ; nommer la boîte d'un collègue exige le droit d'ÉCRIRE
+    dessus (`verifier_acces(envoi=True)`).
+    """
+    from mail.expedition import envoyer_message, porte_un_jeton
+
+    cible = await _boite_a_lire(data, user)
+    boite = await verifier_acces(user, cible, envoi=True)
+
+    destinataire = (data.get("destinataire") or "").strip()
+    objet = (data.get("objet") or "").strip()
+    corps = (data.get("corps") or data.get("message") or "").strip()
+    if not destinataire or "@" not in destinataire:
+        raise MailSkillError(
+            "Il faut `destinataire` : l'adresse exacte de la personne. Si elle "
+            "n'a pas été donnée, demande-la — n'en invente jamais une.")
+    if not objet or not corps:
+        raise MailSkillError(
+            "Il faut `objet` et le `corps` COMPLET du message : ce qui est "
+            "validé est ce qui part, rien n'est complété après l'accord.")
+
+    # Un jeton d'anonymisation resté orphelin n'a rien à faire dans un message
+    # qui SORT de l'entreprise — et « [À COMPLÉTER] » est l'aveu d'un brouillon
+    # inachevé : dans les deux cas on refuse, en disant quoi reprendre.
+    for champ, valeur in (("destinataire", destinataire), ("objet", objet),
+                          ("corps", corps)):
+        if porte_un_jeton(valeur):
+            raise MailSkillError(
+                f"Le champ `{champ}` contient une balise de masquage jamais "
+                "résolue : réécris-le avec les vraies valeurs avant l'envoi.")
+    if "[À COMPLÉTER]" in corps:
+        raise MailSkillError(
+            "Le corps contient encore des mentions [À COMPLÉTER] : complète le "
+            "brouillon avant de demander l'envoi.")
+
+    try:
+        resultat = await envoyer_message(boite, destinataire, objet, corps,
+                                         cc=data.get("cc"))
+    except RuntimeError as e:
+        raise MailSkillError(str(e))
+    resultat["message_final"] = (
+        f"Message envoyé à {destinataire} depuis {boite} (objet : « {objet} »).")
+    return resultat
+
+
 async def resumer_fil(data: dict, user) -> dict:
     """Résume un échange de plusieurs messages et en extrait les engagements."""
     # Même raison qu'au triage : le fil est COLLÉ dans le chat, il ne se lit pas
@@ -326,6 +379,7 @@ async def apprendre_style(data: dict, user) -> dict:
 SKILLS_NATIFS = {
     "triage_email_entrant": triage_email_entrant,
     "redaction_email": rediger_email,
+    "envoyer_email": envoyer_email,
     "resume_fil_email": resumer_fil,
     "profil_style_email": profil_style,
     "apprendre_style_email": apprendre_style,
@@ -699,6 +753,9 @@ EFFETS_NATIFS = {
     "triage_email_entrant": "lecture",
     "resume_fil_email": "lecture",
     "redaction_email": "ecriture_interne",      # brouillon : n'envoie jamais
+    # ENVOYER sort de l'entreprise : validation humaine obligatoire, l'accord
+    # porte sur le destinataire, l'objet et le corps exacts (payload_hash).
+    "envoyer_email": "externe",
     "profil_style_email": "ecriture_interne",
     "apprendre_style_email": "ecriture_interne",
     # Créer une tâche n'a aucun effet hors du système : quand elle s'exécutera,

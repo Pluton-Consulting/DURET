@@ -83,6 +83,7 @@ ACTES = {
     "lire_mails": "je lis la boîte mail",
     "rediger_email": "je rédige le message",
     "redaction_email": "je rédige le message",
+    "envoyer_email": "j'envoie le message",
     "resume_fil_email": "je résume le fil de discussion",
     "apprendre_style_email": "j'apprends le style d'écriture",
     "creer_tache_agent": "je programme la tâche",

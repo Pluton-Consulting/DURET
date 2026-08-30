@@ -370,6 +370,19 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         # Le controle de droits reste entier : nommer la boite d'un collegue est
         # refuse comme avant, et l'envoi exige toujours l'ecriture sur la boite.
         ["type_mail"], ["mailbox", "contexte", "message_recu", "destinataire"]),
+    "envoyer_email": (
+        # Le pendant de `redaction_email`, qui s'arrete au brouillon. Sans ce
+        # geste, l'assistant promettait parfois d'envoyer (defaut n.4 du 27/08)
+        # alors que rien ne le permettait ; desormais il PEUT, mais jamais sans
+        # l'accord humain — effet externe, l'apercu montre le message exact.
+        "ENVOIE reellement un message electronique depuis la boite de l'entreprise. "
+        "A n'utiliser QUE si on demande d'ENVOYER ou de REPONDRE pour de vrai "
+        "(« envoie-le », « reponds-lui », « fais partir ce mail ») — pour preparer "
+        "un texte sans l'envoyer, c'est `redaction_email`. Donne le `corps` "
+        "COMPLET et definitif : ce qui est valide part tel quel, aucun "
+        "[A COMPLETER] ne doit rester. L'envoi passe par la validation humaine. "
+        "Sans `mailbox`, la boite de la personne connectee. `cc` : adresses en copie",
+        ["destinataire", "objet", "corps"], ["mailbox", "cc"]),
     "resume_fil_email": (
         "Résume un échange de mails et en extrait les engagements. `fil` : les "
         "messages, colles tels quels. Meme regle qu'au triage : ne reclame "

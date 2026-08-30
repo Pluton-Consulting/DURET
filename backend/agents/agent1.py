@@ -1820,6 +1820,26 @@ def _apercu_avant_accord(skill: str, args: dict, texte: str) -> str:
             return ((texte or "Voici comment je compte procéder.").rstrip()
                     + "\n\n```ui\n" + _json.dumps(bloc_du_plan(args),
                                                   ensure_ascii=False) + "\n```")
+        if skill == "envoyer_email":
+            # Un MESSAGE QUI PART — troisième cas où le texte du modèle ne
+            # suffit pas : on approuve un envoi, il faut lire ce qui partira.
+            # Construit depuis les arguments vérifiés par empreinte : ce qui
+            # est montré est exactement ce qui sera envoyé.
+            cc = args.get("cc") or []
+            if isinstance(cc, str):
+                cc = [cc]
+            lignes = [f"À : {args.get('destinataire', '')}"]
+            if args.get("mailbox"):
+                lignes.insert(0, f"De : {args['mailbox']}")
+            if cc:
+                lignes.append("Copie : " + ", ".join(str(c) for c in cc[:10]))
+            lignes.append(f"Objet : {args.get('objet', '')}")
+            corps = str(args.get("corps") or "")
+            if len(corps) > 1500:
+                corps = corps[:1500] + "…"
+            return ((texte or "Voici le message prêt à partir.").rstrip()
+                    + "\n\nCe qui sera envoyé, tel quel :\n\n"
+                    + "\n".join(lignes) + "\n\n" + corps)
         if skill == "modifier_visuel" and args.get("image"):
             changements = args.get("changements") or args.get("modifications") or ""
             if isinstance(changements, (list, tuple)):

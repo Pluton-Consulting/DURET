@@ -154,6 +154,47 @@ def _service(boite: str):
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
+# Scope SÉPARÉ, même logique que l'annuaire : ENVOYER n'a rien à voir avec
+# LIRE. La délégation domaine s'accorde scope par scope dans la console Admin —
+# on peut donner la lecture sans l'envoi, ou retirer l'envoi seul.
+SCOPES_ENVOI = ["https://www.googleapis.com/auth/gmail.send"]
+
+
+def _service_envoi(boite: str):
+    """Client Gmail capable d'ENVOYER depuis cette boîte.
+
+    Même ordre que `_service` : la connexion personnelle d'abord — le
+    consentement de `mail/google_perso` porte déjà `gmail.send`, prévu « pour
+    le jour où l'expéditeur sera la personne elle-même », qui est arrivé —,
+    l'emprunt d'identité ensuite, avec le SEUL scope d'envoi : un client qui
+    envoie n'a pas besoin de lire.
+
+    L'unique appelant est `mail.expedition.envoyer_message`, lui-même appelé
+    par le seul skill `envoyer_email`, à effet EXTERNE : aucun message ne part
+    sans validation humaine.
+    """
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    from mail import google_perso
+    perso = google_perso.credentials_pour_boite(boite)
+    if perso is not None:
+        return build("gmail", "v1", credentials=perso, cache_discovery=False)
+
+    infos = _cle_compte_de_service()
+    if infos is None:
+        raise NotImplementedError(
+            f"La boîte {boite} n'est pas reliée (Paramètres > Ma boîte Google) "
+            "et aucun compte de service n'est configuré : l'envoi est "
+            "impossible. Reliez la boîte, ou accordez la délégation domaine "
+            f"avec le scope {SCOPES_ENVOI[0]}."
+        )
+    creds = service_account.Credentials.from_service_account_info(
+        infos, scopes=SCOPES_ENVOI, subject=boite
+    )
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
 def _service_annuaire():
     """Client Admin SDK, empruntant l'identité d'un ADMINISTRATEUR du domaine.
 

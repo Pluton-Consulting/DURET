@@ -230,12 +230,14 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         chain = [
             ("groq", s.model_groq_large),
             ("deepseek", s.model_deepseek_flash),
-            # Gemini : rapide, français correct, et il TIENT le protocole
-            # d'action — le 30/08, seul LongCat restait et il n'y arrivait
-            # plus (livraisons fantômes, forçages sans bloc).
-            ("google", s.model_google_texte),
             ("openrouter", s.model_or_deepseek_flash),
+            # LongCat d'abord : choix de Noa (30/08), c'est SON modèle de
+            # rédaction. Gemini juste derrière : rapide, français correct,
+            # et il TIENT le protocole d'action — c'est le filet exact des
+            # jours où LongCat déraille (livraisons fantômes, forçages sans
+            # bloc, tous relevés le 30/08).
             ("longcat", s.model_longcat),
+            ("google", s.model_google_texte),
             ("openrouter", s.model_primary),               # LongCat via la passerelle
             ("openrouter", s.model_or_free_a),
             ("ollama", None),
@@ -253,9 +255,9 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
             ("deepseek", s.model_deepseek),                # V4 Pro — raisonnement
             ("openrouter", s.model_or_deepseek_pro),
             ("anthropic", s.model_anthropic_vision),
-            ("google", s.model_google_texte),
             ("groq", s.model_groq_large),
             ("longcat", s.model_longcat),
+            ("google", s.model_google_texte),
             ("openrouter", s.model_or_free_b),
             ("ollama", None),
         ]

@@ -1170,6 +1170,39 @@ async def tools_node(state: AgentState, config=None) -> dict:
 
 
 
+def _tracer_filet(state, filet: str, cause: str, **details) -> None:
+    """Trace un FILET MÉCANIQUE dans l'audit — visible en Console développeur.
+
+    Demande de Noa du 30/08 : quand une réponse a une origine mécanique, c'est
+    presque toujours parce que le MODÈLE a échoué (promesse, prétention,
+    invention) — et l'écran, lui, peut avoir l'air d'un succès. La console doit
+    donc dire exactement QUAND un filet a tiré et POURQUOI : l'événement est
+    enregistré `success=False`, parce que c'est bien un échec du modèle que le
+    filet a rattrapé, même si l'utilisateur a fini par voir quelque chose.
+
+    Fire-and-forget : la trace ne ralentit jamais un tour et ne le casse
+    jamais. Et, règle de l'audit : JAMAIS le contenu des messages — seulement
+    le nom du mécanisme, sa cause, et des références techniques.
+    """
+    try:
+        import asyncio as _aio
+        from security.audit import log_action
+        meta = {"filet": filet, "cause": cause}
+        meta.update({k: str(v)[:200] for k, v in details.items() if v is not None})
+        _aio.get_running_loop().create_task(log_action(
+            action="filet_mecanique",
+            user_id=str(state.get("user_id") or "") or None,
+            agent_id="agent1",
+            success=False,
+            error_message=f"Filet « {filet} » : {cause}",
+            metadata=meta,
+            trigger_type="chat",
+            trigger_id=str(state.get("thread_id") or "") or None,
+        ))
+    except Exception:  # noqa: BLE001 — la trace ne casse jamais un tour
+        pass
+
+
 def _rendu_de_secours(resultats) -> str:
     """Ce qu'on affiche quand le modèle n'a pas rédigé : la sortie du skill lui-même.
 
@@ -1463,9 +1496,11 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
             # en AMONT : la livraison fantôme part au forceur
             # (route_apres_llm), qui fait produire pour de vrai. Ici, on ne
             # fait que refuser de corroborer — et on le journalise.
-            logger.info("Livrable inventé sans équivalent réel, effacé : %s",
-                        [str(i.get("nom") or i.get("name") or i.get("titre") or "?")[:60]
-                         for i in inventes])
+            noms_inventes = [str(i.get("nom") or i.get("name") or i.get("titre") or "?")[:60]
+                             for i in inventes]
+            logger.info("Livrable inventé sans équivalent réel, effacé : %s", noms_inventes)
+            _tracer_filet(state, "invention_effacee", "reference_inexistante",
+                          blocs=noms_inventes)
     for bloc in a_montrer:
         ref = _reference_bloc(bloc)
         # `affiches` et non une sous-chaîne : un modèle qui échappe les barres
@@ -1474,6 +1509,8 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
         if ref and (ref in affiches or ref in texte):
             continue
         logger.info("Livrable restitué à l'écran : %s", ref)
+        _tracer_filet(state, "livrable_restitue", "absent_de_la_redaction",
+                      reference=ref)
         affiches.add(ref)
         texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()
     return texte
@@ -1565,6 +1602,7 @@ async def rehydrate_node(state: AgentState) -> dict:
         secours = _rendu_de_secours(state.get("tool_results") or [])
         if secours:
             logger.info("Rédaction absente ou promesse : rendu de secours depuis le dernier skill réussi")
+            _tracer_filet(state, "rendu_de_secours", "redaction_absente_ou_promesse")
             text = secours
     elif _redaction_dement_le_livrable(text, state.get("tool_results") or []):
         # LE DÉMENTI DU TRAVAIL FAIT : la rédaction réclame un préalable
@@ -1574,6 +1612,7 @@ async def rehydrate_node(state: AgentState) -> dict:
         secours = _rendu_de_secours(state.get("tool_results") or [])
         if secours:
             logger.info("La rédaction réclamait un préalable alors que le livrable est produit : rendu de secours")
+            _tracer_filet(state, "rendu_de_secours", "la_redaction_dement_le_livrable")
             text = secours
     # LE SECOND FILET, indépendant du premier : celui-ci ne juge pas la
     # rédaction, il vérifie que ce qui a été PRODUIT est bien à l'écran. Posé
@@ -1597,6 +1636,9 @@ async def rehydrate_node(state: AgentState) -> dict:
                     "mais je n'ai pas réussi à en rédiger le compte rendu. "
                     "Demandez-moi de vous présenter le résultat : le travail, lui, "
                     "est fait.")
+            _tracer_filet(state, "compte_rendu_indisponible",
+                          "aucune_redaction_malgre_actions_reussies",
+                          actions_reussies=len(faits))
             # LA PROMESSE DOIT ÊTRE TENABLE. Ce message disait « demandez-moi le
             # résultat » alors que les résultats d'outils ne vivent que le temps
             # d'un tour : au « présente le résultat » suivant, le modèle n'avait
@@ -2187,6 +2229,8 @@ def route_apres_llm(state: AgentState) -> str:
                  and not _montre_un_fichier_du_fil(visible, state))))
     if fantome:
         logger.info("Livraison fantôme : la réponse prétend livrer sans production — forçage")
+        _tracer_filet(state, "livraison_fantome", "pretention_sans_production",
+                      forcages_deja=state.get("forcages") or 0)
 
     if est_une_annonce(texte) or promesse_sans_suite(texte) or not visible or fantome:
         # L'ORDRE COMPTE, ET IL A ÉTÉ FAUX UNE SOIRÉE. Première version : une
@@ -2199,6 +2243,9 @@ def route_apres_llm(state: AgentState) -> str:
         # quelque chose à rédiger. Une réponse VIDE après un résultat compte
         # comme une promesse : elle n'a rien montré non plus.
         if visible and (state.get("forcages") or 0) < MAX_FORCAGES_PAR_TOUR:
+            if not fantome:
+                _tracer_filet(state, "forcage", "annonce_ou_promesse_sans_acte",
+                              forcages_deja=state.get("forcages") or 0)
             return "forcer"
         if any(r.get("ok") for r in (state.get("tool_results") or [])):
             return "rediger"

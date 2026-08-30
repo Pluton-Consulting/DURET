@@ -85,7 +85,10 @@ espace = {"logger": _Journal(), "AgentState": dict,
 extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
           "_blocs_livrables", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
-          "_meme_livrable", "_livrables_a_l_ecran", "_redaction_dement_le_livrable"}, espace)
+          "_meme_livrable", "_livrables_a_l_ecran", "_redaction_dement_le_livrable",
+          # La trace d'audit des filets : hors boucle asyncio (le cas du banc),
+          # elle ne fait RIEN — c'est précisément son contrat (jamais casser).
+          "_tracer_filet"}, espace)
 livrables = espace["_livrables_a_l_ecran"]
 fichiers_du_fil = espace["fichiers_du_fil"]
 dement = espace["_redaction_dement_le_livrable"]
@@ -348,6 +351,43 @@ verifier("budget épuisé : le tour se termine au lieu de boucler",
                 "query": "fais un word avec les infos",
                 "tool_results": [], "forcages": 2,
                 "messages": []}) == "rehydrate")
+
+# 27. Chaque filet TRACE son passage dans l'audit — demande de Noa du 30/08 :
+#     la Console développeur doit dire QUAND le modèle a échoué et qu'une
+#     mécanique a répondu à sa place, en ÉCHEC (success=False), jamais en
+#     succès maquillé.
+import asyncio as _asy
+enregistres: list[dict] = []
+_faux_sec = _types.ModuleType("security")
+_faux_sec.__path__ = [str(racine / "security")]   # les VRAIS sous-modules restent importables
+_faux_audit = _types.ModuleType("security.audit")
+
+
+async def _faux_log_action(**kw):
+    enregistres.append(kw)
+
+_faux_audit.log_action = _faux_log_action
+sys.modules["security"] = _faux_sec
+sys.modules["security.audit"] = _faux_audit
+
+
+async def _tour_trace():
+    sortie = route({"llm_response": "C'est bon, le document Word a été créé et "
+                                    "le fichier est téléchargeable.",
+                    "query": "fais un word avec toutes les infos de l'entreprise",
+                    "tool_results": [], "forcages": 0, "messages": [],
+                    "thread_id": "fil-banc", "user_id": "u-banc"})
+    await _asy.sleep(0)   # laisse la trace fire-and-forget s'exécuter
+    return sortie
+
+sortie = _asy.run(_tour_trace())
+verifier("la livraison fantôme est tracée dans l'audit, en ÉCHEC du modèle",
+         sortie == "forcer" and len(enregistres) == 1
+         and enregistres[0].get("action") == "filet_mecanique"
+         and enregistres[0].get("success") is False
+         and enregistres[0].get("metadata", {}).get("filet") == "livraison_fantome"
+         and enregistres[0].get("trigger_id") == "fil-banc",
+         str(enregistres)[:300])
 
 
 # ── routines : la colonne demandée, et le mail qu'on ne demande pas ────────

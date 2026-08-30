@@ -271,6 +271,55 @@ async def statut_enrichissement(current_user: User = Depends(get_current_user)):
     return enrichissement.etat()
 
 
+class EnrichissementDocsBody(BaseModel):
+    # Nombre maximal d'appels au modèle PAR NIVEAU d'accès.
+    max_lots_par_niveau: int = 20
+    exiger_modele_principal: bool = True
+
+
+@router.post("/enrichir-documents")
+async def enrichir_documents(body: EnrichissementDocsBody,
+                             current_user: User = Depends(get_current_user)):
+    """Lance la campagne documentaire : distille les documents ingérés du socle
+    (Drive/NAS) en connaissances, chacune au niveau de confidentialité RÉEL de
+    son fichier d'origine (partages lus en lecture seule). Administration.
+    """
+    import asyncio
+
+    from learning import enrichissement_docs
+
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=http.HTTP_403_FORBIDDEN,
+                            detail="Réservé à l'administration système : cette campagne "
+                                   "relit tous les documents de l'entreprise.")
+    if enrichissement_docs.etat().get("en_cours"):
+        raise HTTPException(status_code=http.HTTP_409_CONFLICT,
+                            detail="Une campagne documentaire est déjà en cours.")
+
+    await log_action(action="enrichissement_documents_lance",
+                     user_id=str(current_user.id),
+                     metadata={"max_lots_par_niveau": body.max_lots_par_niveau})
+
+    asyncio.create_task(enrichissement_docs.executer(
+        lance_par=current_user.email,
+        max_lots_par_niveau=max(1, min(body.max_lots_par_niveau, 60)),
+        exiger_modele_principal=body.exiger_modele_principal))
+
+    return {"lance": True,
+            "note": ("La campagne documentaire tourne en tâche de fond. Chaque "
+                     "connaissance héritera du niveau d'accès réel de son "
+                     "fichier d'origine.")}
+
+
+@router.get("/enrichir-documents/statut")
+async def statut_enrichissement_documents(current_user: User = Depends(get_current_user)):
+    """Avancement de la campagne documentaire."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=http.HTTP_403_FORBIDDEN, detail="Réservé à l'administration")
+    from learning import enrichissement_docs
+    return enrichissement_docs.etat()
+
+
 @router.get("/historique")
 async def historique(limit: int = 10, current_user: User = Depends(get_current_user)):
     """Débriefs déjà enregistrés (journal d'audit, source de vérité immuable)."""

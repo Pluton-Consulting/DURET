@@ -128,6 +128,49 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
     }
   }
 
+  // ── Enrichissement DOCUMENTAIRE ───────────────────────────────────
+  // Le pendant de « Tout enrichir » pour les documents déjà ingérés du socle
+  // (lecture seule : rien n'est retéléchargé). Chaque connaissance hérite du
+  // niveau de confidentialité RÉEL de son fichier d'origine — lu dans les
+  // partages, pas dans un réglage global.
+
+  const [enrichDocs, setEnrichDocs] = useState<any>(null)
+
+  const chargerEnrichDocs = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/learning/enrichir-documents/statut`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (res.ok) setEnrichDocs(await res.json())
+    } catch { /* l'état d'une campagne n'est pas critique */ }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { chargerEnrichDocs() }, [chargerEnrichDocs])
+  useEffect(() => {
+    if (!enrichDocs?.en_cours) return
+    const id = setInterval(chargerEnrichDocs, 5000)
+    return () => clearInterval(id)
+  }, [enrichDocs?.en_cours, chargerEnrichDocs])
+
+  const lancerEnrichDocs = async () => {
+    setBusy("enrichir-docs")
+    try {
+      const res = await fetch(`${apiUrl}/api/learning/enrichir-documents`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ max_lots_par_niveau: 30, exiger_modele_principal: true }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
+      setErreur("")
+      await chargerEnrichDocs()
+    } catch (e: any) {
+      setErreur(e?.message || "lancement impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
   // Tant qu'une synchronisation tourne, on réinterroge. Dès qu'elles sont
   // toutes au repos, on s'arrête : inutile de solliciter le serveur pour rien.
   useEffect(() => {
@@ -233,6 +276,57 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
             de faire · {(enrich.skills || []).length} skill(s)
             {enrich.boite_courante ? ` · en cours : ${enrich.boite_courante}` : ""}
             {(enrich.echecs || []).length ? ` · ${enrich.echecs.length} échec(s)` : ""}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Enrichissement documentaire — le savoir des fichiers, au bon niveau */}
+      <div className="sym-card" style={{
+        background: "var(--marque-surface)", border: "2px solid var(--marque-primary)",
+        borderRadius: "var(--marque-radius-card-sm)", padding: "16px 18px", marginBottom: 18,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+              Enrichir les documents
+            </div>
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3,
+                          lineHeight: 1.5 }}>
+              Relit tous les documents déjà ingérés du socle documentaire (lecture seule) et en tire
+              connaissances et manières de faire. Chaque connaissance hérite du niveau de
+              confidentialité réel de son fichier : qui peut ouvrir le fichier peut la
+              lire, personne d'autre. Plusieurs heures.
+            </div>
+          </div>
+          <span style={{
+            background: enrichDocs?.en_cours ? "var(--marque-progress-bg)" : "var(--marque-canvas)",
+            color: enrichDocs?.en_cours ? "var(--marque-progress-text)" : "var(--marque-text-muted)",
+            padding: "5px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
+            fontWeight: 600, whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}>
+            {enrichDocs?.en_cours ? "En cours…" : (enrichDocs?.phase || "Jamais lancée")}
+          </span>
+          <button onClick={lancerEnrichDocs}
+            disabled={!!enrichDocs?.en_cours || busy === "enrichir-docs"}
+            className="sym-tap" style={{
+              padding: "9px 18px", borderRadius: "var(--marque-radius-pill)", border: "none",
+              background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+              color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 700,
+              cursor: enrichDocs?.en_cours ? "not-allowed" : "pointer",
+              opacity: enrichDocs?.en_cours || busy === "enrichir-docs" ? 0.6 : 1,
+            }}>
+            {enrichDocs?.en_cours ? "En cours…" : "Enrichir les documents"}
+          </button>
+        </div>
+        {enrichDocs && (enrichDocs.documents || enrichDocs.appels_analyse) ? (
+          <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 10,
+                        paddingTop: 10, borderTop: "1px solid var(--marque-border)" }}>
+            {enrichDocs.documents} document(s) ·
+            {" "}{Object.entries(enrichDocs.groupes || {}).map(([n, c]) => `${c} en ${n}`).join(", ") || "classement en cours"} ·
+            {" "}{enrichDocs.appels_analyse} appel(s) · {enrichDocs.connaissances} connaissance(s)
+            · {enrichDocs.procedures} manière(s) de faire
+            {(enrichDocs.echecs || []).length ? ` · ${enrichDocs.echecs.length} échec(s)` : ""}
           </div>
         ) : null}
       </div>

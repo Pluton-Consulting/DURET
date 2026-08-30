@@ -84,6 +84,19 @@ ACCES_DEDUCTIONS = "direction_only"
 # « fournisseur:modèle ») plutôt qu'un réglage : c'est le seul témoin de ce qui
 # a VRAIMENT répondu, la cascade pouvant basculer d'un lot à l'autre.
 FOURNISSEUR_PRINCIPAL = "longcat"
+# LE GARDE-FOU S'EST RETOURNÉ CONTRE LA CAMPAGNE, le 30/08 au soir : LongCat a
+# manqué UN appel, la cascade a servi Gemini — un modèle parfaitement capable
+# de distiller — et la campagne s'est arrêtée net (« repli sur
+# google:gemini-flash-latest »). Le garde protégeait contre les replis FAIBLES
+# (gratuits OpenRouter, Ollama local), pas contre un pair. La confiance est
+# donc une LISTE, pas un seul nom : ce qui s'écrit en mémoire doit venir d'un
+# de ces fournisseurs — et de rien d'autre.
+FOURNISSEURS_DE_CONFIANCE = ("longcat", "google", "deepseek", "anthropic")
+
+
+def modele_de_confiance(modele: str) -> bool:
+    """Ce modèle a-t-il le droit d'écrire dans la mémoire d'entreprise ?"""
+    return str(modele or "").split(":", 1)[0] in FOURNISSEURS_DE_CONFIANCE
 
 # État de la campagne en cours. Une seule à la fois : deux campagnes
 # simultanées se disputeraient le quota d'embeddings pour rien.
@@ -259,12 +272,12 @@ async def _lire_lot(boite: str, messages: list[str],
         content=INVITE_CORPUS.format(boite=boite, corpus=corpus))])
 
     modele = getattr(llm, "last_model_used", "") or "?"
-    if exiger_principal and not modele.startswith(FOURNISSEUR_PRINCIPAL + ":"):
+    if exiger_principal and not modele_de_confiance(modele):
         # On ARRÊTE plutôt que d'écrire au rabais. Une campagne à moitié lue se
         # relance ; une mémoire polluée par des déductions de moindre qualité,
         # mêlées aux bonnes, ne se démêle pas.
         raise ModeleDegrade(
-            f"le modèle principal n'a pas répondu (repli sur {modele}). "
+            f"aucun modèle de confiance n'a répondu (obtenu : {modele}). "
             "Campagne interrompue : ce qu'elle écrit reste en mémoire, "
             "il ne doit pas venir d'un modèle de repli.")
 

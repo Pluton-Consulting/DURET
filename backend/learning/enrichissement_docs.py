@@ -162,7 +162,7 @@ async def _lire_lot_docs(niveau: str, textes: list[str],
     from config import settings
 
     from learning.debrief import _extraire_json, _nettoyer
-    from learning.enrichissement import FOURNISSEUR_PRINCIPAL, ModeleDegrade
+    from learning.enrichissement import modele_de_confiance, ModeleDegrade
 
     # Même fail-closed que la campagne mail — et même levée quand
     # l'anonymisation a été COUPÉE volontairement par le réglage.
@@ -178,9 +178,9 @@ async def _lire_lot_docs(niveau: str, textes: list[str],
         content=INVITE_DOCS.format(corpus=corpus))])
 
     modele = getattr(llm, "last_model_used", "") or "?"
-    if exiger_principal and not modele.startswith(FOURNISSEUR_PRINCIPAL + ":"):
+    if exiger_principal and not modele_de_confiance(modele):
         raise ModeleDegrade(
-            f"le modèle principal n'a pas répondu (repli sur {modele}). "
+            f"aucun modèle de confiance n'a répondu (obtenu : {modele}). "
             "Campagne interrompue : ce qu'elle écrit reste en mémoire.")
 
     return _nettoyer(_extraire_json(str(reponse.content))), carte, modele

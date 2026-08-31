@@ -629,6 +629,17 @@ def instruction_actions(role: str | None = None) -> str:
         "émets l'action SUIVANTE, autant de fois qu'il le faut. Tu ne rédiges ta réponse "
         "finale qu'une fois le travail RÉELLEMENT terminé : un document ouvert n'est pas "
         "un document écrit.\n"
+        # LA RÈGLE DE NOA (31/08, deuxième relevé) : « il ne faut pas que chaque
+        # demande exige un outil précis ; il doit chercher ce qu'il a et agir ».
+        # Sans cette phrase, le modèle cherchait une action portant le NOM de la
+        # demande (« lister les adresses mail ») et concluait « je n'ai pas de
+        # commande pour ça » alors que trois actions rendaient l'information.
+        "UNE DEMANDE N'A PAS BESOIN D'UNE ACTION DU MÊME NOM. Ce catalogue est ta "
+        "boîte à outils : choisis l'action dont le RÉSULTAT contient l'information "
+        "demandée, même si son nom ne ressemble pas à la demande, et composes-en "
+        "plusieurs s'il le faut. ESSAIE avant de dire que tu ne peux pas : une action "
+        "de lecture ne coûte rien, et « je n'ai pas de commande pour ça » est presque "
+        "toujours faux.\n"
         "Règles : UNE seule action par réponse ; uniquement un skill de la liste ; "
         "si aucune action n'est nécessaire, réponds normalement SANS bloc. "
         "Les balises masquées ([PER_1], [MONTANT_2]...) sont acceptées dans les paramètres. "

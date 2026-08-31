@@ -62,6 +62,11 @@ verifier("skill `boites_mail` déclaré, effet lecture, filtré par les droits, 
          and "boites_visibles(user)" in skills.split("async def boites_mail(")[1][:1500]
          and "boites_du_domaine" in skills.split("async def boites_mail(")[1][:2500])
 protocole = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
+verifier("le contrat des actions : PAS BESOIN d'une action du même nom, composer, essayer",
+         "PAS BESOIN D'UNE ACTION DU MÊME NOM" in protocole and "composes-en" in protocole
+         and "ESSAIE avant de dire que tu ne peux pas" in protocole)
+verifier("le forceur : choisir l'action dont le RÉSULTAT contient l'information",
+         "presque jamais d'action du MÊME NOM" in agent1 and "s'essaie sans coût" in agent1)
 verifier("catalogue : boites_mail", '"boites_mail": (' in protocole and "adresses mail" in protocole.split('"boites_mail": (')[1][:400])
 verifier("journal : « je liste les boîtes mail »", '"boites_mail"' in (BACKEND / "agents" / "journal.py").read_text(encoding="utf-8"))
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")

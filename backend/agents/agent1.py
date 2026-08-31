@@ -2244,7 +2244,10 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         "\n\nLes identifiants (document_id, chemins, références) se RECOPIENT "
         "depuis les résultats fournis, caractère pour caractère. N'en invente "
         "jamais un qui ressemble : il serait rejeté."
-        "\n\nSi, et seulement si, aucune action de la liste ne peut faire "
+        "\n\nLa demande n'a presque jamais d'action du MÊME NOM : choisis "
+        "celle dont le RÉSULTAT contient l'information demandée, même si son "
+        "nom n'y ressemble pas — une action de lecture s'essaie sans coût. "
+        "Si, et seulement si, aucune action de la liste ne peut faire "
         "avancer la demande, réponds le seul mot RIEN, sans bloc."
     )
 

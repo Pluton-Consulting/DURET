@@ -306,3 +306,23 @@ async def resolve_validation(
                   "fil": fil},
     )
     return result
+
+
+@router.get("/{validation_id}/reprise")
+async def progression_reprise(validation_id: UUID,
+                              current_user: User = Depends(get_current_user)):
+    """Le nœud en cours de la reprise déclenchée par CETTE validation.
+
+    Sondé par l'écran pendant qu'un « Approuver » s'exécute : sans cela, un
+    plan de plusieurs actions tournait des minutes sans un signe (31/08).
+    Rend {"node": None} quand rien ne tourne — jamais une erreur : la sonde
+    est un confort, pas un contrat.
+    """
+    from agents import runtime as _runtime
+    async with get_db() as conn:
+        fil = await conn.fetchval(
+            "SELECT thread_id FROM validations WHERE id = $1", validation_id)
+    if not fil:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Validation introuvable")
+    return _runtime.progression_reprise(str(fil)) or {"node": None}

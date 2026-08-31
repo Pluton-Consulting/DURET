@@ -415,6 +415,30 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     // panneau latéral, mais le résultat arrive dans le fil. Entre les deux,
     // l'indicateur d'activité du chat s'allume comme pendant un tour ordinaire.
     if (accorde) { principalOccupeRef.current = true; setPrincipalOccupe(true) }
+    // LA REPRISE SE VOIT (31/08) : sitôt le clic, le journal parle, puis la
+    // progression réelle est sondée pendant que le serveur déroule le plan.
+    // La sonde s'arrête seule dès que l'accord n'est plus en cours.
+    if (accorde) {
+      setActivite("j'exécute ce que vous venez d'approuver")
+      setThinkingNode("execute_action")
+      const sondeId = setInterval(async () => {
+        if (accordEnCoursRef.current !== id) {
+          clearInterval(sondeId)
+          setThinkingNode(null)
+          setActivite("")
+          return
+        }
+        try {
+          const p = await apiRequest<{ node?: string | null; libelle?: string }>(
+            `/api/validations/${id}/reprise`, { token })
+          if (p?.node) {
+            setThinkingNode(p.node)
+            setThinkingSteps((prev) => (prev[prev.length - 1] === p.node ? prev : [...prev, p.node!]))
+            if (p.libelle) setActivite(p.libelle)
+          }
+        } catch { /* la sonde est un confort, jamais une erreur d'écran */ }
+      }, 1200)
+    }
     try {
       const res = await apiRequest<{ status?: string; response?: string; validation_id?: string | null }>(
         `/api/validations/${id}/resolve`,
@@ -1128,7 +1152,8 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
 
       <ReasoningPath
         steps={thinkingSteps}
-        loading={loading}
+        // La frise s'anime aussi pendant la reprise d'un accord approuvé.
+        loading={loading || accordEnCours !== null}
         rail={
           <FileAttente
             taches={cartesTaches}

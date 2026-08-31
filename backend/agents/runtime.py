@@ -399,6 +399,19 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
     }
 
 
+# LA REPRISE SE VOIT (31/08). Après « Approuver », le graphe repartait dans un
+# `ainvoke` muet : un plan de plusieurs actions tournait des minutes sans un
+# signe à l'écran — « on a l'impression que ça s'est arrêté » (Noa). La
+# reprise enregistre ici le nœud en cours et son libellé « je … » ; l'écran
+# les sonde par GET /api/validations/{id}/reprise pendant l'accord.
+_REPRISES: dict[str, dict] = {}
+
+
+def progression_reprise(thread_id: str) -> Optional[dict]:
+    """Le nœud en cours d'une reprise post-validation, pour l'écran."""
+    return _REPRISES.get(str(thread_id))
+
+
 async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[str] = None,
                       validation_id: Optional[str] = None) -> dict:
     """Reprend un graph suspendu au human_gate avec la décision humaine.
@@ -440,15 +453,29 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
     # L'identifiant traverse la reprise : `execute_action_node` cible ainsi LA
     # ligne résolue, au lieu de « la dernière approuvée du fil » — un fil de
     # test en porte plusieurs, et la plus récente n'est pas forcément la bonne.
+    interruption = None
     with _Verrou(thread_id):
-        result = await graph.ainvoke(
-            Command(resume={"approved": approved, "validated_by": validated_by,
-                            "validation_id": str(validation_id) if validation_id else None}),
-            config,
-        )
-
+        try:
+            # NŒUD PAR NŒUD, comme un tour ordinaire : c'est ce qui rend la
+            # reprise visible — et une éventuelle nouvelle interruption se
+            # capture au passage, comme dans stream_turn.
+            async for _ns, chunk in graph.astream(
+                    Command(resume={"approved": approved, "validated_by": validated_by,
+                                    "validation_id": str(validation_id) if validation_id else None}),
+                    config, stream_mode="updates", subgraphs=True):
+                for node_name, update in chunk.items():
+                    if node_name == "__interrupt__":
+                        if interruption is None:
+                            interruption = _extract_interrupt({"__interrupt__": update})
+                        continue
+                    _REPRISES[str(thread_id)] = {
+                        "node": node_name,
+                        "libelle": libelle(node_name, update if isinstance(update, dict) else {}),
+                    }
+        finally:
+            _REPRISES.pop(str(thread_id), None)
         snapshot = await graph.aget_state(config)
-    state = snapshot.values if isinstance(snapshot.values, dict) else result
+    state = snapshot.values if isinstance(snapshot.values, dict) else {}
 
     commun = {
         "thread_id": thread_id,
@@ -470,7 +497,7 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
     # lieu d'être perdue en silence.
     if getattr(snapshot, "next", None):
         suivante = await _persist_validation(
-            thread_id, validated_by or "", state, _extract_interrupt(result))
+            thread_id, validated_by or "", state, interruption)
         logger.info("Reprise de %s : une NOUVELLE validation attend (%s)",
                     thread_id, suivante)
         return {"status": "pending_validation", "validation_id": suivante, **commun}

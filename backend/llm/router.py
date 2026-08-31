@@ -134,20 +134,6 @@ def _tete(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     # sur des tours réels : il doit se poser et se retirer depuis l'interface,
     # pas par une session SSH et une recréation de conteneur sur CHAQUE serveur.
     from llm.reglages import valeur as reglage
-    # UN SEUL MODÈLE, PARTOUT. `modele_unique` (Paramètres → « Le modèle de
-    # l'assistant ») met le même couple en tête des TROIS paliers : plus de
-    # LIGHT sur Gemini, STANDARD sur LongCat, COMPLEX sur autre chose — un
-    # modèle, un comportement, une facture. Il prime sur `llm_tete`, qui
-    # reste le réglage fin par palier. La cascade demeure derrière : si ce
-    # modèle ne répond pas, le tour n'échoue pas pour autant.
-    unique = (reglage("modele_unique") or "").strip()
-    if unique:
-        fournisseur, _, modele = unique.partition(":")
-        fournisseur, modele = fournisseur.strip().lower(), modele.strip()
-        if modele and (fournisseur in _OPENAI_COMPAT or fournisseur in ("groq", "anthropic")):
-            return [(fournisseur, modele)]
-        logger.warning("modele_unique ignoré (forme « fournisseur:modele », fournisseur connu) : %r",
-                       unique)
     brut = (reglage("llm_tete") or "").strip()
     if not brut:
         return []
@@ -181,6 +167,42 @@ def _tete(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     if sortie:
         logger.info("LLM_TETE actif sur %s : %s", tier.value,
                     ", ".join(f"{p}:{m}" for p, m in sortie))
+    return sortie
+
+
+def _lire_couple(brut) -> Optional[tuple[str, str]]:
+    """« fournisseur:modele » → (fournisseur, modele), ou None si illisible (journalisé)."""
+    brut = (brut or "").strip()
+    if not brut:
+        return None
+    fournisseur, _, modele = brut.partition(":")
+    fournisseur, modele = fournisseur.strip().lower(), modele.strip()
+    if modele and (fournisseur in _OPENAI_COMPAT or fournisseur in ("groq", "anthropic")):
+        return (fournisseur, modele)
+    logger.warning("modèle choisi ignoré (forme « fournisseur:modele », fournisseur connu) : %r", brut)
+    return None
+
+
+def _modeles_choisis(tier: LLMTier) -> list[tuple[str, str]]:
+    """DEUX MODÈLES, ET RIEN D'AUTRE — demande de Noa du 31/08.
+
+    `modele_rapide` sert LIGHT et STANDARD (orientation, mémoire, rédaction
+    courante), `modele_puissant` sert COMPLEX (analyse, synthèse) ; chacun est
+    le secours de l'autre. Dès qu'un des deux est posé, `_tier_chain` n'utilise
+    QUE cette liste : plus de LongCat ici, Gemini là, Ollama au fond — deux
+    modèles, deux comportements, une facture lisible. Les deux vides = la
+    cascade habituelle, `llm_tete` compris.
+    """
+    from llm.reglages import valeur as reglage
+    rapide = _lire_couple(reglage("modele_rapide"))
+    puissant = _lire_couple(reglage("modele_puissant"))
+    if not rapide and not puissant:
+        return []
+    ordre = [puissant, rapide] if tier == LLMTier.COMPLEX else [rapide, puissant]
+    sortie: list[tuple[str, str]] = []
+    for c in ordre:
+        if c and c not in sortie:
+            sortie.append(c)
     return sortie
 
 
@@ -275,7 +297,16 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
             ("openrouter", s.model_or_free_b),
             ("ollama", None),
         ]
-    chain = _tete(tier) + chain
+    # Deux modèles choisis dans Paramètres : la cascade ci-dessus est IGNORÉE.
+    # Si aucun des deux n'a de clé, on le dit et on retombe sur la cascade
+    # plutôt que de ne plus répondre du tout.
+    choisis = [(p, m) for (p, m) in _modeles_choisis(tier) if _provider_available(p)]
+    if choisis:
+        chain = choisis
+    else:
+        if _modeles_choisis(tier):
+            logger.warning("Modèles choisis sans clé disponible : cascade habituelle sur %s", tier.value)
+        chain = _tete(tier) + chain
     filtered = [(p, m) for (p, m) in chain if _provider_available(p)]
     # Un même couple peut arriver deux fois quand la tête reprend un candidat
     # déjà présent : le doublon ferait retenter le modèle qu'on vient d'écarter.

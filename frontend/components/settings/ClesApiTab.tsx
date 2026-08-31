@@ -158,21 +158,20 @@ function ReglageKpiDepuis({ apiUrl, backendToken }: { apiUrl: string; backendTok
   )
 }
 
-// LE MODÈLE DE L'ASSISTANT — UN SEUL, PARTOUT.
+// LES DEUX MODÈLES DE L'ASSISTANT — ET RIEN D'AUTRE.
 //
-// Demande de Noa du 31/08 : « une seule clé, un seul modèle, le même partout —
-// pas vingt mille modèles différents à chaque endroit ». Avant, le forçage se
-// réglait PAR PALIER (« standard=…, complex=…, light=… ») avec des préréglages :
-// juste, mais illisible pour qui n'a pas la cascade en tête. Ici : un
-// fournisseur (parmi ceux dont la clé est présente), un modèle, un bouton.
-// Le réglage `modele_unique` met ce couple en tête des TROIS paliers ET des
-// campagnes d'enrichissement ; la cascade reste derrière en secours. La
-// vision, les images et les embeddings gardent leur modèle dédié : un modèle
-// de texte ne lit pas un plan.
+// Demande de Noa du 31/08 : « deux modèles fiables et rapides, un pour répondre
+// vite et un pour les grosses tâches ; on oublie tous les autres LLM ». Quand au
+// moins un des deux est choisi, la cascade habituelle N'EST PLUS UTILISÉE : le
+// rapide sert les paliers LIGHT et STANDARD (orientation, mémoire, rédaction
+// courante), le puissant sert COMPLEX (analyse, synthèse) et les campagnes
+// d'enrichissement, et chacun est le secours de l'autre. Deux modèles, deux
+// comportements, une facture lisible. « Retirer » les deux rend la cascade.
+// La vision, les images et les embeddings gardent leur modèle dédié.
 //
-// Le forçage par palier (`llm_tete`) existe toujours pour le fichier de
-// configuration ; s'il est posé en base, la carte le montre et permet de le
-// retirer — un réglage invisible est un réglage qu'on ne peut pas vérifier.
+// Le forçage fin par palier (`llm_tete`, fichier de configuration) est montré
+// s'il traîne encore en base, et retirable : un réglage invisible est un
+// réglage qu'on ne peut pas vérifier.
 interface FicheFournisseur {
   fournisseur: string
   libelle: string
@@ -180,13 +179,97 @@ interface FicheFournisseur {
   modeles: { id: string; ecarte: boolean; raison: string }[]
 }
 
-function ReglageModeleUnique({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
-  const [fiches, setFiches] = useState<FicheFournisseur[]>([])
-  const [actuel, setActuel] = useState("")
-  const [avance, setAvance] = useState("")
+function LigneModele({ titre, aide, actuel, fiches, busy, onChoisir, onRetirer }: {
+  titre: string; aide: string; actuel: string; fiches: FicheFournisseur[]; busy: boolean
+  onChoisir: (valeur: string) => void; onRetirer: () => void
+}) {
   const [fournisseur, setFournisseur] = useState("")
   const [modele, setModele] = useState("")
   const [autre, setAutre] = useState("")
+  useEffect(() => {
+    const [f, ...reste] = actuel.split(":")
+    const m = reste.join(":")
+    const premier = fiches.find((x) => x.cle_presente)
+    const fChoisi = (actuel && f) || premier?.fournisseur || ""
+    setFournisseur(fChoisi)
+    const fiche = fiches.find((x) => x.fournisseur === fChoisi)
+    const connu = fiche?.modeles.some((x) => x.id === m)
+    setModele(connu ? m : (fiche?.modeles[0]?.id || ""))
+    setAutre(actuel && !connu ? m : "")
+  }, [actuel, fiches])
+  const fiche = fiches.find((x) => x.fournisseur === fournisseur)
+  const choisi = `${fournisseur}:${(autre.trim() || modele).trim()}`
+  const pret = Boolean(fournisseur && (autre.trim() || modele) && fiche?.cle_presente)
+  const champ = { padding: "8px 10px", borderRadius: "var(--marque-radius-pill)",
+                  border: "1px solid var(--marque-border)", fontSize: 13 } as const
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--marque-border)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{titre}</div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>{aide}</div>
+        </div>
+        <span style={{
+          background: actuel ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+          color: actuel ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+          padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
+          fontWeight: 600, whiteSpace: "nowrap",
+        }}>
+          {actuel || "non choisi"}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+        <select value={fournisseur} disabled={busy} style={{ ...champ, minWidth: 190 }}
+          onChange={(e) => {
+            const f = e.target.value
+            setFournisseur(f)
+            setModele(fiches.find((x) => x.fournisseur === f)?.modeles[0]?.id || "")
+            setAutre("")
+          }}>
+          {fiches.length === 0 && <option value="">chargement…</option>}
+          {fiches.map((f) => (
+            <option key={f.fournisseur} value={f.fournisseur} disabled={!f.cle_presente}>
+              {f.libelle}{f.cle_presente ? "" : " — clé absente"}
+            </option>
+          ))}
+        </select>
+        <select value={modele} disabled={busy || !fiche} style={{ ...champ, minWidth: 230 }}
+          onChange={(e) => { setModele(e.target.value); setAutre("") }}>
+          {(fiche?.modeles || []).map((m) => (
+            <option key={m.id} value={m.id}>{m.id}{m.ecarte ? ` — écarté (${m.raison})` : ""}</option>
+          ))}
+        </select>
+        <input value={autre} disabled={busy} onChange={(e) => setAutre(e.target.value)}
+          placeholder="ou l'identifiant exact d'un autre modèle" style={{ ...champ, minWidth: 240 }} />
+        <button onClick={() => onChoisir(choisi)} disabled={busy || !pret || choisi === actuel}
+          className="sym-tap" style={{
+            padding: "8px 16px", borderRadius: "var(--marque-radius-pill)", border: "none",
+            background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+            color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 700,
+            cursor: busy || !pret || choisi === actuel ? "not-allowed" : "pointer",
+            opacity: busy || !pret || choisi === actuel ? 0.6 : 1,
+          }}>
+          Utiliser
+        </button>
+        {actuel && (
+          <button onClick={onRetirer} disabled={busy} className="sym-tap" style={{
+            padding: "8px 14px", borderRadius: "var(--marque-radius-pill)",
+            border: "1px solid var(--marque-border)", background: "var(--marque-canvas)",
+            color: "var(--marque-text-body)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}>
+            Retirer
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ReglageModeles({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [fiches, setFiches] = useState<FicheFournisseur[]>([])
+  const [rapide, setRapide] = useState("")
+  const [puissant, setPuissant] = useState("")
+  const [avance, setAvance] = useState("")
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState("")
   const [erreur, setErreur] = useState("")
@@ -198,16 +281,10 @@ function ReglageModeleUnique({ apiUrl, backendToken }: { apiUrl: string; backend
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
-      const liste: FicheFournisseur[] = json?.fournisseurs || []
-      setFiches(liste)
-      setActuel(json?.modele_unique || "")
+      setFiches(json?.fournisseurs || [])
+      setRapide(json?.modele_rapide || "")
+      setPuissant(json?.modele_puissant || "")
       setAvance(json?.llm_tete || "")
-      const [f, m] = String(json?.modele_unique || "").split(":")
-      const premier = liste.find((x) => x.cle_presente)
-      const fChoisi = f || premier?.fournisseur || ""
-      setFournisseur(fChoisi)
-      const fiche = liste.find((x) => x.fournisseur === fChoisi)
-      setModele(m || fiche?.modeles[0]?.id || "")
       setErreur("")
     } catch (e: any) {
       setErreur(e?.message || "chargement impossible")
@@ -235,10 +312,7 @@ function ReglageModeleUnique({ apiUrl, backendToken }: { apiUrl: string; backend
     }
   }
 
-  const fiche = fiches.find((x) => x.fournisseur === fournisseur)
-  const choisi = `${fournisseur}:${(autre.trim() || modele).trim()}`
-  const pret = Boolean(fournisseur && (autre.trim() || modele) && fiche?.cle_presente)
-
+  const exclusif = Boolean(rapide || puissant)
   return (
     <div className="sym-card" style={{
       background: "var(--marque-surface)", border: "2px solid var(--marque-primary)",
@@ -247,84 +321,41 @@ function ReglageModeleUnique({ apiUrl, backendToken }: { apiUrl: string; backend
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
-            Le modèle de l&apos;assistant
+            Les modèles de l&apos;assistant
           </div>
           <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3, lineHeight: 1.5 }}>
-            Un seul modèle pour tout ce qui écrit : le chat, la rédaction, l&apos;enrichissement.
-            S&apos;il ne répond pas, la cascade prend le relais. La vision (plans, photos), les
-            images et les embeddings gardent leur modèle dédié.
+            Deux modèles, et rien d&apos;autre : un <b>rapide</b> pour répondre au quotidien, un
+            <b> puissant</b> pour les grosses tâches (analyse, synthèse, enrichissement). Chacun
+            secourt l&apos;autre. Dès qu&apos;un des deux est choisi, la cascade automatique n&apos;est
+            plus utilisée. La vision (plans, photos), les images et les embeddings gardent leur
+            modèle dédié.
           </div>
         </div>
         <span style={{
-          background: actuel ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
-          color: actuel ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+          background: exclusif ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+          color: exclusif ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
           padding: "5px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
           fontWeight: 600, whiteSpace: "nowrap",
         }}>
-          {actuel || "cascade automatique"}
+          {exclusif ? "deux modèles seulement" : "cascade automatique"}
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-        <select value={fournisseur} disabled={busy}
-          onChange={(e) => {
-            const f = e.target.value
-            setFournisseur(f)
-            setModele(fiches.find((x) => x.fournisseur === f)?.modeles[0]?.id || "")
-            setAutre("")
-          }}
-          style={{ padding: "8px 10px", borderRadius: "var(--marque-radius-pill)",
-                   border: "1px solid var(--marque-border)", fontSize: 13, minWidth: 190 }}>
-          {fiches.length === 0 && <option value="">chargement…</option>}
-          {fiches.map((f) => (
-            <option key={f.fournisseur} value={f.fournisseur} disabled={!f.cle_presente}>
-              {f.libelle}{f.cle_presente ? "" : " — clé absente"}
-            </option>
-          ))}
-        </select>
-        <select value={modele} disabled={busy || !fiche} onChange={(e) => { setModele(e.target.value); setAutre("") }}
-          style={{ padding: "8px 10px", borderRadius: "var(--marque-radius-pill)",
-                   border: "1px solid var(--marque-border)", fontSize: 13, minWidth: 240 }}>
-          {(fiche?.modeles || []).map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.id}{m.ecarte ? ` — écarté (${m.raison})` : ""}
-            </option>
-          ))}
-        </select>
-        <input value={autre} disabled={busy} onChange={(e) => setAutre(e.target.value)}
-          placeholder="ou un autre identifiant de modèle"
-          style={{ padding: "8px 10px", borderRadius: "var(--marque-radius-pill)",
-                   border: "1px solid var(--marque-border)", fontSize: 13, minWidth: 220 }} />
-        <button onClick={() => ecrire("modele_unique", choisi,
-                                      `${choisi} est maintenant le modèle de tout ce qui écrit. Effet immédiat.`)}
-          disabled={busy || !pret || choisi === actuel} className="sym-tap" style={{
-            padding: "9px 18px", borderRadius: "var(--marque-radius-pill)", border: "none",
-            background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
-            color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 700,
-            cursor: busy || !pret || choisi === actuel ? "not-allowed" : "pointer",
-            opacity: busy || !pret || choisi === actuel ? 0.6 : 1,
-          }}>
-          Utiliser partout
-        </button>
-        {actuel && (
-          <button onClick={() => ecrire("modele_unique", "",
-                                        "Retour à la cascade automatique : chaque palier reprend son ordre habituel.")}
-            disabled={busy} className="sym-tap" style={{
-              padding: "9px 16px", borderRadius: "var(--marque-radius-pill)",
-              border: "1px solid var(--marque-border)", background: "var(--marque-canvas)",
-              color: "var(--marque-text-body)", fontSize: 13, fontWeight: 600, cursor: "pointer",
-            }}>
-            Retirer
-          </button>
-        )}
-      </div>
+      <LigneModele titre="Réponses rapides" aide="le chat au quotidien, l'orientation, la rédaction courante"
+        actuel={rapide} fiches={fiches} busy={busy}
+        onChoisir={(v) => ecrire("modele_rapide", v, `${v} répond désormais au quotidien. Effet immédiat.`)}
+        onRetirer={() => ecrire("modele_rapide", "", "Modèle rapide retiré.")} />
+      <LigneModele titre="Grosses tâches" aide="analyse, synthèse, enrichissement de la mémoire d'entreprise"
+        actuel={puissant} fiches={fiches} busy={busy}
+        onChoisir={(v) => ecrire("modele_puissant", v, `${v} prend désormais les grosses tâches. Effet immédiat.`)}
+        onRetirer={() => ecrire("modele_puissant", "", "Modèle puissant retiré.")} />
 
       {avance && (
         <div style={{ marginTop: 10, fontSize: 12, color: "var(--marque-text-muted)",
                       display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <span>
             Réglage avancé par palier encore posé (<code>{avance}</code>)
-            {actuel ? " — sans effet tant qu'un modèle unique est choisi." : " — il s'applique tant qu'aucun modèle unique n'est choisi."}
+            {exclusif ? " — sans effet tant qu'un modèle est choisi ci-dessus." : " — il s'applique tant qu'aucun modèle n'est choisi ci-dessus."}
           </span>
           <button onClick={() => ecrire("llm_tete", "", "Le réglage par palier est retiré.")}
             disabled={busy} className="sym-tap" style={{
@@ -487,7 +518,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
 
   return (
     <div>
-      <ReglageModeleUnique apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
 

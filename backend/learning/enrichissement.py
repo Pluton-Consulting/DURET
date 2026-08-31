@@ -97,19 +97,21 @@ FOURNISSEURS_DE_CONFIANCE = ("longcat", "google", "deepseek", "anthropic")
 def modele_de_confiance(modele: str) -> bool:
     """Ce modèle a-t-il le droit d'écrire dans la mémoire d'entreprise ?
 
-    Oui s'il vient d'un fournisseur de la liste — ou s'il est LE modèle unique
-    choisi dans Paramètres : la direction qui désigne un modèle « partout »
-    l'a choisi pour l'enrichissement aussi, c'est le sens même du réglage.
+    Oui s'il vient d'un fournisseur de la liste — ou s'il est l'un des DEUX
+    modèles choisis dans Paramètres (`modele_rapide`, `modele_puissant`) : la
+    direction qui les désigne « pour tout » les a choisis pour l'enrichissement
+    aussi, c'est le sens même du réglage.
     """
     fournisseur = str(modele or "").split(":", 1)[0].strip().lower()
     if fournisseur in FOURNISSEURS_DE_CONFIANCE:
         return True
     try:
         from llm.reglages import valeur
-        choisi = (valeur("modele_unique") or "").split(":", 1)[0].strip().lower()
+        choisis = {(valeur(n) or "").split(":", 1)[0].strip().lower()
+                   for n in ("modele_rapide", "modele_puissant")} - {""}
     except Exception:  # noqa: BLE001 — sans réglage lisible, la liste fait foi
-        choisi = ""
-    return bool(choisi) and fournisseur == choisi
+        choisis = set()
+    return fournisseur in choisis
 
 # État de la campagne en cours. Une seule à la fois : deux campagnes
 # simultanées se disputeraient le quota d'embeddings pour rien.

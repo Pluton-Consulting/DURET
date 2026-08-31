@@ -246,13 +246,14 @@ async def ecrire_cle(body: CleBody, current_user: User = Depends(get_current_use
 async def modeles_disponibles(current_user: User = Depends(get_current_user)):
     """Ce que la carte « Le modèle de l'assistant » a besoin de savoir : les
     fournisseurs de texte et leurs modèles, qui a une clé, qui est écarté, et
-    le choix en vigueur (`modele_unique`, et l'éventuel `llm_tete` par palier)."""
+    les choix en vigueur (`modele_rapide`, `modele_puissant`, et l'éventuel `llm_tete` par palier)."""
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=403, detail="Réservé à l'administration système")
     from llm.router import catalogue_modeles
     from llm.reglages import rafraichir, valeur
     await rafraichir(force=True)
-    return {"modele_unique": (valeur("modele_unique") or "").strip(),
+    return {"modele_rapide": (valeur("modele_rapide") or "").strip(),
+            "modele_puissant": (valeur("modele_puissant") or "").strip(),
             "llm_tete": (valeur("llm_tete") or "").strip(),
             "fournisseurs": catalogue_modeles()}
 

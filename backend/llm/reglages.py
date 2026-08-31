@@ -34,10 +34,14 @@ REGLAGES_CONNUS = (
     # La RÉHYDRATATION, elle, reste toujours en service : les jetons déjà
     # posés dans l'historique doivent continuer de se résoudre.
     "anonymisation",
-    # UN SEUL MODÈLE, PARTOUT (demande de Noa, 31/08 : « le même modèle partout,
-    # pas vingt mille différents »). « fournisseur:modele », mis en tête des
-    # trois paliers et des campagnes ; prime sur `llm_tete`. Vide = cascade.
-    "modele_unique",
+    # DEUX MODÈLES, ET RIEN D'AUTRE (demande de Noa, 31/08 : « deux modèles
+    # fiables et rapides, un pour répondre vite, un pour les grosses tâches ;
+    # on oublie tous les autres LLM »). « fournisseur:modele » chacun. Dès
+    # qu'un des deux est posé, la cascade habituelle n'est plus utilisée :
+    # le rapide sert LIGHT et STANDARD, le puissant COMPLEX et les campagnes,
+    # chacun secourt l'autre. Les deux vides = cascade automatique.
+    "modele_rapide",
+    "modele_puissant",
 )
 
 # Les fournisseurs de TEXTE que le routeur sait construire (llm/router.py).
@@ -122,7 +126,7 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom == "anonymisation" and (brut or "").strip() \
             and (brut or "").strip().lower() not in ("active", "desactivee"):
         raise ValueError("Valeur attendue : « active » ou « desactivee ».")
-    if nom == "modele_unique" and (brut or "").strip():
+    if nom in ("modele_rapide", "modele_puissant") and (brut or "").strip():
         f, _, m = (brut or "").strip().partition(":")
         if f.strip().lower() not in FOURNISSEURS_TEXTE or not m.strip():
             raise ValueError("Forme attendue : « fournisseur:modele », fournisseur parmi "

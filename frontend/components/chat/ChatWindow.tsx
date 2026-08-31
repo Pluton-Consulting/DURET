@@ -947,6 +947,16 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           if (!monteRef.current) majTourDetache({ fini: true })
           return
         }
+        if (err?.status === 401) {
+          // La session a expiré (le JWT vit 8 h) alors que l'onglet est resté
+          // ouvert : rien d'autre ne marchera d'ici la reconnexion. On le dit
+          // en français et on y renvoie — « Erreur : Token invalide » (31/08)
+          // laissait la personne devant un chat mort.
+          if (!monteRef.current) majTourDetache({ fini: true })
+          else pushAssistant("Erreur : session expirée, veuillez vous reconnecter.")
+          setTimeout(() => window.location.assign("/login"), 2500)
+          return
+        }
         if (!monteRef.current) majTourDetache({ fini: true })
         else if (cible.carte) majCarteLocale(cible.carte, { etat: "echec", erreur: err?.message ?? "requête impossible" })
         else pushAssistant(`Erreur : ${err?.message ?? "requête impossible"}`)

@@ -42,7 +42,14 @@ export async function openChatSocket(
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!ticketRes.ok) throw new Error("ws-ticket refusé")
+  if (!ticketRes.ok) {
+    // Un 401 ici est une session expirée (JWT de 8 h, onglet resté ouvert) : le
+    // dire, et porter le statut pour que le chat renvoie à la connexion.
+    const e = new Error(ticketRes.status === 401
+      ? "session expirée, veuillez vous reconnecter" : "ws-ticket refusé") as Error & { status?: number }
+    e.status = ticketRes.status
+    throw e
+  }
   const { ticket } = await ticketRes.json()
 
   const wsBase = API_URL.replace(/^http/, "ws")

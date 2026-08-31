@@ -767,6 +767,9 @@ async def check_mails(data: dict, user) -> dict:
             continue
         objet = _champ(m, "objet", "subject", "sujet")
         releve.append({
+            # La ref est ce qui permet d'OUVRIR le message (`lire_mail`) :
+            # l'extrait ci-dessous n'en est qu'un début.
+            "ref": _champ(m, "ref"),
             "de": _champ(m, "de", "from", "expediteur", "sender"),
             "objet": objet,
             "date": _champ(m, "date", "recu_le", "receivedAt", "received_at"),
@@ -824,7 +827,9 @@ async def check_mails(data: dict, user) -> dict:
             "lignes, présentée comme une PROPOSITION à valider — n'envoie rien : "
             "l'envoi passe par `redaction_email`, que l'utilisateur devra approuver. "
             "Si un extrait est vide, dis que le contenu n'a pas pu être lu au lieu "
-            "d'inventer un résumé."),
+            "d'inventer un résumé. Un `extrait` n'est que le DÉBUT du message : "
+            "s'il ne suffit pas pour proposer une réponse juste, ouvre le message "
+            "avec `lire_mail` et sa `ref` avant de répondre."),
     }
 
 

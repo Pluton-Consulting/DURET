@@ -588,6 +588,47 @@ async def lire_mails(data: dict, user) -> dict:
 SKILLS_NATIFS["lire_mails"] = lire_mails
 
 
+async def lire_mail(data: dict, user) -> dict:
+    """OUVRE UN message en entier : corps complet, pièces jointes nommées.
+
+    Relevé par Noa le 31/08 : « il lit que les aperçus, qui sont donc coupés ».
+    Une liste ne rend qu'un EXTRAIT par message (et Graph plafonne son aperçu
+    à 255 caractères) ; jusqu'ici aucun geste n'allait chercher le reste. Même
+    contrôle de droits que `lire_mails` : sa boîte, celles qui lui sont
+    déléguées, toutes si administrateur. Rien n'est modifié — le message
+    n'est pas marqué lu.
+    """
+    from mail.lecture import lire_message
+
+    cible = await _boite_a_lire(data, user)
+    boite = await verifier_acces(user, cible)      # le contrôle reste ICI
+    # Les alias, comme pour `lire_mails` : refuser l'action pour un nom de
+    # paramètre est le piège déjà payé avec `url`.
+    ref = (data.get("ref") or data.get("reference") or data.get("id")
+           or data.get("message_id") or data.get("identifiant"))
+    objet = data.get("objet") or data.get("subject") or data.get("sujet") or data.get("titre")
+    de = data.get("de") or data.get("expediteur") or data.get("from")
+    try:
+        return await lire_message(boite, ref=ref, objet=objet, de=de,
+                                  dossier=data.get("dossier") or "recus")
+    except NotImplementedError as e:
+        raise MailSkillError(str(e))
+    except (LookupError, ValueError) as e:
+        raise MailSkillError(str(e))
+    except Exception as e:  # noqa: BLE001 - une messagerie injoignable n'est pas une panne du chat
+        logger.warning("Ouverture d'un message de %s impossible : %s", boite, e)
+        detail = str(e)
+        if "404" in detail:
+            raise MailSkillError(
+                f"Ce message n'existe plus dans la boîte {boite}, ou sa référence est périmée : "
+                "relancez la lecture de la boîte pour en obtenir une fraîche.")
+        raise MailSkillError(
+            f"Le message n'a pas pu être ouvert dans la boîte {boite} ({detail}).")
+
+
+SKILLS_NATIFS["lire_mail"] = lire_mail
+
+
 async def connaissances_acquises(data: dict, user) -> dict:
     from skills.connaissances import connaissances_acquises as _acquis
     return await _acquis(data, user)
@@ -769,6 +810,8 @@ EFFETS_NATIFS = {
     "rechercher_documents": "lecture",
     # Lire une boîte ne modifie rien et reste borné par `verifier_acces`.
     "lire_mails": "lecture",
+    # Ouvrir un message ne le marque pas lu : lecture pure, même contrôle.
+    "lire_mail": "lecture",
     # Inventaire de ce qui a été appris : lecture pure, filtrée par rôle.
     "connaissances_acquises": "lecture",
     # Compte et filtre sur les donnees importees : lecture, filtree par role.

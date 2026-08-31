@@ -110,7 +110,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
               COUNT(*) FILTER (WHERE action = 'skill_executed'
                                  AND metadata->>'skill' IN ('terminer_document','produire_document'))     AS documents,
               COUNT(*) FILTER (WHERE action = 'skill_executed'
-                                 AND metadata->>'skill' IN ('lire_mails','triage_email_entrant',
+                                 AND metadata->>'skill' IN ('lire_mails','lire_mail','triage_email_entrant',
                                                             'resume_fil_email','redaction_email'))        AS mails,
               COUNT(*) FILTER (WHERE action = 'skill_executed'
                                  AND metadata->>'skill' IN ('chercher_web','ouvrir_page','naviguer'))     AS web,
@@ -143,7 +143,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
                    COUNT(*) FILTER (WHERE action = 'skill_executed'
                                       AND metadata->>'skill' IN ('terminer_document','produire_document'))      AS documents,
                    COUNT(*) FILTER (WHERE action = 'skill_executed'
-                                      AND metadata->>'skill' IN ('lire_mails','triage_email_entrant',
+                                      AND metadata->>'skill' IN ('lire_mails','lire_mail','triage_email_entrant',
                                                                  'resume_fil_email','redaction_email'))         AS mails,
                    COUNT(*) FILTER (WHERE action = 'skill_executed'
                                       AND metadata->>'skill' IN ('rechercher_documents','interroger_donnees',

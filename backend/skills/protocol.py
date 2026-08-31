@@ -345,9 +345,20 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "plus récents et le total du dossier. N'en tire jamais de conclusion sur "
         "l'entreprise entière (pour cela, `lancer_enrichissement`). dossier : recus "
         "(défaut) ou envoyes ; limite : 1 à 25. Sans mailbox, la boîte de la personne "
-        "connectée. Pour un POINT complet avec résumés et propositions de réponse, "
-        "préfère `check_mails`",
+        "connectée. Chaque `apercu` rendu est un EXTRAIT, pas le message : pour le "
+        "corps complet, `lire_mail` avec la `ref`. Pour un POINT complet avec "
+        "résumés et propositions de réponse, préfère `check_mails`",
         [], ["mailbox", "dossier", "limite", "depuis", "recherche", "avant"]),
+    "lire_mail": (
+        "OUVRE UN message EN ENTIER : le corps complet (jusqu'à 10 000 caractères) et "
+        "ses pièces jointes nommées. L'`apercu` rendu par `lire_mails` ou `check_mails` "
+        "n'est qu'un EXTRAIT : dès qu'il faut le CONTENU d'un message (y répondre, le "
+        "résumer, y trouver une date, un montant, une demande précise), appelle ce geste "
+        "avec la `ref` du message, telle que la liste l'a rendue. Sans ref : `objet` "
+        "(et `de`) pour le retrouver dans le dossier. Un message par appel. Ne marque "
+        "rien comme lu. dossier : recus (défaut) ou envoyes. Sans mailbox, la boîte de "
+        "la personne connectée",
+        [], ["ref", "objet", "de", "dossier", "mailbox"]),
     "triage_email_entrant": (
         # `mailbox` ÉTAIT REQUIS ICI, et c'était un piège. Le cas normal est un
         # message COLLÉ dans le chat (« voici ce que je viens de recevoir ») :

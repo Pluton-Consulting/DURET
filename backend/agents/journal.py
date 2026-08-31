@@ -81,6 +81,7 @@ ACTES = {
     "connaissances_acquises": "je relis ce que j'ai appris",
     "mes_droits": "je vérifie vos droits",
     "lire_mails": "je lis la boîte mail",
+    "lire_mail": "j'ouvre le message",
     "rediger_email": "je rédige le message",
     "redaction_email": "je rédige le message",
     "envoyer_email": "j'envoie le message",

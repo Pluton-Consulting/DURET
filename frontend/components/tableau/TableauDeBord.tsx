@@ -68,7 +68,7 @@ const ACTIONS: Record<string, string> = {
 }
 const SKILLS: Record<string, string> = {
   rechercher_documents: "a cherché dans la mémoire", interroger_donnees: "a interrogé les données",
-  lire_mails: "a relevé des mails", triage_email_entrant: "a trié un mail", redaction_email: "a rédigé un mail",
+  lire_mails: "a relevé des mails", lire_mail: "a lu un mail", triage_email_entrant: "a trié un mail", redaction_email: "a rédigé un mail",
   resume_fil_email: "a résumé un échange de mails", produire_document: "a produit un document",
   terminer_document: "a terminé un document", creer_document: "a commencé un document", ajouter_document: "a complété un document",
   chercher_web: "a cherché sur le web", ouvrir_page: "a lu une page web", naviguer: "a navigué sur le web",

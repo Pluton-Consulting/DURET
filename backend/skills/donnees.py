@@ -109,20 +109,20 @@ async def interroger_donnees(data: dict, user) -> dict:
                     agreger = _j.loads(agreger)
                 except _j.JSONDecodeError:
                     agreger = {"operation": "somme", "colonne": agreger}
+            try:
+                page = max(1, int(data.get("page") or 1))
+            except (TypeError, ValueError):
+                page = 1
             annee = str(data.get("annee") or "").strip()
             fragments = _fragments(data)
             depuis = str(data.get("depuis") or data.get("periode") or "").strip()
             if agreger or annee or depuis:
                 resultat = await _agreger(conn, niveaux, reel,
                                           agreger if isinstance(agreger, dict) else {},
-                                          annee, filtres, fragments, depuis)
+                                          annee, filtres, fragments, depuis, page)
             elif not filtres and not fragments:
                 resultat = await _colonnes(conn, niveaux, reel)
             else:
-                try:
-                    page = max(1, int(data.get("page") or 1))
-                except (TypeError, ValueError):
-                    page = 1
                 resultat = await _filtrer(conn, niveaux, reel, filtres, fragments, page)
             if reel != type_source:
                 resultat["source_type_demande"] = type_source
@@ -412,6 +412,13 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict,
 # borné, et la borne se DIT quand elle mord — un total tronqué en silence est
 # un total faux.
 MAX_LIGNES_AGREGEES = 50000
+# Les groupes d'un agrégat (« CA par client ») se détaillent 60 par page,
+# CLASSÉS PAR VALEUR : relevé le 31/08, 478 clients triés par ordre
+# alphabétique faisaient ~20 000 caractères, coupés au plafond de
+# sérialisation au milieu de l'alphabet — « tronqué après la lettre H »,
+# et le CA le plus haut pouvait être dans la partie perdue. Les TOTAUX,
+# eux, portent toujours sur TOUS les groupes.
+MAX_GROUPES = 60
 
 _OPERATIONS = {"somme": "sum", "total": "sum", "moyenne": "avg", "min": "min",
                "minimum": "min", "max": "max", "maximum": "max",
@@ -469,7 +476,7 @@ def _groupe_de(ligne: dict, par: str, colonne_date: str):
 
 async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
                    annee: str, filtres: dict, fragments: dict = None,
-                   depuis: str = "") -> dict:
+                   depuis: str = "", page: int = 1) -> dict:
     """Compte / somme / moyenne / min / max, avec période et regroupement."""
     import datetime
     from skills.lecture import (lire_date, lire_montant, est_un_nombre,
@@ -587,8 +594,23 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
     sortie_groupes = [
         {"groupe": cle, "enregistrements": g["enregistrements"],
          "lisibles": len(g["valeurs"]), "resultat": _resultat(g)}
-        for cle, g in sorted(groupes.items(),
-                             key=lambda x: (x[0] is None, str(x[0] or "")))]
+        for cle, g in groupes.items()]
+    # PAR VALEUR, PAS PAR ALPHABET : « le CA le plus haut » doit être le
+    # PREMIER groupe rendu. Par année ou par mois, l'ordre chronologique
+    # garde son sens ; un groupe sans clé ou sans valeur passe en dernier.
+    chrono = par in ("annee", "année", "mois")
+
+    def _cle_tri(e):
+        if chrono:
+            return (e["groupe"] is None, str(e["groupe"] or ""))
+        v = e["resultat"] if isinstance(e["resultat"], (int, float)) else float("-inf")
+        return (e["groupe"] is None, -v)
+
+    sortie_groupes.sort(key=_cle_tri)
+    groupes_total = len(sortie_groupes)
+    pages = max(1, -(-groupes_total // MAX_GROUPES))
+    page = max(1, min(int(page or 1), pages))
+    visibles = sortie_groupes[(page - 1) * MAX_GROUPES: page * MAX_GROUPES]
     total_enr = sum(g["enregistrements"] for g in sortie_groupes)
     total_lis = sum(g["lisibles"] for g in sortie_groupes)
 
@@ -602,8 +624,13 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
         sortie = dict(commun, enregistrements=g["enregistrements"],
                       valeurs_lisibles=g["lisibles"], resultat=g["resultat"])
     else:
-        sortie = dict(commun, par=par, groupes=sortie_groupes,
-                      enregistrements=total_enr, valeurs_lisibles=total_lis)
+        sortie = dict(commun, par=par, groupes=visibles,
+                      groupes_total=groupes_total, page=page, pages=pages,
+                      enregistrements=total_enr, valeurs_lisibles=total_lis,
+                      pour_continuer=(
+                          f"Pour les {MAX_GROUPES} groupes SUIVANTS, rappelle "
+                          f"interroger_donnees avec les mêmes paramètres et page={page + 1}."
+                          if page < pages else None))
 
     sortie["note"] = (
         (f"Période retenue : {libelle_periode}, bornes comprises. " if libelle_periode else "")
@@ -611,6 +638,11 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
         + (f", {total_lis} valeur(s) de « {colonne} » lisibles comme nombres "
            f"({total_enr - total_lis} ignorée(s))" if colonne else "")
         + "."
+        + ((f" {groupes_total} groupe(s) « {par} » au total — les totaux ci-dessus "
+            f"portent sur TOUS les groupes ; page {page} sur {pages}, "
+            f"{len(visibles)} groupe(s) détaillé(s), classés "
+            + ("chronologiquement" if chrono else "du plus grand au plus petit")
+            + ".") if par else "")
         + (f" {hors_periode} enregistrement(s) écarté(s) car hors période."
            if hors_periode else "")
         + (f" ATTENTION : {sans_date} enregistrement(s) n'ont AUCUNE date lisible dans "

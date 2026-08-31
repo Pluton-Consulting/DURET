@@ -331,7 +331,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "somme|moyenne|min|max|compte, colonne: montant_ht, par: annee|mois|<colonne>} "
         "donne le total ou la moyenne. La PERIODE : `annee` (\"2024\") ou `depuis` "
         "(\"12m\", \"30j\", \"6 mois\", ou une date AAAA-MM-JJ) pour « les 12 derniers "
-        "mois ». Un seul appel rend le COMPTE et la moyenne. Les enregistrements "
+        "mois ». Un seul appel rend le COMPTE et la moyenne. Avec `par`, les groupes "
+        "sont classes du plus grand au plus petit, 60 par page (`page` pour les "
+        "suivants) — le PREMIER groupe est donc « le plus haut » — et les totaux "
+        "portent sur TOUS les groupes. Les enregistrements "
         "filtres se lisent 25 par 25 : `page` pour les suivants. Verifie TOUJOURS "
         "les valeurs reelles avant de filtrer",
         [], ["source_type", "filtres", "contient", "agreger", "annee", "depuis", "page"]),

@@ -662,6 +662,58 @@ async def lire_piece_jointe(data: dict, user) -> dict:
 SKILLS_NATIFS["lire_piece_jointe"] = lire_piece_jointe
 
 
+async def boites_mail(data: dict, user) -> dict:
+    """LA LISTE des boîtes mail accessibles à la personne connectée.
+
+    Relevé le 31/08 : « liste toutes les adresses mail que tu as » → « je n'ai
+    pas de commande pour ça ». `mes_droits` disait « toutes les boîtes du
+    domaine » sans les nommer, et le cloisonnement (`boites_visibles`) ne
+    connaît que les boîtes configurées ou déjà lues. Un administrateur, lui,
+    a le droit de voir TOUT le domaine : Graph sait le lister
+    (`boites_du_domaine`, permission User.Read.All — sinon liste vide, et on
+    le dit). Lecture pure, filtrée par les droits : un profil terrain ne
+    voit toujours que les siennes.
+    """
+    from mail.collecte import fournisseur
+
+    visibles = await boites_visibles(user)
+    try:
+        from mail.authorization import boites_par_id
+        autorisees = await boites_par_id(str(getattr(user, "id", "") or ""))
+    except Exception:  # noqa: BLE001 - dans le doute, ne rien élargir
+        autorisees = []
+    decouvertes: list[str] = []
+    annuaire = ""
+    if autorisees == ["*"]:
+        try:
+            if fournisseur() == "outlook":
+                from ingestion.connectors.outlook import boites_du_domaine
+                decouvertes = [normaliser(b) for b in await boites_du_domaine()]
+                annuaire = ("annuaire Microsoft 365 du domaine" if decouvertes else
+                            "l'annuaire du domaine n'a pas pu être lu (permission User.Read.All "
+                            "absente ?) : seules les boîtes configurées ou déjà lues sont listées")
+        except Exception as e:  # noqa: BLE001 - l'annuaire est un complément
+            logger.info("Annuaire des boîtes indisponible : %s", e)
+            annuaire = "annuaire du domaine indisponible : boîtes configurées ou déjà lues seulement"
+    toutes = sorted({b for b in (visibles + decouvertes) if b})
+    propre = normaliser(str(getattr(user, "email", "") or ""))
+    return {
+        "nombre": len(toutes),
+        "boites": toutes,
+        "la_votre": propre if propre in toutes else None,
+        "source": annuaire or ("boîtes configurées et déjà lues, filtrées par vos droits"),
+        "bloc_ui": ({"type": "list", "items": toutes} if toutes else None),
+        "message": (f"{len(toutes)} boîte(s) mail accessible(s)." if toutes else
+                    "Aucune boîte mail n'est accessible à ce compte."),
+        "a_faire": ("Cite-les TOUTES, telles quelles (la liste s'affiche aussi sous ta réponse). "
+                    "Aucune autre adresse n'est connue : n'en invente pas, ne propose pas "
+                    "d'aller les chercher ailleurs."),
+    }
+
+
+SKILLS_NATIFS["boites_mail"] = boites_mail
+
+
 async def connaissances_acquises(data: dict, user) -> dict:
     from skills.connaissances import connaissances_acquises as _acquis
     return await _acquis(data, user)
@@ -848,6 +900,8 @@ EFFETS_NATIFS = {
     # Récupérer une pièce jointe ne modifie rien chez le fournisseur ; elle est
     # déposée pour la personne connectée seulement.
     "lire_piece_jointe": "lecture",
+    # Lister les boîtes accessibles : lecture de la configuration et de l'annuaire.
+    "boites_mail": "lecture",
     # Inventaire de ce qui a été appris : lecture pure, filtrée par rôle.
     "connaissances_acquises": "lecture",
     # Compte et filtre sur les donnees importees : lecture, filtree par role.

@@ -388,3 +388,52 @@ def options_proposees(texte: str) -> list[str]:
         vus.add(propre.lower())
         options.append(propre)
     return options if 2 <= len(options) <= 4 else []
+
+
+# ── Proposer au lieu d'agir ─────────────────────────────────────────────────
+#
+# Relevé par Noa le 31/08 : « liste toutes les adresses mail que tu as » →
+# « je n'ai pas de commande pour lister… Pour obtenir cette liste, je peux :
+# 1. chercher sur le Drive 2. vous demander les adresses. Que préférez-vous ? »
+# Le geste existait. Le modèle a répondu par une QUESTION À CHOIX au lieu
+# d'essayer — et « il faut qu'il arrête de demander vingt mille fois ».
+#
+# Deux signatures, étroites : la réponse dit n'avoir PAS DE COMMANDE / d'outil /
+# de moyen pour faire (elle n'a pas cherché), ou elle OFFRE de faire et demande
+# de choisir (« voulez-vous que je… ? », « que préférez-vous ? »). Ce n'est pas
+# une vraie clarification (« à quelle adresse ? », « quel montant ? ») : celles-là
+# demandent une DONNÉE, pas la permission d'agir. Quand aucun geste n'a tourné
+# dans le tour, cette réponse repart au forceur (contexte neuf), qui trouve le
+# geste ou, à défaut, laisse la question.
+_SANS_COMMANDE = re.compile(
+    r"je n['’]ai pas (?:de |d['’])(?:commande|outil|fonction|moyen|acc[eè]s direct|action)s? "
+    r"(?:pour|qui|permettant|me permettant)|"
+    r"je ne dispose (?:pas |d['’]aucun[e]? )(?:de |d['’])?(?:commande|outil|fonction|moyen)|"
+    r"(?:aucune?|pas de) (?:commande|outil|fonction|action) (?:ne |n['’])?(?:me )?permet|"
+    r"il n['’]existe pas (?:de |d['’])(?:commande|outil|fonction|action)",
+    re.I)
+_OFFRE_DE_FAIRE = re.compile(
+    r"(?:voulez-vous|souhaitez-vous|préférez-vous|preferez-vous|que préférez-vous|que preferez-vous|"
+    r"dois-je|puis-je|faut-il que je|je peux (?:vous proposer|commencer par)|je peux ?:)",
+    re.I)
+
+
+def propose_au_lieu_d_agir(texte: str) -> bool:
+    """Vrai quand la réponse dit ne pas avoir de commande, ou offre de faire en
+    demandant de choisir — au lieu d'essayer. À n'appliquer QUE si aucun geste
+    n'a tourné dans le tour : après une action, une question de suite est légitime."""
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    t = _sans_accent(texte)
+    if _SANS_COMMANDE.search(texte) or _SANS_COMMANDE.search(t):
+        return True
+    if "?" in texte and (_OFFRE_DE_FAIRE.search(texte) or _OFFRE_DE_FAIRE.search(t)):
+        # Une offre de faire, pas une demande de donnée : « à quelle adresse ? »
+        # ou « quel montant ? » restent des clarifications légitimes.
+        # Un interrogatif ouvert — « quelles informations », « combien », « à qui »,
+        # « lequel » — demande une DONNÉE : on ne force pas.
+        demande_une_donnee = re.search(
+            r"\b(?:quel|quelle|quels|quelles|lequel|laquelle|lesquels|lesquelles|combien|"
+            r"ou|quand|a qui|a quel|a quelle|pour qui|comment)\b", t, re.I)
+        return not demande_une_donnee
+    return False

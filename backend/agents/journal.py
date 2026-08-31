@@ -83,6 +83,7 @@ ACTES = {
     "lire_mails": "je lis la boîte mail",
     "lire_mail": "j'ouvre le message",
     "lire_piece_jointe": "je lis la pièce jointe",
+    "boites_mail": "je liste les boîtes mail",
     "rediger_email": "je rédige le message",
     "redaction_email": "je rédige le message",
     "envoyer_email": "j'envoie le message",

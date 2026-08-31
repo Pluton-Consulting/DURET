@@ -311,6 +311,7 @@ espace2.update({
     "cloture_attendue": _annonce.cloture_attendue,
     "pretend_avoir_livre": _annonce.pretend_avoir_livre,
     "demande_une_production": _annonce.demande_une_production,
+    "propose_au_lieu_d_agir": _annonce.propose_au_lieu_d_agir,
     "MAX_FORCAGES_PAR_TOUR": 2,
 })
 extraire(racine / "agents" / "agent1.py",

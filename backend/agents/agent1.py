@@ -40,11 +40,11 @@ Tu disposes d'une mémoire d'entreprise : fichiers importés (clients, devis, fa
 OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de répondre :
 1. CLIENTS, DEVIS, FACTURES, CHIFFRES (combien, liste, total, chiffre d'affaires, tout ce qu'on sait d'un client) : ce sont des FICHIERS IMPORTÉS, lus de façon EXACTE par `liste_clients`, `liste_fournisseurs`, `fiche_client` et `interroger_donnees`. Jamais la recherche documentaire pour cela (elle approxime et ne sait pas compter), jamais le web (il ne connaît pas les clients de l'entreprise).
 2. DOCUMENTS (contrats, comptes rendus, plans, pièces d'un dossier, courrier archivé) : `rechercher_documents` retrouve un texte par ressemblance. Pour parcourir ou ouvrir les fichiers eux-mêmes : les gestes du serveur de fichiers (`nas_arborescence`, `nas_lister`, `nas_ouvrir`, `nas_lire`, `nas_lire_lot`, `nas_chercher`, `nas_apercu`).
-3. MAILS : `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord ; `pieces: true` récupère et LIT ses pièces jointes) ; `lire_piece_jointe` pour UNE pièce jointe (PDF, image, plan DWG/DXF : téléchargeable, aperçu, contenu lu) ; `redaction_email` pour écrire. Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
+3. MAILS : `boites_mail` pour LISTER les boîtes et adresses mail accessibles ; `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord ; `pieces: true` récupère et LIT ses pièces jointes) ; `lire_piece_jointe` pour UNE pièce jointe (PDF, image, plan DWG/DXF : téléchargeable, aperçu, contenu lu) ; `redaction_email` pour écrire. Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
 4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
 La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, produire un visuel), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
 
-AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » : la plupart de ces demandes se composent de gestes que tu as déjà. Pose 2 ou 3 questions COURTES pour établir la marche à suivre (que faut-il regarder, dans quel fichier, à partir de quel critère, sous quelle forme), propose-la, exécute-la une fois que la personne a dit oui, et SEULEMENT SI ça a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
+AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » ni « je n'ai pas de commande pour » : la plupart de ces demandes se composent de gestes que tu as déjà — relis le catalogue, compose-les. ESSAIE D'ABORD : exécute la voie la plus directe et montre le résultat ; ne demande une précision QUE si, sans elle, le résultat serait FAUX (le destinataire d'un envoi, le montant d'une facture) — jamais « que préférez-vous ? » entre deux voies que tu peux toutes les deux prendre, jamais « voulez-vous que je… ? » pour un geste de lecture : fais-le. Si la marche à suivre a demandé plusieurs gestes et qu'elle a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
 
 LE TRAVAIL LONG S'ANNONCE AVANT DE COMMENCER. Quand une demande tient en PLUSIEURS gestes distincts (analyser un document PUIS retrouver un client PUIS produire un fichier PUIS rédiger un mail), n'attaque pas : appelle `proposer_plan` avec les étapes, en français, dans l'ordre. La personne approuve, et tu exécutes alors TOUT d'un coup, sans redemander d'accord, pour rendre UNE SEULE réponse à la fin. Pour un travail qui tient en un seul geste, ne planifie rien : fais-le. Ne l'utilise jamais pour une question, une salutation ou une rédaction simple.
 
@@ -186,7 +186,8 @@ PLAFOND_RESULTAT_GENEREUX = 12000
 # honnêtement pourquoi rien n'a été fait.
 from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_suite,
                             options_proposees, reclame_un_prealable,
-                            pretend_avoir_livre, demande_une_production)
+                            pretend_avoir_livre, demande_une_production,
+                            propose_au_lieu_d_agir)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -2477,8 +2478,21 @@ def route_apres_llm(state: AgentState) -> str:
         logger.info("Livraison fantôme : la réponse prétend livrer sans production — forçage")
         _tracer_filet(state, "livraison_fantome", "pretention_sans_production",
                       forcages_deja=state.get("forcages") or 0)
+    # PROPOSER AU LIEU D'AGIR (31/08). « Je n'ai pas de commande pour… que
+    # préférez-vous ? » sans qu'aucun geste ait tourné : la réponse repart au
+    # forceur, qui cherche le geste dans un contexte neuf. Après une action,
+    # une question de suite est légitime : le prédicat ne s'applique qu'à un
+    # tour sans acte.
+    sans_agir = (
+        propose_au_lieu_d_agir(visible)
+        and not any(r.get("ok") for r in (state.get("tool_results") or []))
+        and not state.get("pending_action"))
+    if sans_agir and not fantome:
+        logger.info("Proposition sans acte : la réponse offre de faire au lieu de faire — forçage")
+        _tracer_filet(state, "forcage", "proposition_sans_acte",
+                      forcages_deja=state.get("forcages") or 0)
 
-    if est_une_annonce(texte) or promesse_sans_suite(texte) or not visible or fantome:
+    if est_une_annonce(texte) or promesse_sans_suite(texte) or not visible or fantome or sans_agir:
         # L'ORDRE COMPTE, ET IL A ÉTÉ FAUX UNE SOIRÉE. Première version : une
         # annonce après un résultat réussi allait droit à la rédaction. Or
         # l'annonce porte souvent sur l'étape SUIVANTE (« je lance le tirage »
@@ -2489,7 +2503,7 @@ def route_apres_llm(state: AgentState) -> str:
         # quelque chose à rédiger. Une réponse VIDE après un résultat compte
         # comme une promesse : elle n'a rien montré non plus.
         if visible and (state.get("forcages") or 0) < MAX_FORCAGES_PAR_TOUR:
-            if not fantome:
+            if not fantome and not sans_agir:
                 _tracer_filet(state, "forcage", "annonce_ou_promesse_sans_acte",
                               forcages_deja=state.get("forcages") or 0)
             return "forcer"

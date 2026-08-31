@@ -370,6 +370,12 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "rien comme lu. dossier : recus (défaut) ou envoyes. Sans mailbox, la boîte de "
         "la personne connectée",
         [], ["ref", "objet", "de", "rang", "pieces", "dossier", "mailbox"]),
+    "boites_mail": (
+        "LISTE les boîtes et adresses mail auxquelles la personne connectée a accès "
+        "(pour un administrateur : tout l'annuaire du domaine). À appeler dès qu'on "
+        "demande « quelles boîtes / adresses mail as-tu », « liste les comptes mail », "
+        "« à qui as-tu accès » — ne dis JAMAIS que tu n'as pas de commande pour ça",
+        [], []),
     "lire_piece_jointe": (
         "RÉCUPÈRE UNE pièce jointe d'un mail, la rend téléchargeable avec son aperçu (carte "
         "ajoutée automatiquement sous ta réponse) et la LIT : PDF et Word en texte, Excel en "

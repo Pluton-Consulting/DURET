@@ -197,6 +197,14 @@ async def anonymize_node(state: AgentState) -> dict:
     previous_map = state.get("entity_map") or {}
     # NER spaCy = CPU-bound synchrone : on le sort de la boucle événementielle (sinon il
     # fige le streaming WS et bloque les autres requêtes pendant toute l'étape).
+    # L'ÉTAPE EST SUPPRIMÉE quand l'anonymisation est coupée (défaut depuis le
+    # 31/08, demande de Noa) : ni passe spaCy dans un thread, ni regex — la
+    # question et les extraits passent tels quels, la carte du fil ne bouge
+    # pas. Le nœud reste dans le graphe pour que la réhydratation et les
+    # anciennes balises continuent de fonctionner ; il ne coûte plus rien.
+    if anonymizer.desactivee():
+        return {"anonymized_query": query, "anonymized_chunks": chunks,
+                "entity_map": dict(previous_map)}
     masked, entity_map = await asyncio.to_thread(
         anonymizer.anonymize_chunks, [query] + chunks, previous_map
     )
@@ -1236,6 +1244,42 @@ def _sans_identifiants(texte: str) -> str:
     return _IDENTIFIANT_RE.sub("", brut)
 
 
+def _essentiel(texte: str, budget: int = 8000) -> str:
+    """Le résultat d'un skill RÉDUIT à ce qui répond à la demande, dans un budget.
+
+    Le 31/08, « analyse mes mails pour trouver des demandes de travaux » a fini
+    en : « La recherche "travaux" a donné 19 message(s) trouvé(s) … 7 expéditeurs
+    internes et 3 automatiques ». Le rédacteur ne recevait que les 800 PREMIERS
+    caractères de chaque résultat — l'en-tête (comptes, expéditeurs) — et jamais
+    les messages eux-mêmes, coupés derrière. Il a donc rédigé ce qu'il voyait :
+    des statistiques d'appels.
+
+    Ici, les listes d'objets sont COMPACTÉES plutôt que coupées : chaque champ
+    texte est borné, chaque liste aussi, pour qu'un lot de 25 mails tienne dans
+    le budget AVEC son contenu (objet, expéditeur, date, extrait). Puis le
+    filtre des identifiants, puis le budget global.
+    """
+    import json as _json
+
+    def _compacter(v, profondeur=0):
+        if isinstance(v, dict):
+            return {k: _compacter(x, profondeur + 1) for k, x in v.items()}
+        if isinstance(v, list):
+            return [_compacter(x, profondeur + 1) for x in v[:25]]
+        if isinstance(v, str) and profondeur >= 2:
+            return v[:150]
+        return v
+
+    brut = (texte or "").strip()
+    if brut[:1] in ("{", "["):
+        try:
+            brut = _json.dumps(_compacter(_json.loads(brut)), ensure_ascii=False)
+        except (ValueError, TypeError):
+            pass
+    propre = _sans_identifiants(brut)
+    return propre[:budget] + (" […tronqué]" if len(propre) > budget else "")
+
+
 async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> str:
     """Fait ÉCRIRE la réponse par le MODÈLE à partir des résultats des skills.
 
@@ -1257,10 +1301,12 @@ async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> st
     from langchain_core.messages import HumanMessage as _H
 
     lignes = []
-    for r in (resultats or []):
-        if not isinstance(r, dict):
-            continue
-        brut = _sans_identifiants(str(r.get("resultat_masque") or ""))[:800]
+    # Le budget total (≈ 14 000 caractères) se partage entre les résultats : un
+    # seul lot de 25 mails a toute la place, cinq résultats en ont chacun moins.
+    dicts = [r for r in (resultats or []) if isinstance(r, dict)]
+    budget = max(1500, min(8000, 14000 // max(1, len(dicts))))
+    for r in dicts:
+        brut = _essentiel(str(r.get("resultat_masque") or ""), budget)
         lignes.append(f"- {r.get('skill') or '?'} : "
                       f"{'réussie' if r.get('ok') else 'EN ÉCHEC'}\n  {brut}")
 
@@ -1277,7 +1323,11 @@ async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> st
             "ajoutés automatiquement sous ton texte. Ne cite JAMAIS d'identifiant "
             "technique (clé, jeton, hash, document_id), de drapeau interne "
             "(genere, essai, ok) ni de nom de skill : parle du résultat, pas de la "
-            "tuyauterie. 2 à 6 phrases, sans salutation.")
+            "tuyauterie. Réponds à la DEMANDE avec le CONTENU des résultats — objets, "
+            "expéditeurs, extraits, montants, noms — jamais avec une statistique des "
+            "appels ni un compte rendu de ce que tu as consulté : si la demande "
+            "cherchait quelque chose, dis ce qui a été trouvé, et dis franchement si "
+            "rien n'y répond. 2 à 8 phrases ou une liste courte, sans salutation.")
         corps = (f"Demande de l'utilisateur :\n{demande}\n\n"
                  "Actions exécutées à ce tour, et leurs résultats :\n"
                  + "\n".join(lignes))
@@ -2169,7 +2219,7 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         brut = str(r.get("resultat_masque") or "")
         # Tronqué : ce nœud a besoin des identifiants (en tête des résultats),
         # pas du contenu entier — le modèle principal, lui, l'a déjà.
-        extrait = brut[:800] + (" […tronqué]" if len(brut) > 800 else "")
+        extrait = _essentiel(brut, 2500)
         lignes.append(f"- {r.get('skill') or '?'} : "
                       f"{'réussie' if r.get('ok') else 'EN ÉCHEC'}\n"
                       f"  résultat : {extrait}")

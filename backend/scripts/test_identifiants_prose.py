@@ -39,6 +39,7 @@ fin = src.index("async def _rediger_par_le_modele(")
 espace: dict = {}
 exec(src[debut:fin], espace)  # noqa: S102 — code du dépôt, pas une entrée externe
 _sans_identifiants = espace["_sans_identifiants"]
+_essentiel = espace["_essentiel"]
 
 print(f"\n═══ IDENTIFIANTS DANS LA PROSE — {BACKEND.parent}\n")
 
@@ -78,10 +79,47 @@ verifier("vide → vide", _sans_identifiants("") == "" and _sans_identifiants(No
 print("\n4. Le rédacteur passe par le filtre, et sa consigne le dit")
 corps = src[src.index("async def _rediger_par_le_modele("):]
 corps = corps[:corps.index("\ndef _tracer_filet")]
-verifier("le résultat masqué traverse _sans_identifiants avant le modèle",
-         '_sans_identifiants(str(r.get("resultat_masque") or ""))' in corps)
+verifier("le résultat masqué traverse _essentiel (compactage + filtre des identifiants) avant le modèle",
+         '_essentiel(str(r.get("resultat_masque") or ""), budget)' in corps)
 verifier("la consigne interdit les identifiants et les drapeaux internes",
          "Ne cite JAMAIS d'identifiant" in corps and "drapeau interne" in corps)
+
+print("\n5. Le rédacteur reçoit le CONTENU des mails, pas seulement l'en-tête (31/08)")
+import json as _json
+mails = {"boite": "b@exemple.fr", "nombre": 25, "total_periode": 25, "recherche": "travaux",
+         "compte": "25 message(s) correspondant à « travaux »", "expediteurs_internes": 7,
+         "expediteurs_automatiques": 3,
+         "pour_analyser_tout_le_courrier": "Le DÉTAIL est borné à 25 messages par appel ; le COMPTE, lui, est exact. "
+         "Pour CHERCHER dans toute la boîte : `recherche` (mots-clés). Pour remonter le temps page par page : `avant` "
+         "(voir pour_continuer). Pour analyser l'ensemble du courrier de l'entreprise : `lancer_enrichissement`.",
+         "portee": "25 message(s) correspondant à « travaux », tous détaillés ci-dessous. Un échantillon récent, pas un "
+         "inventaire de l'entreprise. Une adresse dont expediteur_interne vaut false n'appartient PAS à l'entreprise.",
+         "pour_continuer": "Pour les 25 messages PRÉCÉDENTS, rappelle lire_mails avec les mêmes paramètres et avant=2026-08-20.",
+         "messages": [{"objet": f"Demande de devis terrasse n° {i}", "de": f"client{i}@exemple.fr",
+                       "date_iso": "2026-08-2%d" % (i % 9), "apercu": ("Bonjour, nous aimerions une terrasse en bois "
+                       "et des haies autour de la maison, pouvez-vous passer ? " * 12)}
+                      for i in range(25)]}
+brut = _json.dumps(mails, ensure_ascii=False)
+verifier("avant : 800 caractères ne montraient AUCUN message", "Demande de devis terrasse" not in brut[:800])
+e = _essentiel(brut)
+verifier("le rédacteur voit le contenu des mails (objets)", "Demande de devis terrasse n° 0" in e and "n° 12" in e)
+verifier("les extraits sont bornés (150 caractères), pas coupés à zéro", e.count("terrasse en bois") >= 20)
+verifier("le budget global tient (8 000 pour un résultat seul)", len(e) <= 8000 + 20)
+verifier("le compte reste lisible", "25 message(s) correspondant" in e)
+verifier("une liste longue est bornée à 25 éléments", _essentiel(_json.dumps([{"x": "a"}] * 60)).count('"x"') == 25)
+verifier("un texte libre passe par le filtre et le budget", _essentiel("clé e527f1b03524955df936f7ff ici", 50) == "clé  ici")
+
+print("\n6. « Laissez-moi interroger… » est une annonce")
+import importlib.util
+spec = importlib.util.spec_from_file_location("annonce", BACKEND / "agents" / "annonce.py")
+annonce = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(annonce)
+verifier("la phrase exacte du 31/08 est reconnue",
+         annonce.est_une_annonce("Je n'ai pas encore les données pour 2025. Laissez-moi interroger les "
+                                 "factures pour obtenir le chiffre d'affaires mensuel de cette année."))
+verifier("« Permettez-moi de vérifier » aussi", annonce.est_une_annonce("Permettez-moi de vérifier dans les devis."))
+verifier("une vraie réponse ne l'est pas",
+         not annonce.est_une_annonce("Voici le chiffre d'affaires 2025 mois par mois : janvier 12 400 €, février 9 800 €."))
 
 print(f"\n═══ {len(echecs)} échec(s)" + (f" : {', '.join(echecs)}" if echecs else " — tout passe"))
 sys.exit(1 if echecs else 0)

@@ -59,7 +59,11 @@ _PRON = r"(?:vous |me |te |nous |y |le |la |les |leur |lui |en |m['’]|l['’])
 _FUTUR = (rf"je {_PRON}(?:vais|commence|m['’]y mets|me mets|procede|prepare"
           rf"|entame|m['’]occupe)"
           r"|c['’]est parti"
-          r"|je le fais")
+          r"|je le fais"
+          # « Laissez-moi interroger les factures » (31/08, « le CA mois par mois
+          # de 2025 ») : une annonce à l'impératif, sans « je » — la liste ne la
+          # voyait pas, le tour s'est terminé sur la promesse.
+          r"|(?:laissez|laisse|permettez|permets)[- ]moi")
 
 # VERBES DE PRODUCTION au présent. « je crée le PDF » est une promesse : s'il
 # l'avait fait, il en donnerait le RÉSULTAT — « le document est prêt », « j'ai

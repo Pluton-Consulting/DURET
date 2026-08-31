@@ -138,7 +138,7 @@ def espace_redaction(reponse):
     spec = importlib.util.spec_from_file_location("annonce", racine / "agents" / "annonce.py")
     annonce = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(annonce)
-    return extraire({"_rediger_par_le_modele", "_texte_visible", "_sans_identifiants",
+    return extraire({"_rediger_par_le_modele", "_texte_visible", "_sans_identifiants", "_essentiel",
                      "_CLES_TECHNIQUES", "_IDENTIFIANT_RE"},
                     {"logger": _Journal(), "est_une_annonce": annonce.est_une_annonce,
                      "promesse_sans_suite": annonce.promesse_sans_suite})

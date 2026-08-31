@@ -187,8 +187,12 @@ class Settings(BaseSettings):
     # un document entier à écrire, et couper une rédaction en cours serait pire
     # que l'attendre.
     llm_timeout_light: int = 20
-    llm_timeout_standard: int = 75
-    llm_timeout_complex: int = 180
+    # 31/08 : avec deux modèles rapides choisis, un candidat qui pend ne doit
+    # pas retenir le tour 75 s avant de céder à l'autre — 45 s suffisent à
+    # une rédaction ordinaire, 120 s à une analyse. Revoir à la hausse si un
+    # long document sort tronqué (le journal dira « Request timed out »).
+    llm_timeout_standard: int = 45
+    llm_timeout_complex: int = 120
     llm_fallback_enabled: bool = True
 
     # ── Embeddings (RAG) — multi-fournisseurs ────────────────────────────

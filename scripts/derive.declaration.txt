@@ -53,6 +53,7 @@ backend/agents/agent2.py                # SYSTEM_PROMPT : conception et visuels 
 backend/emails/marque.py                # nom, couleur, logo et expediteur des mails — le SEUL fichier de emails/ qui diverge
 backend/mail/skills.py                  # prompt de classement du courrier, formule selon le metier
 backend/scripts/seed_skills_catalogue.py  # catalogue de capacites metier livre a l'amorcage
+frontend/lib/raccourcis.ts              # process frequents du menu de saisie : rendus d'image chez le client qui a l'offre visuelle, DCE chez l'autre
 backend/scripts/test_e2e.py             # jeu d'essai metier (terrassement et plantation / ragreage et carrelage)
 frontend/app/(app)/conception/page.tsx  # formats de plans acceptes (SketchUp / DWG)
 frontend/app/(app)/commercial/page.tsx  # titre et accroche dans le vocabulaire du client (devis et clients / administratif), comme les libelles d'onglets

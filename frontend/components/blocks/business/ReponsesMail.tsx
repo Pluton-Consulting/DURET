@@ -21,7 +21,10 @@
  */
 import { useMemo, useState } from "react"
 
-type Reponse = { ref?: string; de?: string; objet?: string; reponse?: string }
+type Reponse = { ref?: string; de?: string; objet?: string; reponse?: string
+  // La SYNTHÈSE du mail REÇU (ce qu'il demande) : le contexte qui permet de
+  // juger la réponse sans rouvrir le message. 31/08, demande de Noa.
+  synthese?: string; resume?: string }
 
 type Props = {
   reponses: Reponse[]
@@ -85,6 +88,9 @@ export function ReponsesMail({ reponses, onAction }: Props) {
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         /* Le champ est CREUSÉ dans la carte, comme la barre de saisie : on voit
            d'un coup d'œil que c'est un texte à soi, qu'on peut corriger. */
+        .sym-rm-contexte{ font-size:12px; line-height:1.45; color:var(--marque-text-muted);
+          border-left:2px solid var(--marque-primary-light); padding:1px 0 1px 8px;
+          max-height:72px; overflow-y:auto; }
         .sym-rm-texte{ width:100%; min-height:110px; max-height:220px; resize:vertical;
           border:1px solid transparent; border-radius:10px; padding:8px 10px;
           background:var(--marque-chat-champ, var(--marque-primary-subtle));
@@ -121,6 +127,11 @@ export function ReponsesMail({ reponses, onAction }: Props) {
                   <span className="sym-rm-objet">{r.objet || "(sans objet)"}</span>
                 </span>
               </label>
+              {/* Le mail REÇU, en une ou deux phrases : on juge la réponse avec
+                  son contexte sous les yeux, sans rouvrir le message. */}
+              {(r.synthese || r.resume) && (
+                <div className="sym-rm-contexte">{(r.synthese || r.resume || "").trim()}</div>
+              )}
               {/* ÉDITABLE : ce que la personne corrige ici est EXACTEMENT ce qui
                   partira dans la demande d'envoi — pas la proposition d'origine. */}
               <textarea

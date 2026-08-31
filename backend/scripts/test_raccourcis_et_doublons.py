@@ -79,6 +79,11 @@ composant = (FRONTEND / "components" / "blocks" / "business" / "ReponsesMail.tsx
 verifier("cartes horizontales, case par carte, un bouton groupé",
          # 31/08 : le défilement horizontal vit désormais dans la feuille de style du composant.
          "overflow-x:auto" in composant and 'type="checkbox"' in composant and "réponse(s) cochée(s)" in composant)
+verifier("chaque carte montre la SYNTHÈSE du mail reçu (le contexte de la réponse)",
+         "synthese" in composant and "sym-rm-contexte" in composant)
+verifier("le contrat du bloc et check_mails portent le champ synthese",
+         '"synthese":"..."' in (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
+         and "synthese" in (BACKEND / "skills" / "routines.py").read_text(encoding="utf-8"))
 verifier("chaque réponse est ÉDITABLE : la version corrigée est celle qui part",
          "<textarea" in composant and "corriger(" in composant and "textes[i].trim()" in composant
          and "modifiée" in composant)

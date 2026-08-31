@@ -834,7 +834,7 @@ async def check_mails(data: dict, user) -> dict:
             "Quand des messages appellent visiblement une réponse (question posée, "
             "demande de devis, relance), rédige pour chacun une réponse courte (deux "
             "ou trois lignes) et rassemble-les TOUTES dans UN SEUL bloc ```ui "
-            "reponses_mail (une entrée par message : ref, de, objet, reponse) — des "
+            "reponses_mail (une entrée par message : ref, de, objet, synthese — une ou deux phrases sur ce que le mail REÇU demande, tirées de l'extrait —, reponse) — des "
             "cartes cochables avec envoi groupé. N’écris pas ces réponses en prose "
             "en plus du bloc, et n’envoie rien : chaque envoi repassera par "
             "`envoyer_email` et sa validation. "

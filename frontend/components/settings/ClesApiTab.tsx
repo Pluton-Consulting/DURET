@@ -24,26 +24,6 @@ const LIBELLES: Record<string, { nom: string; role: string }> = {
   google_api_key: { nom: "Google AI", role: "Embeddings de la mémoire d'entreprise" },
 }
 
-// LE MODÈLE FORCÉ EN TÊTE DE CASCADE.
-//
-// `llm_tete` PRÉFIXE la cascade d'un palier ; le reste demeure derrière, donc
-// un essai raté retombe sur le comportement habituel au lieu de casser
-// l'application. C'est le réglage le plus expérimental du socle — et c'était
-// le plus coûteux à changer : éditer le fichier de configuration de CHAQUE
-// serveur, puis recréer le conteneur. Deux clients, deux VPS, deux sessions
-// SSH pour un essai qu'on veut pouvoir annuler en dix secondes.
-//
-// Sa valeur s'AFFICHE, contrairement à une clé : un réglage qu'on ne peut pas
-// relire est un réglage qu'on ne peut pas vérifier.
-const EXEMPLES: { libelle: string; valeur: string; aide: string }[] = [
-  { libelle: "LongCat sur le chat", valeur: "standard=longcat:LongCat-2.0",
-    aide: "Rédaction courante uniquement. L'orientation et l'analyse gardent leur cascade." },
-  { libelle: "LongCat partout", valeur: "standard=longcat:LongCat-2.0,complex=longcat:LongCat-2.0",
-    aide: "Rédaction ET analyse. Plus lent, mais un seul fournisseur en jeu." },
-  { libelle: "Groq 70B sur le chat", valeur: "standard=groq:llama-3.3-70b-versatile",
-    aide: "Le plus rapide pour la rédaction, quand sa clé est valide." },
-]
-
 // LA DATE DE DÉPART DES INDICATEURS.
 //
 // « Repartir à zéro » sans rien supprimer. Les chiffres du tableau de bord sont
@@ -178,46 +158,74 @@ function ReglageKpiDepuis({ apiUrl, backendToken }: { apiUrl: string; backendTok
   )
 }
 
-function ReglageLlmTete({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
-  const [valeur, setValeur] = useState("")
-  const [origine, setOrigine] = useState<string | null>(null)
-  const [saisie, setSaisie] = useState("")
+// LE MODÈLE DE L'ASSISTANT — UN SEUL, PARTOUT.
+//
+// Demande de Noa du 31/08 : « une seule clé, un seul modèle, le même partout —
+// pas vingt mille modèles différents à chaque endroit ». Avant, le forçage se
+// réglait PAR PALIER (« standard=…, complex=…, light=… ») avec des préréglages :
+// juste, mais illisible pour qui n'a pas la cascade en tête. Ici : un
+// fournisseur (parmi ceux dont la clé est présente), un modèle, un bouton.
+// Le réglage `modele_unique` met ce couple en tête des TROIS paliers ET des
+// campagnes d'enrichissement ; la cascade reste derrière en secours. La
+// vision, les images et les embeddings gardent leur modèle dédié : un modèle
+// de texte ne lit pas un plan.
+//
+// Le forçage par palier (`llm_tete`) existe toujours pour le fichier de
+// configuration ; s'il est posé en base, la carte le montre et permet de le
+// retirer — un réglage invisible est un réglage qu'on ne peut pas vérifier.
+interface FicheFournisseur {
+  fournisseur: string
+  libelle: string
+  cle_presente: boolean
+  modeles: { id: string; ecarte: boolean; raison: string }[]
+}
+
+function ReglageModeleUnique({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [fiches, setFiches] = useState<FicheFournisseur[]>([])
+  const [actuel, setActuel] = useState("")
+  const [avance, setAvance] = useState("")
+  const [fournisseur, setFournisseur] = useState("")
+  const [modele, setModele] = useState("")
+  const [autre, setAutre] = useState("")
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState("")
   const [erreur, setErreur] = useState("")
 
   const charger = useCallback(async () => {
     try {
-      const res = await fetch(`${apiUrl}/api/settings/reglages`, {
+      const res = await fetch(`${apiUrl}/api/settings/modeles`, {
         headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const lignes = await res.json()
-      const tete = (lignes || []).find((l: any) => l.cle === "llm_tete")
-      setValeur(tete?.valeur || "")
-      setOrigine(tete?.origine || null)
+      const json = await res.json()
+      const liste: FicheFournisseur[] = json?.fournisseurs || []
+      setFiches(liste)
+      setActuel(json?.modele_unique || "")
+      setAvance(json?.llm_tete || "")
+      const [f, m] = String(json?.modele_unique || "").split(":")
+      const premier = liste.find((x) => x.cle_presente)
+      const fChoisi = f || premier?.fournisseur || ""
+      setFournisseur(fChoisi)
+      const fiche = liste.find((x) => x.fournisseur === fChoisi)
+      setModele(m || fiche?.modeles[0]?.id || "")
       setErreur("")
     } catch (e: any) {
       setErreur(e?.message || "chargement impossible")
     }
   }, [apiUrl, backendToken])
-
   useEffect(() => { charger() }, [charger])
 
-  const enregistrer = async (v: string) => {
+  const ecrire = async (cle: string, valeur: string, message: string) => {
     setBusy(true); setNote("")
     try {
       const res = await fetch(`${apiUrl}/api/settings/reglages`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ cle: "llm_tete", valeur: v }),
+        body: JSON.stringify({ cle, valeur }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
-      setSaisie("")
-      setNote(v.trim()
-        ? "Enregistré. Le prochain tour part sur ce modèle, sans redéploiement."
-        : "Réglage retiré : la cascade habituelle reprend la main.")
+      setNote(message)
       setErreur("")
       await charger()
     } catch (e: any) {
@@ -227,89 +235,109 @@ function ReglageLlmTete({ apiUrl, backendToken }: { apiUrl: string; backendToken
     }
   }
 
+  const fiche = fiches.find((x) => x.fournisseur === fournisseur)
+  const choisi = `${fournisseur}:${(autre.trim() || modele).trim()}`
+  const pret = Boolean(fournisseur && (autre.trim() || modele) && fiche?.cle_presente)
+
   return (
     <div className="sym-card" style={{
-      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
-      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+      background: "var(--marque-surface)", border: "2px solid var(--marque-primary)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "16px 18px", marginBottom: 22,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-        <div style={{ flex: 1, minWidth: 180 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
-            Modèle en tête de cascade
+            Le modèle de l&apos;assistant
           </div>
-          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
-            Force un fournisseur devant la cascade. Le reste demeure derrière : un échec retombe
-            sur le comportement habituel.
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3, lineHeight: 1.5 }}>
+            Un seul modèle pour tout ce qui écrit : le chat, la rédaction, l&apos;enrichissement.
+            S&apos;il ne répond pas, la cascade prend le relais. La vision (plans, photos), les
+            images et les embeddings gardent leur modèle dédié.
           </div>
         </div>
         <span style={{
-          background: valeur ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
-          color: valeur ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
-          padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
+          background: actuel ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+          color: actuel ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+          padding: "5px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12,
           fontWeight: 600, whiteSpace: "nowrap",
         }}>
-          {valeur
-            ? `${origine === "parametres" ? "Paramètres" : "fichier serveur"}`
-            : "Cascade automatique"}
+          {actuel || "cascade automatique"}
         </span>
       </div>
 
-      {valeur && (
-        <div style={{
-          fontFamily: "monospace", fontSize: 12.5, color: "var(--marque-text-body)",
-          background: "var(--marque-canvas)", padding: "7px 11px",
-          borderRadius: "var(--marque-radius-card-sm)", marginBottom: 10, overflowX: "auto",
-        }}>{valeur}</div>
-      )}
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-        <input
-          type="text" autoComplete="off" spellCheck={false}
-          placeholder="palier=fournisseur:modele — ex. standard=longcat:LongCat-2.0"
-          value={saisie}
-          onChange={(e) => setSaisie(e.target.value)}
-          style={{
-            flex: 1, minWidth: 240, padding: "8px 12px", fontSize: 13,
-            border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)",
-            fontFamily: "monospace", color: "var(--marque-text-body)", outline: "none",
-          }} />
-        <button onClick={() => enregistrer(saisie)} disabled={busy || !saisie.trim()}
-          className="sym-tap" style={{
-            padding: "8px 16px", borderRadius: "var(--marque-radius-pill)", border: "none",
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+        <select value={fournisseur} disabled={busy}
+          onChange={(e) => {
+            const f = e.target.value
+            setFournisseur(f)
+            setModele(fiches.find((x) => x.fournisseur === f)?.modeles[0]?.id || "")
+            setAutre("")
+          }}
+          style={{ padding: "8px 10px", borderRadius: "var(--marque-radius-pill)",
+                   border: "1px solid var(--marque-border)", fontSize: 13, minWidth: 190 }}>
+          {fiches.length === 0 && <option value="">chargement…</option>}
+          {fiches.map((f) => (
+            <option key={f.fournisseur} value={f.fournisseur} disabled={!f.cle_presente}>
+              {f.libelle}{f.cle_presente ? "" : " — clé absente"}
+            </option>
+          ))}
+        </select>
+        <select value={modele} disabled={busy || !fiche} onChange={(e) => { setModele(e.target.value); setAutre("") }}
+          style={{ padding: "8px 10px", borderRadius: "var(--marque-radius-pill)",
+                   border: "1px solid var(--marque-border)", fontSize: 13, minWidth: 240 }}>
+          {(fiche?.modeles || []).map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.id}{m.ecarte ? ` — écarté (${m.raison})` : ""}
+            </option>
+          ))}
+        </select>
+        <input value={autre} disabled={busy} onChange={(e) => setAutre(e.target.value)}
+          placeholder="ou un autre identifiant de modèle"
+          style={{ padding: "8px 10px", borderRadius: "var(--marque-radius-pill)",
+                   border: "1px solid var(--marque-border)", fontSize: 13, minWidth: 220 }} />
+        <button onClick={() => ecrire("modele_unique", choisi,
+                                      `${choisi} est maintenant le modèle de tout ce qui écrit. Effet immédiat.`)}
+          disabled={busy || !pret || choisi === actuel} className="sym-tap" style={{
+            padding: "9px 18px", borderRadius: "var(--marque-radius-pill)", border: "none",
             background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
-            color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 600,
-            cursor: "pointer", opacity: saisie.trim() ? 1 : 0.5,
+            color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 700,
+            cursor: busy || !pret || choisi === actuel ? "not-allowed" : "pointer",
+            opacity: busy || !pret || choisi === actuel ? 0.6 : 1,
           }}>
-          Appliquer
+          Utiliser partout
         </button>
-        {origine === "parametres" && (
-          <button onClick={() => enregistrer("")} disabled={busy}
-            className="sym-tap" title="Revenir à la cascade automatique"
-            style={{
-              padding: "8px 14px", borderRadius: "var(--marque-radius-pill)",
-              border: "1px solid var(--marque-border)", background: "var(--marque-surface)",
-              color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+        {actuel && (
+          <button onClick={() => ecrire("modele_unique", "",
+                                        "Retour à la cascade automatique : chaque palier reprend son ordre habituel.")}
+            disabled={busy} className="sym-tap" style={{
+              padding: "9px 16px", borderRadius: "var(--marque-radius-pill)",
+              border: "1px solid var(--marque-border)", background: "var(--marque-canvas)",
+              color: "var(--marque-text-body)", fontSize: 13, fontWeight: 600, cursor: "pointer",
             }}>
             Retirer
           </button>
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {EXEMPLES.map((ex) => (
-          <button key={ex.valeur} onClick={() => setSaisie(ex.valeur)} title={ex.aide}
-            className="sym-tap" style={{
-              padding: "5px 11px", borderRadius: "var(--marque-radius-pill)",
+      {avance && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "var(--marque-text-muted)",
+                      display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span>
+            Réglage avancé par palier encore posé (<code>{avance}</code>)
+            {actuel ? " — sans effet tant qu'un modèle unique est choisi." : " — il s'applique tant qu'aucun modèle unique n'est choisi."}
+          </span>
+          <button onClick={() => ecrire("llm_tete", "", "Le réglage par palier est retiré.")}
+            disabled={busy} className="sym-tap" style={{
+              padding: "5px 12px", borderRadius: "var(--marque-radius-pill)",
               border: "1px solid var(--marque-border)", background: "var(--marque-canvas)",
-              color: "var(--marque-text-muted)", fontSize: 12, cursor: "pointer",
+              color: "var(--marque-text-body)", fontSize: 12, cursor: "pointer",
             }}>
-            {ex.libelle}
+            Retirer
           </button>
-        ))}
-      </div>
-
-      {note && <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--marque-paid-text)" }}>{note}</div>}
-      {erreur && <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--marque-error-text)" }}>⚠ {erreur}</div>}
+        </div>
+      )}
+      {note && <div style={{ marginTop: 10, fontSize: 13, color: "var(--marque-text-body)" }}>{note}</div>}
+      {erreur && <div style={{ marginTop: 10, fontSize: 13, color: "var(--marque-error-text)" }}>⚠ {erreur}</div>}
     </div>
   )
 }
@@ -459,8 +487,8 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
 
   return (
     <div>
+      <ReglageModeleUnique apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
-      <ReglageLlmTete apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
 
       <p style={{ margin: "0 0 6px", fontSize: 14, color: "var(--marque-text-body)",

@@ -242,6 +242,21 @@ async def ecrire_cle(body: CleBody, current_user: User = Depends(get_current_use
     return {"cle": body.cle, "empreinte": empreinte,
             "note": "Prise en compte immédiate, sans redéploiement."}
 
+@router.get("/modeles")
+async def modeles_disponibles(current_user: User = Depends(get_current_user)):
+    """Ce que la carte « Le modèle de l'assistant » a besoin de savoir : les
+    fournisseurs de texte et leurs modèles, qui a une clé, qui est écarté, et
+    le choix en vigueur (`modele_unique`, et l'éventuel `llm_tete` par palier)."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.router import catalogue_modeles
+    from llm.reglages import rafraichir, valeur
+    await rafraichir(force=True)
+    return {"modele_unique": (valeur("modele_unique") or "").strip(),
+            "llm_tete": (valeur("llm_tete") or "").strip(),
+            "fournisseurs": catalogue_modeles()}
+
+
 @router.get("/cascade")
 async def sante_de_la_cascade(current_user: User = Depends(get_current_user)):
     """Qui répond, qui est écarté, et pourquoi — pour l'écran d'administration.

@@ -134,6 +134,20 @@ def _tete(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     # sur des tours réels : il doit se poser et se retirer depuis l'interface,
     # pas par une session SSH et une recréation de conteneur sur CHAQUE serveur.
     from llm.reglages import valeur as reglage
+    # UN SEUL MODÈLE, PARTOUT. `modele_unique` (Paramètres → « Le modèle de
+    # l'assistant ») met le même couple en tête des TROIS paliers : plus de
+    # LIGHT sur Gemini, STANDARD sur LongCat, COMPLEX sur autre chose — un
+    # modèle, un comportement, une facture. Il prime sur `llm_tete`, qui
+    # reste le réglage fin par palier. La cascade demeure derrière : si ce
+    # modèle ne répond pas, le tour n'échoue pas pour autant.
+    unique = (reglage("modele_unique") or "").strip()
+    if unique:
+        fournisseur, _, modele = unique.partition(":")
+        fournisseur, modele = fournisseur.strip().lower(), modele.strip()
+        if modele and (fournisseur in _OPENAI_COMPAT or fournisseur in ("groq", "anthropic")):
+            return [(fournisseur, modele)]
+        logger.warning("modele_unique ignoré (forme « fournisseur:modele », fournisseur connu) : %r",
+                       unique)
     brut = (reglage("llm_tete") or "").strip()
     if not brut:
         return []
@@ -390,6 +404,34 @@ def _filtrer_quarantaine(chain: list) -> list:
     """
     vivants = [(p, m) for p, m in chain if not _ecarte(p, m)]
     return vivants or chain
+
+
+def catalogue_modeles() -> list[dict]:
+    """Pour l'écran « Le modèle de l'assistant » : chaque fournisseur de texte,
+    sa clé (présente ou non — jamais la valeur), ses modèles connus de la
+    configuration, et ceux que le disjoncteur écarte en ce moment."""
+    s = settings
+    fiches = [
+        ("longcat", "LongCat", [s.model_longcat]),
+        ("google", "Google Gemini", [s.model_google_texte, s.model_google_texte_leger]),
+        ("deepseek", "DeepSeek", [s.model_deepseek_flash, s.model_deepseek]),
+        ("anthropic", "Anthropic Claude", [s.model_anthropic_vision]),
+        ("groq", "Groq", [s.model_groq_large, s.model_groq_light]),
+        ("openrouter", "OpenRouter", [s.model_or_deepseek_flash, s.model_or_deepseek_pro,
+                                      s.model_primary, s.model_or_free_a, s.model_or_free_b]),
+    ]
+    maintenant = time.monotonic()
+    sortie = []
+    for provider, libelle, modeles in fiches:
+        ecartes = {m: raison for (p, m), (fin, raison) in _QUARANTAINE.items()
+                   if p == provider and maintenant < fin}
+        sortie.append({
+            "fournisseur": provider, "libelle": libelle,
+            "cle_presente": _provider_available(provider),
+            "modeles": [{"id": m, "ecarte": m in ecartes, "raison": ecartes.get(m, "")}
+                        for m in dict.fromkeys(x for x in modeles if x)],
+        })
+    return sortie
 
 
 def sante_cascade() -> list[dict]:

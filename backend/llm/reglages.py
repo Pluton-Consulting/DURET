@@ -34,7 +34,16 @@ REGLAGES_CONNUS = (
     # La RÉHYDRATATION, elle, reste toujours en service : les jetons déjà
     # posés dans l'historique doivent continuer de se résoudre.
     "anonymisation",
+    # UN SEUL MODÈLE, PARTOUT (demande de Noa, 31/08 : « le même modèle partout,
+    # pas vingt mille différents »). « fournisseur:modele », mis en tête des
+    # trois paliers et des campagnes ; prime sur `llm_tete`. Vide = cascade.
+    "modele_unique",
 )
+
+# Les fournisseurs de TEXTE que le routeur sait construire (llm/router.py).
+# Dupliqué ici plutôt qu'importé : reglages.py est lu par le routeur, pas
+# l'inverse, et un import croisé au démarrage a déjà coûté une matinée.
+FOURNISSEURS_TEXTE = ("longcat", "deepseek", "openrouter", "google", "groq", "anthropic")
 
 # Un réglage dont la valeur finit DANS du SQL doit être validé à l'écriture ET
 # à la lecture. On l'oblige à n'être qu'un instant ISO, ce qui le rend
@@ -113,6 +122,11 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom == "anonymisation" and (brut or "").strip() \
             and (brut or "").strip().lower() not in ("active", "desactivee"):
         raise ValueError("Valeur attendue : « active » ou « desactivee ».")
+    if nom == "modele_unique" and (brut or "").strip():
+        f, _, m = (brut or "").strip().partition(":")
+        if f.strip().lower() not in FOURNISSEURS_TEXTE or not m.strip():
+            raise ValueError("Forme attendue : « fournisseur:modele », fournisseur parmi "
+                             + ", ".join(FOURNISSEURS_TEXTE) + ".")
     from database.connection import get_db
 
     v = (brut or "").strip()

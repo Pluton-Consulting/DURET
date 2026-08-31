@@ -553,17 +553,20 @@ async def lire_mails(data: dict, user) -> dict:
     # au maximum : relevé le 22/08, 28 messages sur la période, 10 rendus par
     # défaut, et le modèle qui promet « une limite plus élevée » sans pouvoir.
     _periode = data.get("depuis") or data.get("periode") or data.get("jours")
+    # Les alias : le modèle écrit « mots », « contient » ou « mots_cles » aussi
+    # souvent que « recherche » — refuser l'action pour un nom de paramètre
+    # est le piège déjà payé avec `url` (ouvrir_page, 30/08).
+    recherche = (data.get("recherche") or data.get("mots") or data.get("mots_cles")
+                 or data.get("contient") or data.get("query"))
+    avant = data.get("avant") or data.get("avant_le") or data.get("jusqu_a")
     try:
-        limite = int(data.get("limite") or (25 if _periode else 10))
+        limite = int(data.get("limite") or (25 if (_periode or recherche or avant) else 10))
     except (TypeError, ValueError):
-        limite = 25 if _periode else 10
-
-    # La période : « 7j », « semaine », une date — ou `jours` en nombre. Sans
-    # elle, les plus récents, comme avant. C'est elle qui permet de répondre à
-    # « combien de mails cette semaine » par un chiffre et non par un échantillon.
+        limite = 25 if (_periode or recherche or avant) else 10
     depuis = data.get("depuis") or data.get("periode") or data.get("jours")
     try:
-        return await lire_boite(boite, data.get("dossier") or "recus", limite, depuis=depuis)
+        return await lire_boite(boite, data.get("dossier") or "recus", limite, depuis=depuis,
+                                recherche=recherche, avant=avant)
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except Exception as e:  # noqa: BLE001 - une messagerie injoignable n'est pas une panne du chat

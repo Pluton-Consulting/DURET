@@ -133,8 +133,63 @@ def depuis_quand(valeur) -> Optional[datetime]:
     return debut.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _kql_echapper(terme: str) -> str:
+    """Les guillemets fermeraient la chaîne `$search` : ils deviennent des espaces."""
+    return " ".join(str(terme or "").replace('"', " ").split())
+
+
+def _params_outlook(limite: int, depuis: Optional[datetime], recherche: Optional[str] = None,
+                    avant: Optional[datetime] = None) -> dict:
+    """Les paramètres OData d'une lecture Outlook — fonction PURE, testée au banc.
+
+    Deux régimes que Graph ne laisse pas mélanger :
+      * SANS recherche : `$filter` sur la date de réception, `$orderby` du plus
+        récent au plus ancien, `$count=true` pour le TOTAL exact ;
+      * AVEC recherche : `$search` en KQL — Graph refuse alors `$filter`,
+        `$orderby` et `$count`. Les bornes de date passent DANS la requête
+        (`received>=…`, `received<…`), l'ordre est celui de la pertinence et le
+        total n'est pas connu (le résultat le dit).
+    `avant` : la borne haute, exclusive — c'est elle qui permet de remonter le
+    temps page par page : « les 25 précédant le plus ancien affiché ».
+    """
+    select = "subject,from,toRecipients,receivedDateTime,bodyPreview,isRead"
+    if recherche and recherche.strip():
+        kql = [_kql_echapper(recherche)]
+        if depuis:
+            kql.append(f"received>={depuis.strftime('%Y-%m-%d')}")
+        if avant:
+            kql.append(f"received<{avant.strftime('%Y-%m-%d')}")
+        return {"$top": limite, "$select": select, "$search": '"' + " AND ".join(kql) + '"'}
+    params = {"$top": limite, "$orderby": "receivedDateTime desc", "$count": "true",
+              "$select": select}
+    clauses = []
+    if depuis:
+        clauses.append(f"receivedDateTime ge {depuis.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    if avant:
+        clauses.append(f"receivedDateTime lt {avant.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    if clauses:
+        params["$filter"] = " and ".join(clauses)
+    return params
+
+
+def _requete_gmail(depuis: Optional[datetime], recherche: Optional[str] = None,
+                   avant: Optional[datetime] = None) -> Optional[str]:
+    """La requête Gmail (`q`) — fonction PURE. Gmail cherche dans objet et corps
+    par défaut ; `after:`/`before:` prennent une date à la journée, cohérente
+    avec le départ à minuit de `depuis_quand`."""
+    parts = []
+    if recherche and recherche.strip():
+        parts.append(" ".join(recherche.split()))
+    if depuis:
+        parts.append(f"after:{depuis.strftime('%Y/%m/%d')}")
+    if avant:
+        parts.append(f"before:{avant.strftime('%Y/%m/%d')}")
+    return " ".join(parts) or None
+
+
 async def _lire_outlook(boite: str, dossier: str, limite: int,
-                        depuis: Optional[datetime]) -> tuple[list[dict], Optional[int]]:
+                        depuis: Optional[datetime], recherche: Optional[str] = None,
+                        avant: Optional[datetime] = None) -> tuple[list[dict], Optional[int]]:
     import httpx
     from ingestion.connectors.outlook import _jeton
 
@@ -142,14 +197,11 @@ async def _lire_outlook(boite: str, dossier: str, limite: int,
     # `$count=true` rend le TOTAL de ce que le filtre retient, indépendamment de
     # `$top` : c'est ce qui permet de dire « 84 messages cette semaine » en ne
     # rapatriant que les 25 premiers. Il exige l'en-tête ConsistencyLevel.
-    url = (f"https://graph.microsoft.com/v1.0/users/{boite}/mailFolders/{dossier}/messages"
-           f"?$top={limite}&$orderby=receivedDateTime desc&$count=true"
-           "&$select=subject,from,toRecipients,receivedDateTime,bodyPreview,isRead")
-    if depuis:
-        url += f"&$filter=receivedDateTime ge {depuis.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+    url = f"https://graph.microsoft.com/v1.0/users/{boite}/mailFolders/{dossier}/messages"
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(url, headers={"Authorization": f"Bearer {jeton}",
-                                           "ConsistencyLevel": "eventual"})
+        r = await client.get(url, params=_params_outlook(limite, depuis, recherche, avant),
+                             headers={"Authorization": f"Bearer {jeton}",
+                                      "ConsistencyLevel": "eventual"})
         r.raise_for_status()
         corps = r.json()
         messages = corps.get("value", [])
@@ -168,6 +220,7 @@ async def _lire_outlook(boite: str, dossier: str, limite: int,
             "expediteur_automatique": qualite["automatique"],
             "a": ", ".join(filter(None, destinataires))[:200],
             "date": m.get("receivedDateTime") or "",
+            "date_iso": (m.get("receivedDateTime") or "")[:10],
             "lu": bool(m.get("isRead")),
             "apercu": _apercu(m.get("bodyPreview") or ""),
         })
@@ -175,7 +228,8 @@ async def _lire_outlook(boite: str, dossier: str, limite: int,
 
 
 async def _lire_gmail(boite: str, dossier: str, limite: int,
-                      depuis: Optional[datetime]) -> tuple[list[dict], Optional[int]]:
+                      depuis: Optional[datetime], recherche: Optional[str] = None,
+                      avant: Optional[datetime] = None) -> tuple[list[dict], Optional[int]]:
     import asyncio
 
     # Le cache des connexions personnelles se recharge ICI, tant qu'une boucle
@@ -188,7 +242,7 @@ async def _lire_gmail(boite: str, dossier: str, limite: int,
         service = _service(boite)
         # Gmail filtre par requête, dans sa propre syntaxe. `after:` prend une
         # date à la journée — cohérent avec le départ à minuit de depuis_quand.
-        requete = f"after:{depuis.strftime('%Y/%m/%d')}" if depuis else None
+        requete = _requete_gmail(depuis, recherche, avant)
         commun = {"userId": "me", "labelIds": [dossier]}
         if requete:
             commun["q"] = requete
@@ -206,6 +260,10 @@ async def _lire_gmail(boite: str, dossier: str, limite: int,
                 "expediteur_automatique": qualite["automatique"],
                 "a": _entete(m, "To")[:200],
                 "date": _entete(m, "Date"),
+                # `internalDate` (ms) : la seule date que Gmail garantit lisible —
+                # l'en-tête Date est libre. C'est elle que `avant` réutilise.
+                "date_iso": (datetime.fromtimestamp(int(m["internalDate"]) / 1000, tz=timezone.utc)
+                             .strftime("%Y-%m-%d") if m.get("internalDate") else ""),
                 "lu": "UNREAD" not in (m.get("labelIds") or []),
                 "apercu": _apercu(_texte_du_message(m.get("payload") or {})),
             })
@@ -238,24 +296,34 @@ async def _lire_gmail(boite: str, dossier: str, limite: int,
 
 
 async def lire_boite(boite: str, dossier: str = "recus",
-                     limite: int = 10, depuis=None) -> dict:
+                     limite: int = 10, depuis=None, recherche=None, avant=None) -> dict:
     """Derniers messages d'une boîte, lus en direct — et leur nombre.
 
     `dossier` : « recus » ou « envoyes ». `depuis` : une période (« 7j »,
-    « semaine ») ou une date ISO ; sans lui, les plus récents. L'appelant DOIT
-    avoir vérifié l'accès.
+    « semaine ») ou une date ISO ; sans lui, les plus récents. `recherche` :
+    des mots-clés cherchés dans TOUTE la boîte (objet et corps) — ajouté le
+    31/08 : « cherche dans les mails des demandes de travaux » n'avait aucun
+    outil, le modèle relisait les 25 derniers et le disait. `avant` : une
+    date, borne haute exclusive — c'est la PAGE SUIVANTE : le résultat donne
+    `plus_ancien`, on le redonne en `avant` pour les 25 précédents. L'appelant
+    DOIT avoir vérifié l'accès.
     """
     nom = fournisseur()                       # lève si rien n'est configuré
     cle = "envoyes" if str(dossier).lower().startswith("env") else "recus"
     limite = max(1, min(int(limite or 10), MAX_MESSAGES))
     debut = depuis_quand(depuis)
-
-    logger.info("Lecture de %s (%s, %d messages%s) via %s", boite, cle, limite,
-                f", depuis {debut.date()}" if debut else "", nom)
+    borne = depuis_quand(avant)
+    mots = " ".join(str(recherche or "").split()) or None
+    logger.info("Lecture de %s (%s, %d messages%s%s%s) via %s", boite, cle, limite,
+                f", depuis {debut.date()}" if debut else "",
+                f", avant {borne.date()}" if borne else "",
+                ", recherche" if mots else "", nom)
     if nom == "outlook":
-        messages, total = await _lire_outlook(boite, DOSSIERS["outlook"][cle], limite, debut)
+        messages, total = await _lire_outlook(boite, DOSSIERS["outlook"][cle], limite, debut,
+                                              recherche=mots, avant=borne)
     else:
-        messages, total = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite, debut)
+        messages, total = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite, debut,
+                                            recherche=mots, avant=borne)
 
     internes = sum(1 for m in messages if m.get("expediteur_interne"))
     automatiques = sum(1 for m in messages if m.get("expediteur_automatique"))
@@ -263,7 +331,18 @@ async def lire_boite(boite: str, dossier: str = "recus",
     # Ce que le modèle doit DIRE du compte — dans les mots exacts, parce que
     # « 25 messages » et « 84 messages dont voici les 25 derniers » ne sont pas
     # la même information, et c'est la seconde qu'on demande.
-    if total is None:
+    plus_ancien = min((m.get("date_iso") for m in messages if m.get("date_iso")), default=None)
+    if mots and total is None:
+        compte = (f"{len(messages)} message(s) trouvé(s) pour « {mots} »"
+                  + (f" (avant le {borne.date().strftime('%d/%m/%Y')})" if borne else "")
+                  + " ; le total des correspondances n'est pas connu du fournisseur.")
+    elif mots:
+        compte = (f"{total}{'+' if total >= MAX_COMPTE else ''} message(s) correspondant à « {mots} »"
+                  + (f" depuis le {debut.date().strftime('%d/%m/%Y')}" if debut else "")
+                  + (f" avant le {borne.date().strftime('%d/%m/%Y')}" if borne else "")
+                  + (f", dont voici les {len(messages)} plus récents." if total > len(messages)
+                     else ", tous détaillés ci-dessous."))
+    elif total is None:
         compte = (f"{len(messages)} messages lus ; le total de la boîte n'a pas pu être "
                   "obtenu du fournisseur.")
     elif debut:
@@ -280,6 +359,14 @@ async def lire_boite(boite: str, dossier: str = "recus",
         "total_periode": total,
         "periode_depuis": debut.isoformat() if debut else None,
         "tronque": bool(total is not None and total > len(messages)),
+        "recherche": mots,
+        "avant": borne.isoformat() if borne else None,
+        "plus_ancien": plus_ancien,
+        # La PAGE SUIVANTE, mécanique : le modèle n'a rien à calculer.
+        "pour_continuer": (
+            f"Pour les {limite} messages PRÉCÉDENTS, rappelle lire_mails avec les mêmes "
+            f"paramètres et avant={plus_ancien}."
+            if plus_ancien and (len(messages) >= limite) else None),
         "compte": compte,
         "domaine_entreprise": _domaine_entreprise(),
         "expediteurs_internes": internes,
@@ -288,9 +375,10 @@ async def lire_boite(boite: str, dossier: str = "recus",
         # modèle tirait des conclusions sur l'entreprise entière à partir de
         # dix bulletins d'information reçus le matin même.
         "pour_analyser_tout_le_courrier": (
-            f"Le DÉTAIL est borné à {MAX_MESSAGES} messages d'UNE boîte ; le COMPTE, lui, "
-            "est exact. Pour analyser l'ensemble du courrier de l'entreprise, la seule "
-            "voie est `lancer_enrichissement`."),
+            f"Le DÉTAIL est borné à {MAX_MESSAGES} messages par appel ; le COMPTE, lui, "
+            "est exact. Pour CHERCHER dans toute la boîte : `recherche` (mots-clés). "
+            "Pour remonter le temps page par page : `avant` (voir pour_continuer). "
+            "Pour analyser l'ensemble du courrier de l'entreprise : `lancer_enrichissement`."),
         "portee": (f"{compte} Un échantillon récent, pas un inventaire de l'entreprise. "
                    "Une adresse dont expediteur_interne vaut false n'appartient PAS à "
                    "l'entreprise."),

@@ -334,15 +334,20 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "`depuis` : une période (« 7j », « semaine », « mois ») ou une date "
         "AAAA-MM-JJ — OBLIGATOIRE dès qu'on parle d'une période (« cette semaine », "
         "« depuis lundi ») : le résultat dit alors « N messages sur la période, voici "
-        "les 25 plus récents ». Le DÉTAIL est borné à 25 ; le TOTAL ne l'est pas, "
-        "c'est lui qu'on cite pour « combien ». Sans `depuis` : les plus récents et le "
-        "total du dossier. N'en tire jamais de conclusion sur l'entreprise entière, "
-        "ses activités ou ses process (pour cela, `lancer_enrichissement`). dossier : "
-        "recus (défaut) ou envoyes ; limite : 1 à 25 (25 d'office quand une période est "
-        "donnée). Sans mailbox, la boîte de la "
-        "personne connectée. Pour un POINT complet avec résumés et propositions de "
-        "réponse, préfère `check_mails`",
-        [], ["mailbox", "dossier", "limite", "depuis"]),
+        "les 25 plus récents ». `recherche` : des MOTS-CLÉS cherchés dans TOUTE la "
+        "boîte (objet et corps), pas seulement les récents — c'est l'outil pour "
+        "« trouve les mails qui parlent de terrasse » ou « des demandes de travaux » "
+        "(cherche alors plusieurs mots du métier, un appel par mot). `avant` : une date "
+        "AAAA-MM-JJ pour REMONTER LE TEMPS page par page — le résultat donne "
+        "`plus_ancien` et `pour_continuer` : redonne cette date en `avant` pour les 25 "
+        "précédents. Le DÉTAIL est borné à 25 par appel ; le TOTAL ne l'est pas, "
+        "c'est lui qu'on cite pour « combien ». Sans `depuis` ni `recherche` : les "
+        "plus récents et le total du dossier. N'en tire jamais de conclusion sur "
+        "l'entreprise entière (pour cela, `lancer_enrichissement`). dossier : recus "
+        "(défaut) ou envoyes ; limite : 1 à 25. Sans mailbox, la boîte de la personne "
+        "connectée. Pour un POINT complet avec résumés et propositions de réponse, "
+        "préfère `check_mails`",
+        [], ["mailbox", "dossier", "limite", "depuis", "recherche", "avant"]),
     "triage_email_entrant": (
         # `mailbox` ÉTAIT REQUIS ICI, et c'était un piège. Le cas normal est un
         # message COLLÉ dans le chat (« voici ce que je viens de recevoir ») :

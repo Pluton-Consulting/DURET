@@ -60,7 +60,12 @@ class _Client:
     def __init__(self, **k): pass
     async def __aenter__(self): return self
     async def __aexit__(self, *a): return False
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, params=None):
+        # Depuis le 31/08 les paramètres OData passent par `params=` (httpx les
+        # encode) : la doublure les recolle à l'URL pour que les contrôles
+        # ci-dessous restent lisibles tels quels.
+        if params:
+            url = url + "?" + "&".join(f"{k}={v}" for k, v in params.items())
         classe_urls["url"] = url; classe_urls["headers"] = headers or {}
         return _Reponse()
 faux_httpx = types.ModuleType("httpx"); faux_httpx.AsyncClient = _Client
@@ -85,7 +90,7 @@ asyncio.run(lecture._lire_outlook("x@exemple.fr", "inbox", 10, None))
 verifier("sans période : aucun $filter, mais toujours le $count", "$filter" not in classe_urls["url"] and "$count=true" in classe_urls["url"])
 
 print("\n3. lire_boite : ce que le modèle doit dire du compte")
-async def _faux_outlook(boite, dossier, limite, depuis):
+async def _faux_outlook(boite, dossier, limite, depuis, **_k):
     return [{"objet": "x", "de": "a@b.fr", "expediteur_interne": False, "expediteur_automatique": False,
              "a": "", "date": "", "lu": True, "apercu": ""}] * 25, 84
 lecture._lire_outlook = _faux_outlook
@@ -95,7 +100,7 @@ verifier("tronque = True quand le total dépasse le détail", r["tronque"] is Tr
 verifier("le compte est écrit en clair, avec le total ET le détail",
          "84" in r["compte"] and "25" in r["compte"], r["compte"])
 verifier("la portée cite le compte", r["compte"] in r["portee"])
-async def _faux_outlook_petit(boite, dossier, limite, depuis):
+async def _faux_outlook_petit(boite, dossier, limite, depuis, **_k):
     return [{"objet": "x", "de": "a@b.fr", "expediteur_interne": False, "expediteur_automatique": False,
              "a": "", "date": "", "lu": True, "apercu": ""}] * 3, 3
 lecture._lire_outlook = _faux_outlook_petit

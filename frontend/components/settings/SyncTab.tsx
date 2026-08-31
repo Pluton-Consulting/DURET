@@ -64,6 +64,10 @@ const ETIQUETTE: Record<string, { texte: string; bg: string; fg: string }> = {
   // synchronisation. Le laisser en « en cours » afficherait une barre figée
   // pour toujours ; le passer en « échec » accuserait le connecteur à tort.
   interrompue: { texte: "Interrompue", bg: "var(--marque-pending-bg)", fg: "var(--marque-pending-text)" },
+  // « Partielle » : le connecteur s'est arrêté avant la fin (Drive : trop de
+  // documents lents) et le dit. Afficher « Terminée » là-dessus a caché
+  // pendant des semaines une synchro qui n'avançait plus (31/08).
+  partielle: { texte: "Partielle", bg: "var(--marque-pending-bg)", fg: "var(--marque-pending-text)" },
 }
 
 export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
@@ -72,6 +76,14 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
   const [busy, setBusy] = useState("")
   const minuterie = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const [chargement, setChargement] = useState(true)
+  const tentatives = useRef(0)
+  // La liste des connecteurs venait d'UN seul appel, sans indicateur ni
+  // nouvelle tentative : quand le backend était occupé (une campagne et une
+  // synchro de 438 fichiers en même temps), l'onglet montrait les cartes
+  // d'enrichissement et RIEN à la place des connecteurs (Noa, 31/08).
+  // Désormais : « chargement… » tant qu'on ne sait pas, et jusqu'à trois
+  // nouvelles tentatives espacées avant d'afficher l'erreur.
   const charger = useCallback(async () => {
     try {
       const res = await fetch(`${apiUrl}/api/ingestion/sync`, {
@@ -80,7 +92,16 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setEtats(await res.json())
       setErreur("")
+      setChargement(false)
+      tentatives.current = 0
     } catch (e: any) {
+      if (tentatives.current < 3) {
+        tentatives.current += 1
+        setTimeout(() => { charger().catch(() => { /* la tentative suivante dira */ }) },
+                   3000 * tentatives.current)
+        return
+      }
+      setChargement(false)
       setErreur(e?.message || "état indisponible")
     }
   }, [apiUrl, backendToken])
@@ -206,7 +227,7 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
   }
 
   const resume = (e: EtatSync) => {
-    if (e.etat === "echec" || e.etat === "non_configure") return e.erreur || ""
+    if (e.etat === "echec" || e.etat === "non_configure" || e.etat === "partielle") return e.erreur || ""
     if (!e.resultat) return ""
     // Le bilan d'un connecteur est un petit dictionnaire de compteurs : on le
     // rend lisible sans présumer de ses clés, qui diffèrent d'un connecteur à
@@ -332,7 +353,12 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {etats.map((e) => {
+        {chargement && etats.length === 0 && !erreur && (
+        <div style={{ fontSize: 13, color: "var(--marque-text-muted)", padding: "10px 0" }}>
+          Chargement des connecteurs…
+        </div>
+      )}
+      {etats.map((e) => {
           const et = ETIQUETTE[e.etat] || ETIQUETTE.jamais
           const enCours = e.etat === "en_cours"
           return (

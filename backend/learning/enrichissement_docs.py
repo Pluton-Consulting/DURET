@@ -220,9 +220,14 @@ async def executer(lance_par: str, max_lots_par_niveau: int = 20,
             for i, lot in enumerate(lots[:max_lots_par_niveau]):
                 _ETAT["phase"] = (f"analyse · niveau {niveau} "
                                   f"({i + 1}/{min(len(lots), max_lots_par_niveau)})")
+                # Même patience que la campagne des mails : une cascade à terre
+                # deux minutes ne jette pas des heures de distillation.
+                from learning.enrichissement import avec_reprise
                 try:
-                    propositions, carte, modele = await _lire_lot_docs(
-                        niveau, lot, exiger_modele_principal)
+                    propositions, carte, modele = await avec_reprise(
+                        lambda: _lire_lot_docs(niveau, lot, exiger_modele_principal),
+                        f"niveau {niveau} lot {i + 1}",
+                        sur_attente=lambda t: _ETAT.__setitem__("phase", t))
                 except RuntimeError:
                     raise
                 except Exception as e:  # noqa: BLE001

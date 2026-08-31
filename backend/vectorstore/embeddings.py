@@ -35,14 +35,42 @@ def _warn_once(msg: str) -> None:
         _warned_no_key = True
 
 
-# ── Garde-fou quota Gemini (tier gratuit) : débit + plafond/jour + cooldown 429 ──
+# ── Garde-fou quota Gemini : cadence ADAPTATIVE, plafond/jour, reprise après 429 ──
+#
+# CE QUI SE PASSAIT (31/08, journaux du VPS Symbiose) : « Gemini 429 — pause
+# 1800s » toutes les trente minutes depuis 09:17, et 3 390 morceaux sur 6 401
+# SANS vecteur — dont 1 011 des 1 029 du Drive, toutes les factures, tous les
+# prospects, la moitié des mails. La recherche documentaire ne les voyait que
+# par pg_trgm. Une requête d'UN texte passait pourtant (sondé depuis le
+# conteneur) : la clé n'était pas morte, c'était le DÉBIT. Le worker envoyait
+# 32 textes par requête toutes les 0,8 s, prenait un 429 dès la première
+# rafale, dormait trente minutes, recommençait À L'IDENTIQUE. Deux requêtes
+# par heure : la file ne se vidait jamais — et le détail du 429 (retryDelay,
+# quotaId) n'était pas lu, donc personne ne pouvait dire pourquoi.
+#
+# MAINTENANT : le 429 est LU (Google dit combien attendre et quel quota mord,
+# et ça se retrouve dans le journal) ; la pause est celle qu'il demande, sinon
+# courte et doublée à chaque récidive — jamais trente minutes d'emblée ; et la
+# cadence de croisière RALENTIT à chaque 429 puis se détend au fil des succès.
+# Le module s'accorde ainsi seul au palier réel de la clé (gratuit ou facturé),
+# sans réglage à deviner.
 class _GeminiThrottle:
+    PAUSE_INITIALE_S = 30.0       # premier 429 sans délai annoncé
+    CADENCE_MAX_S = 20.0          # on ne ralentit jamais au-delà (3 requêtes/min)
+
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._last = 0.0
         self._day: Optional[datetime.date] = None
         self._count = 0
         self._cooldown_until = 0.0
+        self._cadence: Optional[float] = None   # None = la cadence du réglage
+        self._recidives = 0                     # 429 consécutifs, effacés par un succès
+        self._dernier_429 = ""                  # ce que Google a dit la dernière fois
+
+    @property
+    def cadence(self) -> float:
+        return self._cadence if self._cadence is not None else float(settings.embedding_min_interval_s)
 
     async def gate(self) -> tuple[bool, str]:
         async with self._lock:
@@ -54,20 +82,75 @@ class _GeminiThrottle:
                 return False, "cooldown quota (429)"
             if self._count >= settings.embedding_daily_request_cap:
                 return False, "plafond quotidien atteint"
-            wait = settings.embedding_min_interval_s - (now - self._last)
+            wait = self.cadence - (now - self._last)
             if wait > 0:
                 await asyncio.sleep(wait)
             self._last = time.monotonic()
             self._count += 1
             return True, ""
 
-    async def hit_quota(self) -> None:
+    @staticmethod
+    def lire_429(corps: str) -> tuple[Optional[float], str]:
+        """Le délai demandé par Google (`retryDelay`, ex. « 18s ») et le quota
+        touché (`quotaId`), lus dans le corps du 429. Rien n'est supposé : un
+        corps illisible rend (None, « détail illisible »)."""
+        import json
+        import re
+        try:
+            data = json.loads(corps or "")
+        except ValueError:
+            return None, "détail illisible"
+        erreur = data.get("error") if isinstance(data, dict) else None
+        if not isinstance(erreur, dict):
+            return None, "détail illisible"
+        delai: Optional[float] = None
+        quotas: list[str] = []
+        for d in erreur.get("details") or []:
+            if not isinstance(d, dict):
+                continue
+            rd = d.get("retryDelay")
+            if isinstance(rd, str):
+                m = re.match(r"(\d+(?:\.\d+)?)s", rd)
+                if m:
+                    delai = float(m.group(1))
+            for v in d.get("violations") or []:
+                if isinstance(v, dict) and v.get("quotaId"):
+                    quotas.append(str(v["quotaId"]))
+        message = str(erreur.get("message") or "")[:120]
+        return delai, (", ".join(quotas) or message or "sans détail")
+
+    async def hit_quota(self, corps: str = "") -> tuple[float, str]:
+        """Un 429 vient d'arriver : pause (celle de Google, sinon progressive)
+        et cadence ralentie. Rend (pause en secondes, diagnostic)."""
+        delai, diag = self.lire_429(corps)
+        plafond = float(settings.embedding_cooldown_s)
         async with self._lock:
-            self._cooldown_until = time.monotonic() + settings.embedding_cooldown_s
+            self._recidives += 1
+            if delai is not None:
+                pause = min(delai + 2.0, plafond)
+            else:
+                pause = min(self.PAUSE_INITIALE_S * (2 ** (self._recidives - 1)), plafond)
+            self._cooldown_until = time.monotonic() + pause
+            self._cadence = min(self.cadence * 2.0, self.CADENCE_MAX_S)
+            self._dernier_429 = diag
+            return pause, diag
+
+    async def succes(self) -> None:
+        """Une requête est passée : les récidives s'effacent et la cadence se
+        détend, sans jamais descendre sous celle du réglage."""
+        async with self._lock:
+            self._recidives = 0
+            if self._cadence is not None:
+                base = float(settings.embedding_min_interval_s)
+                self._cadence = max(base, self._cadence * 0.9)
+                if self._cadence <= base:
+                    self._cadence = None
 
     def stats(self) -> dict:
         return {"jour": str(self._day), "requetes_jour": self._count,
-                "plafond_jour": settings.embedding_daily_request_cap}
+                "plafond_jour": settings.embedding_daily_request_cap,
+                "cadence_s": round(self.cadence, 2), "recidives_429": self._recidives,
+                "dernier_429": self._dernier_429}
 
 
 _gemini_throttle = _GeminiThrottle()
@@ -139,12 +222,13 @@ async def _embed_gemini(texts: list[str]) -> list[Optional[list[float]]]:
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(url, json=body)
             if r.status_code == 429:
-                await _gemini_throttle.hit_quota()
-                logger.warning("Gemini 429 (quota) — pause %ss, backlog conservé",
-                               settings.embedding_cooldown_s)
+                pause, diag = await _gemini_throttle.hit_quota(r.text)
+                logger.warning("Gemini 429 (%s) — pause %.0f s, cadence %.1f s, backlog conservé",
+                               diag, pause, _gemini_throttle.cadence)
                 return [None] * len(texts)
             r.raise_for_status()
             data = r.json()
+        await _gemini_throttle.succes()
         embeddings = data.get("embeddings", [])
         out: list[Optional[list[float]]] = []
         for e in embeddings:

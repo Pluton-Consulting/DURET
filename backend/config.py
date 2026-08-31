@@ -197,7 +197,10 @@ class Settings(BaseSettings):
     # Worker de vectorisation : draine embedding_jobs en tâche de fond (dans le backend).
     embedding_worker_enabled: bool = True
     embedding_worker_interval_s: int = 10
-    embedding_worker_batch: int = 32
+    # 16 et non 32 : à 32 textes par requête, la première rafale après une
+    # pause crevait le débit par minute et relançait un 429 (31/08). La
+    # cadence s'adapte seule (vectorstore/embeddings.py), le lot reste modeste.
+    embedding_worker_batch: int = 16
     # Garde-fous anti-quota (tier gratuit Gemini) :
     embedding_max_chars: int = 8000          # tronque chaque texte (~2000 tokens) avant embedding
     embedding_daily_request_cap: int = 900   # plafond de requêtes/jour (RPD gratuit ~1000)

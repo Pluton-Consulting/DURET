@@ -241,9 +241,17 @@ async def _executer_sync(source: str, module: str, user_id: str,
             resultat = await run(avancer=await _avancement(sync_id))
         else:
             resultat = await run()
-        etat.update({"etat": "terminee", "resultat": resultat or {},
+        # « Partielle » quand le connecteur a dû s'arrêter avant la fin (Drive :
+        # trop de documents lents). Dire « terminée » là-dessus, c'est ce qui a
+        # caché pendant des semaines qu'une synchro s'arrêtait toujours au même
+        # endroit (31/08). La raison est écrite dans `erreur`, l'écran l'affiche.
+        anticipe = bool((resultat or {}).get("arret_anticipe"))
+        statut = "partielle" if anticipe else "terminee"
+        raison = (f"arrêt anticipé : {(resultat or {}).get('non_examines', '?')} fichier(s) "
+                  "non examiné(s) — relancer pour continuer") if anticipe else None
+        etat.update({"etat": statut, "resultat": resultat or {}, "erreur": raison,
                      "fin": time.time()})
-        await _conclure(sync_id, "terminee", resultat=resultat)
+        await _conclure(sync_id, statut, resultat=resultat, erreur=raison)
         await log_action(action="ingestion_sync", user_id=user_id,
                          metadata={"source": source, **(resultat or {})})
     except NotImplementedError as e:

@@ -241,6 +241,52 @@ class ModeleDegrade(RuntimeError):
     """La cascade a répondu avec autre chose que le modèle principal."""
 
 
+# Une panne PASSAGÈRE de la cascade ne doit pas tuer une campagne de plusieurs
+# heures. Le 31/08 à 12:02 : LongCat expire deux fois, Gemini répond 503
+# « high demand », Groq et OpenRouter sont morts depuis des jours, Ollama
+# absent → « Tous les modèles LLM ont échoué » → les DEUX campagnes abandonnées
+# au premier lot venu, la documentaire à ZÉRO appel. Deux minutes de trou, une
+# après-midi de travail perdue, et « interrompue » à l'écran sans autre issue
+# que de tout relancer à la main. On attend, et on rejoue le lot — trois fois,
+# de plus en plus longtemps — avant de renoncer pour de bon.
+REPRISES_CASCADE_S = (60, 180, 420)
+
+
+def _cascade_a_terre(e: BaseException) -> bool:
+    """La panne qui se rejoue : TOUS les fournisseurs ont échoué. Un
+    `ModeleDegrade` (un repli a répondu, on n'en veut pas) ou une anonymisation
+    indisponible sont des REFUS, pas des pannes : ils ne se rejouent pas."""
+    return (isinstance(e, RuntimeError) and not isinstance(e, ModeleDegrade)
+            and "Tous les modèles LLM ont échoué" in str(e))
+
+
+async def avec_reprise(appel, quoi: str, sur_attente=None):
+    """Exécute `appel()` ; si la cascade entière a échoué, attend puis rejoue.
+
+    `appel` : une fabrique de coroutine (lambda), rappelée à chaque essai.
+    `quoi` : le lot, pour le journal. `sur_attente(texte)` : informe l'écran
+    pendant la pause (la phase de la campagne), jamais obligatoire.
+    Après la dernière attente, l'erreur remonte telle quelle : c'est alors une
+    vraie panne, et la campagne s'interrompt comme avant — mais pas avant
+    onze minutes de patience.
+    """
+    for i, attente in enumerate(REPRISES_CASCADE_S):
+        try:
+            return await appel()
+        except Exception as e:  # noqa: BLE001 — filtré juste en dessous
+            if not _cascade_a_terre(e):
+                raise
+            logger.warning("%s : cascade LLM à terre (%s) — nouvel essai dans %d s (%d/%d)",
+                           quoi, str(e)[:100], attente, i + 1, len(REPRISES_CASCADE_S))
+            if sur_attente is not None:
+                try:
+                    sur_attente(f"cascade LLM indisponible · nouvel essai dans {attente} s · {quoi}")
+                except Exception:  # noqa: BLE001 — un affichage ne casse pas une reprise
+                    pass
+            await asyncio.sleep(attente)
+    return await appel()
+
+
 async def _lire_lot(boite: str, messages: list[str],
                     exiger_principal: bool = True) -> tuple[dict, dict, str]:
     """Fait relire un lot au modèle. Renvoie (propositions, carte, modèle utilisé)."""
@@ -379,10 +425,13 @@ async def executer(lance_par: str, collecter: bool = True,
             _ETAT["phase"] = f"analyse · {boite} ({len(lots)} appel(s))"
             for lot, messages in enumerate(lots[:max_lots_par_boite]):
                 try:
-                    propositions, carte, modele = await _lire_lot(
-                        boite, messages, exiger_principal=exiger_modele_principal)
+                    propositions, carte, modele = await avec_reprise(
+                        lambda: _lire_lot(boite, messages,
+                                          exiger_principal=exiger_modele_principal),
+                        f"analyse {boite} lot {lot + 1}",
+                        sur_attente=lambda t: _ETAT.__setitem__("phase", t))
                 except RuntimeError:
-                    raise            # anonymiseur HS ou modèle dégradé : on arrête tout
+                    raise            # anonymiseur HS, modèle dégradé ou cascade morte MALGRÉ les reprises
                 except Exception as e:  # noqa: BLE001
                     _ETAT["echecs"].append(f"analyse {boite} lot {lot + 1} : {e}")
                     continue

@@ -8,10 +8,12 @@ Le filtrage d'accès (access_level selon le rôle) est entièrement délégué �
 `vectorstore.search_hybrid` — cette couche ne fait qu'assembler embedding +
 recherche et formater le résultat pour injection dans un prompt.
 
-DÉGRADATION PROPRE : si l'embedding échoue (clé OpenAI absente / erreur API),
-`search_hybrid` retombe automatiquement sur pg_trgm (full-text). Si la
-recherche elle-même échoue, on retourne une liste vide et on logge un warning
-— jamais d'exception propagée aux agents.
+DEUX VOIES, TOUJOURS (31/08/2026) : la vectorielle (quand l'embedding de la
+question existe) ET la lexicale (plein texte français + trigrammes de mots),
+fusionnées par rang réciproque. La moitié du corpus n'a pas d'embedding
+(quota Gemini) : elle n'existait pas pour l'ancienne recherche, vectorielle
+seule. Si la recherche échoue, on retourne une liste vide et on logge un
+warning — jamais d'exception propagée aux agents.
 
 On ne logge jamais le contenu de la requête ni des chunks, uniquement des
 métadonnées (rôle, nombre de résultats, type d'erreur).
@@ -90,15 +92,15 @@ async def retrieve(
     mailboxes: Optional[list[str]] = None,
 ) -> list[dict]:
     """
-    Recherche sémantique filtrée par rôle et renvoie les chunks bruts.
+    Recherche hybride filtrée par rôle et renvoie les chunks bruts.
 
     Args:
         query: requête en langage naturel.
         user_role: rôle de l'utilisateur (super_admin, direction, commercial…),
             utilisé par le vectorstore pour filtrer les niveaux d'accès.
         source_types: si fourni, ne conserve que les chunks dont le
-            `source_type` figure dans la liste (post-filtre appliqué ici,
-            `search_hybrid` ne filtrant que sur le rôle).
+            `source_type` figure dans la liste — filtré DANS la requête
+            depuis le 31/08 (avant, un post-filtre vidait la page).
         top_k: nombre maximum de chunks à retourner.
 
     Returns:
@@ -116,42 +118,23 @@ async def retrieve(
         return []
 
     try:
-        # Embedding optionnel : None => search_hybrid dégrade sur pg_trgm.
+        # Embedding optionnel : None => la voie lexicale seule (search_hybrid).
         embedding = await embed_query(query)
 
-        # On sur-échantillonne : les post-filtres (type de source, cloisonnement
-        # des boîtes) retirent des résultats, et sans marge on renverrait moins
-        # que `top_k` alors que des documents pertinents existent.
-        marge = 3 if (source_types or mailboxes is not None) else 1
+        # On sur-échantillonne pour le cloisonnement des boîtes (post-filtre) :
+        # sans marge on renverrait moins que `top_k` alors que des documents
+        # pertinents existent.
+        marge = 3 if mailboxes is not None else 1
         chunks = await vectorstore.search_hybrid(
-            query,
-            embedding,
-            user_role,
-            top_k=top_k * marge,
-        ) or []
-
-        # REPLI LEXICAL. La recherche vectorielle applique un seuil de
-        # similarité : une formulation abstraite confrontée à des documents
-        # concrets passe légitimement dessous et ne rend RIEN, alors que les
-        # documents existent et contiennent les mots demandés. Le repli
-        # pg_trgm n'était jusqu'ici tenté que faute d'embedding — donc jamais
-        # dans ce cas, le plus fréquent. On le tente aussi sur un résultat vide.
-        if not chunks and embedding:
-            chunks = await vectorstore.search_hybrid(
-                query, None, user_role, top_k=top_k * marge) or []
-            if chunks:
-                logger.debug("RAG : repli lexical (%d résultats)", len(chunks))
-        # Post-filtre par type de source si demandé (search_hybrid ne le gère pas).
-        if source_types:
-            allowed = set(source_types)
-            chunks = [c for c in chunks if c.get("source_type") in allowed]
+            query, embedding, user_role, top_k=top_k * marge,
+            source_types=list(source_types) if source_types else None) or []
 
         # Cloisonnement des boîtes mail (fail-closed).
         chunks = _filtrer_mails(chunks, mailboxes)[:top_k]
 
         logger.debug(
             "RAG retrieve : rôle=%s, embedding=%s, résultats=%d",
-            user_role, "oui" if embedding else "non (pg_trgm)", len(chunks),
+            user_role, "oui" if embedding else "non (lexical seul)", len(chunks),
         )
         return chunks
 
@@ -161,6 +144,68 @@ async def retrieve(
             user_role, type(e).__name__, e,
         )
         return []
+
+
+# Profondeur maximale d'une recherche : le nombre de morceaux qu'on remonte
+# avant de grouper par document. Assez pour paginer loin (20 documents par
+# page × plusieurs pages), borné pour qu'une question vague ne rapatrie pas
+# le corpus.
+PROFONDEUR_MAX = 400
+
+
+async def rechercher(
+    query: str,
+    user_role: str,
+    source_types: Optional[list[str]] = None,
+    mailboxes: Optional[list[str]] = None,
+    limite: int = 6,
+    page: int = 1,
+    fichier: Optional[str] = None,
+) -> dict:
+    """UNE recherche, petite ou énorme : les DOCUMENTS qui répondent, classés,
+    avec leurs meilleurs extraits, le COMPTE exact de ce qui correspond, et
+    la page demandée. C'est le geste du skill `rechercher_documents`.
+
+    La profondeur suit la page : on remonte assez de morceaux pour servir la
+    page N sans recalculer les précédentes, groupés par document ensuite —
+    « trente morceaux du même compte rendu » deviennent UN document qui dit
+    « 30 morceaux correspondants ». Ne lève jamais : un dict vide sur échec.
+    """
+    from vectorstore.fusion import fusionner, grouper_par_document
+
+    query = (query or "").strip()
+    limite = max(1, int(limite or 6))
+    page = max(1, int(page or 1))
+    vide = {"documents": [], "total_documents": 0, "total_morceaux": 0,
+            "embedding": False, "page": page, "limite": limite}
+    if not query or not await _corpus_has_documents():
+        return vide
+    try:
+        embedding = await embed_query(query)
+        profondeur = min(PROFONDEUR_MAX, max(60, limite * page * 4))
+        types = list(source_types) if source_types else None
+        voies: dict = {}
+        if embedding:
+            voies["vecteur"] = await vectorstore.search(
+                embedding, user_role, types, top_k=profondeur, fichier=fichier)
+        voies["texte"] = await vectorstore.search_lexical(
+            query, user_role, types, top_k=profondeur, fichier=fichier)
+        total_morceaux, total_documents = await vectorstore.count_lexical(
+            query, user_role, types, fichier=fichier)
+        chunks = _filtrer_mails(fusionner(voies), mailboxes)
+        documents = grouper_par_document(chunks)
+        logger.debug("RAG rechercher : rôle=%s, embedding=%s, morceaux=%d, documents=%d, page=%d",
+                     user_role, "oui" if embedding else "non", len(chunks), len(documents), page)
+        return {"documents": documents,
+                # Le compte lexical est EXACT sur le corpus ; le groupement peut
+                # y ajouter des documents que seule la voie vectorielle a vus.
+                "total_documents": max(len(documents), total_documents),
+                "total_morceaux": max(len(chunks), total_morceaux),
+                "embedding": bool(embedding), "page": page, "limite": limite,
+                "profondeur_atteinte": len(chunks) >= profondeur}
+    except Exception as e:  # noqa: BLE001 — une recherche en échec n'est pas une panne
+        logger.warning("Échec RAG rechercher (rôle=%s, %s) : %s", user_role, type(e).__name__, e)
+        return vide
 
 
 async def retrieve_as_context(

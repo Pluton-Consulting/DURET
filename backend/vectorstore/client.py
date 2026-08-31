@@ -1,6 +1,7 @@
 """
 Client pgvector — interface de recherche sémantique
-Gère la recherche hybride (vecteur + filtres métadonnées) et l'insertion de documents.
+Gère la recherche hybride (vecteur + plein texte + trigrammes, fusionnés — voir
+`vectorstore/fusion.py`), les filtres d'accès et l'insertion de documents.
 
 Note : la vectorisation (génération des embeddings) est intentionnellement
 absente — elle sera implémentée dans le pipeline d'ingestion (prochaine itération).
@@ -26,6 +27,20 @@ from security.acces import ROLE_ACCESS_LEVELS  # noqa: F401
 class VectorStoreClient:
     """Interface principale pour les opérations pgvector. Singleton — instancier une fois au démarrage."""
 
+    # ── Les filtres communs aux voies de recherche ─────────────────────────
+    @staticmethod
+    def _filtres(params: list, source_types: Optional[List[str]], fichier: Optional[str]) -> str:
+        """`source_type` et `source_filename` : les valeurs voyagent en PARAMÈTRE,
+        jamais dans le texte SQL — même règle que partout ici."""
+        clauses = ""
+        if source_types:
+            params.append(list(source_types))
+            clauses += f" AND source_type = ANY(${len(params)}::text[])"
+        if fichier and str(fichier).strip():
+            params.append(f"%{str(fichier).strip()}%")
+            clauses += f" AND source_filename ILIKE ${len(params)}"
+        return clauses
+
     async def search(
         self,
         query_embedding: List[float],
@@ -33,42 +48,128 @@ class VectorStoreClient:
         source_types: Optional[List[str]] = None,
         top_k: int = 5,
         similarity_threshold: float = 0.3,
+        fichier: Optional[str] = None,
     ) -> List[dict]:
         """
-        Recherche sémantique avec filtres d'accès par rôle.
-        Retourne uniquement des chunks is_anonymized=true.
+        Recherche VECTORIELLE avec filtres d'accès par rôle.
+        Retourne uniquement des chunks is_anonymized=true et vectorisés.
+
+        `hnsw.ef_search` : la taille de la liste candidate de l'index HNSW
+        (migration 027). À 40 par défaut, une recherche à 200 morceaux de
+        profondeur en rendait 40 : on l'aligne sur ce qu'on demande. Posé en
+        SET LOCAL, dans une transaction — le pool partage ses connexions.
         """
         allowed_levels = ROLE_ACCESS_LEVELS.get(user_role, ["all"])
-
+        top_k = max(1, int(top_k))
+        params: list = [_vec_literal(query_embedding), allowed_levels, top_k, similarity_threshold]
+        filtres = self._filtres(params, source_types, fichier)
+        requete = f"""
+            SELECT
+                id, content, source_type, source_id, source_filename,
+                chunk_index, chunk_total,
+                1 - (embedding <=> $1::vector) AS similarity
+            FROM documents
+            WHERE access_level = ANY($2::text[])
+              AND is_anonymized = true
+              AND embedding IS NOT NULL
+              AND 1 - (embedding <=> $1::vector) >= $4
+              {filtres}
+            ORDER BY embedding <=> $1::vector
+            LIMIT $3
+        """
         async with get_db() as conn:
-            source_filter = ""
-            params: list = [_vec_literal(query_embedding), allowed_levels, top_k, similarity_threshold]
+            try:
+                async with conn.transaction():
+                    await conn.execute(f"SET LOCAL hnsw.ef_search = {min(1000, max(40, top_k))}")
+                    rows = await conn.fetch(requete, *params)
+            except Exception:  # noqa: BLE001 — pgvector sans HNSW : la requête vaut sans le réglage
+                rows = await conn.fetch(requete, *params)
+            return [dict(row) for row in rows]
 
-            if source_types:
-                source_filter = "AND source_type = ANY($5::text[])"
-                params.append(source_types)
+    async def search_lexical(
+        self,
+        query_text: str,
+        user_role: str,
+        source_types: Optional[List[str]] = None,
+        top_k: int = 5,
+        fichier: Optional[str] = None,
+    ) -> List[dict]:
+        """
+        Recherche LEXICALE : plein texte français (index GIN de la migration
+        027) puis trigrammes de MOTS pour les fautes et les formes voisines.
 
+        C'est la voie qui atteint les morceaux SANS embedding (la moitié du
+        corpus le 31/08) et qui tient à des centaines de milliers de morceaux :
+        un index, pas un parcours. `word_similarity` (opérateur <%) compare la
+        question au MEILLEUR passage du morceau — l'ancien `content % requête`
+        comparait trois mots à trois cents et ne trouvait jamais rien.
+        """
+        allowed_levels = ROLE_ACCESS_LEVELS.get(user_role, ["all"])
+        top_k = max(1, int(top_k))
+        texte = " ".join((query_text or "").split())
+        if not texte:
+            return []
+        params: list = [texte, allowed_levels, top_k]
+        filtres = self._filtres(params, source_types, fichier)
+        async with get_db() as conn:
             rows = await conn.fetch(f"""
-                SELECT
-                    id,
-                    content,
-                    source_type,
-                    source_id,
-                    source_filename,
-                    chunk_index,
-                    chunk_total,
-                    1 - (embedding <=> $1::vector) AS similarity
+                SELECT id, content, source_type, source_id, source_filename,
+                       chunk_index, chunk_total,
+                       ts_rank_cd(to_tsvector('french', content),
+                                  websearch_to_tsquery('french', $1)) AS similarity
                 FROM documents
                 WHERE access_level = ANY($2::text[])
                   AND is_anonymized = true
-                  AND embedding IS NOT NULL
-                  AND 1 - (embedding <=> $1::vector) >= $4
-                  {source_filter}
-                ORDER BY embedding <=> $1::vector
+                  AND to_tsvector('french', content) @@ websearch_to_tsquery('french', $1)
+                  {filtres}
+                ORDER BY similarity DESC
                 LIMIT $3
             """, *params)
+            resultats = [dict(r) for r in rows]
+            if len(resultats) < top_k:
+                vus = {str(r["id"]) for r in resultats}
+                rows = await conn.fetch(f"""
+                    SELECT id, content, source_type, source_id, source_filename,
+                           chunk_index, chunk_total,
+                           word_similarity($1, content) AS similarity
+                    FROM documents
+                    WHERE access_level = ANY($2::text[])
+                      AND is_anonymized = true
+                      AND $1 <% content
+                      {filtres}
+                    ORDER BY similarity DESC
+                    LIMIT $3
+                """, *params)
+                resultats += [dict(r) for r in rows if str(r["id"]) not in vus]
+            return resultats[:top_k]
 
-            return [dict(row) for row in rows]
+    async def count_lexical(
+        self,
+        query_text: str,
+        user_role: str,
+        source_types: Optional[List[str]] = None,
+        fichier: Optional[str] = None,
+    ) -> tuple[int, int]:
+        """Le COMPTE exact des morceaux et des documents qui portent les termes
+        cherchés — bon marché grâce aux index, et c'est lui qu'on cite pour
+        « combien de documents parlent de … »."""
+        allowed_levels = ROLE_ACCESS_LEVELS.get(user_role, ["all"])
+        texte = " ".join((query_text or "").split())
+        if not texte:
+            return 0, 0
+        params: list = [texte, allowed_levels]
+        filtres = self._filtres(params, source_types, fichier)
+        async with get_db() as conn:
+            row = await conn.fetchrow(f"""
+                SELECT COUNT(*) AS morceaux, COUNT(DISTINCT (source_type, source_id)) AS documents
+                FROM documents
+                WHERE access_level = ANY($2::text[])
+                  AND is_anonymized = true
+                  AND (to_tsvector('french', content) @@ websearch_to_tsquery('french', $1)
+                       OR $1 <% content)
+                  {filtres}
+            """, *params)
+            return int(row["morceaux"] or 0), int(row["documents"] or 0)
 
     async def search_hybrid(
         self,
@@ -76,27 +177,25 @@ class VectorStoreClient:
         query_embedding: Optional[List[float]],
         user_role: str,
         top_k: int = 5,
+        source_types: Optional[List[str]] = None,
+        fichier: Optional[str] = None,
     ) -> List[dict]:
         """
-        Recherche hybride : vecteur si embedding disponible,
-        fallback pg_trgm full-text sinon.
-        """
-        if query_embedding:
-            return await self.search(query_embedding, user_role, top_k=top_k)
+        Recherche HYBRIDE : la voie vectorielle ET la voie lexicale, TOUJOURS
+        les deux, fusionnées par rang réciproque (`vectorstore.fusion`).
 
-        allowed_levels = ROLE_ACCESS_LEVELS.get(user_role, ["all"])
-        async with get_db() as conn:
-            rows = await conn.fetch("""
-                SELECT id, content, source_type, source_id,
-                       similarity(content, $1) AS similarity
-                FROM documents
-                WHERE access_level = ANY($2::text[])
-                  AND is_anonymized = true
-                  AND content % $1
-                ORDER BY similarity DESC
-                LIMIT $3
-            """, query_text, allowed_levels, top_k)
-            return [dict(row) for row in rows]
+        Avant : vecteur seul, et le lexical uniquement si le vecteur ne rendait
+        RIEN — donc jamais dans le cas courant, alors que la moitié du corpus
+        n'a pas d'embedding et n'existait pas pour la voie vectorielle.
+        """
+        from vectorstore.fusion import fusionner
+        voies: dict = {}
+        if query_embedding:
+            voies["vecteur"] = await self.search(query_embedding, user_role, source_types,
+                                                 top_k=top_k, fichier=fichier)
+        voies["texte"] = await self.search_lexical(query_text, user_role, source_types,
+                                                   top_k=top_k, fichier=fichier)
+        return fusionner(voies)[:max(1, int(top_k))]
 
     async def insert_document_chunk(
         self,

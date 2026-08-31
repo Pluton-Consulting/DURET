@@ -119,7 +119,11 @@ async def interroger_donnees(data: dict, user) -> dict:
             elif not filtres and not fragments:
                 resultat = await _colonnes(conn, niveaux, reel)
             else:
-                resultat = await _filtrer(conn, niveaux, reel, filtres, fragments)
+                try:
+                    page = max(1, int(data.get("page") or 1))
+                except (TypeError, ValueError):
+                    page = 1
+                resultat = await _filtrer(conn, niveaux, reel, filtres, fragments, page)
             if reel != type_source:
                 resultat["source_type_demande"] = type_source
                 resultat["note_nom"] = (f"« {type_source} » a été compris comme « {reel} », "
@@ -297,8 +301,13 @@ async def _colonnes(conn, niveaux: list[str], type_source: str) -> dict:
 
 
 async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict,
-                   fragments: dict = None) -> dict:
-    """Compte exact + échantillon d'enregistrements correspondants."""
+                   fragments: dict = None, page: int = 1) -> dict:
+    """Compte exact + une PAGE d'enregistrements correspondants.
+
+    `page` (31/08) : 2 000 devis filtrés se lisaient 25 par 25… sans jamais
+    pouvoir passer aux 25 suivants. Le compte reste exact, la page se dit.
+    """
+    page = max(1, int(page or 1))
     import json
 
     # Égalité stricte via l'opérateur de containment JSONB : c'est indexé (GIN)
@@ -351,17 +360,25 @@ async def _filtrer(conn, niveaux: list[str], type_source: str, filtres: dict,
         f"SELECT title, data, champs, source_filename, ligne FROM document_metadata m "
         f"WHERE source_type = $1 AND access_level = ANY($2::text[]) "
         f"AND {colonne} @> $3::jsonb AND ({partiel}) "
-        f"ORDER BY ligne NULLS LAST LIMIT ${4 + len(params_partiel)}",
-        type_source, niveaux, charge, *params_partiel, MAX_ENREGISTREMENTS)
+        f"ORDER BY ligne NULLS LAST LIMIT ${4 + len(params_partiel)} "
+        f"OFFSET ${5 + len(params_partiel)}",
+        type_source, niveaux, charge, *params_partiel, MAX_ENREGISTREMENTS,
+        (page - 1) * MAX_ENREGISTREMENTS)
+    pages = max(1, -(-int(total) // MAX_ENREGISTREMENTS))
 
     return {
         "source_type": type_source, "filtres": critere,
         "contient": fragments or None, "nombre": total,
+        "page": page, "pages": pages,
+        "pour_continuer": (
+            f"Pour les {MAX_ENREGISTREMENTS} enregistrements SUIVANTS, rappelle "
+            f"interroger_donnees avec les mêmes paramètres et page={page + 1}."
+            if page < pages else None),
         "enregistrements": [{"titre": l["title"], "valeurs": _jsonb(l["data"]),
                              "fichier": l["source_filename"], "ligne": l["ligne"]}
                             for l in lignes],
-        "note": (f"{total} enregistrement(s) au total ; {min(total, MAX_ENREGISTREMENTS)} "
-                 f"montré(s). Le nombre est EXACT, cite-le tel quel. Réponds par une "
+        "note": (f"{total} enregistrement(s) au total ; page {page} sur {pages}, "
+                 f"{len(lignes)} montré(s). Le nombre est EXACT, cite-le tel quel. Réponds par une "
                  f"PHRASE qui dit ce qui est compté, jamais par le nombre seul : un "
                  f"chiffre nu se lit comme une panne, même quand il est juste."),
     }

@@ -142,8 +142,12 @@ MAX_FORCAGES_PAR_TOUR = 2
 # tenaient pas dans 4 000, le JSON de la liste était tranché au milieu — le
 # modèle ne voyait que les premiers messages, coupés. Et un message OUVERT
 # (`lire_mail`, corps jusqu'à 10 000 caractères) doit passer entier.
+# Puis la recherche documentaire (jusqu'à 20 documents par page, extraits
+# fenêtrés) et les enregistrements filtrés (25 par page) : une page qui ne
+# passe pas entière est une page qu'on redemande.
 RESULTATS_GENEREUX = {"drive_arborescence", "nas_arborescence",
-                      "lire_mails", "lire_mail", "check_mails"}
+                      "lire_mails", "lire_mail", "check_mails",
+                      "rechercher_documents", "interroger_donnees"}
 PLAFOND_RESULTAT = 4000
 PLAFOND_RESULTAT_GENEREUX = 12000
 

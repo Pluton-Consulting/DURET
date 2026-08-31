@@ -24,6 +24,12 @@ from fastapi import HTTPException, status
 logger = logging.getLogger("duret.skills.documents")
 
 MAX_RESULTATS = 6
+# Jusqu'à vingt DOCUMENTS par page : « tous les comptes rendus qui parlent de
+# drainage » ne se lit pas six par six. Au-delà, on pagine (`page`).
+MAX_LIMITE = 20
+# Budget de caractères d'une page d'extraits : elle doit atteindre le modèle
+# entière (résultat généreux, 12 000) avec ses en-têtes.
+BUDGET_EXTRAITS = 9000
 
 
 class RechercheInvalide(HTTPException):
@@ -31,8 +37,23 @@ class RechercheInvalide(HTTPException):
         super().__init__(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
 
 
+def _entier(valeur, defaut: int, minimum: int, maximum: int) -> int:
+    try:
+        return max(minimum, min(maximum, int(valeur)))
+    except (TypeError, ValueError):
+        return defaut
+
+
 async def rechercher_documents(data: dict, user) -> dict:
-    """Cherche dans la mémoire d'entreprise, avec les droits de l'appelant."""
+    """Cherche dans la mémoire d'entreprise, avec les droits de l'appelant.
+
+    Petite ou énorme : `limite` documents par page (6 par défaut, 20 au plus),
+    `page` pour la suite, `fichier` pour ne chercher que dans un nom de
+    fichier. Le résultat est GROUPÉ par document (avec le nombre de morceaux
+    qui correspondent dans chacun), les extraits sont CENTRÉS sur les termes
+    cherchés, et le compte total est EXACT — c'est lui qu'on cite pour
+    « combien de documents parlent de … ».
+    """
     requete = (data.get("requete") or data.get("query") or "").strip()
     if not requete:
         raise RechercheInvalide("Précisez ce que vous cherchez (paramètre « requete »).")
@@ -40,8 +61,12 @@ async def rechercher_documents(data: dict, user) -> dict:
     types = data.get("types") or data.get("type_source")
     if isinstance(types, str):
         types = [t.strip() for t in types.split(",") if t.strip()]
+    limite = _entier(data.get("limite") or data.get("nombre"), MAX_RESULTATS, 1, MAX_LIMITE)
+    page = _entier(data.get("page"), 1, 1, 1000)
+    fichier = str(data.get("fichier") or data.get("source") or data.get("nom_fichier") or "").strip() or None
 
-    from vectorstore.rag import retrieve
+    from vectorstore.rag import rechercher
+    from vectorstore.fusion import fenetre, budget_extrait
     from mail.authorization import boites_par_id
 
     # Cloisonnement : la recherche ne remonte que les boîtes de CET utilisateur.
@@ -52,30 +77,27 @@ async def rechercher_documents(data: dict, user) -> dict:
         boites = []
 
     try:
-        trouves = await retrieve(
-            requete,
-            getattr(user, "role", "terrain"),
-            source_types=types or None,
-            top_k=MAX_RESULTATS,
-            mailboxes=boites,
+        trouve = await rechercher(
+            requete, getattr(user, "role", "terrain"),
+            source_types=types or None, mailboxes=boites,
+            limite=limite, page=page, fichier=fichier,
         )
     except Exception as e:  # noqa: BLE001 - une recherche en échec n'est pas une panne
         logger.warning("Recherche « %s » échouée : %s", requete[:60], e)
         return {"requete": requete, "resultats": [], "nombre": 0,
                 "message": "La recherche a échoué, la mémoire est momentanément indisponible."}
 
-    from optim.tokens import trim_chunks
-    contenus = trim_chunks([c.get("content") or "" for c in trouves])
+    documents = trouve.get("documents") or []
+    total_documents = int(trouve.get("total_documents") or len(documents))
+    pages = max(1, -(-len(documents) // limite))
+    page_docs = documents[(page - 1) * limite: page * limite]
 
-    resultats = []
-    for chunk, contenu in zip(trouves, contenus):
-        resultats.append({
-            "source": chunk.get("source_filename") or chunk.get("source_id"),
-            "type": chunk.get("source_type"),
-            "extrait": contenu,
-        })
-
-    if not resultats:
+    if not page_docs:
+        if page > 1 and documents:
+            return {"requete": requete, "resultats": [], "nombre": 0, "page": page, "pages": pages,
+                    "total_documents": total_documents,
+                    "message": f"Il n'y a que {pages} page(s) de résultats pour cette recherche.",
+                    "a_faire": f"La page {page} n'existe pas : la dernière est la page {pages}."}
         # Une recherche vide ne dit RIEN sur le contenu global de la mémoire.
         # Sans cette distinction, le modèle conclut « la mémoire ne contient
         # aucun mail » alors qu'elle en contient des dizaines qui n'ont
@@ -111,7 +133,47 @@ async def rechercher_documents(data: dict, user) -> dict:
                    "de dossier, une période).")),
         }
 
-    return {"requete": requete, "nombre": len(resultats), "resultats": resultats}
+    # Les extraits d'une page se partagent un budget : longs quand ils sont
+    # peu, courts quand ils sont vingt — et CENTRÉS sur les termes cherchés.
+    longueur = budget_extrait(sum(len(d.get("extraits") or []) for d in page_docs), BUDGET_EXTRAITS)
+    resultats = []
+    for d in page_docs:
+        extraits = [{"morceau": e.get("morceau"), "texte": fenetre(e.get("texte") or "", requete, longueur)}
+                    for e in (d.get("extraits") or [])]
+        resultats.append({
+            "source": d.get("source"), "type": d.get("type"),
+            "morceaux_correspondants": d.get("morceaux_correspondants"),
+            "morceaux_total": d.get("morceaux_total"),
+            # `extrait` : le meilleur, pour les lecteurs qui n'en attendent qu'un.
+            "extrait": extraits[0]["texte"] if extraits else "",
+            "extraits": extraits,
+        })
+
+    compte = (f"{total_documents} document(s) correspondent à « {requete} »"
+              + (f" dans les types {', '.join(types)}" if types else "")
+              + (f" (fichiers « {fichier} »)" if fichier else "")
+              + (f" ; page {page} sur {pages}, {len(resultats)} document(s) détaillé(s)."
+                 if total_documents > len(resultats) else ", tous détaillés ci-dessous."))
+    suite = page < pages
+    return {
+        "requete": requete, "nombre": len(resultats),
+        "total_documents": total_documents,
+        "total_morceaux": trouve.get("total_morceaux"),
+        "page": page, "pages": pages, "limite": limite,
+        "compte": compte,
+        # La PAGE SUIVANTE, mécanique : le modèle n'a rien à calculer.
+        "pour_continuer": (
+            f"Pour les {limite} documents SUIVANTS, rappelle rechercher_documents avec les "
+            f"mêmes paramètres et page={page + 1}."
+            if suite else None),
+        "a_faire": (
+            "Commence par le COMPTE, dans ces mots : « " + compte + " ». Chaque extrait est "
+            "une FENÊTRE sur le document, centrée sur les termes cherchés : cite la source "
+            "(champ `source`) quand tu t'appuies dessus. "
+            + ("Le détail ne couvre pas tout : dis-le, et propose la page suivante ou des "
+               "termes plus précis. " if suite else "")),
+        "resultats": resultats,
+    }
 
 
 async def _inventaire(role: str = "") -> tuple[str, bool]:

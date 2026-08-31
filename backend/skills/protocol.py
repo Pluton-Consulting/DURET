@@ -236,9 +236,14 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "un texte, elle ne sait NI compter NI lister : pour les clients, les devis, "
         "les factures, un chiffre d'affaires ou un nombre, ce sont `liste_clients`, "
         "`fiche_client` et `interroger_donnees`, qui lisent les fichiers importés de "
-        "façon exacte. Peut être relancée avec d'autres termes si la première "
-        "recherche ne donne rien",
-        ["requete"], ["types"]),
+        "façon exacte. Petite ou ÉNORME : `limite` documents par page (6 par défaut, "
+        "20 au plus), `page` pour la suite (le résultat donne `pour_continuer`), "
+        "`fichier` pour ne chercher que dans les fichiers dont le nom contient un "
+        "mot. Le résultat est groupé PAR DOCUMENT (nombre de morceaux qui "
+        "correspondent) et son `compte` est EXACT : c'est lui qu'on cite pour "
+        "« combien de documents parlent de … ». Peut être relancée avec d'autres "
+        "termes si la première recherche ne donne rien",
+        ["requete"], ["types", "limite", "page", "fichier"]),
     "connaissances_acquises": (
         "LISTE ce que l'assistant a APPRIS de l'entreprise (connaissances et manières "
         "de faire retenues par les campagnes d'enrichissement). À utiliser dès qu'on "
@@ -326,9 +331,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "somme|moyenne|min|max|compte, colonne: montant_ht, par: annee|mois|<colonne>} "
         "donne le total ou la moyenne. La PERIODE : `annee` (\"2024\") ou `depuis` "
         "(\"12m\", \"30j\", \"6 mois\", ou une date AAAA-MM-JJ) pour « les 12 derniers "
-        "mois ». Un seul appel rend le COMPTE et la moyenne. Verifie TOUJOURS les "
-        "valeurs reelles avant de filtrer",
-        [], ["source_type", "filtres", "contient", "agreger", "annee", "depuis"]),
+        "mois ». Un seul appel rend le COMPTE et la moyenne. Les enregistrements "
+        "filtres se lisent 25 par 25 : `page` pour les suivants. Verifie TOUJOURS "
+        "les valeurs reelles avant de filtrer",
+        [], ["source_type", "filtres", "contient", "agreger", "annee", "depuis", "page"]),
     "lire_mails": (
         "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. "
         "`depuis` : une période (« 7j », « semaine », « mois ») ou une date "

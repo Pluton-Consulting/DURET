@@ -9,7 +9,14 @@ _pool: asyncpg.Pool | None = None
 async def init_db() -> None:
     global _pool
     dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
-    _pool = await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=10)
+    # 16 connexions : le chat, le worker d'embeddings, les campagnes et les
+    # synchronisations se partagent le pool — à 10, une campagne et deux tours
+    # suffisaient à faire attendre le troisième. `command_timeout` : une
+    # requête qui dure trois minutes est une requête pendue, pas une grosse
+    # recherche (les plus lourdes, 50 000 lignes, tiennent en secondes) ;
+    # sans lui, un tour attendait pour toujours (31/08).
+    _pool = await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=16,
+                                      command_timeout=180)
 
 
 @asynccontextmanager

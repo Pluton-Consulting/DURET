@@ -273,6 +273,16 @@ button, input, select, textarea { font-family: var(--marque-font); }
 }
 .sym-barre-saisie:focus-within textarea { background: transparent; }
 
+/* 31/08 — relevé par Noa : « les boutons ne sont pas alignés verticalement au
+ * milieu ». La rangée du champ les centre déjà (items-center), mais la barre
+ * empile des conteneurs d'AI Elements (InputGroup, addons) et des boutons de
+ * hauteurs différentes (icône 32 px, « Arrêter » avec libellé, soumission),
+ * chacun avec ses propres réglages d'axe. On impose le centrage UNE fois, au
+ * niveau de la carte : tout ce que la barre contient s'aligne sur l'axe du
+ * champ, quelle que soit la variante que la bibliothèque calcule. */
+.sym-barre-saisie [class*="items-"] { align-items: center !important; }
+.sym-barre-saisie button { align-self: center; }
+
 .sym-in   { animation: symFadeUp .5s cubic-bezier(.22,.61,.36,1) both; }
 .sym-in-1 { animation-delay: .05s } .sym-in-2 { animation-delay: .11s }
 .sym-in-3 { animation-delay: .17s } .sym-in-4 { animation-delay: .23s }

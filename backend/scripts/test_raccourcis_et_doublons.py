@@ -91,6 +91,9 @@ barre = (FRONTEND / "components" / "chat" / "InputBar.tsx").read_text(encoding="
 verifier("la liste RACCOURCIS existe, avec la synthèse des mails sur 7 jours",
          "const RACCOURCIS" in barre and "7 derniers jours" in barre)
 verifier("le bouton déroule le menu au-dessus de la saisie", "setRaccourcisOuverts" in barre and "ZapIcon" in barre)
+theme = (FRONTEND / "app" / "theme.css").read_text(encoding="utf-8")
+verifier("les boutons de la barre sont centrés sur l'axe du champ (theme.css)",
+         ".sym-barre-saisie button { align-self: center; }" in theme)
 verifier("un raccourci PRÉREMPLIT la saisie, il n'envoie pas",
          re.search(r"setTexte\(r\.prompt\)", barre) is not None and "onSend(r.prompt" not in barre)
 

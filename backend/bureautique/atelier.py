@@ -161,6 +161,8 @@ def termines(proprietaire: str) -> list[dict]:
         f = _lire_fiche(jeton)
         if not f or f.get("proprietaire") != proprietaire or not f.get("fini"):
             continue
+        if f.get("origine") == "piece_jointe":
+            continue          # reçu, pas produit
         entete = f.get("entete") or {}
         sortie.append({"document_id": jeton, "titre": entete.get("titre"),
                        "format": entete.get("format"),
@@ -316,6 +318,27 @@ def abandonner(jeton: str, proprietaire: str) -> bool:
         except OSError:
             pass
     return True
+
+
+def deposer_fichier(nom: str, octets: bytes, proprietaire: str, origine: str = "depot") -> str:
+    """Range un fichier REÇU (pièce jointe d'un mail) comme un document fini :
+    téléchargeable par `/api/documents/{jeton}`, avec aperçu pour PDF / Word /
+    Excel, à cette personne seulement, 24 h. `origine` = « piece_jointe » le
+    tient hors de la liste des documents PRODUITS : il n'a pas été rédigé."""
+    os.makedirs(DOSSIER, exist_ok=True)
+    purger()
+    base, _, ext = (nom or "piece").rpartition(".")
+    extension = (ext.lower() if base and 1 <= len(ext) <= 5 else "bin")
+    extension = "".join(c for c in extension if c.isalnum()) or "bin"
+    jeton = secrets.token_urlsafe(24)
+    with open(_chemin(jeton, extension), "wb") as f:
+        f.write(octets)
+    _ecrire_fiche(jeton, {"entete": {"titre": base or nom or "piece", "format": extension},
+                          "proprietaire": proprietaire, "ouvert": time.time(), "elements": 0,
+                          "fini": True, "fichier": f"{jeton}.{extension}", "octets": len(octets),
+                          "termine": time.time(), "origine": origine})
+    logger.info("Fichier reçu %s déposé (%s, %d octets)", jeton[:8], extension, len(octets))
+    return jeton
 
 
 def chemin_fichier(jeton: str, proprietaire: str) -> str | None:

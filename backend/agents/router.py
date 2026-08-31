@@ -250,16 +250,20 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     try:
         import json as _json
         from langchain_core.messages import AIMessage
-        bloc = ((resultat or {}).get("output") or {}).get("bloc_ui") \
-            if isinstance((resultat or {}).get("output"), dict) else None
+        from agents.agent1 import _blocs_de
+        # Un dict, ou une LISTE (un mail à trois pièces jointes rend trois cartes).
+        blocs = [b for b in _blocs_de(((resultat or {}).get("output") or {}).get("bloc_ui")
+                                     if isinstance((resultat or {}).get("output"), dict) else None)
+                 if b.get("type") in ("visuel", "plan", "fichier")]
+        bloc = blocs[0] if blocs else None
         # Le PLAN approuvé y entre pour la même raison, et pour une de plus :
         # la réponse de ce tour sera écrite plus loin, par l'assistant. Sans
         # cette ligne, le plan que la personne vient d'approuver disparaîtrait
         # de la conversation au moment même où le travail commence.
-        if isinstance(bloc, dict) and bloc.get("type") in ("visuel", "plan"):
+        if blocs:
             sortie["messages"] = [AIMessage(
                 content=(str(message).strip() + "\n\n" if bloc.get("type") == "plan" else "")
-                + "```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```")]
+                + "\n\n".join("```ui\n" + _json.dumps(b, ensure_ascii=False) + "\n```" for b in blocs))]
     except Exception:  # noqa: BLE001 - l'historique n'est pas vital
         pass
     return sortie
@@ -320,9 +324,10 @@ async def _reponse_apres_action(state: AgentState, skill: str, resultat: dict) -
         prose = ""
 
     message = prose
-    if isinstance(bloc, dict) and bloc.get("type"):
+    from agents.agent1 import _blocs_de
+    for _b in _blocs_de(bloc):          # un dict, ou une liste (pièces jointes)
         message = ((message + "\n\n") if message else "") \
-            + "```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```"
+            + "```ui\n" + _json.dumps(_b, ensure_ascii=False) + "\n```"
     if not message:
         # MÊME EXCEPTION ASSUMÉE que pour l'échec : une action EXTERNE validée
         # a eu lieu (un mail est parti, un fichier est déposé) — son issue DOIT

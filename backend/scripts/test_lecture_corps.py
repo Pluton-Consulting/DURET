@@ -54,7 +54,18 @@ try:
                   "", tete, flags=re.M)
     exec(tete, espace)  # noqa: S102 — code du dépôt
     exec(src[src.index("def _kql_echapper("): src.index("async def _lire_outlook(")], espace)  # noqa: S102
-    exec(src[src.index("async def lire_message("):], espace)  # noqa: S102
+    exec(src[src.index("# ── Les pièces jointes : une référence courte"):], espace)  # noqa: S102
+    # `lire_message` importe `mail.pieces` à l'appel : une doublure minimale suffit ici
+    # (le module réel a son banc, test_pieces_jointes).
+    import types as _types
+    _faux = _types.ModuleType("mail.pieces")
+    _faux.liens_du_texte = lambda t: []
+    _faux.MAX_PIECES_PAR_MAIL = 8
+    async def _analyser(nom, mime, brut, proprietaire):
+        return {"nom": nom, "texte": "", "methode": "doublure", "lisible": False, "url": None, "bloc": None}
+    _faux.analyser = _analyser
+    _pm = _types.ModuleType("mail"); _pm.__path__ = []
+    sys.modules.update({"mail": _pm, "mail.pieces": _faux})
     extrait_ok = True
 except (ValueError, NameError, SyntaxError) as e:
     extrait_ok = False
@@ -199,7 +210,7 @@ verifier("effet LECTURE déclaré (fail-closed sinon)", re.search(r'"lire_mail":
 verifier("le skill résout la boîte et vérifie l'accès comme lire_mails",
          re.search(r"async def lire_mail\(.*?_boite_a_lire\(data, user\).*?verifier_acces\(user, cible\)", skills, re.S) is not None)
 protocole = lire("skills/protocol.py")
-verifier("catalogue : `lire_mail` avec ref / objet / de", re.search(r'"lire_mail": \(.*?\["ref", "objet", "de", "rang", "dossier", "mailbox"\]', protocole, re.S) is not None)
+verifier("catalogue : `lire_mail` avec ref / objet / de", re.search(r'"lire_mail": \(.*?\["ref", "objet", "de", "rang", "pieces", "dossier", "mailbox"\]', protocole, re.S) is not None)
 verifier("catalogue : lire_mails dit que l'aperçu est un EXTRAIT", "EXTRAIT, pas le message" in protocole)
 agent1 = lire("agents/agent1.py")
 m = re.search(r"RESULTATS_GENEREUX = \{([^}]*)\}", agent1)

@@ -445,10 +445,14 @@ async def _ouvrir_outlook(boite: str, identifiant: str) -> dict:
         if m.get("hasAttachments"):
             try:
                 ra = await client.get(base + "/attachments",
-                                      params={"$select": "name,size,contentType"}, headers=entetes)
+                                      params={"$select": "id,name,size,contentType,isInline"},
+                                      headers=entetes)
                 ra.raise_for_status()
-                pieces = [{"nom": p.get("name") or "(sans nom)", "taille": p.get("size"),
-                           "type": p.get("contentType")} for p in ra.json().get("value", [])]
+                # Les images EN LIGNE (logos de signature) ne sont pas des pièces
+                # jointes au sens de la personne : écartées.
+                pieces = [{"id": p.get("id"), "nom": p.get("name") or "(sans nom)",
+                           "taille": p.get("size"), "type": p.get("contentType")}
+                          for p in ra.json().get("value", []) if not p.get("isInline")]
             except Exception as e:  # noqa: BLE001 — les pièces jointes sont un complément
                 logger.info("Pièces jointes non listées pour %s : %s", boite, e)
     fiche = _fiche_outlook(m, boite, MAX_APERCU)
@@ -462,8 +466,12 @@ def _pieces_gmail(charge: dict) -> list[dict]:
 
     def _parcourir(partie: dict):
         if partie.get("filename"):
-            pieces.append({"nom": partie["filename"], "taille": (partie.get("body") or {}).get("size"),
-                           "type": partie.get("mimeType")})
+            corps = partie.get("body") or {}
+            pieces.append({"id": corps.get("attachmentId") or partie.get("partId") or partie["filename"],
+                           "nom": partie["filename"], "taille": corps.get("size"),
+                           "type": partie.get("mimeType"),
+                           # Une petite pièce arrive parfois EN LIGNE dans le message.
+                           "data": corps.get("data")})
         for sous in partie.get("parts") or []:
             _parcourir(sous)
 
@@ -676,16 +684,72 @@ async def lire_boite(boite: str, dossier: str = "recus",
     }
 
 
+# ── Les pièces jointes : une référence courte, liée à la boîte ─────────────
+# Même mécanique que les messages : l'identifiant du fournisseur reste ici,
+# le modèle ne voit qu'une `ref` de 16 hexadécimaux.
+_PIECES: dict[str, dict] = {}
+
+
+def _memoriser_piece(boite: str, message_id: str, piece: dict) -> str:
+    ref = _ref(f"{message_id}|{piece.get('id') or piece.get('nom')}")
+    if len(_PIECES) >= _MAX_REFS:
+        for ancien in list(_PIECES)[: _MAX_REFS // 10]:
+            _PIECES.pop(ancien, None)
+    _PIECES[ref] = {"boite": (boite or "").lower(), "message": message_id, **piece}
+    return ref
+
+
+def piece_connue(ref: str, boite: str) -> Optional[dict]:
+    info = _PIECES.get((ref or "").strip())
+    return info if info and info["boite"] == (boite or "").lower() else None
+
+
+async def telecharger_piece(boite: str, info: dict) -> bytes:
+    """Les OCTETS d'une pièce jointe, chez le fournisseur."""
+    import base64
+    if fournisseur() == "outlook":
+        import httpx
+        from ingestion.connectors.outlook import _jeton
+        jeton = await _jeton()
+        url = (f"https://graph.microsoft.com/v1.0/users/{boite}/messages/{info['message']}"
+               f"/attachments/{info['id']}")
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.get(url, headers={"Authorization": f"Bearer {jeton}"})
+            r.raise_for_status()
+            corps = r.json()
+        contenu = corps.get("contentBytes")
+        if not contenu:
+            # Un `itemAttachment` (un mail joint) ou une référence OneDrive : pas
+            # un fichier — on le dit plutôt que de rendre des octets vides.
+            raise ValueError("cette pièce n'est pas un fichier (message joint ou lien de partage)")
+        return base64.b64decode(contenu)
+
+    def _travail() -> bytes:
+        from ingestion.connectors.gmail import _service
+        service = _service(boite)
+        if info.get("data"):
+            return base64.urlsafe_b64decode(info["data"] + "==")
+        piece = service.users().messages().attachments().get(
+            userId="me", messageId=info["message"], id=info["id"]).execute()
+        return base64.urlsafe_b64decode((piece.get("data") or "") + "==")
+    import asyncio
+    return await asyncio.to_thread(_travail)
+
+
 async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str = "recus",
-                       rang=None) -> dict:
+                       rang=None, pieces=False, proprietaire: str = "") -> dict:
     """UN message, en entier : le corps complet (borné à MAX_CORPS, et la
-    coupure est dite), les pièces jointes nommées.
+    coupure est dite), les pièces jointes nommées — avec leur `ref` —, les
+    liens du corps ; et, si `pieces` est vrai, chaque pièce RÉCUPÉRÉE,
+    déposée (téléchargeable, aperçu) et LUE (`mail/pieces.py`).
 
     Par sa `ref` (rendue dans chaque liste) d'abord ; sinon par son `objet`
     — une recherche dans le dossier, dont on garde le meilleur candidat. Rien
     n'est modifié : le message n'est pas marqué lu. L'appelant DOIT avoir
     vérifié l'accès.
     """
+    from mail.pieces import liens_du_texte, analyser, MAX_PIECES_PAR_MAIL
+
     nom = fournisseur()
     cle = "envoyes" if str(dossier or "").lower().startswith("env") else "recus"
     identifiant = _resoudre(str(ref or ""), boite)
@@ -723,17 +787,93 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     corps = fiche.get("corps") or ""
     longueur = len(corps)
     coupe = longueur > MAX_CORPS
+
+    # Les pièces jointes portent une ref ; les liens du corps sont relevés.
+    brutes = [p for p in (fiche.get("pieces_jointes") or []) if isinstance(p, dict)]
+    for p in brutes:
+        p["ref"] = _memoriser_piece(boite, identifiant, p)
+    pieces_jointes = [{k: v for k, v in p.items() if k not in ("id", "data", "partId")} for p in brutes]
+    liens = liens_du_texte(corps)
+
+    lues, blocs = [], []
+    if pieces and brutes:
+        for p in brutes[:MAX_PIECES_PAR_MAIL]:
+            try:
+                octets = await telecharger_piece(boite, _PIECES[p["ref"]])
+                lu = await analyser(p.get("nom") or "", p.get("type"), octets, proprietaire)
+            except Exception as e:  # noqa: BLE001 — une pièce qui manque n'annule pas le mail
+                logger.warning("Pièce jointe « %s » non récupérée : %s", p.get("nom"), e)
+                lu = {"nom": p.get("nom"), "type": p.get("type"), "taille": p.get("taille"),
+                      "texte": "", "methode": f"non récupérée ({e})", "lisible": False, "url": None}
+            lu["ref"] = p["ref"]
+            if lu.get("bloc"):
+                blocs.append(lu.pop("bloc"))
+            else:
+                lu.pop("bloc", None)
+            lues.append(lu)
+
     fiche.update({
         "boite": boite,
         "corps": corps[:MAX_CORPS],
         "longueur": longueur,
         "corps_tronque": coupe,
+        "pieces_jointes": pieces_jointes,
+        "liens": liens,
         "a_faire": (
             "Le corps ci-dessus est le message ENTIER"
             + (f", sauf sa fin : {longueur - MAX_CORPS} caractères n'ont pas été lus, dis-le"
                if coupe else "")
             + ". Réponds à partir de son CONTENU (cite, résume, relève les demandes et les "
-            "dates), jamais de l'extrait d'une liste."),
+            "dates), jamais de l'extrait d'une liste."
+            + (f" Il porte {len(pieces_jointes)} pièce(s) jointe(s) : "
+               + ("elles sont LUES ci-dessous (`pieces_lues`) et leurs cartes s'affichent "
+                  "automatiquement sous ta réponse — n'écris aucun bloc ```ui pour elles ; "
+                  "parle de leur CONTENU." if lues else
+                  "pour les récupérer, les afficher et les lire, rappelle `lire_mail` avec "
+                  "`pieces: true`, ou `lire_piece_jointe` avec la `ref` d'une seule.")
+               if pieces_jointes else "")
+            + (f" Il contient {len(liens)} lien(s) : pour lire une page, `ouvrir_page` avec son adresse."
+               if liens else "")),
     })
+    if lues:
+        fiche["pieces_lues"] = lues
+        if len(brutes) > MAX_PIECES_PAR_MAIL:
+            fiche["pieces_non_lues"] = len(brutes) - MAX_PIECES_PAR_MAIL
+    if blocs:
+        fiche["bloc_ui"] = blocs
     fiche.pop("apercu", None)
     return fiche
+
+
+async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: str = "") -> dict:
+    """UNE pièce jointe, par sa `ref` — ou par son nom dans un message (`mail` =
+    la ref du message, sinon le dernier reçu). Récupérée, déposée, lue."""
+    from mail.pieces import analyser
+    info = piece_connue(str(ref or ""), boite) if ref else None
+    if not info:
+        message = await lire_message(boite, ref=mail, proprietaire=proprietaire)
+        pieces = message.get("pieces_jointes") or []
+        if not pieces:
+            raise LookupError(f"Le message « {message.get('objet')} » n'a pas de pièce jointe.")
+        voulu = (nom or "").strip().lower()
+        choisie = next((p for p in pieces if voulu and voulu in str(p.get("nom") or "").lower()), None)
+        if not choisie and (len(pieces) == 1 or not voulu):
+            choisie = pieces[0]
+        if not choisie:
+            raise LookupError("Aucune pièce jointe de ce nom dans ce message : "
+                              + ", ".join(str(p.get("nom")) for p in pieces))
+        info = piece_connue(choisie["ref"], boite)
+    octets = await telecharger_piece(boite, info)
+    lu = await analyser(info.get("nom") or "", info.get("type"), octets, proprietaire)
+    lu["ref"] = _ref(f"{info['message']}|{info.get('id') or info.get('nom')}")
+    bloc = lu.pop("bloc", None)
+    lu["a_faire"] = ("La pièce est LUE : son texte est dans `texte` (méthode : " + str(lu.get("methode")) + ")"
+                     + (", coupé" if lu.get("tronque") else "")
+                     + ". Sa carte (aperçu, téléchargement) s'affiche automatiquement sous ta réponse : "
+                     "n'écris aucun bloc ```ui, parle de son CONTENU."
+                     if lu.get("lisible") else
+                     "La pièce n'a pas pu être lue (" + str(lu.get("methode")) + ") : elle reste "
+                     "téléchargeable, sa carte s'affiche sous ta réponse. Dis-le, sans inventer son contenu.")
+    if bloc:
+        lu["bloc_ui"] = bloc
+    return lu

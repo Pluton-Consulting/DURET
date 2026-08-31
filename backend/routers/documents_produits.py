@@ -9,6 +9,7 @@ du document à qui tente sa chance.
 from __future__ import annotations
 
 import logging
+import mimetypes
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -51,7 +52,8 @@ async def telecharger(jeton: str, current_user: User = Depends(get_current_user)
     logger.info("Document %s téléchargé par %s", jeton[:8], proprio)
     return FileResponse(
         chemin,
-        media_type=TYPES_MIME.get(extension, "application/octet-stream"),
+        media_type=TYPES_MIME.get(extension) or mimetypes.guess_type(f"x.{extension}")[0]
+        or "application/octet-stream",
         filename=_nom_fichier((f.get("entete") or {}).get("titre"), extension))
 
 

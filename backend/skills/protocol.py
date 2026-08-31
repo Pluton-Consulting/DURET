@@ -363,10 +363,22 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "avec la `ref` du message, telle que la liste l'a rendue. Sans ref : `objet` "
         "(et `de`) pour le retrouver dans le dossier. SANS RIEN : le DERNIER message reçu "
         "(« affiche le mail complet », « ouvre le dernier ») ; `rang: 2` = l'avant-dernier. "
-        "Un message par appel. Ne marque "
+        "`pieces: true` RÉCUPÈRE ses pièces jointes, les rend téléchargeables (cartes) et les LIT "
+        "(PDF, Word, Excel, image par OCR puis vision, DWG par sa vignette, DXF) — à demander "
+        "dès qu'on parle du contenu d'une pièce jointe. Le résultat donne aussi les `liens` du "
+        "corps (`ouvrir_page` pour les lire). Un message par appel. Ne marque "
         "rien comme lu. dossier : recus (défaut) ou envoyes. Sans mailbox, la boîte de "
         "la personne connectée",
-        [], ["ref", "objet", "de", "rang", "dossier", "mailbox"]),
+        [], ["ref", "objet", "de", "rang", "pieces", "dossier", "mailbox"]),
+    "lire_piece_jointe": (
+        "RÉCUPÈRE UNE pièce jointe d'un mail, la rend téléchargeable avec son aperçu (carte "
+        "ajoutée automatiquement sous ta réponse) et la LIT : PDF et Word en texte, Excel en "
+        "tableau, image par OCR puis description par la vision, DWG par sa vignette et sa "
+        "version, DXF par ses textes, archive par son contenu. `ref` : celle rendue par "
+        "`lire_mail` dans `pieces_jointes` ; sinon `nom` (un bout du nom de fichier) et "
+        "`mail` (la ref du message, sinon le dernier reçu). Parle ensuite de son CONTENU "
+        "(`texte`), et dis la `methode` si elle a des limites",
+        [], ["ref", "nom", "mail", "mailbox"]),
     "triage_email_entrant": (
         # `mailbox` ÉTAIT REQUIS ICI, et c'était un piège. Le cas normal est un
         # message COLLÉ dans le chat (« voici ce que je viens de recevoir ») :

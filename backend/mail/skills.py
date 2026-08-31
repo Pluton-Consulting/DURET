@@ -612,9 +612,13 @@ async def lire_mail(data: dict, user) -> dict:
     objet = data.get("objet") or data.get("subject") or data.get("sujet") or data.get("titre")
     de = data.get("de") or data.get("expediteur") or data.get("from")
     rang = data.get("rang") or data.get("numero") or (1 if data.get("dernier") else None)
+    # `pieces` : récupérer, déposer et LIRE les pièces jointes (31/08).
+    brut_pieces = data.get("pieces") or data.get("pieces_jointes") or data.get("attachments")
+    pieces = str(brut_pieces).strip().lower() in ("true", "1", "oui", "toutes", "all", "yes")
     try:
         return await lire_message(boite, ref=ref, objet=objet, de=de,
-                                  dossier=data.get("dossier") or "recus", rang=rang)
+                                  dossier=data.get("dossier") or "recus", rang=rang,
+                                  pieces=pieces, proprietaire=str(user.id))
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except (LookupError, ValueError) as e:
@@ -631,6 +635,31 @@ async def lire_mail(data: dict, user) -> dict:
 
 
 SKILLS_NATIFS["lire_mail"] = lire_mail
+
+
+async def lire_piece_jointe(data: dict, user) -> dict:
+    """UNE pièce jointe : récupérée chez le fournisseur, déposée (téléchargeable,
+    aperçu) et LUE — PDF, Word, Excel, image par OCR puis vision, DWG par sa
+    vignette, DXF par ses textes (`mail/pieces.py`). Mêmes droits que la lecture."""
+    from mail.lecture import lire_piece
+
+    cible = await _boite_a_lire(data, user)
+    boite = await verifier_acces(user, cible)
+    ref = data.get("ref") or data.get("reference") or data.get("id") or data.get("piece")
+    nom = data.get("nom") or data.get("fichier") or data.get("name")
+    mail = data.get("mail") or data.get("message") or data.get("ref_message")
+    try:
+        return await lire_piece(boite, ref=ref, nom=nom, mail=mail, proprietaire=str(user.id))
+    except NotImplementedError as e:
+        raise MailSkillError(str(e))
+    except (LookupError, ValueError) as e:
+        raise MailSkillError(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Pièce jointe de %s non lue : %s", boite, e)
+        raise MailSkillError(f"La pièce jointe n'a pas pu être récupérée ({e}).")
+
+
+SKILLS_NATIFS["lire_piece_jointe"] = lire_piece_jointe
 
 
 async def connaissances_acquises(data: dict, user) -> dict:
@@ -816,6 +845,9 @@ EFFETS_NATIFS = {
     "lire_mails": "lecture",
     # Ouvrir un message ne le marque pas lu : lecture pure, même contrôle.
     "lire_mail": "lecture",
+    # Récupérer une pièce jointe ne modifie rien chez le fournisseur ; elle est
+    # déposée pour la personne connectée seulement.
+    "lire_piece_jointe": "lecture",
     # Inventaire de ce qui a été appris : lecture pure, filtrée par rôle.
     "connaissances_acquises": "lecture",
     # Compte et filtre sur les donnees importees : lecture, filtree par role.

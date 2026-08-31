@@ -84,7 +84,7 @@ espace = {"logger": _Journal(), "AgentState": dict,
           "reclame_un_prealable": _annonce.reclame_un_prealable}
 extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
-          "_blocs_livrables", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
+          "_blocs_livrables", "_blocs_de", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
           "_meme_livrable", "_livrables_a_l_ecran", "_redaction_dement_le_livrable",
           # La trace d'audit des filets : hors boucle asyncio (le cas du banc),
           # elle ne fait RIEN — c'est précisément son contrat (jamais casser).

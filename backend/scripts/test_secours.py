@@ -58,7 +58,7 @@ class _Journal:
     warning = info
 
 
-espace = extraire({"_rendu_de_secours"}, {"logger": _Journal()})
+espace = extraire({"_rendu_de_secours", "_blocs_de"}, {"logger": _Journal()})
 secours = espace["_rendu_de_secours"]
 
 print(f"\n═══ RENDU DE SECOURS — {BACKEND}\n")

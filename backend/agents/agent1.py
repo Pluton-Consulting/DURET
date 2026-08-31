@@ -40,7 +40,7 @@ Tu disposes d'une mémoire d'entreprise : fichiers importés (clients, devis, fa
 OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de répondre :
 1. CLIENTS, DEVIS, FACTURES, CHIFFRES (combien, liste, total, chiffre d'affaires, tout ce qu'on sait d'un client) : ce sont des FICHIERS IMPORTÉS, lus de façon EXACTE par `liste_clients`, `liste_fournisseurs`, `fiche_client` et `interroger_donnees`. Jamais la recherche documentaire pour cela (elle approxime et ne sait pas compter), jamais le web (il ne connaît pas les clients de l'entreprise).
 2. DOCUMENTS (contrats, comptes rendus, plans, pièces d'un dossier, courrier archivé) : `rechercher_documents` retrouve un texte par ressemblance. Pour parcourir ou ouvrir les fichiers eux-mêmes : les gestes du serveur de fichiers (`nas_arborescence`, `nas_lister`, `nas_ouvrir`, `nas_lire`, `nas_lire_lot`, `nas_chercher`, `nas_apercu`).
-3. MAILS : `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord) ; `redaction_email` pour écrire. Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
+3. MAILS : `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord ; `pieces: true` récupère et LIT ses pièces jointes) ; `lire_piece_jointe` pour UNE pièce jointe (PDF, image, plan DWG/DXF : téléchargeable, aperçu, contenu lu) ; `redaction_email` pour écrire. Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
 4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
 La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, produire un visuel), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
 
@@ -1457,11 +1457,11 @@ def _rendu_de_secours(resultats) -> str:
         if not isinstance(d, dict):
             continue
         parties = []
-        bloc = d.get("bloc_ui")
-        if isinstance(bloc, dict) and bloc.get("type"):
+        blocs = _blocs_de(d.get("bloc_ui"))
+        for bloc in blocs:
             parties.append("```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```")
         messages = d.get("messages")
-        if isinstance(messages, list) and messages and not (isinstance(bloc, dict) and bloc.get("type")):
+        if isinstance(messages, list) and messages and not blocs:
             for m in messages[:25]:
                 if not isinstance(m, dict):
                     continue
@@ -1513,6 +1513,14 @@ _BLOC_UI_RE = _re_livrables.compile(r"```ui\s*(\{.*?\})\s*```", _re_livrables.S)
 _TYPES_LIVRABLE = ("fichier", "visuel")
 
 
+def _blocs_de(bloc_ui) -> list[dict]:
+    """Les blocs d'écran d'un résultat : UN dict, ou une LISTE (31/08 — un mail
+    à trois pièces jointes rend trois cartes). Tout ce qui n'a pas de `type`
+    est ignoré."""
+    blocs = bloc_ui if isinstance(bloc_ui, list) else [bloc_ui]
+    return [b for b in blocs if isinstance(b, dict) and b.get("type")]
+
+
 def _reference_bloc(bloc) -> str:
     """Ce qui identifie un livrable : l'URL du document, ou la clé de sa première image."""
     if not isinstance(bloc, dict):
@@ -1546,11 +1554,10 @@ def _blocs_livrables(resultats) -> list[dict]:
             continue
         if not isinstance(d, dict):
             continue
-        bloc = d.get("bloc_ui")
-        if (isinstance(bloc, dict) and bloc.get("type") in _TYPES_LIVRABLE
-                and _reference_bloc(bloc)
-                and not any(_reference_bloc(b) == _reference_bloc(bloc) for b in blocs)):
-            blocs.append(bloc)
+        for bloc in _blocs_de(d.get("bloc_ui")):
+            if (bloc.get("type") in _TYPES_LIVRABLE and _reference_bloc(bloc)
+                    and not any(_reference_bloc(b) == _reference_bloc(bloc) for b in blocs)):
+                blocs.append(bloc)
     return blocs
 
 

@@ -9,7 +9,7 @@ import {
   usePromptInputAttachments,
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input"
-import { PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
+import { PaperclipIcon, SquareIcon, XIcon, ZapIcon } from "lucide-react"
 
 export interface PieceJointe {
   name: string
@@ -98,6 +98,21 @@ function PieceJointeJointe({ desactive }: { desactive?: boolean }) {
  *  « streaming », le bouton se changerait en bouton d'arrêt et cesserait de
  *  soumettre, alors qu'ici envoyer PENDANT un tour est justement ce qui met
  *  la demande en file. */
+// LES PROCESS FRÉQUENTS (31/08, demande de Noa) : un petit menu au-dessus de la
+// saisie, une liste de boutons pour ce qu’on refait souvent. Un clic PRÉREMPLIT
+// la saisie — il n’envoie rien : on relit, on ajuste, on envoie soi-même.
+const RACCOURCIS: { libelle: string; prompt: string }[] = [
+  { libelle: "Synthèse des mails (7 jours)",
+    prompt: "Fais le point sur tous mes mails des 7 derniers jours : une synthèse message par message, et propose une réponse pour chacun de ceux qui en appellent une." },
+  { libelle: "Dossiers en attente",
+    prompt: "Quels dossiers sont en attente d’une réponse ou d’une relance, du plus ancien au plus récent ?" },
+  { libelle: "Liste des clients",
+    prompt: "Exporte la liste complète des clients en Excel." },
+  { libelle: "CA du mois",
+    prompt: "Quel est le chiffre d’affaires facturé ce mois-ci, et comment se compare-t-il au mois dernier ?" },
+]
+
+
 function BoutonEnvoyer({ texte, desactive, modeFile }: {
   texte: string
   desactive?: boolean
@@ -142,6 +157,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
   // l'envoi réellement passé.
   const [texte, setTexte] = useState("")
   const [erreur, setErreur] = useState("")
+  const [raccourcisOuverts, setRaccourcisOuverts] = useState(false)
 
   const surEnvoi = (message: PromptInputMessage) => {
     if (disabled) return
@@ -194,6 +210,22 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
         </div>
       )}
 
+      {raccourcisOuverts && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+          {RACCOURCIS.map((r) => (
+            <button
+              key={r.libelle}
+              type="button"
+              onClick={() => { setTexte(r.prompt); setRaccourcisOuverts(false) }}
+              style={{ border: "1px solid var(--marque-border, #d8d8d8)", borderRadius: 999,
+                       padding: "5px 12px", fontSize: 13, cursor: "pointer",
+                       background: "var(--marque-surface, transparent)" }}
+            >
+              {r.libelle}
+            </button>
+          ))}
+        </div>
+      )}
       <PromptInput
         className="sym-in sym-barre-saisie"
         onSubmit={surEnvoi}
@@ -235,6 +267,16 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
             liberté de grandir — c'est lui qui pousse la carte, pas eux. */}
         <div className="flex w-full items-center gap-1.5 px-2 py-2">
           <BoutonJoindre desactive={disabled} />
+          <PromptInputButton
+            type="button"
+            data-testid="raccourcis"
+            onClick={() => setRaccourcisOuverts((v) => !v)}
+            title="Processus fréquents"
+            aria-label="Processus fréquents"
+            className="shrink-0"
+          >
+            <ZapIcon className="size-4" />
+          </PromptInputButton>
 
           <PromptInputTextarea
             data-testid="saisie-message"

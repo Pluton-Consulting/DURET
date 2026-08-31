@@ -313,7 +313,8 @@ async def principal():
              r["messages"][0]["extrait"])
     verifier("la boîte lue est rendue", r.get("boite") == "contact@duret-sols.fr", r.get("boite"))
     verifier("la consigne interdit d'envoyer quoi que ce soit",
-             "n'envoie rien" in (r.get("a_faire") or "").lower())
+             # 31/08 : la consigne est passée à l'apostrophe typographique (« n’envoie rien »).
+             "envoie rien" in (r.get("a_faire") or "").lower())
     verifier("la consigne impose UN SEUL message",
              "un seul message" in (r.get("a_faire") or "").lower())
     # ── La période : « cette semaine » ────────────────────────────────

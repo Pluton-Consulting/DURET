@@ -327,7 +327,10 @@ async def routeur_node(state: AgentState) -> dict:
     # d'un juge : cet appel LLM « très court » coûtait une minute entière quand
     # la cascade tournait sur un modèle lent, à CHAQUE message.
     from agents.memoire_conversation import question_meta
-    if question_meta(str(state.get("query") or "")):
+    # …et seulement pour une SUITE : un premier message, même court
+    # (« liste les clients »), passe par le juge — la voie rapide ne
+    # décide RIEN du fond, elle évite un appel qui ne servait à rien.
+    if question_meta(str(state.get("query") or "")) and (state.get("messages") or []):
         logger.debug("Routage : voie rapide (suite courte), aucun appel LLM")
         return {"besoin_memoire": False, "requete_memoire": "", "llm_tier": "standard"}
 
@@ -742,6 +745,7 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"stat","label":"...","value":"...","hint":"..."}
 - {"type":"badge","tone":"primary|success|warning|error|neutral","text":"..."}
 - {"type":"quick_replies","options":["Proposition 1","Proposition 2"]}
+- {"type":"reponses_mail","reponses":[{"ref":"...","de":"...","objet":"...","reponse":"..."}]} LES RÉPONSES PROPOSÉES à plusieurs mails, en cartes cochables avec un envoi groupé : une entrée par message qui appelle une réponse, `ref` recopiée telle que la lecture l'a rendue, `reponse` prête à partir. C'est une PROPOSITION : rien ne part sans l'accord habituel. Ne double pas ce bloc avec des cartes `email`.
 - {"type":"plan","titre":"...","etapes":[{"titre":"...","etat":"fait|en_cours|a_faire","resultats":["ce que l’étape a donné"]}]} pour une demande à plusieurs livrables : annonce le plan dès ta PREMIÈRE réponse, puis redonne-le à jour chaque fois que tu rends compte. Sous une étape franchie, écris ce qu’elle a DONNÉ — constats, chiffres, décisions — jamais « fait », et jamais « fait » sur une étape que tu n’as pas menée.
 
 DOCUMENTS. Un cahier des charges, un rapport, un compte rendu, une note, un mémoire technique, une procédure, un courrier ne s’écrivent NI en bloc ```ui NI en markdown : ils se PRODUISENT en fichier Word, format par défaut sauf demande contraire. « Montre-le-moi dans le chat » veut dire : produis-le et laisse son bloc `fichier` en afficher l’aperçu.
@@ -1605,6 +1609,82 @@ def fichiers_du_fil(state: AgentState) -> list[dict]:
             vus.append(bloc)
     return vus[-4:]
 
+def _signature_bloc(bloc: dict) -> str:
+    """Ce qui fait qu'un bloc d'écran EST le même qu'un autre, sous une autre forme.
+
+    Relevé par Noa le 31/08 : « des fois il met deux composants visuels
+    différents mais pour le même contenu ». Un `table` et un `keyvalue` qui
+    portent les mêmes valeurs, deux cartes `email` du même message, une carte
+    `doc` à côté du vrai `fichier` : mêmes données, deux affichages. La
+    signature se calcule sur le CONTENU (les feuilles du JSON, triées), pas sur
+    la forme — et sur l'identité quand le type en a une (URL, clé d'image,
+    objet + expéditeur).
+    """
+    import json as _j
+    t = str(bloc.get("type") or "")
+    if t in ("fichier", "doc", "doc_apercu"):
+        # Le NOM identifie (comme `_meme_livrable`) : une vignette `doc` n'a
+        # jamais l'URL du vrai fichier, elle a son nom.
+        ident = str(bloc.get("nom") or bloc.get("name") or bloc.get("titre") or bloc.get("url") or "")
+        return "fichier|" + _plat_nom(ident)
+    if t == "visuel":
+        images = bloc.get("images") or []
+        premiere = images[0] if images and isinstance(images[0], dict) else {}
+        return "visuel|" + str(premiere.get("cle") or premiere.get("url") or "")
+    if t == "email":
+        return "email|" + " ".join(str(bloc.get(c) or "").strip().lower()
+                                   for c in ("subject", "from", "date"))
+    if t == "site":
+        return "site|" + str(bloc.get("url") or "")
+    feuilles: list = []
+
+    def _cueillir(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                _cueillir(x)
+        elif isinstance(v, list):
+            for x in v:
+                _cueillir(x)
+        elif v not in (None, ""):
+            feuilles.append(str(v).strip().lower())
+
+    _cueillir({k: v for k, v in bloc.items() if k != "type"})
+    if len(feuilles) >= 3:
+        return "contenu|" + "|".join(sorted(set(feuilles)))
+    return "brut|" + _j.dumps(bloc, ensure_ascii=False, sort_keys=True)
+
+
+def _dedoublonner_blocs(texte: str) -> str:
+    """Un même contenu ne s'affiche qu'UNE fois par message, quel que soit son habit.
+
+    Passe mécanique, posée après `_livrables_a_l_ecran` (qui gère les
+    livrables face au FIL) : ici on dédoublonne À L'INTÉRIEUR du message. Le
+    premier bloc gagne, les suivants de même signature disparaissent. Un bloc
+    illisible est gardé tel quel (le rendu sait déjà l'écarter), et les
+    `quick_replies` ne comptent pas : des suggestions ne sont pas un contenu.
+    """
+    import json as _j
+    if not texte or "```ui" not in texte:
+        return texte
+    vus: set = set()
+
+    def _garder(m):
+        try:
+            bloc = _j.loads(m.group(1))
+        except ValueError:
+            return m.group(0)
+        if not isinstance(bloc, dict) or str(bloc.get("type")) == "quick_replies":
+            return m.group(0)
+        sig = _signature_bloc(bloc)
+        if sig in vus:
+            return ""
+        vus.add(sig)
+        return m.group(0)
+
+    resultat = _BLOC_UI_RE.sub(_garder, texte)
+    return _re_livrables.sub(r"\n{3,}", "\n\n", resultat).strip()
+
+
 
 def _plat_nom(valeur) -> str:
     """Un nom réduit à ses lettres et chiffres, sans accent : « Liste des clients » -> « listedesclients »."""
@@ -1860,6 +1940,9 @@ async def rehydrate_node(state: AgentState) -> dict:
     # — c'est ainsi que le tour suivant retrouve le vrai fichier (URL et nom,
     # aucune donnée personnelle) au lieu d'en réinventer une vignette.
     text = _livrables_a_l_ecran(text, state)
+    # Et un même CONTENU ne s'affiche qu'une fois par message (31/08 : « deux
+    # composants visuels différents pour le même contenu »).
+    text = _dedoublonner_blocs(text)
     resultats_en_attente = None
     if not text:
         # DERNIER FILET, ET IL NE DOIT PAS ACCUSER L'UTILISATEUR.

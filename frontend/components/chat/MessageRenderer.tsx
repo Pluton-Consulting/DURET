@@ -7,6 +7,7 @@ import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
 import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, SiteApercu, VisuelPaysager, FileCard, ContactCard, ProjectCard,
+  ReponsesMail,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
   Callout, StatTile, Badge, BulletList, PlanEtapes,
@@ -166,6 +167,8 @@ const REQUIRED: Record<string, string[]> = {
   badge: ["text"],
   callout: ["text"],
   quick_replies: ["options"],
+  // Les réponses proposées à plusieurs mails : sans la liste, rien à valider.
+  reponses_mail: ["reponses"],
   plan: ["etapes"],
 }
 
@@ -308,6 +311,9 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     // une rangee qui DEFILE horizontalement au lieu de se replier sur trois
     // lignes des que les libelles s'allongent, ce qui arrivait vite avec des
     // propositions ecrites par le modele.
+    // Les réponses proposées à plusieurs mails : le bouton écrit dans le chat
+    // (même canal que les suggestions), chaque envoi repasse par la validation.
+    case "reponses_mail": return <ReponsesMail reponses={p.reponses} onAction={onAction} />
     case "quick_replies": return (
       <Suggestions>
         {(p.options as string[]).map((o) => (

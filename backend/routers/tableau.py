@@ -198,10 +198,22 @@ async def tableau(current_user: User = Depends(get_current_user)):
 
         # ── Mémoire d'entreprise : ce que l'outil connaît ──
         memoire = await _une(conn, """
-            SELECT (SELECT COUNT(*) FROM documents)                                              AS documents,
-                   (SELECT COUNT(*) FROM document_metadata WHERE source_type = 'devis')          AS devis,
-                   (SELECT COUNT(*) FROM document_metadata WHERE source_type IN ('client','clients')) AS clients,
-                   (SELECT COUNT(*) FROM document_metadata WHERE source_type IN ('fournisseur','fournisseurs')) AS fournisseurs,
+            -- DEUX CHIFFRES ÉTAIENT FAUX (relevé par Noa le 31/08).
+            -- « documents » comptait les MORCEAUX d'ingestion (COUNT(*) sur la table
+            -- des chunks : ~15 par document) — l'écran annonçait des milliers de
+            -- documents pour quelques centaines de fichiers réels. On compte les
+            -- documents DISTINCTS (source_type, source_id).
+            -- Et clients/fournisseurs/devis cherchaient des noms de jeux DEVINÉS
+            -- (« client », « clients ») alors qu'un import s'appelle comme son
+            -- fichier (« CLIENTS 2025 ») : même rapprochement par RACINE que
+            -- `_jeu_clients` côté routines.
+            SELECT (SELECT COUNT(DISTINCT (source_type, source_id)) FROM documents)              AS documents,
+                   (SELECT COUNT(*) FROM document_metadata WHERE lower(source_type) LIKE '%devis%'
+                       OR lower(source_type) LIKE '%quote%')                                     AS devis,
+                   (SELECT COUNT(*) FROM document_metadata WHERE lower(source_type) LIKE '%client%'
+                       OR lower(source_type) LIKE '%customer%')                                  AS clients,
+                   (SELECT COUNT(*) FROM document_metadata WHERE lower(source_type) LIKE '%fournisseur%'
+                       OR lower(source_type) LIKE '%supplier%' OR lower(source_type) LIKE '%vendor%') AS fournisseurs,
                    (SELECT COUNT(*) FROM consignes)                                              AS consignes,
                    (SELECT COUNT(*) FROM skills WHERE status IN ('validated','stable') AND COALESCE(enabled,true)
                        AND COALESCE(code,'') NOT LIKE '%Squelette g_n_rique%')                  AS competences

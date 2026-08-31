@@ -39,6 +39,12 @@ chat = (FRONTEND / "components" / "chat" / "ChatWindow.tsx").read_text(encoding=
 verifier("le chat traite le 401 : message humain + retour à la connexion",
          re.search(r"err\?\.status === 401.*?session expirée.*?window\.location\.assign\(\"/login\"\)", chat, re.S) is not None)
 ws = (FRONTEND / "lib" / "ws.ts").read_text(encoding="utf-8")
+config = (BACKEND / "config.py").read_text(encoding="utf-8")
+auth_ts = (FRONTEND / "lib" / "auth.ts").read_text(encoding="utf-8")
+exemple = (BACKEND.parent / ".env.example").read_text(encoding="utf-8")
+verifier("la session dure 24 h, et backend, .env.example et NextAuth disent la MÊME chose",
+         "jwt_expire_hours: int = 24" in config and "JWT_EXPIRE_HOURS=24" in exemple
+         and "maxAge: 60 * 60 * 24" in auth_ts)
 verifier("le ticket WebSocket refusé en 401 porte le même message et son statut",
          "ticketRes.status === 401" in ws and "session expirée" in ws and "e.status = ticketRes.status" in ws)
 

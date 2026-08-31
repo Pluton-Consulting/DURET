@@ -20,7 +20,7 @@ async def get_current_user(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                 detail="Session invalide : reconnectez-vous.")
     except ExpiredSignatureError:
-        # LA CAUSE N°1, EN PRATIQUE (31/08). Le JWT vit 8 h (jwt_expire_hours) ;
+        # LA CAUSE N°1, EN PRATIQUE (31/08). Le JWT vit 24 h (jwt_expire_hours) ;
         # l'onglet du chat, lui, garde la session en mémoire et continue
         # d'envoyer le vieux jeton. Replié avec les autres erreurs en « Token
         # invalide », le message ne disait ni la cause, ni quoi faire — et un

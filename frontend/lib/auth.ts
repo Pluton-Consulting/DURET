@@ -37,9 +37,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     signIn: "/login",
   },
   trustHost: true,
-  // La session NextAuth expire en même temps que le JWT backend (8 h, cf. jwt_expire_hours).
-  // Sans ça, la session survivrait au token backend → app "accessible" (coquille) avec des 401.
-  session: { maxAge: 60 * 60 * 8 },
+  // La session NextAuth expire en même temps que le JWT backend (24 h, cf. jwt_expire_hours
+  // et JWT_EXPIRE_HOURS du .env — les trois ensemble). Sans ça, la session survivrait au
+  // token backend → app "accessible" (coquille) avec des 401.
+  session: { maxAge: 60 * 60 * 24 },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {

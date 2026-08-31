@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_expire_hours: int = 8
+    # 24 h (31/08, décision de Noa) : 8 h expiraient en pleine journée dans un onglet
+    # resté ouvert. Doit rester ÉGAL à `session.maxAge` de frontend/lib/auth.ts.
+    jwt_expire_hours: int = 24
 
     # ── LLM — stratégie multi-fournisseurs ───────────────────────────────
     # Cascade par palier : chaque candidat est essayé (retry+backoff) puis on

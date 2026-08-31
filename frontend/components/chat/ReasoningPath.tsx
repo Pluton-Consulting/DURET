@@ -108,8 +108,7 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
         .sym-path-haut{ flex:1 1 auto; min-height:0; overflow-y:auto; }
         .sym-path-bas{ flex-shrink:0; max-height:52%; overflow-y:auto; }
         .sym-path-eyebrow{ font-size:11px; letter-spacing:.14em; text-transform:uppercase;
-          color:var(--marque-primary-mid); font-weight:700; margin-bottom:3px; }
-        .sym-path-title{ font-size:14px; font-weight:700; color:var(--marque-text-primary); margin-bottom:12px; }
+          color:var(--marque-primary-mid); font-weight:700; margin-bottom:12px; }
         .sym-node{ position:relative; display:grid; grid-template-columns:20px 1fr; gap:10px; padding-bottom:12px; }
         .sym-node:last-child{ padding-bottom:0; }
         .sym-line{ position:absolute; left:9px; top:-12px; width:2px; height:12px; background:var(--marque-border); transition:background .3s; }
@@ -131,7 +130,6 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
       `}</style>
       <div className="sym-path-haut">
         <div className="sym-path-eyebrow">En coulisses</div>
-        <div className="sym-path-title">Chemin de réflexion</div>
         <div>
           {STAGES.map((s, i) => {
             // L'étape du spécialiste prend le nom de celui qui a réellement
@@ -146,7 +144,13 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
                 <span className="sym-dot" aria-hidden="true">{stateOf(i) === "done" ? "✓" : ""}</span>
                 <div>
                   <div className="sym-node-label">{nomme.label}</div>
-                  <div className="sym-node-desc">{nomme.desc}</div>
+                  {/* 31/08, relevé par Noa : « trop de texte ». Le détail d'une
+                      étape n'apprend quelque chose QUE pendant qu'elle tourne :
+                      seize lignes en permanence, c'est un pavé — huit libellés et
+                      UNE description, celle de l'étape active, suffisent. */}
+                  {stateOf(i) === "active" && (
+                    <div className="sym-node-desc">{nomme.desc}</div>
+                  )}
                 </div>
               </div>
             )

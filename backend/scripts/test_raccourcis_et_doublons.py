@@ -86,6 +86,10 @@ routines = (BACKEND / "skills" / "routines.py").read_text(encoding="utf-8")
 verifier("check_mails demande de rassembler les propositions dans UN bloc reponses_mail",
          "reponses_mail" in routines and "n’envoie rien" in routines)
 
+chemin = (FRONTEND / "components" / "chat" / "ReasoningPath.tsx").read_text(encoding="utf-8")
+verifier("la colonne « En ce moment » : une ligne par étape, le détail suit l'étape ACTIVE, plus de titre redondant",
+         'stateOf(i) === "active" && (' in chemin and "sym-path-title" not in chemin)
+
 print("\n4. Les raccourcis de la barre de saisie")
 barre = (FRONTEND / "components" / "chat" / "InputBar.tsx").read_text(encoding="utf-8")
 verifier("la liste RACCOURCIS existe, avec la synthèse des mails sur 7 jours",

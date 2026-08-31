@@ -321,7 +321,7 @@ function ReglageLlmTete({ apiUrl, backendToken }: { apiUrl: string; backendToken
 // MASQUAGE se coupe : les jetons déjà posés dans l'historique continuent de
 // se résoudre.
 function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
-  const [desactivee, setDesactivee] = useState(false)
+  const [desactivee, setDesactivee] = useState(true)   // le défaut est « désactivée » (31/08) : on l'affiche tel quel le temps du chargement
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState("")
   const [erreur, setErreur] = useState("")
@@ -334,7 +334,9 @@ function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backen
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const lignes = await res.json()
       const r = (lignes || []).find((l: any) => l.cle === "anonymisation")
-      setDesactivee((r?.valeur || "").trim().toLowerCase() === "desactivee")
+      // Le défaut est « désactivée » (31/08) : seule la valeur « active »,
+      // posée en base ou dans le .env, allume le masquage.
+      setDesactivee((r?.valeur || "").trim().toLowerCase() !== "active")
       setErreur("")
     } catch (e: any) {
       setErreur(e?.message || "chargement impossible")
@@ -350,7 +352,7 @@ function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backen
         method: "PUT",
         headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
         // Vider la valeur retire la surcharge : « active » redevient le défaut.
-        body: JSON.stringify({ cle: "anonymisation", valeur: desactivee ? "" : "desactivee" }),
+        body: JSON.stringify({ cle: "anonymisation", valeur: desactivee ? "active" : "desactivee" }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
@@ -377,8 +379,9 @@ function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backen
             Anonymisation des données personnelles
           </div>
           <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
-            Masque noms, e-mails et coordonnées avant tout envoi aux modèles externes.
-            Désactivée, les textes partent tels quels — à réserver aux fournisseurs de confiance.
+            Désactivée par défaut depuis le 31/08 : les demandes passent de bout en bout sans
+            masquage. Activée, noms, e-mails et coordonnées sont remplacés par des balises avant
+            tout envoi aux modèles externes — au prix de balises dans certaines réponses.
           </div>
         </div>
         <span style={{

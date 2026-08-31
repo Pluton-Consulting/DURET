@@ -527,17 +527,21 @@ class _Anonymizer:
         couper d'un clic (Paramètres → réglage `anonymisation=desactivee`),
         sans redéploiement.
 
-        Ne lève jamais, et le DÉFAUT EST LA PROTECTION : sans base, sans
-        cache, ou sur un poste de banc, le masquage reste ACTIF — couper une
-        protection ne peut être que la lecture explicite d'une décision.
+        DEPUIS LE 31/08, LE DÉFAUT EST « DÉSACTIVÉE » (décision de Noa :
+        « supprimer l'anonymisation pour fluidifier de A à Z les requêtes »).
+        Le masquage ne s'applique que si le réglage dit EXPLICITEMENT
+        « active » — en base (Paramètres) ou dans le `.env`
+        (ANONYMISATION=active). Le défaut lui-même vit dans `config.py`, pas
+        ici : un banc qui teste le masquage pose `settings.anonymisation =
+        "active"`, rien d'autre à savoir. Ne lève jamais.
         Seul le MASQUAGE se coupe : `rehydrate` reste toujours en service,
         les jetons déjà posés dans l'historique doivent se résoudre.
         """
         try:
             from llm.reglages import valeur
-            return (valeur("anonymisation") or "").strip().lower() == "desactivee"
-        except Exception:  # noqa: BLE001 — jamais une panne, jamais une fuite
-            return False
+            return (valeur("anonymisation") or "").strip().lower() != "active"
+        except Exception:  # noqa: BLE001 — jamais une panne
+            return (getattr(settings, "anonymisation", "") or "").strip().lower() != "active"
 
     def anonymize(self, text: str, entity_map: Optional[dict] = None) -> tuple[str, dict]:
         """

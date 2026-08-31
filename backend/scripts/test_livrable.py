@@ -468,9 +468,15 @@ verifier("désactivée : les chunks aussi", chunks == [MAIL], str(chunks))
 verifier("désactivée, la réhydratation résout ENCORE les anciens jetons",
          anonymizer.rehydrate("Bonjour [PER_9]", {"[PER_9]": "Dupont"}) == "Bonjour Dupont")
 
-faux_reg.valeur = lambda nom: None   # réglage retiré : le défaut est la protection
+# Depuis le 31/08 (décision de Noa), le DÉFAUT est « désactivée » : sans
+# réglage, le texte part tel quel ; seul « active » rallume le masquage.
+faux_reg.valeur = lambda nom: None   # réglage retiré : le défaut s'applique
 texte, carte_a = anonymizer.anonymize(MAIL, {})
-verifier("réglage retiré : le masquage reprend (le défaut est la protection)",
+verifier("réglage retiré : le masquage reste coupé (défaut « désactivée » depuis le 31/08)",
+         texte == MAIL and carte_a == {}, texte)
+faux_reg.valeur = lambda nom: "active" if nom == "anonymisation" else None
+texte, carte_a = anonymizer.anonymize(MAIL, {})
+verifier("réglage « active » : le masquage reprend",
          "benjamin@exemple-paysage.fr" not in texte and carte_a, texte)
 
 # ── la carte fichier des documents est MÉCANIQUE (saga du Word, 30/08) ─────

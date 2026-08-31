@@ -29,7 +29,8 @@ REGLAGES_CONNUS = (
     "kpi_depuis",   # AAAA-MM-JJ — les indicateurs ne comptent rien avant cette date
     # L'anonymisation PII se coupe d'un clic (demande de Noa, 30/08 : elle
     # cassait des flux réels — adresse tapée masquée en boucle, balises dans
-    # les mails). Valeurs admises : « active » (défaut) ou « desactivee ».
+    # les mails). Valeurs admises : « active » ou « desactivee » — le DÉFAUT
+    # est « desactivee » depuis le 31/08 (config.py), sur décision de Noa.
     # La RÉHYDRATATION, elle, reste toujours en service : les jetons déjà
     # posés dans l'historique doivent continuer de se résoudre.
     "anonymisation",

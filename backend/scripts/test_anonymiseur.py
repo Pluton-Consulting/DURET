@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import sys
 
+from config import settings
+settings.anonymisation = "active"   # le défaut est « désactivée » depuis le 31/08 : ce banc teste le MASQUAGE
 from security.anonymizer import anonymizer
 
 # Le brief anglais qui a servi de mesure. Une seule donnée réellement

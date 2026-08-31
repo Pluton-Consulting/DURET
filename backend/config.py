@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     # Sécurité transverse
     max_body_mb: int = 10                          # limite de taille du corps HTTP (anti-DoS mémoire)
     block_external_llm_without_ner: bool = True    # refuse l'envoi aux LLM externes si l'anonymiseur NER est HS (RGPD)
+    # Anonymisation PII : « active » ou « desactivee ». DÉSACTIVÉE PAR DÉFAUT
+    # depuis le 31/08/2026, décision de Noa (« fluidifier de A à Z les
+    # requêtes ») : le masquage cassait des flux réels — adresse tapée masquée
+    # en boucle, balises dans les comptes rendus, mémoire gravée de [PER_n]
+    # irrésolubles. Le mécanisme reste entier et se rallume en un clic
+    # (Paramètres → Clés API) ou par ANONYMISATION=active ici ; la
+    # RÉHYDRATATION des balises déjà posées ne se coupe jamais.
+    anonymisation: str = "desactivee"
     screenshot_ttl_minutes: int = 30               # purge des captures d'écran orphelines dans validations.payload
     screenshot_cleanup_interval_s: int = 300       # fréquence du balayage TTL
 

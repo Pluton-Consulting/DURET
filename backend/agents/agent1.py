@@ -71,6 +71,16 @@ Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emp
 # l'ENLISEMENT, pas le nombre d'actions — c'est lui qui est mesuré plus bas.
 # Ce plafond-ci ne sert plus qu'à empêcher une boucle folle de durer des heures.
 MAX_ACTIONS_PAR_TOUR = 40
+# Un même skill rappelé sans fin avec des paramètres qui changent un peu à
+# chaque fois — le 31/08 : DIX-SEPT `interroger_donnees` en neuf minutes pour
+# « dégager 10 missions types » de 1 398 titres de devis, ce que ce skill ne
+# sait pas faire. La garde « à l'identique » ne voyait rien (empreintes
+# différentes) et le plafond global de 40 laissait faire. Au-delà de ce
+# nombre, la boucle sort sur une note et le modèle rédige avec ce qu'il a.
+# Les gestes qui CONSTRUISENT un document par morceaux sont exemptés : un
+# rapport de douze sections, c'est douze `ajouter_document` légitimes.
+MAX_APPELS_MEME_SKILL = 10
+SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
 
 # LE FILET CONTRE L'ERRANCE — PAS CONTRE L'EXPLORATION.
 #
@@ -728,8 +738,12 @@ Voici les messages trouvés :
     # débusquer. La reprise se fait maintenant dans un appel dédié.
 
     # Drapeau de la seconde passe de rédaction, posé plus bas et renvoyé avec
-    # la réponse : c'est lui qui borne la reprise à UNE fois.
-    redaction_a_reprendre = False
+    # la réponse : c'est lui qui borne la reprise à UNE fois. Il est COLLANT
+    # dans le tour : posé par `rediger_node` ou par une passe précédente, il
+    # ne retombe pas — sinon ce nœud, qui le RÉÉCRIT à chaque passage,
+    # l'effaçait et la reprise n'était plus bornée. `runtime` le remet à
+    # zéro au début de chaque tour.
+    redaction_a_reprendre = bool(state.get("redaction_forcee"))
 
     # Dernière passe imposée : la boucle d'actions est close, il ne reste qu'à
     # rédiger. Sans cette consigne, le modèle peut redemander une action, dont
@@ -926,6 +940,11 @@ async def tools_node(state: AgentState, config=None) -> dict:
             for k, v in action["args"].items()}
 
     empreinte = hash_payload(action["skill"], args)
+    memes = sum(1 for r in resultats if r.get("skill") == action["skill"])
+    if memes >= MAX_APPELS_MEME_SKILL and action["skill"] not in SKILLS_SANS_PLAFOND:
+        return _sortir(f"l'action « {action['skill']} » a déjà été appelée {memes} fois "
+                       "ce tour sans que la demande aboutisse : elle ne donnera pas "
+                       "davantage, il faut répondre avec ce qui a été obtenu.")
     deja = [r for r in resultats if r.get("payload_hash") == empreinte]
     if deja:
         # UNE ACTION QUI A ÉCHOUÉ NE RÉUSSIRA PAS EN LA REDEMANDANT TELLE QUELLE.
@@ -1170,6 +1189,53 @@ async def tools_node(state: AgentState, config=None) -> dict:
 
 
 
+_CLES_TECHNIQUES = frozenset({
+    "cles", "cle", "clé", "clés", "document_id", "bloc_ui", "payload_hash", "hash",
+    "ids", "jeton", "token", "source_id", "fichier_id", "thread_id", "tache_id",
+    "validation_id", "empreinte", "a_faire", "a_savoir", "note",
+})
+# Un identifiant : long, sans espace, avec au moins un chiffre — une clé de
+# dépôt (sha tronqué), un jeton de document, un UUID. Un mot français ne
+# ressemble jamais à ça ; un numéro de devis (« DV0001410 ») fait 9 caractères
+# et passe.
+_IDENTIFIANT_RE = __import__("re").compile(r"(?<![\w/])(?=[\w-]*\d)[A-Za-z0-9_-]{16,}(?![\w/])")
+
+
+def _sans_identifiants(texte: str) -> str:
+    """Le résultat d'un skill, DÉBARRASSÉ de ce qui n'est pas pour l'utilisateur.
+
+    Relevé par Noa le 31/08 sur un tour réussi : « les résultats indiquent les
+    clés ["e527f1b03524955df936f7ff"], la source "bc4191bbe1154b53f191d130" »,
+    et « avec l'identifiant xz-U9coZQtoswQYDsniBnM9pr1BfwJMA » dans la prose.
+    Le rédacteur recevait le résultat BRUT du skill : le modèle recopiait
+    docilement les clés de dépôt, drapeaux internes et consignes qui lui
+    étaient destinées. Deux passes : les CLÉS techniques d'un JSON sont
+    retirées (récursivement), puis toute valeur qui a la forme d'un
+    identifiant disparaît — que le résultat soit du JSON ou du texte.
+    Les blocs d'écran, eux, gardent leurs clés : ils sont ajoutés
+    mécaniquement sous la prose, pas écrits par le modèle.
+    """
+    import json as _json
+
+    def _nettoyer(v):
+        if isinstance(v, dict):
+            return {k: _nettoyer(x) for k, x in v.items()
+                    if str(k).lower() not in _CLES_TECHNIQUES}
+        if isinstance(v, list):
+            return [_nettoyer(x) for x in v]
+        if isinstance(v, str):
+            return _IDENTIFIANT_RE.sub("", v).strip()
+        return v
+
+    brut = (texte or "").strip()
+    if brut[:1] in ("{", "["):
+        try:
+            return _json.dumps(_nettoyer(_json.loads(brut)), ensure_ascii=False)
+        except (ValueError, TypeError):
+            pass
+    return _IDENTIFIANT_RE.sub("", brut)
+
+
 async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> str:
     """Fait ÉCRIRE la réponse par le MODÈLE à partir des résultats des skills.
 
@@ -1194,7 +1260,7 @@ async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> st
     for r in (resultats or []):
         if not isinstance(r, dict):
             continue
-        brut = str(r.get("resultat_masque") or "")[:800]
+        brut = _sans_identifiants(str(r.get("resultat_masque") or ""))[:800]
         lignes.append(f"- {r.get('skill') or '?'} : "
                       f"{'réussie' if r.get('ok') else 'EN ÉCHEC'}\n  {brut}")
 
@@ -1208,8 +1274,10 @@ async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> st
             "promets rien, n'invente ni fichier ni référence, ne propose pas la "
             "suite. Si une action a ÉCHOUÉ, dis-le simplement avec sa raison. "
             "N'écris AUCUN bloc de code ni ```ui : les aperçus et fichiers sont "
-            "ajoutés automatiquement sous ton texte. 2 à 6 phrases, sans "
-            "salutation.")
+            "ajoutés automatiquement sous ton texte. Ne cite JAMAIS d'identifiant "
+            "technique (clé, jeton, hash, document_id), de drapeau interne "
+            "(genere, essai, ok) ni de nom de skill : parle du résultat, pas de la "
+            "tuyauterie. 2 à 6 phrases, sans salutation.")
         corps = (f"Demande de l'utilisateur :\n{demande}\n\n"
                  "Actions exécutées à ce tour, et leurs résultats :\n"
                  + "\n".join(lignes))
@@ -2186,8 +2254,15 @@ async def rediger_node(state: AgentState, config=None) -> dict:
     Pas de logique ici : c'est `llm_node` qui, voyant `tools_finished` et une
     annonce en réponse précédente, ajoute la consigne qui nomme le défaut. Ce
     nœud ne fait que poser le drapeau — mais un routeur ne peut pas écrire
-    l'état, d'où son existence."""
-    return {"tools_finished": True}
+    l'état, d'où son existence.
+
+    Il pose AUSSI `redaction_forcee` : c'est ce drapeau que `route_apres_llm`
+    lit pour ne redemander la rédaction qu'UNE fois. Le laisser à `llm_node`
+    seul avait un trou : quand la boucle d'actions sort sur une note, la
+    consigne « ta réponse était vide » n'est pas ajoutée (la note explique
+    déjà) et le drapeau n'était pas posé non plus — d'où une seconde
+    redemande, vers une arête inexistante (KeyError « llm », 31/08)."""
+    return {"tools_finished": True, "redaction_forcee": True}
 
 
 def route_apres_forcage(state: AgentState) -> str:
@@ -2264,7 +2339,17 @@ def route_apres_llm(state: AgentState) -> str:
                                                   or promesse_sans_suite(texte)
                                                   or not _texte_visible(texte)):
             logger.info("Dernière passe sans réponse utilisable : rédaction redemandée")
-            return "llm"
+            # « rediger », PAS « llm ». La table des arêtes de ce routeur ne
+            # connaît que tools / forcer / rediger / rehydrate : renvoyer « llm »
+            # faisait lever un KeyError par LangGraph, le tour mourait et l'écran
+            # affichait « Une erreur est survenue ». Relevé le 31/08 sur trois
+            # tours (« Non, cherche seulement dans les devis », 280 s ; « fias »,
+            # 545 s ; « Détaille par mois sur 2025 »). Le cas exact : la boucle
+            # d'actions sort sur une NOTE, la rédaction forcée rend encore une
+            # annonce, et `redaction_forcee` n'avait pas été posé (la note en
+            # dispensait). `rediger` pose maintenant le drapeau lui-même : une
+            # reprise, jamais une boucle.
+            return "rediger"
         return "rehydrate"
 
     # Deux syntaxes : le bloc demandé, et celle que certains modèles de la

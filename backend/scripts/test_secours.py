@@ -33,9 +33,15 @@ def verifier(nom, cond, detail=""):
 
 def extraire(noms, espace):
     arbre = ast.parse((racine / "agents" / "agent1.py").read_text(encoding="utf-8"))
+    # Fonctions ET constantes de module nommées : le rédacteur s'appuie depuis
+    # le 31/08 sur `_sans_identifiants`, qui lit `_CLES_TECHNIQUES` et
+    # `_IDENTIFIANT_RE` — des affectations, pas des def.
+    def _cibles(n):
+        return [t.id for t in getattr(n, "targets", []) if isinstance(t, ast.Name)]
     gardes = [n for n in arbre.body
               if (isinstance(n, ast.ImportFrom) and n.module == "__future__")
-              or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in noms)]
+              or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in noms)
+              or (isinstance(n, ast.Assign) and any(c in noms for c in _cibles(n)))]
     exec(compile(ast.Module(body=gardes, type_ignores=[]), "agent1", "exec"), espace)
     manquants = [x for x in noms if x not in espace]
     assert not manquants, f"absent du module livré : {manquants}"
@@ -132,7 +138,8 @@ def espace_redaction(reponse):
     spec = importlib.util.spec_from_file_location("annonce", racine / "agents" / "annonce.py")
     annonce = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(annonce)
-    return extraire({"_rediger_par_le_modele", "_texte_visible"},
+    return extraire({"_rediger_par_le_modele", "_texte_visible", "_sans_identifiants",
+                     "_CLES_TECHNIQUES", "_IDENTIFIANT_RE"},
                     {"logger": _Journal(), "est_une_annonce": annonce.est_une_annonce,
                      "promesse_sans_suite": annonce.promesse_sans_suite})
 

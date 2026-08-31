@@ -242,6 +242,17 @@ def libelle(node: str, update: dict | None = None) -> str:
         nom = action.get("skill") or ""
         return f"{_acte(nom) or nom} (en attente de votre validation)".strip()[:MAX_LIBELLE]
 
+    # Le nœud d'anonymisation tourne toujours (il rend le texte tel quel quand le
+    # masquage est coupé), mais dire « je protège les données personnelles »
+    # alors qu'on ne masque rien serait faux — relevé par Noa le 31/08, juste
+    # après le passage du défaut à « désactivée ». Coupé : on se tait.
+    if node == "anonymize":
+        try:
+            from security.anonymizer import anonymizer
+            if anonymizer.desactivee():
+                return ""
+        except Exception:  # noqa: BLE001 — un libellé ne casse jamais un tour
+            pass
     return LIBELLES.get(node, "")
 
 

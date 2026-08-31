@@ -611,9 +611,10 @@ async def lire_mail(data: dict, user) -> dict:
            or data.get("message_id") or data.get("identifiant"))
     objet = data.get("objet") or data.get("subject") or data.get("sujet") or data.get("titre")
     de = data.get("de") or data.get("expediteur") or data.get("from")
+    rang = data.get("rang") or data.get("numero") or (1 if data.get("dernier") else None)
     try:
         return await lire_message(boite, ref=ref, objet=objet, de=de,
-                                  dossier=data.get("dossier") or "recus")
+                                  dossier=data.get("dossier") or "recus", rang=rang)
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except (LookupError, ValueError) as e:

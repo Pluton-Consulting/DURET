@@ -230,6 +230,29 @@ def memoriser_echange_en_fond(thread_id: str, user_id: Optional[str], rang: int,
     tache.add_done_callback(_TACHES_MEMOIRE.discard)
 
 
+# Une question COURTE et sans objet propre — « es-tu sûr ? », « vraiment ? »,
+# « et alors ? », « oui », « non » — porte sur le DERNIER échange, qui est déjà
+# dans la fenêtre récente. La vectoriser rappelait des échanges anciens au
+# hasard de la proximité (« es-tu sûr » ressemble à tous les « es-tu sûr »
+# passés), et le modèle répondait sur l'un d'eux : relevé par Noa le 31/08,
+# « il m'a ressorti un message quatre ou cinq plus haut ».
+_META = ("sûr", "sur ?", "certain", "vraiment", "t'es sur", "tu es sur", "ah bon",
+         "et alors", "c'est tout", "pourquoi", "comment ça", "comment ca", "hein",
+         "quoi ?", "ok", "d'accord", "merci", "oui", "non", "exact", "confirme",
+         "vérifie", "verifie", "recommence", "refais", "encore", "continue", "et ?")
+
+
+def question_meta(question: str) -> bool:
+    """Vrai quand la question n'a pas d'objet propre et vise le dernier échange."""
+    q = " ".join((question or "").lower().split())
+    if not q:
+        return True
+    mots = [m for m in q.replace("?", " ").replace("!", " ").split() if len(m) > 1]
+    if len(mots) <= 3:
+        return True
+    return len(mots) <= 6 and any(m in q for m in _META)
+
+
 async def rappeler_echanges(thread_id: str, question: str, avant_rang: int) -> list[dict]:
     """Les échanges anciens du fil les plus proches de la question.
 
@@ -239,6 +262,8 @@ async def rappeler_echanges(thread_id: str, question: str, avant_rang: int) -> l
     """
     k = int(_reglage("memoire_rappels_k", 3))
     if not thread_id or not question or avant_rang <= 1 or k <= 0:
+        return []
+    if question_meta(question):
         return []
     try:
         from vectorstore.embeddings import embed_query
@@ -274,7 +299,8 @@ def bloc_memoire(resume: Optional[str], rappels: list[dict]) -> str:
                           f"{_tailler(r.get('question') or '', 400)}\n  l'assistant : "
                           f"{_tailler(r.get('reponse') or '', 700)}")
         parties.append("Échanges plus anciens de cette conversation, en rapport avec la "
-                       "question actuelle :\n" + "\n".join(lignes))
+                       "question actuelle — ils sont ANCIENS : la question actuelle porte sur "
+                       "le DERNIER échange, sauf si elle les nomme :\n" + "\n".join(lignes))
     if not parties:
         return ""
     return ("MÉMOIRE DE LA CONVERSATION (ce que vous avez déjà échangé ; « tout à "

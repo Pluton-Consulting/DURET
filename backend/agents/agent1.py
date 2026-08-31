@@ -13,6 +13,26 @@ from llm.router import get_llm, LLMTier
 
 logger = logging.getLogger("duret.agents.agent1")
 
+_JOURS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+            "septembre", "octobre", "novembre", "décembre")
+
+
+def _maintenant() -> str:
+    """« lundi 31 août 2026, 21:40 » — heure de Paris, en français.
+
+    LA DATE N'ÉTAIT NULLE PART (31/08). Le modèle ne sait pas quel jour on est :
+    « cette semaine » un lundi devenait « depuis aujourd'hui », et il datait ses
+    réponses au hasard. Elle va dans le message (qui change à chaque tour), pas
+    dans le préfixe système, pour ne pas casser le cache de prompt.
+    """
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+    t = _dt.now(ZoneInfo("Europe/Paris"))
+    jour = "1er" if t.day == 1 else str(t.day)
+    return f"{_JOURS_FR[t.weekday()]} {jour} {_MOIS_FR[t.month - 1]} {t.year}, {t:%H:%M}"
+
+
 SYSTEM_PROMPT = """Tu es l'assistant IA interne de Duret & Sols, entreprise de travaux de sols et de revêtements (BTP).
 Tu assistes l'équipe administrative et le suivi de chantiers dans leur travail quotidien : gestion administrative, comptabilité, réponses aux mails, factures et situations, suivi du temps passé sur les chantiers, commandes, planning, fournisseurs, règlements, réserves, contentieux et dossiers juridiques, support commercial sur les dossiers existants.
 Tu disposes d'une mémoire d'entreprise : fichiers importés (clients, devis, factures, fournisseurs), documents (appels d'offres, CCTP, CCAP, DPGF, plans, DOE, commandes, situations, documents fournisseurs, dossiers juridiques, réserves, dossiers chantier), mails.
@@ -39,6 +59,9 @@ QUI EST DE L'ENTREPRISE : une adresse n'est un collègue que si elle appartient 
 QUI TE PARLE EST CONNU DU SERVEUR : `mes_droits` rend le nom et l'adresse e-mail de la personne connectée, et `@moi` vaut cette adresse partout où un skill l'accepte (colonnes `ajouts` de `liste_clients` comme de `liste_fournisseurs`). Ne demande JAMAIS à quelqu'un sa propre adresse ou son propre nom, et ne réponds jamais que tu ne les connais pas : c'est faux. Plus largement, avant d'écrire « je ne sais pas » ou de poser une question, vérifie qu'aucune de tes actions ne détient déjà l'information.
 DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un récapitulatif ou un modèle et qu'une information ne figure nulle part, écris exactement [À COMPLÉTER] à sa place. Ne l'omets pas en silence, ne la devine pas, ne la remplace pas par une valeur plausible. Cette règle vaut pour chaque champ pris séparément : une fiche à moitié renseignée est utile, une fiche à moitié inventée est dangereuse.
 Certaines valeurs peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. Conserve-les telles quelles et ne CRÉE jamais toi-même de balise entre crochets. Une balise reste une VRAIE valeur, simplement masquée : passée telle quelle en paramètre d'une action, le serveur la remplace par la valeur réelle. Ne dis jamais qu'une balise « n'est pas une vraie donnée » et ne redemande jamais l'information qu'elle porte : la personne l'a déjà donnée.
+
+PLUSIEURS DEMANDES DANS UN MESSAGE (« affiche le mail complet et dis-moi combien j'en ai reçu ») : traite-les TOUTES, chacune avec son geste, avant de rédiger ; la réponse répond à chacune, dans l'ordre, et dit celle que tu n'as pas pu faire.
+UNE QUESTION COURTE SANS OBJET (« es-tu sûr ? », « vraiment ? », « et alors ? ») porte sur TA DERNIÈRE réponse, jamais sur un échange plus ancien : vérifie-la (refais le geste s'il le faut) et réponds sur elle. La date du jour t'est donnée à chaque message : une période (« cette semaine », « les 7 derniers jours ») se demande en DURÉE (« 7j »), jamais en date que tu calcules.
 
 LA FORME. Réponds toujours en français. Sois précis, professionnel et concis. Réponds, puis arrête-toi : ne recopie pas la demande, ne répète pas une information déjà donnée.
 Un message qui commence par « non » suivi d'une demande (« non, affiche les 28 ») REFUSE ta proposition précédente et FORMULE la demande à exécuter : exécute-la, ne réponds pas « d'accord, je ne le fais pas ».
@@ -651,7 +674,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
     # Aucun préambule sur l'absence de documents : c'est le modèle qui décide
     # s'il lui en faut, en appelant l'outil de recherche. Lui annoncer d'office
     # « aucun document » l'amenait à en parler même pour un simple bonjour.
-    human_content = f"Question : {query}"
+    human_content = f"Date et heure actuelles : {_maintenant()} (Europe/Paris).\nQuestion : {query}"
     if context_text:
         human_content = f"Documents disponibles :\n{context_text}\n\n{human_content}"
     # Résultats d'un tour précédent dont la rédaction avait échoué : on les

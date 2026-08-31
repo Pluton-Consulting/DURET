@@ -46,7 +46,10 @@ verifier("une date ISO est prise telle quelle", d is not None and d.date() == dt
 verifier("la date ISO est rendue en UTC si elle n'a pas de fuseau", d is not None and d.tzinfo is not None)
 verifier("rien demandé → None (on lit simplement les plus récents)", lecture.depuis_quand(None) is None)
 verifier("vide → None", lecture.depuis_quand("") is None)
-verifier("illisible → None, jamais une exception", lecture.depuis_quand("la semaine dernière svp") is None)
+verifier("illisible → None, jamais une exception", lecture.depuis_quand("bientôt, on verra") is None)
+# 31/08 : « la semaine dernière » n'est plus illisible — elle remonte 14 jours (la semaine d'avant).
+verifier("« la semaine dernière » → 14 jours", lecture.depuis_quand("la semaine dernière") is not None
+         and (dt.datetime.now(dt.timezone.utc) - lecture.depuis_quand("la semaine dernière")).days in (14, 15))
 verifier("une période absurde est bornée (10 000 jours → 3650)",
          lecture.depuis_quand("10000").date() == (maintenant - dt.timedelta(days=3650)).date())
 

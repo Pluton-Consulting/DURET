@@ -167,11 +167,18 @@ if extrait_ok:
     verifier("ref inconnue + objet : une recherche dans le bon dossier, puis l'ouverture",
              [a[0] for a in appels] == ["lister", "ouvrir"] and appels[0][1] == "sentitems" and appels[0][3] == "devis terrasse")
     verifier("le message ouvert est celui que la recherche a trouvé", appels[1][2].startswith("ID-TROUVE"))
+    appels.clear()
+    r = asyncio.run(lire_message("nath@x.fr"))
+    verifier("sans ref ni objet : le DERNIER message reçu (liste de 1, sans recherche, puis ouverture)",
+             [a[0] for a in appels] == ["lister", "ouvrir"] and appels[0][2] == 1 and appels[0][3] is None)
+    appels.clear()
+    r = asyncio.run(lire_message("nath@x.fr", rang=1))
+    verifier("rang=1 : le plus récent", appels[0][2] == 1)
     try:
-        asyncio.run(lire_message("nath@x.fr"))
-        verifier("sans ref ni objet : refus explicite", False)
-    except ValueError as e:
-        verifier("sans ref ni objet : refus explicite", "référence" in str(e))
+        asyncio.run(lire_message("nath@x.fr", rang=3))
+        verifier("rang=3 sur une boîte d'un message : refus explicite", False)
+    except LookupError:
+        verifier("rang=3 sur une boîte d'un message : refus explicite", True)
 
     async def _rien(*a, **k):
         return [], None
@@ -192,7 +199,7 @@ verifier("effet LECTURE déclaré (fail-closed sinon)", re.search(r'"lire_mail":
 verifier("le skill résout la boîte et vérifie l'accès comme lire_mails",
          re.search(r"async def lire_mail\(.*?_boite_a_lire\(data, user\).*?verifier_acces\(user, cible\)", skills, re.S) is not None)
 protocole = lire("skills/protocol.py")
-verifier("catalogue : `lire_mail` avec ref / objet / de", re.search(r'"lire_mail": \(.*?\["ref", "objet", "de", "dossier", "mailbox"\]', protocole, re.S) is not None)
+verifier("catalogue : `lire_mail` avec ref / objet / de", re.search(r'"lire_mail": \(.*?\["ref", "objet", "de", "rang", "dossier", "mailbox"\]', protocole, re.S) is not None)
 verifier("catalogue : lire_mails dit que l'aperçu est un EXTRAIT", "EXTRAIT, pas le message" in protocole)
 agent1 = lire("agents/agent1.py")
 m = re.search(r"RESULTATS_GENEREUX = \{([^}]*)\}", agent1)

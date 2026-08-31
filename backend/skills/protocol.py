@@ -337,8 +337,8 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         [], ["source_type", "filtres", "contient", "agreger", "annee", "depuis", "page"]),
     "lire_mails": (
         "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. "
-        "`depuis` : une période (« 7j », « semaine », « mois ») ou une date "
-        "AAAA-MM-JJ — OBLIGATOIRE dès qu'on parle d'une période (« cette semaine », "
+        "`depuis` : une DURÉE (« 7j », « semaine », « mois », « lundi » = depuis lundi) — "
+        "jamais une date que tu calcules — OBLIGATOIRE dès qu'on parle d'une période (« cette semaine », "
         "« depuis lundi ») : le résultat dit alors « N messages sur la période, voici "
         "les 25 plus récents ». `recherche` : des MOTS-CLÉS cherchés dans TOUTE la "
         "boîte (objet et corps), pas seulement les récents — c'est l'outil pour "
@@ -361,10 +361,12 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "n'est qu'un EXTRAIT : dès qu'il faut le CONTENU d'un message (y répondre, le "
         "résumer, y trouver une date, un montant, une demande précise), appelle ce geste "
         "avec la `ref` du message, telle que la liste l'a rendue. Sans ref : `objet` "
-        "(et `de`) pour le retrouver dans le dossier. Un message par appel. Ne marque "
+        "(et `de`) pour le retrouver dans le dossier. SANS RIEN : le DERNIER message reçu "
+        "(« affiche le mail complet », « ouvre le dernier ») ; `rang: 2` = l'avant-dernier. "
+        "Un message par appel. Ne marque "
         "rien comme lu. dossier : recus (défaut) ou envoyes. Sans mailbox, la boîte de "
         "la personne connectée",
-        [], ["ref", "objet", "de", "dossier", "mailbox"]),
+        [], ["ref", "objet", "de", "rang", "dossier", "mailbox"]),
     "triage_email_entrant": (
         # `mailbox` ÉTAIT REQUIS ICI, et c'était un piège. Le cas normal est un
         # message COLLÉ dans le chat (« voici ce que je viens de recevoir ») :

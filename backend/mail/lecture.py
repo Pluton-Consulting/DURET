@@ -227,30 +227,58 @@ def _qualifier(adresse_brute: str) -> dict:
 # ── La période, dans les mots où on la demande ──────────────────────────────
 _RE_JOURS = re.compile(r"^\s*(\d{1,5})\s*(j|jour|jours|d|day|days)?\s*$", re.I)
 _MOTS_PERIODE = {
-    "aujourd'hui": 0, "aujourdhui": 0, "today": 0,
+    "aujourd'hui": 0, "aujourdhui": 0, "today": 0, "matin": 0, "journée": 0, "journee": 0,
     "hier": 1, "yesterday": 1,
-    "semaine": 7, "cette semaine": 7, "7 jours": 7, "week": 7, "1s": 7,
-    "15 jours": 15, "quinzaine": 15,
+    "semaine": 7, "cette semaine": 7, "7 jours": 7, "week": 7, "1s": 7, "7j": 7,
+    "15 jours": 15, "quinzaine": 15, "deux semaines": 14, "2 semaines": 14,
     "mois": 30, "ce mois": 30, "30 jours": 30, "month": 30,
-    "trimestre": 90,
+    "trimestre": 90, "3 mois": 90, "semestre": 180, "6 mois": 180, "année": 365, "annee": 365, "an": 365,
 }
+
+_JOURS_SEMAINE = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4,
+                  "samedi": 5, "dimanche": 6}
+# Les mots qui habillent une période sans la changer : « les 7 derniers jours »,
+# « depuis lundi », « cette semaine », « la semaine dernière ». Relevé le 31/08 :
+# le modèle écrivait « 7 derniers jours » ou « lundi », que `depuis_quand` ne
+# lisait pas — et une période illisible était ÉLARGIE en silence : « les mails
+# de la semaine » rendait les 25 plus récents (ceux du jour), sous un titre
+# « 7 derniers jours » recopié de la demande.
+_HABILLAGE = ("depuis", "les", "ces", "cette", "cet", "ce", "la", "le", "l'", "du",
+              "de", "d'", "derniers", "dernières", "dernieres", "dernier", "dernière",
+              "derniere", "passés", "passes", "écoulés", "ecoules")
+
+
+def _depouiller(texte: str) -> str:
+    mots = [m for m in texte.replace("'", "' ").split() if m not in _HABILLAGE]
+    return " ".join(mots).replace("' ", "'").strip()
 
 
 def depuis_quand(valeur) -> Optional[datetime]:
-    """« 7j », « semaine », « 2026-08-15 » → l'instant de départ, en UTC.
+    """« 7j », « semaine », « les 7 derniers jours », « lundi », « 2026-08-15 » →
+    l'instant de départ, en UTC.
 
-    Rend None quand rien n'est demandé (ou quand la valeur est illisible) : on
-    lit alors simplement les plus récents, comme avant. Une période mal comprise
-    ne doit jamais faire échouer une lecture — elle l'élargit.
+    Rend None quand rien n'est demandé, ou quand la valeur est illisible —
+    l'appelant (`lire_boite`) le DIT alors dans son résultat au lieu d'élargir
+    en silence. Un jour de la semaine désigne sa dernière occurrence (« lundi »
+    un lundi, c'est aujourd'hui : « cette semaine » se dit « semaine »).
     """
     if valeur is None or valeur == "":
         return None
+    maintenant = datetime.now(timezone.utc)
     if isinstance(valeur, (int, float)):
         jours = int(valeur)
     else:
-        texte = str(valeur).strip().lower()
-        if texte in _MOTS_PERIODE:
+        brut = str(valeur).strip().lower()
+        # « semaine dernière » se lit AVANT le dépouillage : « dernière » y change le
+        # sens (la semaine d'avant), alors qu'il n'habille que « les 7 derniers jours ».
+        if "semaine derni" in brut or "semaine pass" in brut:
+            jours = 14
+        elif "week" in brut and "end" in brut:
+            jours = (maintenant.weekday() - 5) % 7
+        elif (texte := _depouiller(brut)) in _MOTS_PERIODE:
             jours = _MOTS_PERIODE[texte]
+        elif texte in _JOURS_SEMAINE:
+            jours = (maintenant.weekday() - _JOURS_SEMAINE[texte]) % 7
         else:
             m = _RE_JOURS.match(texte)
             if m:
@@ -263,7 +291,7 @@ def depuis_quand(valeur) -> Optional[datetime]:
                 except ValueError:
                     return None
     jours = max(0, min(jours, 3650))
-    debut = datetime.now(timezone.utc) - timedelta(days=jours)
+    debut = maintenant - timedelta(days=jours)
     # « Les 7 derniers jours » se compte en journées pleines : on part de minuit.
     return debut.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -559,6 +587,11 @@ async def lire_boite(boite: str, dossier: str = "recus",
     limite = max(1, min(int(limite or 10), MAX_MESSAGES))
     debut = depuis_quand(depuis)
     borne = depuis_quand(avant)
+    # UNE PÉRIODE ILLISIBLE SE DIT. Elle était élargie en silence : « les mails
+    # de la semaine » avec un `depuis` que personne ne lisait rendait les 25
+    # plus récents — ceux du jour — et le modèle titrait « 7 derniers jours ».
+    non_comprise = [str(v) for v, d in ((depuis, debut), (avant, borne))
+                    if v not in (None, "") and d is None]
     mots = " ".join(str(recherche or "").split()) or None
     logger.info("Lecture de %s (%s, %d messages%s%s%s) via %s", boite, cle, limite,
                 f", depuis {debut.date()}" if debut else "",
@@ -600,8 +633,13 @@ async def lire_boite(boite: str, dossier: str = "recus",
         compte = (f"La boîte contient {total} message(s) dans ce dossier ; voici les "
                   f"{len(messages)} plus récents.")
 
+    if non_comprise:
+        compte = (f"La période « {', '.join(non_comprise)} » n'a pas été comprise : aucun filtre "
+                  f"de date n'a été appliqué. {compte}")
+
     return {
         "boite": boite, "dossier": cle, "nombre": len(messages),
+        "periode_non_comprise": non_comprise or None,
         "total_periode": total,
         "periode_depuis": debut.isoformat() if debut else None,
         "tronque": bool(total is not None and total > len(messages)),
@@ -638,7 +676,8 @@ async def lire_boite(boite: str, dossier: str = "recus",
     }
 
 
-async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str = "recus") -> dict:
+async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str = "recus",
+                       rang=None) -> dict:
     """UN message, en entier : le corps complet (borné à MAX_CORPS, et la
     coupure est dite), les pièces jointes nommées.
 
@@ -650,10 +689,23 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     nom = fournisseur()
     cle = "envoyes" if str(dossier or "").lower().startswith("env") else "recus"
     identifiant = _resoudre(str(ref or ""), boite)
+    if not identifiant and not objet and not de:
+        # SANS RIEN : LE DERNIER MESSAGE REÇU (31/08). « Affiche le mail complet »
+        # désigne le plus récent ; `rang` = le n-ième plus récent (2 = l'avant-
+        # dernier). Refuser faute de référence obligeait à relire la boîte.
+        try:
+            n = max(1, min(int(rang or 1), MAX_MESSAGES))
+        except (TypeError, ValueError):
+            n = 1
+        if nom == "outlook":
+            recents, _ = await _lire_outlook(boite, DOSSIERS["outlook"][cle], n, None)
+        else:
+            recents, _ = await _lire_gmail(boite, DOSSIERS["gmail"][cle], n, None)
+        if len(recents) < n:
+            raise LookupError(f"Ce dossier ne contient pas {n} message(s).")
+        identifiant = _resoudre(recents[n - 1]["ref"], boite)
     if not identifiant:
         mots = " ".join(str(objet or "").split())
-        if not mots and not de:
-            raise ValueError("Il manque de quoi retrouver le message : sa référence, ou son objet.")
         recherche = mots or str(de)
         if nom == "outlook":
             candidats, _ = await _lire_outlook(boite, DOSSIERS["outlook"][cle], 5, None,

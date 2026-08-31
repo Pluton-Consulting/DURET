@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 interface EtatSync {
   source: string
   libelle: string
-  etat: "jamais" | "en_cours" | "terminee" | "echec" | "non_configure" | "interrompue"
+  etat: "jamais" | "en_cours" | "terminee" | "partielle" | "echec" | "non_configure" | "interrompue"
   debut?: string | number
   fin?: string | number
   par?: string

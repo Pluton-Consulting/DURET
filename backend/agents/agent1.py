@@ -321,6 +321,16 @@ async def routeur_node(state: AgentState) -> dict:
         logger.info("Routage court-circuité (courtoisie) : « %s »", _nu[:40])
         return {"besoin_memoire": False, "llm_tier": "standard"}
 
+    # LA VOIE RAPIDE (31/08). Une suite courte et sans objet propre — « oui »,
+    # « 1 », « es-tu sûr ? » — n'a besoin ni de recherche mémoire (la fenêtre
+    # récente la couvre, et le rappel vectoriel est déjà coupé pour elle) ni
+    # d'un juge : cet appel LLM « très court » coûtait une minute entière quand
+    # la cascade tournait sur un modèle lent, à CHAQUE message.
+    from agents.memoire_conversation import question_meta
+    if question_meta(str(state.get("query") or "")):
+        logger.debug("Routage : voie rapide (suite courte), aucun appel LLM")
+        return {"besoin_memoire": False, "requete_memoire": "", "llm_tier": "standard"}
+
     invite = (
         "Tu orientes une demande adressée à l'assistant interne d'une entreprise.\n"
         "Dis UNIQUEMENT s'il faut consulter la mémoire d'entreprise (chantiers, devis, "
@@ -502,12 +512,17 @@ async def llm_node(state: AgentState, config=None) -> dict:
     maj_memoire: dict = {}
     bloc_memoire_txt = ""
     if _anciens:
-        maj_memoire = await fondre_dans_le_resume(state, _tous, _anciens)
-        _resume = maj_memoire.get("resume_conversation") or state.get("resume_conversation")
         _nb = len([m for m in _tous if getattr(m, "type", None) != "system"])
         _premier_rang_fenetre = (_nb - len(history)) // 2 + 1
-        _rappels = await rappeler_echanges(str(state.get("thread_id") or ""), query,
-                                           _premier_rang_fenetre)
+        # EN PARALLÈLE (31/08) : le résumé glissant est un appel LLM léger, le
+        # rappel vectoriel un embedding — indépendants, ils s'additionnaient en
+        # série sur le chemin critique du tour.
+        import asyncio as _aio_mem
+        maj_memoire, _rappels = await _aio_mem.gather(
+            fondre_dans_le_resume(state, _tous, _anciens),
+            rappeler_echanges(str(state.get("thread_id") or ""), query,
+                              _premier_rang_fenetre))
+        _resume = maj_memoire.get("resume_conversation") or state.get("resume_conversation")
         bloc_memoire_txt = bloc_memoire(_resume, _rappels)
     # L'AMNÉSIE DOIT SE VOIR DANS LES JOURNAUX.
     #

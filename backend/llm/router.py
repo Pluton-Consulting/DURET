@@ -77,8 +77,28 @@ def tier_timeout(tier: str) -> int:
     }.get(tier, settings.llm_timeout_standard)
 
 
+# LES INSTANCES SONT RÉUTILISÉES (31/08). Chaque appel reconstruisait son
+# client LangChain, donc son client HTTP : la poignée de main TLS se payait à
+# CHAQUE appel LLM, plusieurs fois par tour. La clé du cache porte l'empreinte
+# de la clé API : une clé changée dans Paramètres reconstruit l'instance —
+# sinon un vieux client continuerait d'appeler avec la clé révoquée.
+_MODELES: dict = {}
+
+
 def _build_model(provider: str, model: Optional[str], max_tokens: int = 4096,
                  delai: int = 75):
+    empreinte = str(_cle(provider) or "")[-6:] if provider != "ollama" else ""
+    cle = (provider, model, max_tokens, delai, empreinte)
+    instance = _MODELES.get(cle)
+    if instance is None:
+        if len(_MODELES) > 64:
+            _MODELES.clear()
+        instance = _MODELES[cle] = _construire_modele(provider, model, max_tokens, delai)
+    return instance
+
+
+def _construire_modele(provider: str, model: Optional[str], max_tokens: int = 4096,
+                       delai: int = 75):
     """Construit l'instance LangChain (sans résilience) pour un couple (fournisseur, modèle).
 
     DEUX RÉGLAGES QUI MANQUAIENT, ET QUI COÛTAIENT DES MINUTES.

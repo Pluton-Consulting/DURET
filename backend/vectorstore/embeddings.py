@@ -180,6 +180,19 @@ def _openai():
         return None
 
 
+_CLIENT = None
+
+
+def _client():
+    """Client HTTP PARTAGÉ (31/08) : un client neuf par appel payait la poignée
+    de main TLS à chaque embedding — sur le chemin critique de chaque tour
+    (rappel de conversation, recherche documentaire)."""
+    global _CLIENT
+    if _CLIENT is None or _CLIENT.is_closed:
+        _CLIENT = httpx.AsyncClient(timeout=60)
+    return _CLIENT
+
+
 async def _embed_openai(texts: list[str]) -> list[Optional[list[float]]]:
     client = _openai()
     if client is None:
@@ -219,15 +232,14 @@ async def _embed_gemini(texts: list[str]) -> list[Optional[list[float]]]:
         ]
     }
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(url, json=body)
-            if r.status_code == 429:
-                pause, diag = await _gemini_throttle.hit_quota(r.text)
-                logger.warning("Gemini 429 (%s) — pause %.0f s, cadence %.1f s, backlog conservé",
-                               diag, pause, _gemini_throttle.cadence)
-                return [None] * len(texts)
-            r.raise_for_status()
-            data = r.json()
+        r = await _client().post(url, json=body)
+        if r.status_code == 429:
+            pause, diag = await _gemini_throttle.hit_quota(r.text)
+            logger.warning("Gemini 429 (%s) — pause %.0f s, cadence %.1f s, backlog conservé",
+                           diag, pause, _gemini_throttle.cadence)
+            return [None] * len(texts)
+        r.raise_for_status()
+        data = r.json()
         await _gemini_throttle.succes()
         embeddings = data.get("embeddings", [])
         out: list[Optional[list[float]]] = []

@@ -220,6 +220,36 @@ controle("toute sortie de la garde correspond à un nœud du graphe",
 controle("le prompt de la vision interdit la salutation non sollicitée",
          "Ne commence pas par une salutation" in src_tout)
 
+# ── LA RETOUCHE EN UN MESSAGE (31/08) ─────────────────────────────────
+# Une image jointe part TOUJOURS à la vision, qui n'appelle aucun skill : la
+# retouche (`modifier_visuel`) vit chez l'assistant. Sans passe de main dans
+# le même tour, « photo + ajoute une pergola » s'arrêtait à l'analyse et à
+# « dites-moi ce que vous voulez changer » — un second message obligatoire.
+ROUTEUR = pathlib.Path(BACKEND) / "agents" / "router.py"
+arbre_r = ast.parse(ROUTEUR.read_text(encoding="utf-8"))
+espace_r: dict = {"AgentState": dict}
+for noeud in arbre_r.body:
+    if isinstance(noeud, ast.FunctionDef) and noeud.name == "route_apres_agent2":
+        exec(compile(ast.Module([noeud], []), str(ROUTEUR), "exec"), espace_r)
+    if isinstance(noeud, ast.Assign) and any(
+            isinstance(c, ast.Name) and c.id == "_SUITE_ATTENDUE" for c in noeud.targets):
+        exec(compile(ast.Module([noeud], []), str(ROUTEUR), "exec"), espace_r)
+route = espace_r.get("route_apres_agent2")
+controle("le routeur porte route_apres_agent2 et _SUITE_ATTENDUE", callable(route) and "_SUITE_ATTENDUE" in espace_r)
+if callable(route):
+    vu = {"vision_analysis": "Maison de plain-pied, pelouse, haie de lauriers."}
+    for demande, attendu in (
+            ("ajoute une pergola à droite", "agent1"),
+            ("remplace la pelouse par une terrasse en bois", "agent1"),
+            ("projette le rendu final avec des graminées", "agent1"),
+            ("fais une simulation avant/après avec un bassin", "agent1"),
+            ("enlève la haie et mets un muret en pierre", "agent1"),
+            ("modifie cette photo : terrasse bois et éclairage", "agent1"),
+            ("c'est quoi cette plante ?", "human_gate"),
+            ("décris-moi ce plan", "human_gate")):
+        controle(f"photo + « {demande} » → {attendu}", route(dict(vu, query=demande)) == attendu,
+                 str(route(dict(vu, query=demande))))
+
 print()
 if echecs:
     print(f"{ROUGE}{echecs} contrôle(s) en échec.{RAZ}")

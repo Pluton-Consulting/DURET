@@ -396,6 +396,18 @@ _SUITE_ATTENDUE = (
     "client", "historique", "dossier", "fiche", "document", "rapport", "pdf",
     "docx", "excel", "compte rendu", "prépare", "prepare", "rédige", "redige",
     "produis", "génère", "genere", "fais-moi", "fais moi", "sors-moi",
+    # LA RETOUCHE AUSSI (31/08). Le scénario n°1 de Symbiose — « une image + une
+    # demande → visualisation de la prestation finale » — s'arrêtait à
+    # l'analyse : « ajoute une pergola », « remplace la pelouse par une terrasse »
+    # ne contenaient aucun mot de la liste, la vision répondait « dites-moi ce
+    # que vous voulez changer », et il fallait un SECOND message pour que
+    # l'assistant appelle `modifier_visuel`. Le coût d'une passe de main en trop
+    # est une lecture de l'analyse par l'assistant ; le coût d'une passe
+    # manquante est une demande honorée à moitié.
+    "ajout", "remplac", "modifi", "retouch", "transform", "enlève", "enleve",
+    "supprime", "installe", "mets ", "met ", "crée", "cree", "imagine", "simul",
+    "visuel", "rendu", "projet", "illustr", "dessine", "variante", "version",
+    "à la place", "a la place", "avec un", "avec une", "avec des",
 )
 
 

@@ -361,9 +361,23 @@ def _fiche_outlook(m: dict, boite: str, longueur_apercu: int) -> dict:
     }
 
 
+def _longueur_apercu(nombre: int, apercu=None) -> int:
+    """La longueur d'extrait EFFECTIVE : celle que l'appelant demande (borné),
+    sinon le budget partagé. `check_mails` rend des fiches plus légères que
+    `lire_mails` et sait ce qu'il peut se permettre."""
+    try:
+        voulu = int(apercu) if apercu is not None else 0
+    except (TypeError, ValueError):
+        voulu = 0
+    if voulu > 0:
+        return max(MIN_APERCU, min(MAX_APERCU, voulu))
+    return _budget_apercu(nombre)
+
+
 async def _lire_outlook(boite: str, dossier: str, limite: int,
                         depuis: Optional[datetime], recherche: Optional[str] = None,
-                        avant: Optional[datetime] = None) -> tuple[list[dict], Optional[int]]:
+                        avant: Optional[datetime] = None,
+                        apercu=None) -> tuple[list[dict], Optional[int]]:
     import httpx
     from ingestion.connectors.outlook import _jeton
 
@@ -382,7 +396,7 @@ async def _lire_outlook(boite: str, dossier: str, limite: int,
         messages = corps.get("value", [])
         total = corps.get("@odata.count")
 
-    longueur = _budget_apercu(len(messages))
+    longueur = _longueur_apercu(len(messages), apercu)
     resultats = [_fiche_outlook(m, boite, longueur) for m in messages]
     return resultats, (int(total) if total is not None else None)
 
@@ -453,7 +467,8 @@ def _fiche_gmail(m: dict, boite: str, longueur_apercu: int, _entete, _texte_du_m
 
 async def _lire_gmail(boite: str, dossier: str, limite: int,
                       depuis: Optional[datetime], recherche: Optional[str] = None,
-                      avant: Optional[datetime] = None) -> tuple[list[dict], Optional[int]]:
+                      avant: Optional[datetime] = None,
+                      apercu=None) -> tuple[list[dict], Optional[int]]:
     import asyncio
 
     def _travail() -> tuple[list[dict], Optional[int]]:
@@ -467,7 +482,7 @@ async def _lire_gmail(boite: str, dossier: str, limite: int,
             commun["q"] = requete
         liste = service.users().messages().list(maxResults=limite, **commun).execute()
         entrees = liste.get("messages", [])
-        longueur = _budget_apercu(len(entrees))
+        longueur = _longueur_apercu(len(entrees), apercu)
         resultats = []
         for entree in entrees:
             m = service.users().messages().get(
@@ -526,7 +541,8 @@ async def _ouvrir_gmail(boite: str, identifiant: str) -> dict:
 
 
 async def lire_boite(boite: str, dossier: str = "recus",
-                     limite: int = 10, depuis=None, recherche=None, avant=None) -> dict:
+                     limite: int = 10, depuis=None, recherche=None, avant=None,
+                     apercu=None) -> dict:
     """Derniers messages d'une boîte, lus en direct — et leur nombre.
 
     `dossier` : « recus » ou « envoyes ». `depuis` : une période (« 7j »,
@@ -550,10 +566,10 @@ async def lire_boite(boite: str, dossier: str = "recus",
                 ", recherche" if mots else "", nom)
     if nom == "outlook":
         messages, total = await _lire_outlook(boite, DOSSIERS["outlook"][cle], limite, debut,
-                                              recherche=mots, avant=borne)
+                                              recherche=mots, avant=borne, apercu=apercu)
     else:
         messages, total = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite, debut,
-                                            recherche=mots, avant=borne)
+                                            recherche=mots, avant=borne, apercu=apercu)
 
     internes = sum(1 for m in messages if m.get("expediteur_interne"))
     automatiques = sum(1 for m in messages if m.get("expediteur_automatique"))
@@ -600,7 +616,7 @@ async def lire_boite(boite: str, dossier: str = "recus",
         # L'EXTRAIT N'EST PAS LE MESSAGE. Sans cette phrase, le modèle résumait
         # « le mail » à partir de ses 160 premiers caractères, et le disait lu.
         "pour_lire_en_entier": (
-            f"Chaque `apercu` est un EXTRAIT ({_budget_apercu(len(messages))} caractères), "
+            f"Chaque `apercu` est un EXTRAIT ({_longueur_apercu(len(messages), apercu)} caractères), "
             "pas le message. Pour le corps COMPLET et les pièces jointes d'un message : "
             "`lire_mail` avec sa `ref`."),
         "compte": compte,

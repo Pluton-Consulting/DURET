@@ -204,6 +204,11 @@ verifier("journal : « j'ouvre le message »", '"lire_mail": "j\'ouvre le messag
 routines = lire("skills/routines.py")
 verifier("check_mails porte la ref de chaque message", '"ref": _champ(m, "ref")' in routines)
 verifier("check_mails dit d'ouvrir le message si l'extrait ne suffit pas", "ouvre le message" in routines and "`lire_mail`" in routines)
+verifier("check_mails demande SON budget d'extrait (240 à 25 messages, 800 dès 10) et ne coupe plus à 400",
+         '"apercu": apercu' in routines and "[:800]," in routines and "[:400]," not in routines
+         and max(160, min(800, (10500 - 25 * 180) // 25)) == 240 and max(160, min(800, (10500 - 10 * 180) // 10)) == 800)
+verifier("lire_mails transmet `apercu` et lire_boite l'applique (borné 160–800)",
+         'apercu=data.get("apercu")' in skills and "def _longueur_apercu(" in src and "apercu=apercu)" in src)
 verifier("tableau de bord : lire_mail compte comme un mail relevé", lire("routers/tableau.py").count("'lire_mail'") == 2)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")

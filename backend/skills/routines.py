@@ -741,9 +741,18 @@ async def check_mails(data: dict, user) -> dict:
     # si le détail reste borné — c'est la différence entre « 25 mails » et
     # « 84 mails cette semaine, voici les 25 derniers ».
     depuis = data.get("depuis") or data.get("periode") or data.get("jours")
+    # L'EXTRAIT A UN BUDGET (31/08). Le point sur la semaine — analyser,
+    # synthétiser, proposer des réponses — se fait sur le TEXTE des messages :
+    # 160 caractères (le plancher de lire_mails à 25 messages) ne disent pas
+    # s'il y a une question à laquelle répondre. Le relevé d'ici est plus
+    # léger qu'une fiche de lire_mails (~180 caractères hors extrait), et le
+    # résultat est « généreux » (12 000) : on demande la longueur qui remplit
+    # ce budget — 240 pour 25 messages, 520 pour 15, 800 dès 10.
+    apercu = max(160, min(800, (10500 - limite * 180) // limite))
     brut = await lire_mails({"mailbox": data.get("mailbox"),
                              "dossier": data.get("dossier") or "recus",
-                             "limite": limite, "depuis": depuis}, user)
+                             "limite": limite, "depuis": depuis,
+                             "apercu": apercu}, user)
 
     messages = brut.get("messages") or brut.get("mails") or []
     if not isinstance(messages, list):
@@ -773,7 +782,7 @@ async def check_mails(data: dict, user) -> dict:
             "de": _champ(m, "de", "from", "expediteur", "sender"),
             "objet": objet,
             "date": _champ(m, "date", "recu_le", "receivedAt", "received_at"),
-            "extrait": _champ(m, "apercu", "extrait", "preview", "body", "corps")[:400],
+            "extrait": _champ(m, "apercu", "extrait", "preview", "body", "corps")[:800],
             # « Re: » n'est pas un détail : une réponse dans un fil en cours est
             # ce qu'on veut voir en premier quand on fait le point.
             "reponse_dans_un_fil": bool(re.match(r"\s*(re|rép|rep)\s*:", objet, re.I)),

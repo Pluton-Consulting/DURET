@@ -566,7 +566,10 @@ async def lire_mails(data: dict, user) -> dict:
     depuis = data.get("depuis") or data.get("periode") or data.get("jours")
     try:
         return await lire_boite(boite, data.get("dossier") or "recus", limite, depuis=depuis,
-                                recherche=recherche, avant=avant)
+                                recherche=recherche, avant=avant,
+                                # `apercu` : la longueur d'extrait voulue par un
+                                # appelant qui connaît son budget (check_mails).
+                                apercu=data.get("apercu"))
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except Exception as e:  # noqa: BLE001 - une messagerie injoignable n'est pas une panne du chat

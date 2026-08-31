@@ -77,7 +77,12 @@ verifier("le composant reçoit onAction (le même canal que les suggestions)",
          re.search(r'case "reponses_mail":.*?onAction=\{onAction\}', rendu, re.S) is not None)
 composant = (FRONTEND / "components" / "blocks" / "business" / "ReponsesMail.tsx").read_text(encoding="utf-8")
 verifier("cartes horizontales, case par carte, un bouton groupé",
-         "overflowX" in composant and 'type="checkbox"' in composant and "réponse(s) cochée(s)" in composant)
+         # 31/08 : le défilement horizontal vit désormais dans la feuille de style du composant.
+         "overflow-x:auto" in composant and 'type="checkbox"' in composant and "réponse(s) cochée(s)" in composant)
+verifier("chaque réponse est ÉDITABLE : la version corrigée est celle qui part",
+         "<textarea" in composant and "corriger(" in composant and "textes[i].trim()" in composant
+         and "modifiée" in composant)
+verifier("tout cocher / tout décocher existe", "Tout décocher" in composant)
 verifier("le bouton n'envoie RIEN lui-même : il écrit dans le chat, la validation reste",
          "onAction(" in composant and "validation" in composant)
 prompt_ok = '"type":"reponses_mail"' in agent1_src and "reponses_mail" in agent1_src.split("COMPOSANTS VISUELS")[1][:6000]

@@ -195,7 +195,9 @@ MAX_FORCAGES_PAR_TOUR = 2
 # Puis la recherche documentaire (jusqu'à 20 documents par page, extraits
 # fenêtrés) et les enregistrements filtrés (25 par page) : une page qui ne
 # passe pas entière est une page qu'on redemande.
-RESULTATS_GENEREUX = {"drive_arborescence", "nas_arborescence",
+RESULTATS_GENEREUX = {"drive_chercher", "nas_chercher", "drive_apercu",
+                      "nas_apercu", "preparer_envois",
+                      "drive_arborescence", "nas_arborescence",
                       "lire_mails", "lire_mail", "check_mails",
                       "rechercher_documents", "interroger_donnees"}
 PLAFOND_RESULTAT = 4000
@@ -1166,20 +1168,35 @@ async def tools_node(state: AgentState, config=None) -> dict:
             trigger={"type": state.get("trigger_kind") or "chat",
                      "id": state.get("thread_id")},
         )
+        sortie = brut.get("output")
+        # LE BLOC GARANTI NE PASSE PAS PAR LA COUPE (01/09). Le résultat est
+        # tranché pour le modèle ; or un tableau de 40 lignes ou 40 cartes de
+        # publipostage pèse 12 000 à 14 000 caractères et tombe au milieu de ce
+        # JSON. `_blocs_garantis` ne sait alors plus le relire, et l'écran
+        # n'affiche RIEN — sans la moindre erreur, alors que le skill a réussi
+        # et que sa consigne interdit au modèle de recopier le contenu. On met
+        # donc le bloc DE CÔTÉ avant de couper, et on le masque à part.
+        bloc_garanti = (sortie.get("bloc_ui")
+                        if isinstance(sortie, dict) and sortie.get("bloc_garanti")
+                        else None)
         plafond = (PLAFOND_RESULTAT_GENEREUX
                    if action["skill"] in RESULTATS_GENEREUX else PLAFOND_RESULTAT)
-        contenu = _json.dumps(brut.get("output"), ensure_ascii=False,
-                              default=str)[:plafond]
+        contenu = _json.dumps(sortie, ensure_ascii=False, default=str)[:plafond]
         ok = True
     except SkillError as e:
-        contenu, ok = f"ERREUR : {e}", False
+        contenu, ok, bloc_garanti = f"ERREUR : {e}", False, None
     except Exception as e:  # noqa: BLE001 - inclut le 403 de verifier_acces
-        contenu, ok = f"ERREUR : {getattr(e, 'detail', None) or e}", False
+        contenu, ok, bloc_garanti = f"ERREUR : {getattr(e, 'detail', None) or e}", False, None
 
     # Le résultat repart vers le modèle : il doit être masqué, avec la carte
     # cumulative du fil pour que les jetons restent cohérents.
+    # Le bloc garanti est masqué DANS LE MÊME APPEL : une carte de jetons
+    # séparée ferait diverger [PER_1] du texte et du bloc.
     masques, carte_maj = await asyncio.to_thread(
-        anonymizer.anonymize_chunks, [contenu], state.get("entity_map") or {})
+        anonymizer.anonymize_chunks,
+        [contenu, _json.dumps(bloc_garanti, ensure_ascii=False, default=str)
+         if bloc_garanti else ""],
+        state.get("entity_map") or {})
     # `args` accompagne le resultat POUR L'ECRAN, pas pour le modele : c'est ce
     # qui permet au journal d'activite de dire « je regarde le dossier :
     # Chantiers/2026 » au lieu de « je regarde le dossier ». Seuls des reperes
@@ -1187,7 +1204,9 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # ce champ n'est pas reinjecte dans le prompt : il ne coute aucun jeton.
     resultats.append({"skill": action["skill"], "ok": ok, "payload_hash": empreinte,
                       "args": action.get("args") or {},
-                      "resultat_masque": masques[0]})
+                      "resultat_masque": masques[0],
+                      # Hors de la coupe : c'est lui qui garantit l'affichage.
+                      "bloc_garanti_masque": (masques[1] or None) if len(masques) > 1 else None})
     # UNE ACTION A ABOUTI : le drapeau de relance retombe, pour que le modele
     # puisse etre repris s'il cale de nouveau plus loin.
     #
@@ -1908,6 +1927,14 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
     for r in state.get("tool_results") or []:
         if not isinstance(r, dict) or not r.get("ok"):
             continue
+        # LA VOIE SÛRE D'ABORD : le bloc mis de côté avant la coupe.
+        direct = r.get("bloc_garanti_masque")
+        if direct:
+            try:
+                garantis.extend(_blocs_de(_j.loads(direct)))
+                continue
+            except ValueError:
+                pass                      # on retombe sur la lecture du résultat
         brut = str(r.get("resultat_masque") or "")
         i = brut.find("{")
         if i < 0:
@@ -1946,7 +1973,12 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
             elif v not in (None, ""):
                 feuilles.add(str(v).strip().lower())
 
-        _cueillir({k: v for k, v in bloc.items() if k != "type"})
+        # STRUCTURE ≠ CONTENU (01/09). `columns` et `titre` sont la CHARPENTE :
+        # deux tableaux sans rapport partagent « Nom » et « Type » sans parler de
+        # la même chose, et le seuil se calcule sur le plus PETIT des deux — un
+        # tableau légitime de trois lignes s'effaçait alors, sans être remplacé.
+        _cueillir({k: v for k, v in bloc.items()
+                   if k not in ("type", "titre", "sous_titre", "columns", "colonnes")})
         return feuilles
 
     def _copie_du_garanti(bloc: dict) -> bool:

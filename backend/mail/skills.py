@@ -531,9 +531,18 @@ async def _boite_a_lire(data: dict, user) -> str:
     # donc pas de boîte propre à lire : on prend la boîte de l'entreprise si
     # elle est connue, plutôt que d'échouer sur une adresse qui n'existe pas
     # dans le tenant.
-    visibles = await boites_visibles(user)
-    if visibles:
-        return visibles[0]
+    # UNE BOÎTE QUE PERSONNE N'A NOMMÉE NE S'OUVRE PAS (01/09). `boites_visibles`
+    # rend TOUTES les boîtes connues à un super_admin ou à la direction : en
+    # prendre la première reviendrait à lire — et, via `envoyer_email`, à ÉCRIRE —
+    # au nom d'un collègue que personne n'a désigné, la carte de validation ne
+    # montrant même pas l'expéditeur quand `mailbox` est absent. Une boîte
+    # DÉLÉGUÉE, elle, a été nommée une fois par un humain : c'est le seul repli
+    # légitime, et seulement s'il n'y en a qu'une (sinon on ne devine pas).
+    from mail.authorization import boites_par_id
+    deleguees = [x for x in await boites_par_id(str(getattr(user, "id", "") or ""))
+                 if x and x != "*" and x != propre]
+    if len(deleguees) == 1:
+        return deleguees[0]
     raise MailSkillError(
         "Aucune boîte à lire : votre compte "
         f"({propre or 'sans adresse'}) n'appartient pas au domaine de messagerie"

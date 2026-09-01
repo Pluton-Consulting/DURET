@@ -130,6 +130,10 @@ def garantir_apercu(resultat: dict, quoi: str) -> dict:
     if noms:
         blocs.append({"type": "list", "items": noms[:60]})
 
+    # Les noms des sous-dossiers sont déjà dans le bloc : les laisser AUSSI
+    # dans le résultat doublait son poids et le poussait au-delà de la coupe.
+    resultat.pop("detail", None)
+    resultat.pop("emplacements", None)
     resultat["bloc_ui"] = blocs
     resultat["bloc_garanti"] = True
     resultat["message_final"] = (f"{quoi} : {total_d} sous-dossier(s) et "
@@ -173,6 +177,9 @@ def garantir_recherche(resultat: dict, motif: str) -> dict:
                            "titre": f"Recherche — {motif}",
                            "columns": ["Nom", "Type", "Emplacement"],
                            "rows": lignes}
+    # Mêmes données que `rows` : on ne les rend pas deux fois (cf. le `schema`
+    # de l'arborescence, retiré pour la même raison).
+    resultat.pop("resultats", None)
     resultat["bloc_garanti"] = True
     pages = int(resultat.get("pages") or 1)
     resultat["message_final"] = (

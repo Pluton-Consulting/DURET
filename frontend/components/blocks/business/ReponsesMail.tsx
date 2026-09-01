@@ -26,7 +26,7 @@ type Reponse = { ref?: string; de?: string; objet?: string; reponse?: string
   // juger la réponse sans rouvrir le message. 31/08, demande de Noa.
   synthese?: string; resume?: string }
 
-type Props = {
+type Props = { titre?: string;
   reponses: Reponse[]
   onAction?: (message: string) => void
 }
@@ -36,7 +36,7 @@ function initiale(de?: string): string {
   return (m.replace(/[<>"']/g, "").trim()[0] || "@").toUpperCase()
 }
 
-export function ReponsesMail({ reponses, onAction }: Props) {
+export function ReponsesMail({ titre, reponses, onAction }: Props) {
   const valides = useMemo(() => (reponses || []).filter((r) => r && (r.reponse || "").trim()), [reponses])
   const [choisies, setChoisies] = useState<boolean[]>(() => valides.map(() => true))
   const [textes, setTextes] = useState<string[]>(() => valides.map((r) => (r.reponse || "").trim()))
@@ -111,6 +111,10 @@ export function ReponsesMail({ reponses, onAction }: Props) {
         .sym-rm-note{ font-size:12px; color:var(--marque-text-muted); }
       `}</style>
 
+      {titre && (
+        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)",
+                      marginBottom: 8 }}>{titre}</div>
+      )}
       <div className="sym-rm-rail">
         {valides.map((r, i) => {
           const modifiee = textes[i].trim() !== (r.reponse || "").trim()

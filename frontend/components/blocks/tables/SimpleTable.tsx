@@ -1,15 +1,22 @@
 import { md } from "../text/inline"
 /** Tableau simple (colonnes + lignes), en-tête coloré. */
 export function SimpleTable({
+  titre,
   columns = ["Poste", "Quantité", "Unité", "P.U. HT"],
   rows = [
     ["Ragréage P3", "120", "m²", "18,00 €"],
     ["Carrelage 60×60", "120", "m²", "45,00 €"],
     ["Plinthes", "85", "ml", "12,00 €"],
   ],
-}: { columns?: string[]; rows?: (string | number)[][] }) {
+}: { titre?: string; columns?: string[]; rows?: (string | number)[][] }) {
   return (
     <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: "min(var(--bloc-largeur), 100%)" }}>
+      {titre && (
+        <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--marque-border)",
+                      fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+          {titre}
+        </div>
+      )}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
           <tr>{columns.map((c, i) => (

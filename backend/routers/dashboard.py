@@ -177,7 +177,10 @@ async def get_agents_activity(current_user: User = Depends(get_current_user)):
     `audit_log` : nombre de requêtes, succès/échecs, tokens totaux (in + out),
     coût total et durée moyenne d'exécution.
     """
-    _exiger(current_user.role, "view_dashboard_global")
+    # ADMINISTRATION SYSTÈME (01/09) : l'onglet « États des agents » a été retiré
+    # à la direction, et l'écran Superviseur — seul autre appelant — est déjà
+    # réservé au super_admin. Masquer un écran ne ferme pas son API.
+    _exiger(current_user.role, "manage_system")
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
         rows = await conn.fetch("""
             SELECT agent_id,
@@ -453,7 +456,11 @@ async def get_pilotage(current_user: User = Depends(get_current_user)):
             FROM users u
             LEFT JOIN api_usage_daily d
                    ON d.user_id = u.id AND d.date >= CURRENT_DATE - INTERVAL '30 days'{_plancher('d.date')}
+            -- MÊME RÈGLE QUE list_users (01/09) : la direction ne voit pas les
+            -- super_admin, ici non plus. Un filtre posé à un seul endroit est un
+            -- rideau, pas un mur — ce tableau rend nom, e-mail et rôle.
             WHERE COALESCE(u.actif, true)
+              AND ({'true' if current_user.role == 'super_admin' else "u.role <> 'super_admin'"})
             GROUP BY u.id, u.name, u.email, u.role
             ORDER BY requetes DESC, u.email
         """)

@@ -19,7 +19,9 @@ class QuotaUpdateRequest(BaseModel):
 
 @router.get("/quotas")
 async def get_quotas(current_user: User = Depends(get_current_user)):
-    if not has_permission(current_user.role, "view_costs_global"):
+    # Même raison : l'onglet « Quotas » est réservé au super_admin, et l'écriture
+    # exigeait déjà `manage_system`. La lecture s'aligne.
+    if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
 
     async with get_db() as conn:

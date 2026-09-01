@@ -10,10 +10,12 @@ Principes de conception :
     utilisateur sans email) refuse l'accès. Jamais de repli permissif.
   * UN SEUL point de vérification (`verifier_acces`) : toute fonction touchant
     au mail doit l'appeler. Aucun contournement possible ailleurs.
-  * Les rôles d'administration ne contournent PAS la règle d'identité d'envoi.
-    Un super_admin peut GÉRER les délégations ; il ne peut pas pour autant
-    écrire au nom d'autrui sans s'être délégué la boîte. L'usurpation reste
-    tracée dans `user_mailboxes` : c'est une décision, pas un effet de bord.
+  * DEUX rôles contournent la délégation : `super_admin` et `direction` (cf.
+    ROLES_ACCES_SUR_DEMANDE). Ils lisent, ET ÉCRIVENT AU NOM DE, toute boîte
+    qu'ils NOMMENT explicitement — sans délégation préalable, `can_send` non
+    consulté. Leur DÉFAUT, lui, reste leur propre boîte (`boites_par_id`), et
+    chaque usage du contournement est tracé dans `audit_log`. Tous les autres
+    rôles restent strictement bornés par `user_mailboxes`.
   * Comparaison insensible à la casse et aux espaces (les adresses arrivent de
     sources hétérogènes : Graph, saisie manuelle, base).
 """
@@ -43,8 +45,10 @@ class AccesBoiteRefuse(HTTPException):
 # délégations — c'est ce qui empêche un employé d'écrire au nom d'un collègue.
 # Chaque usage de ce contournement est journalisé.
 ROLES_ACCES_SUR_DEMANDE = {"super_admin", "direction"}
-# Alias conservé : d'anciens appels ou sondes peuvent encore le lire.
-ROLE_ACCES_TOTAL = "super_admin"
+# ⚠ DÉPRÉCIÉ (01/09) : ce n'est plus UN rôle mais un ENSEMBLE. Un contrôle
+# écrit `if role == ROLE_ACCES_TOTAL` serait silencieusement faux pour la
+# direction — utiliser `acces_total(role)`. Conservé pour les sondes externes.
+ROLE_ACCES_TOTAL = ROLES_ACCES_SUR_DEMANDE
 
 # Jeton signifiant « toutes les boîtes », consommé par le filtrage RAG.
 TOUTES_LES_BOITES = "*"
@@ -78,9 +82,12 @@ async def delegations(user_id: str) -> list[dict]:
 
 async def boites_autorisees(user) -> list[dict]:
     """Toutes les boîtes accessibles : la sienne (envoi permis) + les délégations."""
-    if acces_total(getattr(user, "role", None)):
-        return [{"mailbox": TOUTES_LES_BOITES, "can_send": True, "propre": False,
-                 "libelle": "Toutes les boîtes (sur demande explicite, journalisé)"}]
+    # PAS DE JETON « TOUTES LES BOÎTES » ICI (01/09). Ce jeton est lu ailleurs
+    # comme un blanc-seing (filtrage RAG), alors que le DÉFAUT de ces rôles est
+    # désormais leur propre boîte. On rend donc les boîtes RÉELLES, et on dit à
+    # part que ce rôle peut en demander une autre — c'est une capacité, pas un
+    # accès déjà ouvert.
+    elargi = acces_total(getattr(user, "role", None))
 
     propre = normaliser(getattr(user, "email", None))
     boites: list[dict] = []
@@ -90,6 +97,13 @@ async def boites_autorisees(user) -> list[dict]:
     for d in await delegations(str(user.id)):
         if d["mailbox"] != propre:                 # la sienne prime, jamais dupliquée
             boites.append({**d, "propre": False})
+    if elargi:
+        # La capacité se DIT, elle ne s'exerce qu'en nommant une boîte.
+        for x in boites:
+            x.setdefault("sur_demande", False)
+        boites.append({"mailbox": None, "can_send": True, "propre": False,
+                       "sur_demande": True,
+                       "libelle": "Toute autre boîte, sur demande explicite (journalisé)"})
     return boites
 
 
@@ -138,6 +152,18 @@ async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> s
         # une trace, même s'il est légitime.
         logger.info("Accès administrateur à la boîte %s par %s (envoi=%s)",
                     cible, user.id, envoi)
+        # ET DANS LA BASE : un `logger.info` part avec la rotation Docker. Depuis
+        # que ce contournement couvre la direction ET autorise l'envoi au nom
+        # d'un tiers, la trace doit se relire dans la Console superviseur.
+        try:
+            import asyncio
+            from security.audit import log_action
+            asyncio.create_task(log_action(
+                action="mailbox_admin_access", user_id=str(user.id), success=True,
+                metadata={"mailbox": cible, "envoi": bool(envoi),
+                          "role": getattr(user, "role", None)}))
+        except Exception:  # noqa: BLE001 - une trace absente ne bloque pas l'accès
+            pass
         return cible
 
     propre = normaliser(getattr(user, "email", None))

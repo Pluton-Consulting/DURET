@@ -1832,6 +1832,71 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     return texte
 
 
+def _blocs_garantis(texte: str, state: AgentState) -> str:
+    """Les blocs qu'un skill GARANTIT à l'écran, que le modèle les recopie ou non.
+
+    Pendant de `_livrables_a_l_ecran` pour les blocs SANS référence (l'arbre
+    des dossiers, l'aperçu compté d'un dossier). Relevé le 01/09 : le modèle
+    devait recopier le `schema` de l'arborescence ; il a inventé à la place
+    une carte de document quasi vide (« TXT — Arborescence du Drive »), et
+    l'utilisateur n'a rien eu à lire. Un résultat qui porte `bloc_garanti`
+    voit donc ses blocs AJOUTÉS au texte s'ils n'y sont pas déjà (même
+    signature), et la carte de document inventée qui les désigne est effacée.
+    Trois gestes légitimes d'un garde-fou (règle de Noa) : effacer, restituer
+    la sortie d'un skill, forcer — jamais une phrase écrite en dur.
+    """
+    import json as _j
+    garantis: list[dict] = []
+    for r in state.get("tool_results") or []:
+        if not isinstance(r, dict) or not r.get("ok"):
+            continue
+        brut = str(r.get("resultat_masque") or "")
+        i = brut.find("{")
+        if i < 0:
+            continue
+        try:
+            d = _j.loads(brut[i:])
+        except ValueError:
+            continue
+        if not isinstance(d, dict) or not d.get("bloc_garanti"):
+            continue
+        garantis.extend(_blocs_de(d.get("bloc_ui")))
+    if not garantis:
+        return texte
+
+    def _retirer(m):
+        try:
+            bloc = _j.loads(m.group(1))
+        except ValueError:
+            return m.group(0)
+        # Une carte de document SANS url qui désigne un bloc garanti est la
+        # signature exacte du défaut relevé : le vrai contenu la remplace.
+        if (isinstance(bloc, dict) and bloc.get("type") in ("doc", "doc_apercu")
+                and not bloc.get("url") and _designe_le_meme(bloc, garantis)):
+            _tracer_filet(state, "invention_effacee", "carte_au_lieu_du_bloc_garanti",
+                          bloc=str(bloc.get("titre") or bloc.get("name")
+                                   or bloc.get("nom") or "")[:60])
+            return ""
+        return m.group(0)
+
+    texte = _BLOC_UI_RE.sub(_retirer, texte).strip()
+    presentes: set[str] = set()
+    for brut in _BLOC_UI_RE.findall(texte):
+        try:
+            bloc = _j.loads(brut)
+        except ValueError:
+            continue
+        if isinstance(bloc, dict):
+            presentes.add(_signature_bloc(bloc))
+    for bloc in garantis:
+        if _signature_bloc(bloc) in presentes:
+            continue
+        _tracer_filet(state, "livrable_restitue", "bloc_garanti_absent",
+                      type=str(bloc.get("type") or ""))
+        texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()
+    return texte
+
+
 def _montre_un_fichier_du_fil(texte: str, state) -> bool:
     """La réponse remontre-t-elle un VRAI fichier de la conversation ?
 
@@ -1944,6 +2009,10 @@ async def rehydrate_node(state: AgentState) -> dict:
     # — c'est ainsi que le tour suivant retrouve le vrai fichier (URL et nom,
     # aucune donnée personnelle) au lieu d'en réinventer une vignette.
     text = _livrables_a_l_ecran(text, state)
+    # Les blocs GARANTIS par les skills (arborescence, aperçu d'un dossier)
+    # s'affichent aussi, recopiés par le modèle ou non — et la carte de
+    # document inventée à leur place s'efface (01/09).
+    text = _blocs_garantis(text, state)
     # Et un même CONTENU ne s'affiche qu'une fois par message (31/08 : « deux
     # composants visuels différents pour le même contenu »).
     text = _dedoublonner_blocs(text)

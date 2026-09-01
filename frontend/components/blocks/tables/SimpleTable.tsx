@@ -9,7 +9,7 @@ export function SimpleTable({
   ],
 }: { columns?: string[]; rows?: (string | number)[][] }) {
   return (
-    <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: 480 }}>
+    <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
           <tr>{columns.map((c, i) => (

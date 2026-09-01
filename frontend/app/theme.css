@@ -46,6 +46,12 @@
 /* ── Ce que shadcn/ui, AI Elements et Extend UI vont lire ──────────────
    Les noms sont imposés par shadcn ; les valeurs viennent de la charte. */
 :root {
+  /* LA LARGEUR COMMUNE DES BLOCS DU CHAT (01/09). Chaque composant portait la
+     sienne en dur (320, 380, 460, 640…) : un message à plusieurs blocs était
+     un escalier. Un seul jeton, STRUCTUREL donc ici et pas dans charte.css,
+     que tous les blocs consomment via maxWidth: min(var(--bloc-largeur), 100%). */
+  --bloc-largeur: 620px;
+
   --background:             var(--marque-canvas);
   --foreground:             var(--marque-text-primary);
 

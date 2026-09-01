@@ -4,7 +4,7 @@ import { useState } from "react"
 export function Tabs({ tabs = ["Résumé", "Lignes", "Documents", "Historique"] }: { tabs?: string[] }) {
   const [active, setActive] = useState(0)
   return (
-    <div style={{ maxWidth: 400 }}>
+    <div style={{ maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--marque-border)" }}>
         {tabs.map((t, i) => {
           const on = i === active

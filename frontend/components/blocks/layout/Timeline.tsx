@@ -10,7 +10,7 @@ export function Timeline({
   ] as Step[],
 }: { steps?: Step[] }) {
   return (
-    <div style={{ maxWidth: 320, paddingLeft: 4 }}>
+    <div style={{ maxWidth: "min(var(--bloc-largeur), 100%)", paddingLeft: 4 }}>
       {steps.map((s, i) => (
         <div key={i} style={{ display: "grid", gridTemplateColumns: "20px 1fr", gap: 12, position: "relative", paddingBottom: i < steps.length - 1 ? 20 : 0 }}>
           {i < steps.length - 1 && <span style={{ position: "absolute", left: 9, top: 18, bottom: 0, width: 2, background: s.done ? "var(--marque-primary-mid)" : "var(--marque-border)" }} />}

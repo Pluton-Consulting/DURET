@@ -31,24 +31,40 @@ async def _garde_nas(user):
 # ── Serveur de fichiers ──────────────────────────────────────────────
 
 async def nas_apercu(data: dict, user) -> dict:
-    """Compte et classe le contenu d'un dossier, sans en lister le détail."""
+    """Compte et classe le contenu d'un dossier, sans en lister le détail.
+
+    Le résumé s'affiche en blocs MÉCANIQUES (fiche + noms des sous-dossiers) :
+    relevé le 01/09 sur le projet jumeau, laissé au modèle, l'aperçu devenait
+    une carte de document inventée aux lignes vides.
+    """
     from outils.nas import apercu
+    from skills.affichage import garantir_apercu
     await _garde_nas(user)
+    chemin = (data.get("chemin") or "").strip()
     try:
-        return await apercu((data.get("chemin") or "").strip() or None)
+        resultat = await apercu(chemin or None)
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
+    return garantir_apercu(resultat, f"« {chemin} »" if chemin else "le serveur")
 
 
 async def nas_arborescence(data: dict, user) -> dict:
-    """L'arbre du serveur — complet si aucun chemin n'est précisé — en un appel."""
+    """L'arbre du serveur — complet si aucun chemin n'est précisé — en un appel.
+
+    L'arbre s'affiche par un bloc MÉCANIQUE (`arbre`) : demander au modèle de
+    recopier le `schema` produisait une carte de document inventée, sans rien
+    dedans (relevé le 01/09 sur le projet jumeau).
+    """
     from outils.nas import arborescence
+    from skills.affichage import garantir_arborescence
     await _garde_nas(user)
+    chemin = (data.get("chemin") or "").strip()
     try:
-        return await arborescence((data.get("chemin") or "").strip() or None,
-                                  data.get("profondeur") or 0)
+        resultat = await arborescence(chemin or None, data.get("profondeur") or 0)
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
+    return garantir_arborescence(
+        resultat, f"du dossier « {chemin} »" if chemin else "du serveur")
 
 
 async def nas_ouvrir(data: dict, user) -> dict:
@@ -155,9 +171,10 @@ SKILLS = {
             "COMPTE et resume un dossier du serveur : combien de dossiers, de "
             "fichiers, de quels types. LE SERVEUR, LE NAS, LE RESEAU, LES "
             "PARTAGES et SYNOLOGY designent la meme chose. A utiliser des "
-            "qu'on demande un NOMBRE ou « ce qu'il y a dans ». `chemin` "
-            "accepte le NOM du dossier (ex. « Drive »), pas besoin du chemin "
-            "exact"),
+            "qu'on demande un NOMBRE ou « ce qu'il y a dans ». Le resume "
+            "S'AFFICHE AUTOMATIQUEMENT dans le chat : n'en fais jamais un "
+            "document. `chemin` accepte le NOM du dossier, pas besoin du "
+            "chemin exact"),
         optionnels=["chemin"],
         effet="lecture",
         libelle="je regarde ce que contient le dossier"),
@@ -165,7 +182,8 @@ SKILLS = {
         fonction=nas_arborescence,
         description=("ARBRE COMPLET du serveur en UNE action : sans `chemin`, "
                      "TOUS les partages ouverts y passent, avec les comptes. "
-                     "Rend `schema` : recopie-le TEL QUEL dans un bloc ```. "
+                     "L'arbre S'AFFICHE AUTOMATIQUEMENT dans le chat : ne le "
+                     "recopie pas, n'en fais jamais un document. "
                      "`chemin` (NOM accepte) limite a un sous-arbre"),
         optionnels=["chemin", "profondeur"],
         effet="lecture",

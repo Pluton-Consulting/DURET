@@ -16,7 +16,7 @@ export function StatusTable({
   ] as Row[],
 }: { columns?: string[]; rows?: Row[] }) {
   return (
-    <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: 440 }}>
+    <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>{columns.map((c, i) => (
           <th key={i} style={{ textAlign: "left", padding: "10px 14px", background: "var(--marque-primary-subtle)", color: "var(--marque-text-muted)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 700 }}>{c}</th>

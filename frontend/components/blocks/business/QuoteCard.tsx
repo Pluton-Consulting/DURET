@@ -154,7 +154,7 @@ export function QuoteCard({
 /** La carte compacte d'origine, inchangée : un devis qu'on cite, pas qu'on lit. */
 function Resume({ id, client, st, total, lines }: any) {
   return (
-    <div style={{ ...cadre, maxWidth: 480 }}>
+    <div style={{ ...cadre, maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <div style={{ ...entete, padding: "15px 18px" }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-.2px" }}>Devis {id}</div>

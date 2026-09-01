@@ -10,7 +10,7 @@ export function BarChart({
 }: { data?: D[]; height?: number }) {
   const max = Math.max(...data.map((d) => d.value)) || 1
   return (
-    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", padding: 18, maxWidth: 420 }}>
+    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", padding: 18, maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 12, height }}>
         {data.map((d, i) => (
           <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 7, height: "100%", justifyContent: "flex-end" }}>

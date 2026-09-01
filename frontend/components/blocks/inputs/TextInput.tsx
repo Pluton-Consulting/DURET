@@ -1,7 +1,7 @@
 /** Champ de saisie avec libellé (focus = couleur de marque). */
 export function TextInput({ label = "Référence chantier", placeholder = "ex. CH-2024-08" }: { label?: string; placeholder?: string }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, maxWidth: 300 }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <span style={{ fontWeight: 600, color: "var(--marque-text-primary)" }}>{label}</span>
       <input
         placeholder={placeholder}

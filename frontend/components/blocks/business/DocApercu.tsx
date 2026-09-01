@@ -48,7 +48,7 @@ export function DocApercu({ titre, format = "docx", extrait = "", pages }:
     <div style={{
       background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
       borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)",
-      maxWidth: 460, width: "100%", overflow: "hidden",
+      maxWidth: "min(var(--bloc-largeur), 100%)", width: "100%", overflow: "hidden",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: "1px solid var(--marque-border)" }}>
         <span style={{

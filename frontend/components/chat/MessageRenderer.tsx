@@ -10,7 +10,7 @@ import {
   ReponsesMail,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
-  Callout, StatTile, Badge, BulletList, PlanEtapes,
+  Callout, StatTile, Badge, BulletList, PlanEtapes, Arbre,
 } from "@/components/blocks"
 
 // Une réponse de l'IA = du texte, avec éventuellement des composants intercalés
@@ -164,6 +164,8 @@ const REQUIRED: Record<string, string[]> = {
   gauge: ["value"],
   stat: ["label", "value"],
   list: ["items"],
+  // Un arbre sans schéma n'a rien à montrer.
+  arbre: ["schema"],
   badge: ["text"],
   callout: ["text"],
   quick_replies: ["options"],
@@ -227,7 +229,7 @@ function FichierAvecApercu({ bloc, acces }: {
   if (ouvert) vuUneFois.current = true
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 620, width: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: "min(var(--bloc-largeur), 100%)", width: "100%" }}>
       <FileCard {...bloc} {...acces} />
       {detecte && (
         <>
@@ -303,6 +305,9 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "gauge":         return <Gauge {...p} />
     case "stat":          return <StatTile {...p} />
     case "list":          return <BulletList {...p} />
+    // L'arborescence mécanique du Drive ou du serveur (01/09) : le backend
+    // construit le bloc, le modèle n'a rien à recopier.
+    case "arbre":         return <Arbre titre={p.titre} sous_titre={p.sous_titre} schema={p.schema} />
     case "plan":          return <PlanEtapes {...p} />
     case "badge":         return <Badge tone={p.tone}>{p.text}</Badge>
     case "callout":       return <Callout tone={p.tone} title={p.title}>{md(p.text)}</Callout>

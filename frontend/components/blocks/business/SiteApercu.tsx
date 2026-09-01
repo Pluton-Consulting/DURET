@@ -35,7 +35,7 @@ export function SiteApercu({
 
   return (
     <a href={url} target="_blank" rel="noopener noreferrer" className="sym-card sym-tap"
-       style={{ display: "block", maxWidth: 560, borderRadius: "var(--marque-radius-card)", overflow: "hidden",
+       style={{ display: "block", maxWidth: "min(var(--bloc-largeur), 100%)", borderRadius: "var(--marque-radius-card)", overflow: "hidden",
                 background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
                 boxShadow: "var(--marque-shadow-card)", textDecoration: "none", color: "inherit" }}>
       <div style={{ position: "relative", aspectRatio: "16 / 10", background: "var(--marque-primary-subtle)", overflow: "hidden" }}>

@@ -314,7 +314,8 @@ async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dic
     chaque dossier coûtant une requête au serveur. Les plafonds — dossiers ET
     temps — rendent un arbre PARTIEL et le disent, jamais un arbre faux.
 
-    Le résultat porte `schema` : l'arbre en texte, à recopier tel quel.
+    Le résultat porte `schema` : l'arbre en texte. La couche skill le
+    transforme en bloc d'écran mécanique (`skills/affichage.py`).
     """
     import asyncio
     import time as _t
@@ -409,7 +410,7 @@ async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dic
     if sortie["complet"]:
         sortie["note"] = (
             "ARBORESCENCE COMPLÈTE : tous les dossiers y sont, comptes exacts. "
-            "Recopie le `schema` TEL QUEL dans un bloc ```. Ne relance PAS "
+            "Elle est déjà affichée à l'écran. Ne relance PAS "
             "l'exploration, il n'y a rien de plus à trouver.")
     else:
         morceaux = []

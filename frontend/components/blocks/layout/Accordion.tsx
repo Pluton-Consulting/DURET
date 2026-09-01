@@ -12,7 +12,7 @@ export function Accordion({
 }: { items?: Item[] }) {
   const [open, setOpen] = useState(0)
   return (
-    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden", maxWidth: 400 }}>
+    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden", maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       {items.map((it, i) => {
         const on = i === open
         return (

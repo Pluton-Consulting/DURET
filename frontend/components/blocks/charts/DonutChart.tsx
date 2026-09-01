@@ -37,7 +37,7 @@ export function DonutChart({
     return `${teinte(s, i)} ${from}deg ${to}deg`
   }).join(", ")
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 22, background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", padding: 18, maxWidth: 380 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 22, background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", padding: 18, maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <div style={{ width: 108, height: 108, borderRadius: "50%", background: `conic-gradient(${stops})`, flexShrink: 0, display: "grid", placeItems: "center" }}>
         <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--marque-surface)", display: "grid", placeItems: "center", fontSize: 13, fontWeight: 800, color: "var(--marque-text-primary)" }}>100%</div>
       </div>

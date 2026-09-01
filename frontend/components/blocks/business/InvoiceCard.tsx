@@ -12,7 +12,7 @@ export function InvoiceCard({
 }: { number?: string; client?: string; amount?: string; issued?: string; due?: string; status?: Status }) {
   const st = STATUS[status]
   return (
-    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 20, maxWidth: 380 }}>
+    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 20, maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--marque-text-muted)" }}>Facture {number}</div>

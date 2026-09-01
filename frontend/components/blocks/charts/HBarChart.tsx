@@ -10,7 +10,7 @@ export function HBarChart({
 }: { data?: D[]; unit?: string }) {
   const max = Math.max(...data.map((d) => d.value)) || 1
   return (
-    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", padding: 18, display: "flex", flexDirection: "column", gap: 12, maxWidth: 380 }}>
+    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", padding: 18, display: "flex", flexDirection: "column", gap: 12, maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       {data.map((d, i) => (
         <div key={i}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 5 }}>

@@ -146,7 +146,7 @@ export function VisuelPaysager({
   }
 
   return (
-    <div className="sym-card" style={{ maxWidth: 640, borderRadius: "var(--marque-radius-card)", overflow: "hidden",
+    <div className="sym-card" style={{ maxWidth: "min(var(--bloc-largeur), 100%)", borderRadius: "var(--marque-radius-card)", overflow: "hidden",
                                         background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
                                         boxShadow: "var(--marque-shadow-card)" }}>
       <div style={{ padding: "12px 16px 10px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>

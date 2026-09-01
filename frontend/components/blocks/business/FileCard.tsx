@@ -66,7 +66,7 @@ export function FileCard({ url, nom, format, octets, apiUrl, backendToken }: Pro
     <div style={{
       display: "flex", alignItems: "center", gap: 12, padding: 12,
       border: "1px solid var(--marque-border)", borderRadius: 10,
-      background: "var(--marque-surface)", margin: "8px 0", maxWidth: 460,
+      background: "var(--marque-surface)", margin: "8px 0", maxWidth: "min(var(--bloc-largeur), 100%)",
     }}>
       <div style={{
         width: 40, height: 40, borderRadius: 8, background: couleur,

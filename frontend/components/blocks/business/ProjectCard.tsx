@@ -1,7 +1,7 @@
 /** Carte CHANTIER / projet (avancement + statut). */
 export function ProjectCard({ name = "Résidence Les Tilleuls", client = "SCI Dupont", progress = 62, status = "En cours" }: { name?: string; client?: string; progress?: number; status?: string }) {
   return (
-    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 18, maxWidth: 320 }}>
+    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", padding: 18, maxWidth: "min(var(--bloc-largeur), 100%)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>{name}</div>

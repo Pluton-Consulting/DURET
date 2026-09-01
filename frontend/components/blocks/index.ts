@@ -5,6 +5,7 @@ export * from "./text/Heading"
 export * from "./text/RichText"
 export * from "./text/Callout"
 export * from "./text/BulletList"
+export * from "./text/Arbre"
 
 export * from "./buttons/PrimaryButton"
 export * from "./buttons/GhostButton"

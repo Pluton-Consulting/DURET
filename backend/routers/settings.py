@@ -317,9 +317,28 @@ async def modeles_disponibles(current_user: User = Depends(get_current_user)):
     from llm.router import catalogue_modeles
     from llm.reglages import rafraichir, texte
     await rafraichir(force=True)
+    from config import settings as _s
     return {"modele_rapide": texte("modele_rapide"),
             "modele_puissant": texte("modele_puissant"),
+            "modele_vision": texte("modele_vision"),
+            "modele_embedding": texte("modele_embedding"),
             "llm_tete": texte("llm_tete"),
+            # LA GÉNÉRATION D'IMAGES SE MONTRE, ELLE NE SE CHOISIT PAS.
+            # Décision de Noa : « la génération d'image, je veux que ça reste
+            # Nano Banana Pro avec Google AI ». L'écran l'affiche pour qu'on
+            # sache ce qui tire les visuels — ne rien montrer laisserait croire
+            # que rien ne s'en occupe — mais aucune route ne permet d'en
+            # changer, et c'est voulu.
+            "modele_image": {
+                "fournisseur": "google",
+                "modele": getattr(_s, "model_nano_banana", "") or "nano-banana-pro",
+                "verrouille": True,
+                "raison": "choix arrêté : un rendu montré à un client ne doit "
+                          "pas sortir d'un modèle moindre",
+            },
+            # La dimension des vecteurs : changer de modèle d'embedding impose
+            # de tout re-vectoriser, et l'écran doit le dire AVANT le clic.
+            "embedding_dimensions": int(getattr(_s, "embedding_dimensions", 1536) or 1536),
             "fournisseurs": catalogue_modeles()}
 
 

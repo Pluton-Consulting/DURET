@@ -94,6 +94,36 @@ def prochaine_echeance(tache: dict, apres: Optional[datetime] = None) -> Optiona
     return candidat
 
 
+def heure_du_jour(brut) -> Optional[time]:
+    """« 07:30 » ou « 7h30 » vers un `time`, ou None.
+
+    POURQUOI CETTE FONCTION EXISTE (01/09). L'heure partait en base sous forme
+    de CHAÎNE vers un paramètre `$8::time`. asyncpg n'accepte pas ça : il exige
+    un `datetime.time` pour ce type et lève `DataError`. Conséquence mesurée :
+    « chaque matin à 7h30, trie les mails » faisait échouer le skill, et le
+    tour rendait « ERREUR : invalid input for query argument $8 ». Autrement
+    dit, AUCUNE tâche quotidienne ou hebdomadaire ne pouvait être créée — seule
+    la récurrence par intervalle passait, parce qu'elle ne pose pas d'heure.
+
+    Le cast SQL `::time` ne sauve pas : il s'applique APRÈS l'encodage du
+    paramètre, et c'est l'encodage qui refuse.
+    """
+    if brut is None or isinstance(brut, time):
+        return brut
+    texte = str(brut).strip().lower().replace("h", ":")
+    if not texte:
+        return None
+    morceaux = texte.split(":")
+    try:
+        h = int(morceaux[0])
+        m = int(morceaux[1]) if len(morceaux) > 1 and morceaux[1] else 0
+    except (ValueError, IndexError):
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return time(hour=h, minute=m)
+
+
 def valider_planification(donnees: dict) -> Optional[str]:
     """Retourne un message d'erreur si la planification est incohérente, sinon None."""
     forme = (donnees.get("schedule_kind") or "").strip().lower()

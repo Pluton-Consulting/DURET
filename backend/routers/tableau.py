@@ -88,6 +88,15 @@ async def tableau(current_user: User = Depends(get_current_user)):
     # Le filtre de périmètre est le MÊME fragment partout : $1 = user_id,
     # $2 = vrai si global. Un collaborateur ne voit que ce qui porte son nom.
     perim = "($2::boolean OR {col} = $1::uuid)"
+    # CE QUE LES EXPERTS ONT FAIT NE CONCERNE QUE MOI (01/09, demande de Noa :
+    # « fais en sorte que toutes les data des experts dans le tableau de bord
+    # ne concernent que l'utilisateur actuel »). Ces cartes répondent à « qu'ai-
+    # JE confié à l'outil », pas « que fait l'entreprise » : les servir en
+    # global à un administrateur lui montrait l'activité de tout le monde sous
+    # un libellé personnel, ce qui rendait le chiffre inutilisable pour lui.
+    # Le ROI et l'inventaire, eux, restent d'entreprise — c'est leur nature, et
+    # l'écran le dit.
+    perso = "{col} = $1::uuid"
     # LE PLANCHER DES INDICATEURS. Réglage `kpi_depuis` : une remise à zéro qui
     # ne supprime rien. Les lignes restent en base — on cesse simplement de les
     # compter. Réversible en effaçant le champ, ce qu'aucun DELETE ne permet.
@@ -119,7 +128,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
               COUNT(*) FILTER (WHERE action IN ('browser_task_completed'))                                AS navigations,
               COUNT(*) FILTER (WHERE success = false)                                                     AS echecs
             FROM audit_log
-            WHERE created_at >= NOW() - INTERVAL '30 days' AND {perim.format(col='user_id')}{plancher}
+            WHERE created_at >= NOW() - INTERVAL '30 days' AND {perso.format(col='user_id')}{plancher}
         """, uid, global_)
 
         # Activité par jour (14 jours) : des barres, pas des courbes de dev.
@@ -128,7 +137,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
                    COUNT(*) FILTER (WHERE action = 'chat_request') AS conversations,
                    COUNT(*) FILTER (WHERE action = 'skill_executed') AS actions
             FROM audit_log
-            WHERE created_at >= NOW() - INTERVAL '14 days' AND {perim.format(col='user_id')}{plancher}
+            WHERE created_at >= NOW() - INTERVAL '14 days' AND {perso.format(col='user_id')}{plancher}
             GROUP BY 1 ORDER BY 1
         """, uid, global_)
 
@@ -178,6 +187,21 @@ async def tableau(current_user: User = Depends(get_current_user)):
             WHERE {perim.format(col='t.user_id')}{plancher_t}
             ORDER BY t.updated_at DESC LIMIT 10
         """, uid, global_)
+        # ── Les EXÉCUTIONS des tâches planifiées ──
+        # Le worker écrit ici à chaque réveil (réussite, échec, accord en
+        # attente) — et RIEN ne lisait cette table. Une tâche de 7 h 30 qui
+        # plantait ne laissait aucune trace à l'écran : ni carte, ni liste, ni
+        # notification. La carte « Tâches en arrière-plan », elle, lit
+        # `taches_differees`, qui est la file du CHAT : deux notions distinctes
+        # sous un seul libellé, dont l'une était invisible.
+        executions = await _sur(conn, f"""
+            SELECT r.id, r.status, r.started_at, r.updated_at, r.error,
+                   t.title, t.id AS tache_id
+            FROM agent_task_runs r JOIN agent_tasks t ON t.id = r.task_id
+            WHERE {perim.format(col='t.user_id')}
+              AND r.created_at >= NOW() - INTERVAL '7 days'
+            ORDER BY r.created_at DESC LIMIT 10
+        """, uid, global_)
         synthese = await _une(conn, f"""
             SELECT COUNT(*) FILTER (WHERE status IN ('terminee','termine','done'))              AS terminees,
                    COUNT(*) FILTER (WHERE status IN ('en_cours','attente_validation','pending')) AS en_attente,
@@ -192,11 +216,24 @@ async def tableau(current_user: User = Depends(get_current_user)):
             SELECT id, agent, title, schedule_kind, interval_minutes, time_of_day, days_of_week,
                    next_run_at, enabled
             FROM agent_tasks
-            WHERE enabled AND {perim.format(col='user_id')}
+            -- UNE TÂCHE SANS ÉCHÉANCE N'EST PAS PLANIFIÉE (01/09). Le filtre ne
+            -- portait que sur `enabled` : une tâche créée sans récurrence
+            -- (`manual`, `next_run_at` NULL) s'affichait ici avec un rythme
+            -- vide et « — » à la place de la date. L'écran annonçait comme
+            -- programmé ce qui ne partira jamais tout seul.
+            WHERE enabled AND next_run_at IS NOT NULL
+              AND {perim.format(col='user_id')}
             ORDER BY next_run_at NULLS LAST LIMIT 8
         """, uid, global_)
 
         # ── Mémoire d'entreprise : ce que l'outil connaît ──
+        #
+        # RÉSERVÉE À QUI VOIT L'ENTREPRISE (01/09). Ces compteurs disent combien
+        # la maison a de clients, de fournisseurs et de devis : un rôle terrain
+        # les lisait, alors que la migration 019 pose précisément qu'on ne
+        # répond pas « 14 devis » à qui n'a pas le droit de les voir. Le chiffre
+        # n'est pas cloisonnable ligne à ligne (c'est un COUNT global) : on ne
+        # le rend donc pas du tout à qui n'a pas le périmètre.
         memoire = await _une(conn, """
             -- DEUX CHIFFRES ÉTAIENT FAUX (relevé par Noa le 31/08).
             -- « documents » comptait les MORCEAUX d'ingestion (COUNT(*) sur la table
@@ -217,11 +254,11 @@ async def tableau(current_user: User = Depends(get_current_user)):
                    (SELECT COUNT(*) FROM consignes)                                              AS consignes,
                    (SELECT COUNT(*) FROM skills WHERE status IN ('validated','stable') AND COALESCE(enabled,true)
                        AND COALESCE(code,'') NOT LIKE '%Squelette g_n_rique%')                  AS competences
-        """)
+        """) if global_ else None
         synchros = await _sur(conn, """
             SELECT DISTINCT ON (source) source, statut, etape, traites, total, demarre_a, termine_a
             FROM synchronisations ORDER BY source, demarre_a DESC
-        """)
+        """) if global_ else []
 
         # ── Activité récente, en mots ──
         activite = await _sur(conn, f"""
@@ -317,8 +354,18 @@ async def tableau(current_user: User = Depends(get_current_user)):
     # accès aux indicateurs financiers). Pour les autres rôles, le bloc n'est
     # pas rendu du tout : l'écran ne dessine pas une carte qu'on ne lui donne
     # pas — c'est le serveur qui tranche, jamais un `if` d'affichage.
+    #
+    # IL DÉPEND DU RÔLE, PLUS DE LA PERMISSION (01/09, demande de Noa : « masque
+    # la carte ROI pour tous les rôles sauf super admin et direction »).
+    # `view_dashboard_global` gouverne le PÉRIMÈTRE du tableau de bord — voir
+    # l'entreprise entière plutôt que soi — et elle est COCHABLE dans la matrice
+    # des permissions. L'accorder à un commercial pour qu'il voie l'activité
+    # collective lui aurait donné le chiffre d'affaires généré au passage, sans
+    # que personne l'ait voulu : deux décisions distinctes tenaient à une seule
+    # case. Le ROI ne se coche pas ; il suit le rôle, et rien d'autre.
+    ROLES_ROI = ("super_admin", "direction")
     bloc_roi = None
-    if global_:
+    if global_ and getattr(current_user, "role", None) in ROLES_ROI:
         bloc_roi = {
             "euros": euros, "heures": heures, "periode": "30 derniers jours",
             "hypotheses": {
@@ -349,14 +396,18 @@ async def tableau(current_user: User = Depends(get_current_user)):
             "par_jour": jours_actifs,
         },
         "planifiees": [_ligne(p) for p in planifiees],
+        "executions": [_ligne(e) for e in executions],
         "taches": [_ligne(t) for t in taches],
-        "memoire": {
+        # `None` quand la personne n'a pas le périmètre : l'écran ne dessine
+        # pas une carte qu'on ne lui donne pas — c'est le serveur qui tranche,
+        # jamais un `if` d'affichage qu'on peut contourner.
+        "memoire": ({
             "documents": int(_val(memoire, "documents")),
             "devis": int(_val(memoire, "devis")),
             "clients": int(_val(memoire, "clients")),
             "fournisseurs": int(_val(memoire, "fournisseurs")),
             "synchronisations": [_ligne(s) for s in synchros],
-        },
+        } if memoire is not None else None),
         "activite": [_ligne(a) for a in activite],
     }
 

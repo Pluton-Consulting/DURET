@@ -122,14 +122,35 @@ async def create_user(
         existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", body.email)
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cet email est déjà enregistré")
-        row = await conn.fetchrow(
-            """
-            INSERT INTO users (email, name, role, quota_mensuel)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, email, name, role, actif, quota_mensuel, created_at
-            """,
-            body.email, body.name, body.role, body.quota_mensuel,
-        )
+        # LA COLONNE EST OMISE QUAND AUCUN QUOTA N'EST DONNÉ, et ce n'est pas
+        # une coquetterie : `quota_mensuel` est `NOT NULL DEFAULT 50`, et
+        # passer explicitement NULL N'ACTIVE PAS le défaut — en SQL, un défaut
+        # ne s'applique QUE si la colonne est absente de l'INSERT. Le
+        # formulaire n'envoie pas de quota, donc chaque création partait avec
+        # un NULL explicite et tombait sur la contrainte : « impossible de
+        # créer un utilisateur », sans que rien à l'écran ne dise pourquoi.
+        #
+        # On omet la colonne plutôt que d'écrire `COALESCE($4, 50)` : recopier
+        # le défaut ici en ferait un second endroit à tenir à jour, et le jour
+        # où la migration change, les deux diraient des choses différentes.
+        if body.quota_mensuel is None:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO users (email, name, role)
+                VALUES ($1, $2, $3)
+                RETURNING id, email, name, role, actif, quota_mensuel, created_at
+                """,
+                body.email, body.name, body.role,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO users (email, name, role, quota_mensuel)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, email, name, role, actif, quota_mensuel, created_at
+                """,
+                body.email, body.name, body.role, body.quota_mensuel,
+            )
 
     await log_action(
         action="user_created",

@@ -289,7 +289,32 @@ async def embed_texts(texts: list[str]) -> list[Optional[list[float]]]:
     if not to_embed:
         return [None] * len(texts)
 
-    provider = _PROVIDERS.get(settings.embedding_provider, _embed_gemini)
+    # LE FOURNISSEUR D'EMBEDDINGS SE CHOISIT À L'ÉCRAN (01/09), comme les
+    # modèles de texte. Il vivait dans le `.env`, donc derrière une recréation
+    # de conteneur.
+    #
+    # ET UN FOURNISSEUR INCONNU SE DIT. Cette ligne retombait SILENCIEUSEMENT
+    # sur Gemini : un nom mal écrit dans la configuration donnait un système
+    # qui semble obéir et n'obéit pas — le pire des deux mondes, puisque rien
+    # ne le signale.
+    nom_fournisseur = (settings.embedding_provider or "gemini").strip().lower()
+    modele_choisi = ""
+    try:
+        from llm.reglages import texte as _reglage_texte
+        brut = _reglage_texte("modele_embedding")
+        if brut:
+            f, _, m = brut.partition(":")
+            if f.strip() and m.strip():
+                nom_fournisseur, modele_choisi = f.strip().lower(), m.strip()
+    except Exception:  # noqa: BLE001 — un réglage illisible garde la configuration
+        pass
+    provider = _PROVIDERS.get(nom_fournisseur)
+    if provider is None:
+        _warn_once(
+            f"Fournisseur d'embeddings inconnu : « {nom_fournisseur} ». "
+            f"Attendu : {', '.join(sorted(_PROVIDERS))}. Rien n'est vectorisé "
+            "tant que ce nom n'est pas corrigé.")
+        return [None] * len(texts)
 
     # Dédup : chaque texte identique n'est vectorisé qu'une fois (économie de quota).
     unique_texts: list[str] = []

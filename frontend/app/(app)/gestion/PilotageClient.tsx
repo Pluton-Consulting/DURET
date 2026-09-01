@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { StatTile } from "@/components/blocks/layout/StatTile"
 import { BarChart } from "@/components/blocks/charts/BarChart"
 
@@ -73,17 +73,38 @@ export default function PilotageClient({ apiUrl, token }: Props) {
   const [erreur, setErreur] = useState<string | null>(null)
   const [onglet, setOnglet] = useState<Onglet>("usages")
 
+  // MÊME DÉFAUT QUE LE TABLEAU DE BORD (01/09) : un seul chargement au montage,
+  // donc un écran de pilotage figé sur l'heure d'ouverture de l'onglet. On
+  // relit quand l'onglet redevient visible, et toutes les 60 s tant qu'il l'est
+  // — jamais en arrière-plan : un écran que personne ne regarde n'a pas besoin
+  // d'être à jour, et chaque lecture coûte plusieurs requêtes lourdes.
+  const charger = useCallback(async () => {
+    try {
+      const r = await fetch(`${apiUrl}/api/dashboard/pilotage`,
+        { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+      if (!r.ok) {
+        throw new Error(r.status === 403
+          ? "Vous n'avez pas accès au pilotage."
+          : `Chargement impossible (${r.status}).`)
+      }
+      setDonnees(await r.json()); setErreur(null)
+    } catch (e: any) {
+      setErreur(e?.message || "Chargement impossible.")
+    }
+  }, [apiUrl, token])
+
   useEffect(() => {
     let vivant = true
-    fetch(`${apiUrl}/api/dashboard/pilotage`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(r.status === 403 ? "Vous n'avez pas accès au pilotage." : `Chargement impossible (${r.status}).`)
-        return r.json()
-      })
-      .then((d) => { if (vivant) setDonnees(d) })
-      .catch((e) => { if (vivant) setErreur(e?.message || "Chargement impossible.") })
-    return () => { vivant = false }
-  }, [apiUrl, token])
+    const relire = () => { if (vivant && document.visibilityState === "visible") charger() }
+    relire()
+    document.addEventListener("visibilitychange", relire)
+    const minuterie = window.setInterval(relire, 60000)
+    return () => {
+      vivant = false
+      document.removeEventListener("visibilitychange", relire)
+      window.clearInterval(minuterie)
+    }
+  }, [charger])
 
   const k = donnees?.kpi || {}
   const onglets: { key: Onglet; label: string; n?: number }[] = [

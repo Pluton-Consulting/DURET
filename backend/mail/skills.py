@@ -517,6 +517,30 @@ async def creer_tache_agent(data: dict, user) -> dict:
 SKILLS_NATIFS["creer_tache_agent"] = creer_tache_agent
 
 
+# CRÉER SANS POUVOIR DÉFAIRE N'EST PAS UNE FONCTIONNALITÉ, C'EST UN PIÈGE
+# (01/09, demande de Noa). Une tâche créée par erreur en « toutes les 5
+# minutes » se réveillait indéfiniment : il n'existait aucune voie pour
+# l'arrêter, ni écran ni chat. Mêmes imports différés que ci-dessus.
+async def mes_taches(data: dict, user) -> dict:
+    from tasks.skills import mes_taches as _f
+    return await _f(data, user)
+
+
+async def supprimer_tache(data: dict, user) -> dict:
+    from tasks.skills import supprimer_tache as _f
+    return await _f(data, user)
+
+
+async def suspendre_tache(data: dict, user) -> dict:
+    from tasks.skills import suspendre_tache as _f
+    return await _f(data, user)
+
+
+SKILLS_NATIFS["mes_taches"] = mes_taches
+SKILLS_NATIFS["supprimer_tache"] = supprimer_tache
+SKILLS_NATIFS["suspendre_tache"] = suspendre_tache
+
+
 async def rechercher_documents(data: dict, user) -> dict:
     from skills.documents import rechercher_documents as _chercher
     return await _chercher(data, user)
@@ -1103,6 +1127,14 @@ EFFETS_NATIFS = {
     # Créer une tâche n'a aucun effet hors du système : quand elle s'exécutera,
     # elle repassera par tous les contrôles, validation humaine comprise.
     "creer_tache_agent": "ecriture_interne",
+    # Lister ne fait que lire. Suspendre et supprimer écrivent DANS
+    # l'application et n'ont aucun effet au dehors : la règle du projet réserve
+    # l'accord humain aux effets qui SORTENT. Le garde-fou est ailleurs, et il
+    # vaut mieux qu'une confirmation — on ne devine jamais quelle tâche est
+    # visée : une désignation ambiguë ne supprime rien et redemande.
+    "mes_taches": "lecture",
+    "supprimer_tache": "ecriture_interne",
+    "suspendre_tache": "ecriture_interne",
     # Recherche dans la mémoire d'entreprise : ne modifie rien, et reste bornée
     # aux droits de l'appelant (cloisonnement des boîtes mail compris).
     "rechercher_documents": "lecture",

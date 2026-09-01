@@ -15,6 +15,11 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 //        ↓
 //     les composants
 import "./theme.css"
+// APRÈS `theme.css`, et c'est tout l'objet : le palier téléphone doit
+// pouvoir corriger le palier 900 px, qui vit en fin de theme.css. Importé
+// depuis theme.css (un `@import` se place en tête), il passait AVANT et se
+// faisait écraser — la moitié de ce fichier ne s'appliquait jamais.
+import "./mobile.css"
 
 export const metadata: Metadata = {
   title: "Duret & Sols",
@@ -22,12 +27,28 @@ export const metadata: Metadata = {
 }
 
 // `viewportFit: "cover"` : sans lui, `env(safe-area-inset-*)` vaut zéro et
-// l'en-tête passe sous l'encoche des iPhone. `maximumScale` n'est PAS fixé :
-// empêcher le zoom est une faute d'accessibilité, et le zoom intempestif d'iOS
-// se règle par la taille des champs (voir mobile.css), pas en le bloquant.
+// l'en-tête passe sous l'encoche des iPhone.
+//
+// LE ZOOM EST BLOQUÉ — décision de Noa (01/09) : « tu dois bloquer les pages en
+// version mobile pour éviter qu'elles se zooment et se dézooment toutes seules ».
+//
+// Ce commentaire disait le contraire, et l'argument n'était pas faux : brider le
+// zoom est une gêne d'accessibilité, et le zoom intempestif d'iOS se règle EN
+// PRINCIPE par la taille des champs. Mais en principe seulement — il suffit d'un
+// champ à 13 px oublié quelque part, ou d'un bloc qui déborde de quelques pixels,
+// pour que l'écran parte tout seul et n'y revienne pas. Sur un outil interne
+// consulté au téléphone sur un chantier, une page qui bouge sous le doigt coûte
+// plus que le zoom qu'on retire.
+//
+// LES DEUX PARADES SONT POSÉES, pas une seule : les champs sont ramenés à 16 px
+// dans `mobile.css`, ET le zoom est bridé ici. Si l'accessibilité redevient
+// prioritaire, retirer les deux lignes ci-dessous suffit — les champs, eux,
+// resteront corrects.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
 }
 

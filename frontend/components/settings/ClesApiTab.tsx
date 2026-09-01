@@ -98,11 +98,6 @@ function ReglageKpiDepuis({ apiUrl, backendToken }: { apiUrl: string; backendTok
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
             Indicateurs comptés depuis
           </div>
-          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
-            Remet le tableau de bord à zéro <b>sans rien supprimer</b> : l&apos;activité
-            antérieure reste en base, elle n&apos;est plus comptée. Retirer la date rend
-            tout l&apos;historique.
-          </div>
         </div>
         <span style={{
           background: valeur ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
@@ -180,9 +175,14 @@ interface FicheFournisseur {
   modeles: { id: string; ecarte: boolean; raison: string }[]
 }
 
-function LigneModele({ titre, aide, actuel, fiches, busy, onChoisir, onRetirer }: {
+function LigneModele({ titre, aide, actuel, fiches, busy, onChoisir, onRetirer,
+                      avertissement }: {
   titre: string; aide: string; actuel: string; fiches: FicheFournisseur[]; busy: boolean
   onChoisir: (valeur: string) => void; onRetirer: () => void
+  // Ce qu'un changement COÛTE, dit AVANT le clic. Les embeddings sont le seul
+  // réglage de cette carte dont le changement impose un travail derrière : les
+  // vecteurs déjà calculés ne se comparent pas à ceux d'un autre modèle.
+  avertissement?: string
 }) {
   const [fournisseur, setFournisseur] = useState("")
   const [modele, setModele] = useState("")
@@ -205,6 +205,13 @@ function LigneModele({ titre, aide, actuel, fiches, busy, onChoisir, onRetirer }
                   border: "1px solid var(--marque-border)", fontSize: 13 } as const
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--marque-border)" }}>
+      {avertissement && (
+        <div style={{ fontSize: 12, color: "var(--marque-late-text, var(--marque-text-body))",
+                      background: "var(--marque-late-bg, rgba(0,0,0,0.04))",
+                      padding: "8px 10px", borderRadius: 8, marginBottom: 10 }}>
+          {avertissement}
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>{titre}</div>
@@ -282,6 +289,10 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
   const [rapide, setRapide] = useState("")
   const [puissant, setPuissant] = useState("")
   const [avance, setAvance] = useState("")
+  const [vision, setVision] = useState("")
+  const [embedding, setEmbedding] = useState("")
+  const [image, setImage] = useState<{ fournisseur: string; modele: string } | null>(null)
+  const [dimensions, setDimensions] = useState(1536)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState("")
   const [erreur, setErreur] = useState("")
@@ -297,6 +308,10 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
       setRapide(json?.modele_rapide || "")
       setPuissant(json?.modele_puissant || "")
       setAvance(json?.llm_tete || "")
+      setVision(json?.modele_vision || "")
+      setEmbedding(json?.modele_embedding || "")
+      setImage(json?.modele_image || null)
+      setDimensions(json?.embedding_dimensions || 1536)
       setErreur("")
     } catch (e: any) {
       setErreur(e?.message || "chargement impossible")
@@ -337,13 +352,6 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
             Les modèles de l&apos;assistant
           </div>
-          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3, lineHeight: 1.5 }}>
-            Deux modèles, et rien d&apos;autre : un <b>rapide</b> pour répondre au quotidien, un
-            <b> puissant</b> pour les grosses tâches (analyse, synthèse, enrichissement). Chacun
-            secourt l&apos;autre. Dès qu&apos;un des deux est choisi, la cascade automatique n&apos;est
-            plus utilisée. La vision (plans, photos), les images et les embeddings gardent leur
-            modèle dédié.
-          </div>
         </div>
         <span style={{
           background: exclusif ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
@@ -363,6 +371,38 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
         actuel={puissant} fiches={fiches} busy={busy}
         onChoisir={(v) => ecrire("modele_puissant", v, `${v} prend désormais les grosses tâches. Effet immédiat.`)}
         onRetirer={() => ecrire("modele_puissant", "", "Modèle puissant retiré.")} />
+      <LigneModele titre="Vision et OCR" aide="lecture des plans, des photos et des pièces jointes scannées"
+        actuel={vision} fiches={fiches} busy={busy}
+        onChoisir={(v) => ecrire("modele_vision", v, `${v} lit désormais les images. Effet immédiat.`)}
+        onRetirer={() => ecrire("modele_vision", "", "Modèle de vision retiré : la cascade reprend.")} />
+      <LigneModele titre="Embeddings" aide="la recherche documentaire et la mémoire de conversation"
+        actuel={embedding} fiches={fiches} busy={busy}
+        avertissement={`Changer de modèle impose de re-vectoriser tout le corpus : les vecteurs existants (${dimensions} dimensions) ne se comparent pas à ceux d'un autre modèle. Un modèle qui rend une autre dimension est refusé à l'écriture, sans rien casser.`}
+        onChoisir={(v) => ecrire("modele_embedding", v, `${v} vectorise désormais. Re-vectorisation nécessaire.`)}
+        onRetirer={() => ecrire("modele_embedding", "", "Modèle d'embedding retiré.")} />
+
+      {/* LA GÉNÉRATION D'IMAGES SE MONTRE, ELLE NE SE CHOISIT PAS — décision de
+          Noa. On l'affiche pour qu'on sache ce qui tire les visuels : ne rien
+          montrer laisserait croire que rien ne s'en occupe. */}
+      {image && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--marque-border)",
+                      display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+              Génération d&apos;images
+            </div>
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>
+              visuels d&apos;aménagement et retouches de photos
+            </div>
+          </div>
+          <span style={{ fontSize: 12.5, color: "var(--marque-text-body)",
+                         background: "var(--marque-canvas)", padding: "6px 12px",
+                         borderRadius: "var(--marque-radius-pill)",
+                         border: "1px solid var(--marque-border)" }}>
+            {image.fournisseur} : {image.modele} · choix arrêté
+          </span>
+        </div>
+      )}
 
       {avance && (
         <div style={{ marginTop: 10, fontSize: 12, color: "var(--marque-text-muted)",
@@ -450,11 +490,6 @@ function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backen
         <div style={{ flex: 1, minWidth: 180 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
             Anonymisation des données personnelles
-          </div>
-          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
-            Désactivée par défaut depuis le 31/08 : les demandes passent de bout en bout sans
-            masquage. Activée, noms, e-mails et coordonnées sont remplacés par des balises avant
-            tout envoi aux modèles externes — au prix de balises dans certaines réponses.
           </div>
         </div>
         <span style={{

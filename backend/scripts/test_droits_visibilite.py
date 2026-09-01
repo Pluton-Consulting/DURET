@@ -114,5 +114,23 @@ verifier("États des agents, Quotas, Services, Synchronisations, Clés API : sup
 verifier("l'onglet actif par défaut est le premier VISIBLE du rôle",
          "subTabs[0]?.key" in sc)
 
+# ── LE ROI NE SE COCHE PAS (01/09) ──────────────────────────────────────
+# Demande de Noa : « masque la carte ROI pour tous les rôles sauf super admin
+# et direction ». Il l'était déjà — mais par la permission
+# `view_dashboard_global`, qui est COCHABLE dans la matrice : l'accorder à un
+# commercial pour qu'il voie l'activité collective lui aurait donné le chiffre
+# d'affaires au passage. Deux décisions distinctes tenaient à une seule case.
+_tab = (BACKEND / "routers" / "tableau.py").read_text(encoding="utf-8")
+verifier("le ROI dépend du RÔLE, pas seulement d'une permission cochable",
+         'ROLES_ROI = ("super_admin", "direction")' in _tab
+         and 'getattr(current_user, "role", None) in ROLES_ROI' in _tab)
+verifier("le périmètre global reste exigé en plus (on ne l'élargit pas)",
+         "if global_ and getattr(current_user" in _tab)
+verifier("le pourquoi est écrit, pour qu'on ne recoche pas les deux ensemble",
+         "Le ROI ne se coche pas" in _tab)
+verifier("l'écran ne dessine que ce que le serveur lui donne",
+         "{d.roi && (" in (FRONTEND / "components" / "tableau" / "TableauDeBord.tsx")
+         .read_text(encoding="utf-8"))
+
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

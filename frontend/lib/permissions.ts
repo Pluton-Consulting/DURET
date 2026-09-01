@@ -171,13 +171,24 @@ export function getVisibleSections(role: string): TabDef[] {
 }
 
 /** Les experts, tels qu'ils se nomment à l'écran. Propres à l'entreprise. */
-export const EXPERTS: { cle: string; nom: string; domaine: string; accent: string }[] = [
-  { cle: "agent1", nom: "Expert administratif & chantiers",
+// `court` : le même expert dans un en-tête de colonne, où « Expert appels
+// d'offres » ne tient pas. AJOUTÉ le 01/09 parce que la matrice des droits
+// affichait encore « Agent 1 / Agent 2 / Agent 3 » — relevé de Noa : « ça veut
+// dire quoi agent 1 2 3 dans les utilisateurs, c'est pas clair ». Le mot
+// « agent » avait disparu des écrans en août, sauf là.
+export const EXPERTS: { cle: string; nom: string; court: string; domaine: string; accent: string }[] = [
+  { cle: "agent1", nom: "Expert administratif & chantiers", court: "Admin & chantiers",
     domaine: "suivi de chantiers, clients, mails, documents administratifs", accent: "primary" },
-  { cle: "agent2", nom: "Expert appels d'offres",
+  { cle: "agent2", nom: "Expert appels d'offres", court: "Appels d'offres",
     domaine: "analyse de DCE — CCTP, CCAP, RC, DPGF, métrés et chiffrage", accent: "leaf" },
-  { cle: "agent3", nom: "Expert savoir-faire",
+  { cle: "agent3", nom: "Expert savoir-faire", court: "Savoir-faire",
     domaine: "apprentissage — compétences, consignes, connaissances acquises", accent: "mid" },
 ]
+
+/** Le nom d'écran d'un expert, à partir de sa clé technique. Jamais « agent1 ». */
+export function nomExpert(cle: string, court = false): string {
+  const e = EXPERTS.find((x) => x.cle === cle)
+  return e ? (court ? e.court : e.nom) : cle
+}
 
 export const MARQUE = { nom: "Duret & Sols", logo: "/duret-sols.svg", logoAlt: "Duret & Sols" }

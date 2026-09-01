@@ -64,7 +64,9 @@ print("1. Les réglages sont connus et validés")
 reg = (BACKEND / "llm" / "reglages.py").read_text(encoding="utf-8")
 verifier("modele_rapide et modele_puissant dans REGLAGES_CONNUS", '"modele_rapide",' in reg and '"modele_puissant",' in reg)
 verifier("modele_unique a disparu", "modele_unique" not in reg)
-verifier("validation « fournisseur:modele »", 'if nom in ("modele_rapide", "modele_puissant")' in reg)
+verifier("validation « fournisseur:modele », pour les QUATRE réglages de modèle",
+         'if nom in ("modele_rapide", "modele_puissant",' in reg
+         and '"modele_vision", "modele_embedding")' in reg)
 
 print("\n2. L'ordre par palier")
 reglages_valeurs.clear()
@@ -114,8 +116,17 @@ routes = (BACKEND / "routers" / "settings.py").read_text(encoding="utf-8")
 verifier("GET /api/settings/modeles rend les deux choix",
          '"modele_rapide"' in routes and '"modele_puissant"' in routes and "catalogue_modeles" in routes)
 ecran = (FRONTEND / "components" / "settings" / "ClesApiTab.tsx").read_text(encoding="utf-8")
-verifier("la carte « Les modèles de l'assistant » avec ses deux lignes",
-         "function ReglageModeles" in ecran and ecran.count("<LigneModele") == 2)
+# 01/09 : QUATRE lignes désormais — rapide, puissant, vision/OCR, embeddings.
+# Relevé de Noa : « je vois pas le choix des modèles pour embedding ou image ou
+# OCR ». La génération d'images, elle, s'affiche mais ne se choisit pas.
+verifier("la carte porte les QUATRE lignes réglables",
+         "function ReglageModeles" in ecran and ecran.count("<LigneModele") == 4)
+verifier("vision et embeddings sont bien deux d'entre elles",
+         'ecrire("modele_vision", v' in ecran and 'ecrire("modele_embedding", v' in ecran)
+verifier("la génération d'images se MONTRE sans se choisir",
+         "Génération d&apos;images" in ecran and 'ecrire("modele_image"' not in ecran)
+verifier("et le coût d'un changement d'embedding est dit AVANT le clic",
+         "re-vectoriser tout le corpus" in ecran)
 verifier("elle écrit modele_rapide et modele_puissant",
          'ecrire("modele_rapide", v' in ecran and 'ecrire("modele_puissant", v' in ecran)
 verifier("elle dit que la cascade n'est plus utilisée", "deux modèles seulement" in ecran)

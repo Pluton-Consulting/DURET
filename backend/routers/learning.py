@@ -344,3 +344,62 @@ async def historique(limit: int = 10, current_user: User = Depends(get_current_u
         resultats.append({"par": l["email"], "date": l["created_at"].isoformat(),
                           **(meta or {})})
     return resultats
+
+
+# ── LE PORTRAIT DE LA PERSONNE ───────────────────────────────────────────
+#
+# C'est SA donnée : elle doit pouvoir la lire, la couper et l'effacer, sans
+# passer par un administrateur. Un portrait construit dans le dos de quelqu'un
+# et qu'il ne peut pas consulter serait une surveillance, pas une mémoire.
+# Chacun ne voit que le sien : aucun paramètre d'identité n'est accepté, c'est
+# la session qui tranche.
+
+@router.get("/portrait")
+async def lire_portrait(current_user: User = Depends(get_current_user)):
+    """Ce que l'assistant a observé de moi, et depuis quand."""
+    from learning.profil_utilisateur import enregistre
+    p = await enregistre(str(current_user.id))
+    if not p:
+        return {"existe": False, "actif": True, "portrait": "",
+                "note": "Aucun portrait pour l'instant : il se construit la nuit, "
+                        "à partir de vos conversations."}
+    return {
+        "existe": bool((p.get("profil") or "").strip()),
+        "actif": bool(p.get("actif", True)),
+        "portrait": p.get("profil") or "",
+        "conversations": p.get("conversations"),
+        "messages": p.get("messages"),
+        "derniere_maj": p["derniere_maj"].isoformat() if p.get("derniere_maj") else None,
+    }
+
+
+@router.post("/portrait/couper")
+async def couper_portrait(actif: bool = True,
+                          current_user: User = Depends(get_current_user)):
+    """Refuser d'être observé, ou l'accepter de nouveau.
+
+    Couper ne détruit rien : le portrait cesse simplement d'être injecté et la
+    passe de nuit saute ce compte. Pour l'effacer, c'est l'autre route.
+    """
+    from learning.profil_utilisateur import activer
+    await activer(str(current_user.id), bool(actif))
+    return {"actif": bool(actif)}
+
+
+@router.delete("/portrait")
+async def effacer_portrait(current_user: User = Depends(get_current_user)):
+    """Oublie tout. La prochaine passe repartira des conversations existantes."""
+    from learning.profil_utilisateur import effacer
+    return {"efface": await effacer(str(current_user.id))}
+
+
+@router.post("/portrait/construire")
+async def construire_portrait(current_user: User = Depends(get_current_user)):
+    """Reconstruire tout de suite, sans attendre la nuit.
+
+    Utile le jour où l'on veut voir ce que ça donne, et après un changement de
+    façon de travailler qu'on ne veut pas attendre une nuit pour voir pris en
+    compte.
+    """
+    from learning.profil_utilisateur import construire
+    return await construire(str(current_user.id))

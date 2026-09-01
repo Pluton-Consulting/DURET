@@ -464,18 +464,30 @@ async def get_pilotage(current_user: User = Depends(get_current_user)):
             GROUP BY u.id, u.name, u.email, u.role
             ORDER BY requetes DESC, u.email
         """)
-        erreurs = await conn.fetch("""
+        # LE MÊME FILTRE AUX TROIS ENDROITS (01/09). Il n'était posé que sur le
+        # tableau « par personne » — alors que le commentaire juste au-dessus
+        # dit lui-même qu'un filtre à un seul endroit est un rideau, pas un
+        # mur. Le Journal et les Erreurs rendent AUSSI le nom et l'e-mail :
+        # la direction y voyait donc les super_admin qu'on venait de lui
+        # masquer ailleurs. Une ligne d'un super_admin est retirée, pas
+        # anonymisée : garder la ligne sans le nom dirait encore qu'il existe
+        # une activité qu'on ne montre pas.
+        filtre_admin = ("" if current_user.role == "super_admin"
+                        else " AND (u.role IS NULL OR u.role <> 'super_admin')")
+        erreurs = await conn.fetch(f"""
             SELECT a.created_at, a.action, a.agent_id, a.error_message,
                    COALESCE(u.name, u.email) AS qui
             FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
             WHERE a.success = false AND a.created_at >= NOW() - INTERVAL '24 hours'
+              {filtre_admin}
             ORDER BY a.created_at DESC LIMIT 50
         """) if peut_journal else []
-        journal = await conn.fetch("""
+        journal = await conn.fetch(f"""
             SELECT a.created_at, a.action, a.agent_id, a.model_used, a.duration_ms,
                    a.success, a.tokens_in, a.tokens_out,
                    COALESCE(u.name, u.email) AS qui
             FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+            WHERE true {filtre_admin}
             ORDER BY a.created_at DESC LIMIT 80
         """) if peut_journal else []
 

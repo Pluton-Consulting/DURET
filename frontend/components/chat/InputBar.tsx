@@ -191,7 +191,8 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
     // perdus. `clamp` garde les 32 px sur grand écran et descend à 12 px sur
     // téléphone ; `env(safe-area-inset-bottom)` laisse la place à la barre
     // d'accueil d'iOS, qui recouvrait le bouton d'envoi.
-    <div style={{ padding: "12px clamp(12px, 4vw, 32px) calc(16px + env(safe-area-inset-bottom))", background: "var(--marque-chat-fond)" }}>
+    <div className="sym-zone-saisie"
+         style={{ padding: "12px clamp(12px, 4vw, 32px) calc(16px + env(safe-area-inset-bottom))", background: "var(--marque-chat-fond)" }}>
       {erreur && (
         <div role="alert" style={{ fontSize: 13, color: "var(--marque-error-text)", marginBottom: 10 }}>
           {erreur}

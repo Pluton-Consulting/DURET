@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { EXPERTS } from "@/lib/permissions"
 import { EVENEMENT_VUE } from "@/components/nav/EnTete"
 
@@ -32,8 +32,12 @@ type Donnees = {
   a_valider: { accords: any[]; competences: any[] }
   synthese: { terminees: number; en_attente: number; echouees: number; total: number; par_jour: { jour: string; conversations: number; actions: number }[] }
   planifiees: any[]
+  executions?: any[]
   taches: any[]
-  memoire: { documents: number; devis: number; clients: number; fournisseurs: number; synchronisations: any[] }
+  // `null` quand la personne n'a pas le périmètre : ces compteurs disent
+  // combien la maison a de clients et de devis, ils ne sont pas pour tout
+  // le monde. Le serveur ne les rend pas ; l'écran ne dessine pas la carte.
+  memoire: { documents: number; devis: number; clients: number; fournisseurs: number; synchronisations: any[] } | null
   activite: any[]
 }
 
@@ -122,13 +126,46 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
   const [historiques, setHistoriques] = useState<Record<string, any>>({})
   const [hypotheses, setHypotheses] = useState(false)
 
+  // CE TABLEAU NE SE RAFRAÎCHISSAIT JAMAIS (01/09). Un seul chargement au
+  // montage — et, pire, la scène garde les DEUX vues montées : basculer
+  // Chat → Tableau de bord ne remontait donc pas le composant et ne relisait
+  // rien. Après une conversation, « À valider », « Tâches en arrière-plan » et
+  // « Ce qui vient de se passer » restaient figés sur l'état d'ouverture de
+  // l'onglet, jusqu'au F5. Or c'est précisément là qu'on va voir si un accord
+  // attend.
+  //
+  // Trois déclencheurs, et aucun n'est un intervalle court : un tableau de bord
+  // n'est pas un moniteur temps réel, et interroger toutes les cinq secondes
+  // coûterait une requête par personne et par seconde pour rien.
+  //   · au montage ;
+  //   · quand l'onglet REDEVIENT visible (on revient du chat, ou du navigateur) ;
+  //   · toutes les 60 s, mais SEULEMENT si l'onglet est visible.
+  const charger = useCallback(async () => {
+    try {
+      const r = await fetch(`${apiUrl}/api/dashboard/tableau`,
+        { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+      if (!r.ok) throw new Error(`Tableau de bord indisponible (${r.status})`)
+      setD(await r.json()); setErreur(null)
+    } catch (e: any) {
+      setErreur(e?.message || "Tableau de bord indisponible")
+    }
+  }, [apiUrl, token])
+
   useEffect(() => {
     let vivant = true
-    fetch(`${apiUrl}/api/dashboard/tableau`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
-      .then(async (r) => { if (!r.ok) throw new Error(`Tableau de bord indisponible (${r.status})`); return r.json() })
-      .then((x) => { if (vivant) setD(x) })
-      .catch((e) => { if (vivant) setErreur(e?.message || "Tableau de bord indisponible") })
-    return () => { vivant = false }
+    const relire = () => { if (vivant && document.visibilityState === "visible") charger() }
+    relire()
+    document.addEventListener("visibilitychange", relire)
+    // La scène ne démonte pas la vue : c'est cet événement, émis par le switch,
+    // qui dit qu'on revient regarder le tableau.
+    window.addEventListener(EVENEMENT_VUE, relire)
+    const minuterie = window.setInterval(relire, 60000)
+    return () => {
+      vivant = false
+      document.removeEventListener("visibilitychange", relire)
+      window.removeEventListener(EVENEMENT_VUE, relire)
+      window.clearInterval(minuterie)
+    }
   }, [apiUrl, token])
 
   const ouvrirHistorique = async (cle: string) => {
@@ -180,7 +217,7 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
               <b>{d.roi.detail.conversations}</b> conversations · <b>{d.roi.detail.documents}</b> documents · <b>{d.roi.detail.mails}</b> mails · <b>{d.roi.detail.analyses}</b> analyses · <b>{d.roi.detail.recherches}</b> recherches
               {d.roi.cout_ia_eur !== null && <> · coût IA <b>{euros(d.roi.cout_ia_eur)}</b></>}
               <div style={{ marginTop: 6, color: "var(--marque-text-muted)", fontSize: 12 }}>
-                Estimation : temps valorisé {d.roi.hypotheses.taux_horaire} €/h ; une conversation ≈ {d.roi.hypotheses.minutes_par_conversation} min,
+                Estimation : temps valorisé {d.roi.hypotheses.taux_horaire} €/h ; un échange ≈ {d.roi.hypotheses.minutes_par_conversation} min,
                 un document ≈ {d.roi.hypotheses.minutes_par_document} min, un mail ≈ {d.roi.hypotheses.minutes_par_mail} min,
                 une analyse ≈ {d.roi.hypotheses.minutes_par_analyse} min, une recherche ≈ {d.roi.hypotheses.minutes_par_recherche} min.
               </div>
@@ -294,6 +331,7 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
       })}
 
       {/* ── Mémoire d'entreprise ─────────────────────────────────────── */}
+      {d.memoire && (
       <div className="v2-carte v2-apparait" style={{ gridColumn: "span 4" }}>
         <div className="v2-carte-titre"><h3>Ce que l'entreprise a confié à l'outil</h3><small>mémoire d'entreprise</small></div>
         <div className="v2-mini" style={{ marginTop: 0, gridTemplateColumns: "repeat(4, 1fr)" }}>
@@ -315,6 +353,46 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
           ))}
         </div>
       </div>
+      )}
+
+      {/* ── Les RÉVEILS des tâches planifiées ──────────────────────────
+          Le worker écrivait ses exécutions dans une table que RIEN ne lisait :
+          une tâche de 7 h 30 qui plantait ne laissait aucune trace à l'écran.
+          On montre l'issue, et la cause quand il y en a une. */}
+      {(d.executions?.length ?? 0) > 0 && (
+        <div className="v2-carte v2-apparait" style={{ gridColumn: "span 4" }}>
+          <div className="v2-carte-titre">
+            <h3>Derniers réveils</h3><small>7 derniers jours</small>
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+            {(d.executions || []).map((e: any) => (
+              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10,
+                                       flexWrap: "wrap", fontSize: 13 }}>
+                <span style={{
+                  fontWeight: 700,
+                  color: e.status === "failed" ? "var(--marque-error-text)"
+                       : e.status === "completed" ? "var(--marque-paid-text)"
+                       : "var(--marque-text-muted)",
+                }}>
+                  {e.status === "failed" ? "échec"
+                   : e.status === "completed" ? "fait"
+                   : e.status === "awaiting_approval" ? "attend un accord"
+                   : e.status}
+                </span>
+                <span style={{ flex: 1, minWidth: 140 }}>{e.title}</span>
+                <span style={{ color: "var(--marque-text-muted)", fontSize: 12 }}>
+                  {e.started_at ? new Date(e.started_at).toLocaleString("fr-FR",
+                    { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
+                </span>
+                {e.error && (
+                  <span style={{ width: "100%", fontSize: 12,
+                                 color: "var(--marque-error-text)" }}>{e.error}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Actions planifiées ─────────────────────────────────────────── */}
       <div className="v2-carte v2-apparait" style={{ gridColumn: "span 4" }}>

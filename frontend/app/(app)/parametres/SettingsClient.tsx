@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect } from "react"
-import { ROLE_LABELS, ROLE_COLORS } from "@/lib/permissions"
+import { ROLE_LABELS, ROLE_COLORS, nomExpert } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
 import ClesApiTab from "@/components/settings/ClesApiTab"
@@ -172,10 +172,14 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
       )}
 
       <div className="sym-card sym-in sym-in-1" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        {/* Sept colonnes sur un téléphone : sans ce conteneur, les dernières
+            sont coupées par l'`overflow: hidden` de la carte et rien ne permet
+            d'y accéder. Les deux autres tables de cet écran l'avaient déjà. */}
+        <div className="sym-table-large" style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--marque-border)", background: "var(--marque-canvas)" }}>
-              {["Utilisateur", "Rôle", ...visibleAgents.map((a) => a.replace("agent", "Agent ")), "Statut", ""].map((h, i) => (
+              {["Utilisateur", "Rôle", ...visibleAgents.map((a) => nomExpert(a, true)), "Statut", ""].map((h, i) => (
                 <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
               ))}
             </tr>
@@ -253,6 +257,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )
@@ -508,9 +513,9 @@ function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: strin
 /* ---------- AGENTS TAB (métriques réelles) ---------- */
 function AgentsTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
   const AGENTS = [
-    { key: "agent1", name: "Agent 1 : Commercial / Admin", desc: "RAG, anonymisation NER, LLM. Requêtes commerciales et administratives.", tier: "Palier LIGHT / STANDARD" },
-    { key: "agent2", name: "Agent 2 : Conception / Visuels", desc: "Vision multimodale, extraction de plans, pré-chiffrage.", tier: "Palier COMPLEX (vision)" },
-    { key: "agent3", name: "Agent 3 : Auto-Évolution", desc: "Génération de skills, sandbox Daytona, auto-apprentissage.", tier: "Palier COMPLEX" },
+    { key: "agent1", name: nomExpert("agent1"), desc: "Chantiers, clients, dossiers, mails et documents.", tier: "Palier LIGHT / STANDARD" },
+    { key: "agent2", name: nomExpert("agent2"), desc: "Analyse de DCE, métrés, pré-chiffrage.", tier: "Palier COMPLEX (vision)" },
+    { key: "agent3", name: nomExpert("agent3"), desc: "Consignes retenues, connaissances acquises, compétences.", tier: "Palier COMPLEX" },
   ]
   const [stats, setStats] = useState<Record<string, any>>({})
   const [loaded, setLoaded] = useState(false)
@@ -768,7 +773,7 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
         Configuration du système Duret & Sols, accès {ROLE_LABELS[currentRole] || currentRole}
       </p>
 
-      <div className="sym-in sym-in-3" style={{ display: "flex", gap: 2, marginBottom: 28, background: "var(--marque-surface)", padding: 6, borderRadius: "var(--marque-radius-card-sm)", width: "fit-content", boxShadow: "var(--marque-shadow-card)" }}>
+      <div className="sym-in sym-in-3 sym-onglets" style={{ display: "flex", gap: 2, marginBottom: 28, background: "var(--marque-surface)", padding: 6, borderRadius: "var(--marque-radius-card-sm)", width: "fit-content", maxWidth: "100%", boxShadow: "var(--marque-shadow-card)" }}>
         {subTabs.map((t) => {
           const active = activeTab === t.key
           return (

@@ -176,6 +176,48 @@ async def _executer(run: dict) -> None:
     logger.info("Exécution %s terminée", run["id"])
 
 
+# ── LA PASSE DE NUIT SUR LES PORTRAITS ───────────────────────────────────
+#
+# Demande de Noa : « tous les jours à minuit, pour chaque utilisateur, il relit
+# la conversation complète pour apprendre au max de l'utilisateur ».
+#
+# Elle vit DANS la boucle du worker plutôt que dans une tâche planifiée en base,
+# et ce n'est pas un raccourci : une tâche en base devrait être créée quelque
+# part, pour quelqu'un, avec un propriétaire et des droits — or celle-ci
+# n'appartient à personne, elle traite TOUT LE MONDE. La mettre en base
+# obligerait à inventer un utilisateur système, c'est-à-dire un compte qui peut
+# tout lire et que personne ne surveille.
+#
+# LA FENÊTRE, ET POURQUOI ELLE EST LARGE. Le repère de « déjà fait aujourd'hui »
+# vit en mémoire du processus : un redémarrage l'oublie. Sans fenêtre, un
+# conteneur relancé à 14 h relancerait la passe en pleine journée, au moment où
+# les créneaux du fournisseur servent le chat. Entre minuit et cinq heures, une
+# passe de trop ne dérange personne — et le curseur fait qu'elle ne relit rien.
+_FENETRE_NUIT = (0, 5)
+_derniere_passe_profils: Optional[str] = None
+
+
+async def _passe_profils_si_due() -> None:
+    """Met à jour les portraits une fois par nuit. Ne lève jamais."""
+    global _derniere_passe_profils
+    try:
+        from tasks.scheduler import _paris
+        maintenant = _paris()
+        if not (_FENETRE_NUIT[0] <= maintenant.hour < _FENETRE_NUIT[1]):
+            return
+        jour = maintenant.date().isoformat()
+        if _derniere_passe_profils == jour:
+            return
+        # Posé AVANT la passe : si elle échoue, on ne la rejoue pas en boucle
+        # toute la nuit — elle repartira demain, et le curseur n'a pas bougé.
+        _derniere_passe_profils = jour
+        from learning.profil_utilisateur import passe_de_nuit
+        bilan = await passe_de_nuit()
+        logger.info("Portraits : %s", bilan)
+    except Exception as e:  # noqa: BLE001 - une passe de fond ne casse jamais la boucle
+        logger.warning("Passe de nuit sur les portraits : %s", e)
+
+
 async def _boucle() -> None:
     global _stop
     await _requalifier_runs_interrompus()
@@ -183,6 +225,7 @@ async def _boucle() -> None:
     while not _stop:
         try:
             await _reveiller_taches_dues()
+            await _passe_profils_si_due()
 
             traites = 0
             while traites < MAX_RUNS_PAR_TICK and not _stop:

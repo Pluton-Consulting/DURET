@@ -22,6 +22,7 @@ def _vec_literal(vec: List[float]) -> str:
 # Échelle des accès : définie dans `security/acces.py`, source unique partagée
 # avec le catalogue de skills. Réexportée ici pour ne rien casser des appelants.
 from security.acces import ROLE_ACCESS_LEVELS  # noqa: F401
+from config import settings
 
 
 class VectorStoreClient:
@@ -265,6 +266,25 @@ class VectorStoreClient:
             return [dict(row) for row in rows]
 
     async def mark_job_completed(self, job_id: UUID, embedding: List[float]) -> None:
+        # LA DIMENSION EST VÉRIFIÉE AVANT D'ÉCRIRE, et c'est ce qui empêche une
+        # boucle infinie. La colonne est `vector(1536)` : un vecteur d'une autre
+        # longueur fait échouer le cast, ce qui annule la TRANSACTION ENTIÈRE —
+        # donc le job reste 'pending' et son compteur d'essais n'est PAS
+        # incrémenté. Le worker le reprend au tour suivant, repaie l'appel au
+        # fournisseur, et recommence indéfiniment. Un modèle d'embedding mal
+        # choisi (bge-m3 rend 1024) suffisait à le déclencher, et rien à
+        # l'écran ne l'aurait dit.
+        #
+        # On marque donc le job en ÉCHEC, avec sa raison : il consomme un essai,
+        # s'arrête après le troisième, et la cause est lisible.
+        attendue = int(getattr(settings, "embedding_dimensions", 1536) or 1536)
+        if embedding is not None and len(embedding) != attendue:
+            await self.mark_job_failed(
+                job_id,
+                f"dimension {len(embedding)} au lieu de {attendue} : le modèle "
+                "d'embedding ne correspond pas au schéma de la base. Changer de "
+                "modèle exige de re-vectoriser tout le corpus.")
+            return
         async with get_db() as conn:
             async with conn.transaction():
                 await conn.execute("""

@@ -54,10 +54,10 @@ export function ReflexionEnCours({ activite, enCours }: Props) {
   if (!enCours) return null
 
   return (
-    <div className="px-8 py-2" role="status" aria-live="polite">
+    <div className="sym-fil px-8 py-2" role="status" aria-live="polite">
       {/* Pas de fond : la ligne se pose sur le fil, elle n'y ajoute pas une
           carte. Seul un liseré discret la rattache au message qui vient. */}
-      <div className="flex w-full items-center gap-3 rounded-lg border border-border bg-transparent px-3 py-2 text-muted-foreground">
+      <div className="sym-reflexion-boite flex w-full items-center gap-3 rounded-lg border border-border bg-transparent px-3 py-2 text-muted-foreground">
         <Grille />
         {/* La `key` remonte l'élément à chaque changement d'étape et rejoue
             l'apparition : sans elle, le texte se remplacerait sur place, et

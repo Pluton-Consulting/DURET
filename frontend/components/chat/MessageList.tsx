@@ -96,7 +96,7 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
           cadre faisait la séparation. Le texte de l'IA coulant désormais à
           même la page, c'est le blanc qui doit dire où finit une réponse et
           où commence la question suivante. */}
-      <ConversationContent className="gap-7 px-8 py-6">
+      <ConversationContent className="sym-fil gap-7 px-8 py-6">
         {messages.length === 0 && (
           <ConversationEmptyState
             className="sym-in mt-20"

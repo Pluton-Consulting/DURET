@@ -811,6 +811,13 @@ Voici les messages trouvés :
     # sur deux est pire qu'une regle absente.
     from learning.consignes import texte_injecte
     system_prompt += await texte_injecte(state.get("user_id"), state.get("user_role"))
+    # LE PORTRAIT DE LA PERSONNE, juste après ses consignes — et l'ordre n'est
+    # pas neutre : une consigne est un ORDRE qu'elle a donné, le portrait n'est
+    # qu'une OBSERVATION. Si les deux se contredisent, c'est l'ordre qui doit
+    # avoir été lu en premier et qui prime. Vide tant qu'aucune passe de nuit
+    # n'a tourné, ou si la personne a refusé d'être observée.
+    from learning.profil_utilisateur import texte_injecte as portrait
+    system_prompt += await portrait(state.get("user_id"))
     # Les références d'images du fil, pour que « retouche celle-là » soit une
     # action possible sans fouille de l'historique (voir cles_images_du_fil).
     system_prompt += _consigne_images(state)

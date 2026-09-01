@@ -23,6 +23,24 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
    visible. Le navigateur qui ne le connaît pas garde la règle d'origine. */
 @supports (height: 100dvh) {
   .v2-scene { height: 100dvh; }
+  /* L'enveloppe de l'application : c'est ELLE qui fixe la hauteur du
+     document, et elle était restée en `100vh`. Corriger la scène seule ne
+     servait à rien — le rebond venait de l'étage du dessus. */
+  .sym-hauteur-ecran { min-height: 100dvh; }
+}
+
+/* ── LES ACCORDS, AU TÉLÉPHONE ───────────────────────────────────────
+   `FileAttente` (boutons Approuver / Refuser, tâches de fond) n'est montée
+   que dans la colonne de droite, et cette colonne est masquée sous 900 px :
+   sur un téléphone, aucune action à effet externe ne pouvait donc aboutir.
+   `ChatWindow` monte désormais la même file au-dessus de la saisie ; elle ne
+   s'affiche qu'ici, sinon elle ferait doublon avec la colonne.
+   Le seuil est 900 px, PAS 640 : c'est celui de `.sym-path`, et les deux
+   doivent basculer ensemble — sinon, entre 640 et 900 px, la file
+   disparaîtrait des DEUX côtés. */
+.sym-file-tel { display: none; }
+@media (max-width: 900px) {
+  .sym-file-tel { display: block; margin: 0 0 8px; }
 }
 
 @media (max-width: 640px) {
@@ -64,14 +82,74 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .v2-panneau { top: 6px; right: 6px; bottom: 6px; left: 6px; width: auto; border-radius: 20px; }
   .v2-contexte span { max-width: 42vw; }
 
+  /* ── LA HAUTEUR : `dvh` PARTOUT, sinon la page rebondit ─────────────
+     `100vh` compte la hauteur de l'écran quand la barre d'adresse est
+     MASQUÉE : sur un téléphone, le document mesure donc 60 à 100 px de plus
+     que ce qu'on voit. Le doigt fait défiler la page de ces quelques
+     dizaines de pixels, la barre d'adresse apparaît et disparaît, et
+     l'affichage semble « bouger tout seul ». `.v2-scene` était corrigé ;
+     l'enveloppe au-dessus et `.v2-page` ne l'étaient pas. */
+  .v2-page { min-height: 100dvh; }
+  /* L'en-tête descend sous l'encoche (règle plus haut), donc les pages
+     classiques doivent descendre d'autant. Sans cette ligne, Paramètres,
+     Connaissances et Skills démarrent SOUS la bulle de l'en-tête : c'est le
+     défaut « la bulle passe sous l'en-tête flottant » relevé le 27/08, jamais
+     refermé parce qu'il n'avait été corrigé que pour la scène. */
+  .v2-page { padding-top: calc(var(--v2-entete-h) + 26px + env(safe-area-inset-top)); }
+
+  /* ── Une barre d'onglets ne doit JAMAIS être hors d'atteinte ─────────
+     `html, body { overflow-x: hidden }` (plus haut) est nécessaire, mais il
+     transforme tout débordement en contenu DÉFINITIVEMENT inaccessible : sans
+     barre de défilement, on ne peut pas aller le chercher. Les onglets de
+     Paramètres — jusqu'à onze — et les tables larges doivent donc défiler
+     CHEZ EUX. */
+  .sym-onglets, [data-onglets] {
+    overflow-x: auto !important; flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .sym-onglets::-webkit-scrollbar, [data-onglets]::-webkit-scrollbar { display: none; }
+  .sym-table-large { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+
   /* ── Le chat ────────────────────────────────────────────────────────── */
+  /* 64 px DE LARGEUR RENDUS AU TEXTE. Le fil garde les marges du bureau
+     (`px-8`, 32 px de chaque côté) : sur 390 px, il ne restait qu'environ
+     300 px utiles pour les tableaux, les cartes et les images. La barre de
+     saisie, elle, avait déjà été ramenée à `clamp(12px, 4vw, 32px)` — les
+     deux ne s'alignaient plus. */
+  .sym-fil .px-8, .sym-fil > div > .px-8 { padding-left: 14px !important; padding-right: 14px !important; }
+
+  /* ── LE BAS DU CHAT : QUATRE DÉMARCATIONS EMPILÉES SUR 150 px ────────
+     De haut en bas, on comptait : la boîte bordée de « en ce moment », la
+     carte du contexte rappelé, la bande de fond de la zone de saisie, puis la
+     carte de la saisie avec sa bordure, son arrondi et ses deux ombres. Quatre
+     traits pour une seule fonction — écrire — sur le tiers bas d'un écran de
+     téléphone. On garde UNE délimitation : celle du champ, la seule qui dise
+     où l'on écrit. */
+  .sym-reflexion-boite {
+    border: none !important; background: transparent !important;
+    padding-left: 0 !important; padding-right: 0 !important;
+  }
+  .sym-zone-saisie { background: transparent !important; }
+  .sym-barre-saisie { box-shadow: none !important; }
+  .v2-contexte { margin: 0 0 6px !important; }
   .sym-page { padding: 12px 12px 20px !important; }
   .sym-bulle { max-width: 94% !important; }
   /* iOS ZOOME sur tout champ dont la police fait moins de 16 px, et ne
      revient pas tout seul : après chaque message la page restait agrandie.
      Seize pixels, et le zoom ne se déclenche plus. */
-  .sym-barre-saisie textarea, .sym-barre-saisie input,
-  .sym-page input, .sym-page textarea, .sym-page select { font-size: 16px !important; }
+  /* LA RÈGLE PORTE SUR TOUS LES CHAMPS, plus sur deux zones nommées. Les
+     sélecteurs `.sym-page` et `.sym-barre-saisie` laissaient passer tout ce
+     qui vit AILLEURS : le champ de la page de connexion (le tout premier
+     écran qu'un salarié ouvre), les cartes de réponses aux mails éditables
+     dans le fil, les champs des visionneuses de documents, et tout ce qui est
+     monté en PORTAIL sur `document.body` (les fenêtres surgissantes Radix) —
+     qu'aucun sélecteur descendant ne peut atteindre, où qu'il soit écrit.
+     Viser le champ lui-même est la seule règle qui les couvre tous. */
+  input, textarea, select { font-size: 16px !important; }
+  /* Une case à cocher ou un bouton radio n'a pas de texte : leur imposer
+     16 px les agrandirait sans raison. */
+  input[type="checkbox"], input[type="radio"], input[type="range"],
+  input[type="color"] { font-size: inherit !important; }
 
   /* ── Les blocs de réponse : jamais plus larges que l'écran ──────────── */
   .sym-fluide, .sym-mesure { max-width: 100% !important; }

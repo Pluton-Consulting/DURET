@@ -1,5 +1,6 @@
 "use client"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { nomExpert } from "@/lib/permissions"
 
 interface Props { apiUrl: string; token: string }
 
@@ -199,7 +200,7 @@ export default function SkillsClient({ apiUrl, token }: Props) {
               fontWeight: agentFilter === a ? 700 : 500,
               boxShadow: agentFilter === a ? "var(--marque-shadow-card)" : "none",
             }}>
-            {a === "all" ? "Tous" : a === "agent1" ? "Agent 1" : a === "agent2" ? "Agent 2" : "Agent 3"}
+            {a === "all" ? "Tous" : nomExpert(a, true)}
           </button>
         ))}
         <button onClick={() => telecharger("/export", "skills.md")} disabled={busy === "/export"}

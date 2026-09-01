@@ -478,16 +478,60 @@ def _filtrer_quarantaine(chain: list) -> list:
     return vivants or chain
 
 
+# LE CATALOGUE OLLAMA VIENT DE CHEZ OLLAMA (01/09, relevé de Noa : « dans les
+# listes Ollama il doit y avoir tous leurs modèles, pas juste quelques-uns »).
+# La configuration n'en nomme que quatre — ceux que la cascade utilise — et
+# c'était tout ce que le menu proposait. Or l'abonnement en donne des dizaines,
+# et le champ libre du formulaire obligeait à connaître l'identifiant par cœur.
+#
+# On demande donc la liste à l'API (`GET /v1/models`, standard OpenAI). Cache
+# d'une heure : un catalogue de fournisseur ne bouge pas dans la journée, et
+# une requête réseau à chaque ouverture de l'écran serait payée pour rien.
+# Injoignable ou sans clé, on retombe sur les quatre de la configuration :
+# l'écran continue de marcher, avec moins de choix.
+_CATALOGUE_OLLAMA: dict = {"modeles": [], "expire": 0.0}
+_DUREE_CATALOGUE_S = 3600
+
+
+def _modeles_ollama_cloud() -> list[str]:
+    """Tous les modèles que l'abonnement propose, ou [] si on ne sait pas."""
+    import time as _t
+
+    if _CATALOGUE_OLLAMA["modeles"] and _t.monotonic() < _CATALOGUE_OLLAMA["expire"]:
+        return _CATALOGUE_OLLAMA["modeles"]
+    cle = _cle("ollama_cloud")
+    if not cle:
+        return []
+    try:
+        import httpx
+        base = (settings.ollama_cloud_base_url or "").rstrip("/")
+        r = httpx.get(f"{base}/models",
+                      headers={"Authorization": f"Bearer {cle}"}, timeout=8)
+        r.raise_for_status()
+        noms = sorted({str(m.get("id") or "").strip()
+                       for m in (r.json().get("data") or []) if m.get("id")})
+    except Exception as e:  # noqa: BLE001 — un catalogue absent n'empêche rien
+        logger.info("Catalogue Ollama Cloud non lu (%s)", type(e).__name__)
+        return []
+    _CATALOGUE_OLLAMA.update({"modeles": noms,
+                              "expire": _t.monotonic() + _DUREE_CATALOGUE_S})
+    logger.info("Catalogue Ollama Cloud : %d modèle(s)", len(noms))
+    return noms
+
+
 def catalogue_modeles() -> list[dict]:
     """Pour l'écran « Le modèle de l'assistant » : chaque fournisseur de texte,
     sa clé (présente ou non — jamais la valeur), ses modèles connus de la
     configuration, et ceux que le disjoncteur écarte en ce moment."""
     s = settings
     fiches = [
+        # Les quatre de la configuration D'ABORD (ce sont ceux que la cascade
+        # utilise, donc les plus probables), puis tout le reste du catalogue.
         ("ollama_cloud", "Ollama Cloud", [s.model_ollama_cloud_rapide,
                                           s.model_ollama_cloud_puissant,
                                           s.model_ollama_cloud_vision,
-                                          s.model_ollama_cloud_vision_secours]),
+                                          s.model_ollama_cloud_vision_secours]
+                                         + _modeles_ollama_cloud()),
         ("longcat", "LongCat", [s.model_longcat]),
         ("google", "Google Gemini", [s.model_google_texte, s.model_google_texte_leger]),
         ("deepseek", "DeepSeek", [s.model_deepseek_flash, s.model_deepseek]),
@@ -587,6 +631,17 @@ class ResilientLLM:
                     from llm.concurrence import porte_llm
                     async with porte_llm():
                         result = await llm.ainvoke(messages, **kwargs)
+                    # CE QUE L'APPEL A COÛTÉ, compté ICI parce que c'est le seul
+                    # endroit que TOUS les appels traversent. Les nœuds du
+                    # graphe sont une vingtaine et il en naît de nouveaux :
+                    # compter chez eux, c'était compter une fois sur trois —
+                    # d'où des colonnes « Jetons » et « Coût » fausses par
+                    # construction. Ne lève jamais.
+                    try:
+                        from llm.compteur import ajouter as _compter
+                        _compter(provider, model, result)
+                    except Exception:  # noqa: BLE001
+                        pass
                     if _contenu_vide(result):
                         if not budget_double:
                             budget_double = True
@@ -666,6 +721,21 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
     Ordre : Anthropic (meilleure lecture de plans), Google Gemini (rapide,
     gratuit, toujours un modèle courant), Groq multimodal (si encore servi).
     """
+    # LE MODÈLE DE VISION SE CHOISIT À L'ÉCRAN (01/09). Posé, il passe DEVANT
+    # la cascade : c'est le même contrat que `modele_rapide` pour le texte —
+    # ce qu'on choisit s'applique, sinon la liste par défaut reprend la main.
+    # La cascade reste derrière, jamais supprimée : un modèle choisi qui ne
+    # répond pas ne doit pas rendre l'assistant aveugle.
+    choisi = []
+    try:
+        from llm.reglages import texte as _reglage_texte
+        brut = _reglage_texte("modele_vision")
+        if brut:
+            f, _, m = brut.partition(":")
+            if f.strip() and m.strip():
+                choisi = [(f.strip().lower(), m.strip())]
+    except Exception:  # noqa: BLE001 — un réglage illisible ne rend pas aveugle
+        choisi = []
     s = settings
     if not getattr(s, "vision_enabled", True):
         return []
@@ -674,7 +744,8 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
     # factures bien mieux que le flash direct — c'est le modèle d'OCR
     # préparamétré, servi par la clé OpenRouter déjà en place. Anthropic garde
     # la tête quand sa clé existe (meilleure lecture de plans).
-    for provider, model in (("anthropic", s.model_anthropic_vision),
+    for provider, model in (tuple(choisi) +
+                           (("anthropic", s.model_anthropic_vision),
                             ("openrouter", s.model_openrouter_vision),
                             # Ollama Cloud lit aussi les images. Placé DERRIÈRE
                             # Gemini 2.5 Pro tant qu'aucune mesure n'a comparé
@@ -686,7 +757,7 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
                             ("ollama_cloud", s.model_ollama_cloud_vision_secours),
                             ("google", s.model_google_vision),
                             ("google", s.model_google_vision_secours),
-                            ("groq", s.model_groq_vision)):
+                            ("groq", s.model_groq_vision))):
         if not _provider_available(provider):
             continue
         try:

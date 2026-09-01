@@ -98,6 +98,9 @@ VALEURS = {
     "anonymisation": "desactivee",
     "modele_rapide": "ollama_cloud:deepseek-v4-flash:0731",
     "modele_puissant": "ollama_cloud:deepseek-v4-pro:0813",
+    # 01/09 : la vision et les embeddings se choisissent aussi à l'écran.
+    "modele_vision": "ollama_cloud:qwen3.5:397b",
+    "modele_embedding": "ollama_cloud:embeddinggemma",
 }
 verifier("le banc couvre TOUS les réglages déclarés (sinon il ne prouve rien)",
          set(reglages.REGLAGES_CONNUS) <= set(VALEURS),
@@ -141,6 +144,8 @@ for nom, mauvais, pourquoi in (
         ("anonymisation", "peut-être", "valeur hors des deux admises"),
         ("modele_rapide", "inconnu:x", "fournisseur hors liste"),
         ("modele_rapide", "ollama_cloud:", "modèle vide"),
+        ("modele_vision", "inconnu:x", "fournisseur hors liste, vision aussi"),
+        ("modele_embedding", "x", "forme « fournisseur:modele » exigée"),
         ("un_reglage_invente", "x", "réglage hors liste")):
     try:
         asyncio.run(reglages.enregistrer(nom, mauvais, USER))

@@ -47,6 +47,17 @@ REGLAGES_CONNUS = (
     # chacun secourt l'autre. Les deux vides = cascade automatique.
     "modele_rapide",
     "modele_puissant",
+    # LA VISION ET LES EMBEDDINGS SE CHOISISSENT AUSSI (01/09, relevé de Noa :
+    # « je vois pas le choix des modèles pour embedding ou image ou OCR »).
+    # Ils vivaient dans le `.env`, donc derrière une session SSH et une
+    # recréation de conteneur — exactement ce que la migration 026 avait
+    # supprimé pour les modèles de texte.
+    #
+    # L'IMAGE, ELLE, N'EST PAS ICI, et c'est voulu : « la génération d'image,
+    # je veux que ça reste Nano Banana Pro avec Google AI ». L'écran la montre,
+    # il ne la propose pas.
+    "modele_vision",
+    "modele_embedding",
 )
 
 # Les fournisseurs de TEXTE que le routeur sait construire (llm/router.py).
@@ -158,7 +169,8 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
         nombre = (brut or "").strip()
         if not nombre.isdigit() or not (1 <= int(nombre) <= 64):
             raise ValueError("Nombre attendu entre 1 et 64 (l'abonnement en autorise 10).")
-    if nom in ("modele_rapide", "modele_puissant") and (brut or "").strip():
+    if nom in ("modele_rapide", "modele_puissant",
+               "modele_vision", "modele_embedding") and (brut or "").strip():
         f, _, m = (brut or "").strip().partition(":")
         if f.strip().lower() not in FOURNISSEURS_TEXTE or not m.strip():
             raise ValueError("Forme attendue : « fournisseur:modele », fournisseur parmi "

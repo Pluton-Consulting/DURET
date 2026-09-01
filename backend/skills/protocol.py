@@ -533,6 +533,23 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "Sans recurrence, la tâche ne part que sur demande.",
         ["titre", "consigne"],
         ["recurrence", "interval_minutes", "heure", "jours"]),
+    "mes_taches": (
+        "LISTE les taches enregistrees par la personne : leur titre, leur rythme, "
+        "la prochaine execution et si elles sont actives. A appeler des qu'on parle "
+        "de « mes taches », « ce qui est programme », ou avant de supprimer quoi que "
+        "ce soit — le titre EXACT s'y lit.",
+        [], []),
+    "supprimer_tache": (
+        "SUPPRIME definitivement une tache programmee. `tache` = son TITRE exact ou "
+        "son identifiant, tels que `mes_taches` les a rendus. Si plusieurs taches "
+        "correspondent, RIEN n'est supprime et on te rend la liste : redemande "
+        "laquelle, ne choisis pas. A utiliser quand une tache a ete creee par erreur.",
+        ["tache"], []),
+    "suspendre_tache": (
+        "MET EN PAUSE une tache programmee, ou la relance (`active: true`). "
+        "A PREFERER a la suppression quand on hesite : une tache suspendue ne se "
+        "reveille plus mais reste la, avec son historique. `tache` = son TITRE exact.",
+        ["tache"], ["active"]),
 }
 
 

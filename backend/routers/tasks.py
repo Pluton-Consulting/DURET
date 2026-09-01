@@ -20,7 +20,7 @@ from database.models import User
 from database.connection import get_db
 from security.rbac import has_permission
 from security.audit import log_action
-from tasks.scheduler import prochaine_echeance, valider_planification
+from tasks.scheduler import heure_du_jour, prochaine_echeance, valider_planification
 
 router = APIRouter()
 
@@ -93,7 +93,8 @@ async def creer(body: TacheEntrante, current_user: User = Depends(get_current_us
                RETURNING id, title, trigger_kind, schedule_kind, next_run_at, enabled""",
             str(current_user.id), body.title.strip(), body.task_prompt.strip(),
             json.dumps(body.params or {}), body.trigger_kind, body.schedule_kind,
-            body.interval_minutes, body.time_of_day, body.days_of_week, premiere, secret,
+            body.interval_minutes, heure_du_jour(body.time_of_day),
+            body.days_of_week, premiere, secret,
         )
 
     await log_action(action="agent_task_created", user_id=str(current_user.id),

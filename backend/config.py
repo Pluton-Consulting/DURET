@@ -130,6 +130,26 @@ class Settings(BaseSettings):
     # Date de départ des indicateurs (AAAA-MM-JJ). Vide = tout l'historique.
     kpi_depuis: str = ""
 
+    # LE ROI DU TABLEAU DE BORD : une estimation, et l'écran le dit.
+    #
+    # Ces réglages n'étaient PAS déclarés ici : `routers/tableau.py` retombait
+    # sur des valeurs en dur (65 €/h, 10 min par « conversation »), donc
+    # impossibles à ajuster sans toucher au code. Ils sont posés le 01/09 avec
+    # les valeurs revues chez le jumeau — relevé de Noa : « le ROI monte trop
+    # vite, sûrement une surestimation des temps ».
+    #
+    # Il avait raison, et la cause principale n'était pas la valeur : le
+    # compteur compte des TOURS de chat et les appelait « conversations ». Cinq
+    # messages pour obtenir un devis créditaient cinquante minutes. Les valeurs
+    # ci-dessous répondent à « combien de temps CE geste aurait pris à la
+    # main », pas « combien vaut une journée assistée ».
+    roi_taux_horaire: float = 45.0         # coût horaire chargé, prudent
+    roi_minutes_question: float = 3.0      # UN ÉCHANGE (pas une conversation entière)
+    roi_minutes_document: float = 20.0     # un document produit (devis, mémoire)
+    roi_minutes_mail: float = 2.0          # un mail trié, résumé ou répondu
+    roi_minutes_analyse: float = 15.0      # un plan ou une photo analysés
+    roi_minutes_recherche: float = 3.0     # une recherche (mémoire, données, web)
+
     # Vision (Agent 2) : ordre de préférence anthropic > groq. Désactivable.
     vision_enabled: bool = True
 

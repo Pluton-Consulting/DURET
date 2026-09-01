@@ -359,6 +359,12 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
     # n'est pas un argument à faire passer par quinze signatures.
     from llm.concurrence import limite_de, porter
     porter(f"user:{user_id}", await limite_de(user_id, user_role))
+    # LE COMPTEUR DU TOUR. Ouvert ici, lu après le graphe : c'est ce qui rend
+    # les colonnes « Jetons » et « Coût » vraies. Avant, seule la VISION
+    # renseignait les jetons — le chemin le moins emprunté — et le coût
+    # n'était écrit nulle part.
+    from llm.compteur import bilan, demarrer
+    demarrer()
     with _Verrou(thread_id):
         result = await graph.ainvoke(
             _initial_state(query, user_id, user_role, has_attachment, thread_id,
@@ -370,11 +376,15 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
     paused = bool(snapshot.next)
 
     state = snapshot.values if isinstance(snapshot.values, dict) else result
-    tokens_in = state.get("tokens_in", 0) or 0
-    tokens_out = state.get("tokens_out", 0) or 0
-    cost_eur = state.get("cost_eur", 0.0) or 0.0
+    # Le compteur PRIME sur l'état : il a vu tous les appels, y compris ceux
+    # des nœuds qui ne renseignent rien. L'état sert de repli pour la vision,
+    # qui, elle, compte déjà de son côté.
+    mesure = bilan()
+    tokens_in = mesure["tokens_in"] or (state.get("tokens_in", 0) or 0)
+    tokens_out = mesure["tokens_out"] or (state.get("tokens_out", 0) or 0)
+    cost_eur = mesure["cost_eur"] or (state.get("cost_eur", 0.0) or 0.0)
     agent_used = state.get("target_agent", "agent1")
-    model_used = state.get("model_used")
+    model_used = mesure["modele"] or state.get("model_used")
 
     if paused:
         intr = _extract_interrupt(result)
@@ -538,6 +548,12 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
     # n'est pas un argument à faire passer par quinze signatures.
     from llm.concurrence import limite_de, porter
     porter(f"user:{user_id}", await limite_de(user_id, user_role))
+    # LE COMPTEUR DU TOUR. Ouvert ici, lu après le graphe : c'est ce qui rend
+    # les colonnes « Jetons » et « Coût » vraies. Avant, seule la VISION
+    # renseignait les jetons — le chemin le moins emprunté — et le coût
+    # n'était écrit nulle part.
+    from llm.compteur import bilan, demarrer
+    demarrer()
     with _Verrou(thread_id):
         # subgraphs=True : remonte AUSSI les sous-étapes internes des agents (recherche mémoire,
         # anonymisation, rédaction, vision…) et pas seulement les gros nœuds (agent1/agent2).
@@ -588,7 +604,13 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                "skill": charge.get("skill") if isinstance(charge, dict) else None,
                "args": charge.get("args") if isinstance(charge, dict) else None}
     else:
-        yield {"type": "final", "thread_id": thread_id, "response": _response_from_state(state)}
+        # L'ÉVÉNEMENT FINAL PORTE LA MESURE. Sans elle, le chemin WebSocket —
+        # qui est le chemin NOMINAL, le POST n'étant qu'un repli — journalisait
+        # zéro jeton, zéro euro et aucun modèle : les colonnes du pilotage
+        # étaient donc fausses là où presque tout le trafic passe.
+        yield {"type": "final", "thread_id": thread_id,
+               "response": _response_from_state(state),
+               "mesure": bilan()}
 
 
 def _safe(update: Any) -> dict:

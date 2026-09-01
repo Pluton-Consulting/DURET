@@ -445,6 +445,9 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
 
     start = time.monotonic()
     tokens = 0
+    cout = 0.0
+    modele = None
+    mesure: dict = {}
     agent_used = "agent1"
     # Réservation + contrôle d'appartenance AVANT le tour : le thread_id vient
     # de l'URL du WebSocket, et stream_turn charge le checkpoint (historique).
@@ -485,6 +488,12 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                 agent_used = cible
             if event.get("type") == "final":
                 final_response = event.get("response") or ""
+                # CE QUE LE TOUR A COÛTÉ. Cette variable valait 0 depuis
+                # toujours sur ce chemin — qui est pourtant le chemin nominal.
+                mesure = event.get("mesure") or {}
+                tokens = int(mesure.get("tokens_in", 0)) + int(mesure.get("tokens_out", 0))
+                cout = float(mesure.get("cost_eur", 0.0) or 0.0)
+                modele = mesure.get("modele")
                 # ON ÉCRIT AVANT D'ANNONCER, ET C'EST TOUT LE CORRECTIF.
                 #
                 # La persistance vivait APRÈS la boucle. Or `final` est le
@@ -543,6 +552,16 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         await _dire(websocket, {"type": "fil_occupe", "detail": str(e)})
         return
     except Exception as e:  # noqa: BLE001
+        # UN TOUR QUI PLANTE DOIT LAISSER UNE TRACE. Cette branche rendait
+        # « Une erreur est survenue » à l'écran et sortait SANS RIEN journaliser :
+        # la tuile « Erreurs (24 h) » et l'onglet Erreurs du pilotage ne
+        # voyaient donc jamais les pannes du chat — celles-là mêmes qu'on passe
+        # ensuite des heures à chercher dans les journaux Docker.
+        await log_action(
+            action="chat_request", user_id=str(user.id), agent_id=agent_used,
+            success=False, error_message=str(e)[:500],
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
         await _dire(websocket, {"type": "error", "detail": str(e)})
         return
 
@@ -553,10 +572,20 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     if not persistance_faite:
         await _persist_messages(user, thread_pk, data.get("query", ""), final_response)
     await _actualiser_expert(user, thread_pk, agent_used)
-    await _increment_usage(user, tokens=tokens, cost=0.0)
+    await _increment_usage(user, tokens=tokens, cost=cout)
+    # LE JOURNAL DISAIT « RÉUSSI » ET « MODÈLE — » À TOUS LES COUPS. Il porte
+    # désormais ce qui s'est passé : le modèle qui a effectivement répondu (pas
+    # celui qu'on espérait), les jetons, le coût. Un tour sans réponse finale
+    # n'est pas un succès : le dire aurait rendu la tuile « Erreurs » vide par
+    # construction.
     await log_action(
         action="chat_request", user_id=str(user.id), agent_id=agent_used,
-        success=True, duration_ms=duration_ms,
+        model_used=modele, success=bool(final_response),
+        error_message=None if final_response else "aucune réponse finale",
+        duration_ms=duration_ms,
+        tokens_in=int(mesure.get("tokens_in", 0) or 0),
+        tokens_out=int(mesure.get("tokens_out", 0) or 0),
+        cost_eur=cout,
     )
 
 

@@ -120,7 +120,8 @@ CONSIGNE_RESUME = (
     "d'entreprise. On te donne le résumé existant et les échanges qui viennent de "
     "sortir de la fenêtre récente. Écris le NOUVEAU résumé, en français, en "
     "{max_chars} caractères au plus, sous forme de lignes courtes. Garde : les "
-    "faits et chiffres donnés (surfaces, montants, dates, références), les noms "
+    "faits et chiffres donnés (surfaces, montants, dates, références) — recopie "
+    "chaque chiffre EXACTEMENT, jamais arrondi ni approché —, les noms "
     "de chantiers, clients, documents et fichiers, les décisions prises, les "
     "demandes restées en suspens, les préférences exprimées. Les jetons entre "
     "crochets comme [PER_1] ou [ORG_2] sont des noms masqués : recopie-les tels "
@@ -303,6 +304,14 @@ def bloc_memoire(resume: Optional[str], rappels: list[dict]) -> str:
                        "le DERNIER échange, sauf si elle les nomme :\n" + "\n".join(lignes))
     if not parties:
         return ""
+    # LES CHIFFRES DE LA MÉMOIRE DATENT. Relevé le 01/09 : la veille, un geste
+    # avait compté 66 mails ; le lendemain, le modèle a répondu « 70 » de
+    # mémoire. Un compte recopié d'ici est à la fois périmé (la boîte a changé)
+    # et approximatif (le résumé compresse) : le bandeau le dit au modèle, la
+    # règle du prompt lui dit quoi faire à la place (refaire le geste).
     return ("MÉMOIRE DE LA CONVERSATION (ce que vous avez déjà échangé ; « tout à "
-            "l'heure », « ce devis », « le chantier » s'y réfèrent) :\n"
+            "l'heure », « ce devis », « le chantier » s'y réfèrent). Ses chiffres "
+            "et comptes DATENT de leur moment : pour en redonner un aujourd'hui, "
+            "refais le geste qui l'a produit et cite son résultat, jamais une "
+            "estimation :\n"
             + "\n\n".join(parties) + "\n\n")

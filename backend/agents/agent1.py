@@ -61,6 +61,8 @@ DONNÉE MANQUANTE : quand on te demande de remplir une fiche, un tableau, un ré
 Certaines valeurs peuvent apparaître masquées sous forme de balises [PER_1], [MONTANT_2], etc. Conserve-les telles quelles et ne CRÉE jamais toi-même de balise entre crochets. Une balise reste une VRAIE valeur, simplement masquée : passée telle quelle en paramètre d'une action, le serveur la remplace par la valeur réelle. Ne dis jamais qu'une balise « n'est pas une vraie donnée » et ne redemande jamais l'information qu'elle porte : la personne l'a déjà donnée.
 
 TOUT SIGNIFIE TOUT. Quand la demande porte sur l'ENSEMBLE (« tous mes clients », « tous les mails », « toute la base ») : les COMPTES et TOTAUX rendus par les gestes portent déjà sur tout — cite-les. Quand un résultat dit « tronqué », « page x sur y » ou rend `pour_continuer`, ENCHAÎNE les pages jusqu'à couvrir la demande, ou produis le FICHIER complet quand le geste le propose (`liste_clients`/`liste_fournisseurs` avec fichier: true). Ne conclus JAMAIS à partir d'un échantillon présenté comme le tout : si tu t'arrêtes avant la fin, dis exactement ce qui est couvert et comment obtenir le reste.
+UN CHIFFRE SE LIT, IL NE S'ESTIME JAMAIS. Tout nombre que tu donnes (compte de mails, de dossiers, montant) se recopie À L'UNITÉ depuis un résultat d'action de CE tour : jamais « environ », « à peu près », « une soixantaine » quand un geste rend le compte exact. Un chiffre cité plus tôt dans la conversation est PÉRIMÉ (la boîte, la base, les dossiers ont changé depuis) : pour redonner un compte, refais le geste qui le rend et cite le résultat du tour, pas ton souvenir.
+UNE DEMANDE RÉPÉTÉE SE REFAIT. Quand on te redemande un travail déjà fait (« fais le point sur les mails » alors que le point a été fait tout à l'heure) : REFAIS les gestes et livre le résultat À JOUR. Ne réponds JAMAIS « cela a déjà été fait », ne renvoie jamais vers une réponse précédente et ne la ressers pas de mémoire : elle date de son moment, la personne veut l'état ACTUEL. Seule une question qui porte sur le passé lui-même (« as-tu envoyé le mail ? ») se répond par ce qui a été fait.
 PLUSIEURS DEMANDES DANS UN MESSAGE (« affiche le mail complet et dis-moi combien j'en ai reçu ») : traite-les TOUTES, chacune avec son geste, avant de rédiger ; la réponse répond à chacune, dans l'ordre, et dit celle que tu n'as pas pu faire.
 UNE QUESTION COURTE SANS OBJET (« es-tu sûr ? », « vraiment ? », « et alors ? ») porte sur TA DERNIÈRE réponse, jamais sur un échange plus ancien : vérifie-la (refais le geste s'il le faut) et réponds sur elle. La date du jour t'est donnée à chaque message : une période (« cette semaine », « les 7 derniers jours ») se demande en DURÉE (« 7j »), jamais en date que tu calcules.
 
@@ -188,7 +190,8 @@ PLAFOND_RESULTAT_GENEREUX = 12000
 from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_suite,
                             options_proposees, reclame_un_prealable,
                             pretend_avoir_livre, demande_une_production,
-                            propose_au_lieu_d_agir)
+                            propose_au_lieu_d_agir, renvoie_au_deja_fait,
+                            demande_sur_le_passe)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -2593,8 +2596,26 @@ def route_apres_llm(state: AgentState) -> str:
         logger.info("Proposition sans acte : la réponse offre de faire au lieu de faire — forçage")
         _tracer_filet(state, "forcage", "proposition_sans_acte",
                       forcages_deja=state.get("forcages") or 0)
+    # LE RENVOI AU DÉJÀ-FAIT (01/09). « Fais le point sur les mails » → « cela
+    # a déjà été fait tout à l'heure » sans qu'aucun geste ait tourné : une
+    # demande répétée se REFAIT — la boîte a changé depuis, et une réponse de
+    # mémoire est à la fois périmée et approximative (« environ 70 mails » pour
+    # 66 exacts). La réponse repart au forceur, dont le contexte NEUF n'est pas
+    # contaminé par la première exécution. Une vraie question sur le passé
+    # (« as-tu envoyé le mail ? ») garde sa réponse : c'est la demande qui
+    # décide, pas la formulation du modèle.
+    deja_fait = (
+        renvoie_au_deja_fait(visible)
+        and not any(r.get("ok") for r in (state.get("tool_results") or []))
+        and not state.get("pending_action")
+        and not demande_sur_le_passe(state.get("query") or ""))
+    if deja_fait and not fantome and not sans_agir:
+        logger.info("Renvoi au déjà-fait : la réponse repousse la demande vers le passé — forçage")
+        _tracer_filet(state, "forcage", "renvoi_au_deja_fait",
+                      forcages_deja=state.get("forcages") or 0)
 
-    if est_une_annonce(texte) or promesse_sans_suite(texte) or not visible or fantome or sans_agir:
+    if (est_une_annonce(texte) or promesse_sans_suite(texte) or not visible
+            or fantome or sans_agir or deja_fait):
         # L'ORDRE COMPTE, ET IL A ÉTÉ FAUX UNE SOIRÉE. Première version : une
         # annonce après un résultat réussi allait droit à la rédaction. Or
         # l'annonce porte souvent sur l'étape SUIVANTE (« je lance le tirage »
@@ -2605,7 +2626,7 @@ def route_apres_llm(state: AgentState) -> str:
         # quelque chose à rédiger. Une réponse VIDE après un résultat compte
         # comme une promesse : elle n'a rien montré non plus.
         if visible and (state.get("forcages") or 0) < MAX_FORCAGES_PAR_TOUR:
-            if not fantome and not sans_agir:
+            if not fantome and not sans_agir and not deja_fait:
                 _tracer_filet(state, "forcage", "annonce_ou_promesse_sans_acte",
                               forcages_deja=state.get("forcages") or 0)
             return "forcer"

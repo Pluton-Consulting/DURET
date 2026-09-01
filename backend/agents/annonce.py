@@ -437,3 +437,79 @@ def propose_au_lieu_d_agir(texte: str) -> bool:
             r"ou|quand|a qui|a quel|a quelle|pour qui|comment)\b", t, re.I)
         return not demande_une_donnee
     return False
+
+
+# ── Le renvoi au déjà-fait ──────────────────────────────────────────────────
+#
+# Relevé par Noa le 01/09 : « fais le point sur les mails » → « cela a déjà été
+# fait tout à l'heure ». Le point AVAIT été fait — mais la boîte a changé
+# depuis, et la personne qui redemande veut l'état ACTUEL, pas un renvoi vers
+# le passé. Même racine que le chiffre estimé (« vous aviez environ 70 mails »
+# pour 66 exacts) : le modèle répond de MÉMOIRE de conversation au lieu de
+# refaire le geste, et la mémoire est à la fois périmée et approximative.
+#
+# Le prédicat reconnaît une réponse qui REPOUSSE la demande vers un travail
+# passé : « a déjà été fait », « je vous l'ai déjà transmis », « comme indiqué
+# précédemment », « voir ma réponse précédente ». Il ne juge JAMAIS seul :
+# l'appelant ne force que si AUCUN geste n'a tourné dans le tour (une réponse
+# qui refait le point et ajoute « comme ce matin » est légitime), et si la
+# demande n'interroge pas ELLE-MÊME le passé (« as-tu envoyé le mail ? » se
+# répond par ce qui a été fait — c'est `demande_sur_le_passe`).
+_DEJA_FAIT = re.compile(
+    # « le point a déjà été fait », « cette analyse a déjà été réalisée »
+    r"(?:a|ont) deja ete (?:fait|effectue|realise|traite|analyse|verifie"
+    r"|envoye|prepare|donne|transmis|communique|liste|resume)e?s?\b"
+    # « je vous l'ai déjà transmis », « je l'ai déjà fait »
+    r"|je (?:vous |te )?(?:l['’]|les |leur )?ai deja "
+    r"(?:fait|donne|fourni|liste|communique|transmis|envoye|montre|indique"
+    r"|dit|repondu|prepare|analyse|resume|traite|verifie)"
+    # « déjà fait tout à l'heure / ce matin / hier »
+    r"|deja (?:fait|effectue|realise|traite)e?s? "
+    r"(?:tout a l['’]heure|ce matin|hier|precedemment|plus tot|il y a)"
+    # « comme indiqué précédemment » : sans geste dans le tour, c'est une
+    # réponse de mémoire — exactement ce qui rend les chiffres approximatifs.
+    r"|comme (?:indique|mentionne|precise|explique|dit|vu|repondu) "
+    r"(?:precedemment|plus tot|plus haut|ci-dessus|tout a l['’]heure"
+    r"|ce matin|hier|dans ma reponse)"
+    # « voir ma réponse précédente », « reportez-vous à ma réponse précédente »
+    r"|(?:voir|cf\.?|reportez-vous a|referez-vous a|consultez|reprenez)"
+    r" [^.!?\n]{0,30}?reponse precedente"
+    # « je viens de le faire », « je viens de faire le point » — au présent,
+    # mais sans le moindre geste dans le tour c'est la même esquive.
+    r"|je viens (?:deja )?de (?:le |la |les |vous le |vous la |vous les )?"
+    r"(?:faire|donner|transmettre|envoyer|communiquer|repondre)",
+    re.IGNORECASE)
+
+
+def renvoie_au_deja_fait(texte: str) -> bool:
+    """La réponse repousse-t-elle la demande vers un travail passé ?
+
+    À n'appliquer QUE si aucun geste n'a tourné dans le tour ET si la demande
+    n'interroge pas le passé : une demande répétée se REFAIT, elle ne se
+    renvoie pas à sa précédente exécution.
+    """
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    return bool(_DEJA_FAIT.search(_sans_accent(texte)))
+
+
+# La QUESTION SUR LE PASSÉ, elle, appelle une réponse sur le passé. « As-tu
+# envoyé le mail à Martin ? » → « oui, ce matin » est la bonne réponse, pas un
+# renvoi ni un nouvel envoi. Volontairement étroit : il ne reconnaît que les
+# questions qui portent sur ce que L'ASSISTANT a fait ou sur l'état d'un envoi,
+# jamais une demande de travail (« refais le point » n'y tombe pas).
+_QUESTION_SUR_LE_PASSE = re.compile(
+    r"\b(?:as-tu|avais-tu|l['’]as-tu|qu['’]as-tu)\b"
+    r"|est-ce que tu (?:as|avais|l['’]as)"
+    r"|tu (?:as|avais) (?:deja|bien|fini|termine)"
+    r"|(?:c['’]est|est-ce|est-il|est-elle) (?:deja )?"
+    r"(?:fait|faite|parti|partie|envoye|envoyee|traite|traitee|regle|reglee)\b"
+    r"|a-t-(?:il|elle) (?:deja )?ete",
+    re.IGNORECASE)
+
+
+def demande_sur_le_passe(texte: str) -> bool:
+    """La demande interroge-t-elle ce qui a DÉJÀ été fait ?"""
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    return bool(_QUESTION_SUR_LE_PASSE.search(_sans_accent(texte)))

@@ -146,6 +146,35 @@ deux = json.dumps({"bloc_garanti": True, "bloc_ui": [
 sortie2 = garantir("Voici l'aperçu.", {"tool_results": [{"ok": True, "resultat_masque": deux}]})
 verifier("PLUSIEURS blocs garantis s'affichent tous", sortie2.count("```ui") == 2)
 
+# LE DOUBLON DE PROD (01/09 au soir) : la recherche Drive répond bien, mais le
+# modèle RECONSTRUIT sa propre version du tableau depuis les données (lignes en
+# moins, champ reformulé) — signature différente, et le bloc mécanique
+# s'ajoutait À CÔTÉ. La copie dégradée doit s'effacer, la complète rester SEULE.
+table = {"type": "table", "titre": "Recherche — durand",
+         "columns": ["Nom", "Type", "Emplacement"],
+         "rows": [["Dossier DURAND", "Dossier", "Clients/DURAND"],
+                  ["devis durand.pdf", "Fichier", "Clients/DURAND"],
+                  ["facture durand.pdf", "Fichier", "Clients/DURAND/2026"]]}
+etat_t = {"tool_results": [{"ok": True, "resultat_masque": json.dumps(
+    {"bloc_garanti": True, "bloc_ui": table}, ensure_ascii=False)}]}
+copie_partielle = json.dumps({"type": "table",
+                              "columns": ["Nom", "Type", "Emplacement"],
+                              "rows": table["rows"][:2]}, ensure_ascii=False)
+s = garantir("Voici les résultats :\n\n```ui\n" + copie_partielle + "\n```", etat_t)
+verifier("la copie PARTIELLE du modèle s'efface : UN seul composant, le complet",
+         s.count("```ui") == 1 and "facture durand.pdf" in s)
+s2 = garantir("Voici :\n\n```ui\n" + json.dumps(table, ensure_ascii=False) + "\n```", etat_t)
+verifier("la copie EXACTE reste en place, sans doublon", s2.count("```ui") == 1)
+autre = json.dumps({"type": "table", "columns": ["Mois", "CA"],
+                    "rows": [["janvier", "12 000"], ["février", "9 000"]]},
+                   ensure_ascii=False)
+s3 = garantir("Deux choses :\n\n```ui\n" + autre + "\n```", etat_t)
+verifier("un tableau SANS RAPPORT n'est pas pris pour une copie : il reste, plus le garanti",
+         s3.count("```ui") == 2 and "janvier" in s3)
+double_res = {"tool_results": [etat_t["tool_results"][0], dict(etat_t["tool_results"][0])]}
+verifier("le même résultat garanti DEUX fois dans le tour n'affiche qu'un bloc",
+         garantir("Voici.", double_res).count("```ui") == 1)
+
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("le garde-fou est branché entre les livrables et le dédoublonnage",
          re.search(r"_livrables_a_l_ecran\(text, state\).*?_blocs_garantis\(text, state\).*?"

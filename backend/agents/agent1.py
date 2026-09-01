@@ -1891,19 +1891,66 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
         garantis.extend(_blocs_de(d.get("bloc_ui")))
     if not garantis:
         return texte
+    signatures_garanties = {_signature_bloc(g) for g in garantis}
+
+    # UNE COPIE PARTIELLE N'EST PAS UNE PRÉSENCE (01/09, relevé en prod le
+    # soir même du déploiement : la recherche Drive « parfaitement répondue »
+    # affichait le composant EN DOUBLE). Le modèle avait reconstruit SA
+    # version du tableau depuis les données du résultat — quelques lignes de
+    # moins, un champ reformulé — et la comparaison par signature EXACTE ne
+    # la reconnaissait pas : le bloc mécanique s'ajoutait à côté de la copie.
+    # On reconnaît donc la copie au RECOUVREMENT de contenu (même type, même
+    # titre, ou 60 % des feuilles en commun) : la copie dégradée s'efface, le
+    # bloc mécanique complet la remplace. Une copie EXACTE reste en place —
+    # elle est déjà le bon bloc, au bon endroit.
+    def _feuilles(bloc) -> set:
+        feuilles: set = set()
+
+        def _cueillir(v):
+            if isinstance(v, dict):
+                for x in v.values():
+                    _cueillir(x)
+            elif isinstance(v, list):
+                for x in v:
+                    _cueillir(x)
+            elif v not in (None, ""):
+                feuilles.add(str(v).strip().lower())
+
+        _cueillir({k: v for k, v in bloc.items() if k != "type"})
+        return feuilles
+
+    def _copie_du_garanti(bloc: dict) -> bool:
+        for g in garantis:
+            if bloc.get("type") != g.get("type"):
+                continue
+            if bloc.get("titre") and bloc.get("titre") == g.get("titre"):
+                return True
+            fa, fg = _feuilles(bloc), _feuilles(g)
+            if fa and fg and len(fa & fg) >= max(3, int(0.6 * min(len(fa), len(fg)))):
+                return True
+        return False
 
     def _retirer(m):
         try:
             bloc = _j.loads(m.group(1))
         except ValueError:
             return m.group(0)
+        if not isinstance(bloc, dict):
+            return m.group(0)
         # Une carte de document SANS url qui désigne un bloc garanti est la
         # signature exacte du défaut relevé : le vrai contenu la remplace.
-        if (isinstance(bloc, dict) and bloc.get("type") in ("doc", "doc_apercu")
+        if (bloc.get("type") in ("doc", "doc_apercu")
                 and not bloc.get("url") and _designe_le_meme(bloc, garantis)):
             _tracer_filet(state, "invention_effacee", "carte_au_lieu_du_bloc_garanti",
                           bloc=str(bloc.get("titre") or bloc.get("name")
                                    or bloc.get("nom") or "")[:60])
+            return ""
+        # La copie dégradée d'un bloc garanti s'efface (le complet arrive) ;
+        # la copie exacte, elle, reste : c'est déjà le bon bloc.
+        if (_signature_bloc(bloc) not in signatures_garanties
+                and _copie_du_garanti(bloc)):
+            _tracer_filet(state, "invention_effacee", "copie_partielle_du_bloc_garanti",
+                          type=str(bloc.get("type") or ""))
             return ""
         return m.group(0)
 
@@ -1919,6 +1966,9 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
     for bloc in garantis:
         if _signature_bloc(bloc) in presentes:
             continue
+        # La signature s'ajoute à la volée : deux résultats garantis IDENTIQUES
+        # dans le même tour (le skill rappelé tel quel) n'affichent qu'un bloc.
+        presentes.add(_signature_bloc(bloc))
         _tracer_filet(state, "livrable_restitue", "bloc_garanti_absent",
                       type=str(bloc.get("type") or ""))
         texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()

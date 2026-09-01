@@ -127,18 +127,25 @@ async def nas_lire(data: dict, user) -> dict:
 
 
 async def nas_chercher(data: dict, user) -> dict:
-    """Recherche un fichier par son nom, dans le périmètre autorisé."""
+    """Recherche par NOM (dossiers et fichiers), récursive, périmètre autorisé.
+
+    Le résultat s'affiche en tableau MÉCANIQUE (`garantir_recherche`, 01/09) :
+    même forme et même écran que le `drive_chercher` du projet jumeau.
+    """
     from nas.acces import chercher, verifier_role, NasRefuse
+    from skills.affichage import garantir_recherche
     try:
         verifier_role(user)
     except NasRefuse as e:
         _echec(str(e))
+    motif = (data.get("motif") or data.get("nom") or data.get("client") or "").strip()
     try:
-        return await chercher(data.get("motif") or "", data.get("dossier"))
+        resultat = await chercher(motif, data.get("dossier"))
     except NasRefuse as e:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001
         _echec(_detail("La recherche a échoué", e))
+    return garantir_recherche(resultat, motif)
 
 
 async def nas_deposer(data: dict, user) -> dict:
@@ -257,10 +264,17 @@ SKILLS = {
         libelle="je lis un fichier du serveur"),
     "nas_chercher": Declaration(
         fonction=nas_chercher,
-        description="CHERCHE un fichier par son nom sur le serveur, sans le lire",
+        description=(
+            "CHERCHE dossiers ET fichiers par NOM sur le serveur, dans toute "
+            "la profondeur du perimetre, et rend leurs CHEMINS. A utiliser "
+            "D'INSTINCT quand une information sur un client, un chantier ou "
+            "un fournisseur ne sort ni des fichiers importes ni des "
+            "documents : le classement porte les noms des clients. Le "
+            "resultat s'affiche automatiquement ; propose ensuite d'ouvrir "
+            "ou d'explorer ce qui est trouve. `motif` : le nom cherche"),
         requis=["motif"], optionnels=["dossier"],
         effet="lecture",
-        libelle="je cherche un fichier sur le serveur"),
+        libelle="je cherche ce nom sur le serveur"),
     "nas_deposer": Declaration(
         fonction=nas_deposer,
         description=("DEPOSE sur le serveur un fichier deja produit, UNIQUEMENT "

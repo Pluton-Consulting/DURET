@@ -141,3 +141,46 @@ def garantir_apercu(resultat: dict, quoi: str) -> dict:
         "document pour montrer un dossier. Rédige une ou deux phrases ; pour "
         "le détail d'un sous-dossier, rappelle l'aperçu avec son nom.")
     return resultat
+
+
+def garantir_recherche(resultat: dict, motif: str) -> dict:
+    """La recherche par NOM en tableau mécanique : nom, type, emplacement.
+
+    Demande de Noa du 01/09 : quand une information sur un client manque en
+    mémoire, l'assistant cherche « instinctivement » les dossiers et fichiers
+    qui PARLENT de ce client — et montre ce qu'il trouve, avant de proposer
+    d'aller plus loin. Les deux recherches (Drive et NAS) rendent la même
+    forme (`resultats`: nom, chemin, dossier) : un seul afficheur.
+    """
+    if not isinstance(resultat, dict):
+        return resultat
+    entrees = [r for r in (resultat.get("resultats") or []) if isinstance(r, dict)]
+    dossiers = sum(1 for r in entrees if r.get("dossier"))
+    fichiers = len(entrees) - dossiers
+    if not entrees:
+        resultat["message_final"] = (f"Aucun dossier ni fichier ne porte "
+                                     f"« {motif} » dans son nom.")
+        resultat["a_faire"] = (
+            "Rien ne SORT de cette recherche, ce qui ne prouve pas l'absence : "
+            "dis ce que tu as cherché et retente avec UN seul mot du nom ou une "
+            "autre orthographe avant de conclure ; propose aussi la recherche "
+            "dans le CONTENU des documents.")
+        return resultat
+    lignes = [[str(r.get("nom") or ""),
+               "Dossier" if r.get("dossier") else "Fichier",
+               str(r.get("chemin") or "")] for r in entrees]
+    resultat["bloc_ui"] = {"type": "table",
+                           "titre": f"Recherche — {motif}",
+                           "columns": ["Nom", "Type", "Emplacement"],
+                           "rows": lignes}
+    resultat["bloc_garanti"] = True
+    resultat["message_final"] = (f"« {motif} » : {dossiers} dossier(s) et "
+                                 f"{fichiers} fichier(s) trouvés par leur nom.")
+    resultat["a_faire"] = (
+        "Les résultats sont DÉJÀ affichés à l'écran par un bloc mécanique : ne "
+        "les recopie pas, n'écris aucun bloc doc ou fichier pour eux. Rédige "
+        "une ou deux phrases sur ce qui a été trouvé, puis PROPOSE la suite : "
+        "ouvrir un fichier trouvé, explorer un dossier trouvé, ou pousser la "
+        "recherche plus loin (contenu des documents, autre orthographe) — "
+        "c'est à l'utilisateur de dire s'il veut aller plus loin.")
+    return resultat

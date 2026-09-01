@@ -586,8 +586,11 @@ async def fiche_client(data: dict, user) -> dict:
             "trouve": False, "nom_demande": demande, "jeux_de_donnees": existants,
             "message": (f"Aucun enregistrement ne mentionne « {demande} » dans les "
                         f"{len(existants)} jeu(x) de données importés."),
-            "a_faire": ("Dis-le sans détour et n'invente RIEN. Propose d'appeler "
-                        "`liste_clients` pour vérifier l'orthographe exacte du nom."),
+            "a_faire": ("Dis-le sans détour et n'invente RIEN. AVANT de conclure, "
+                        "cherche ce NOM dans le classement des fichiers (le geste "
+                        "de recherche par nom : drive_chercher ou nas_chercher) — "
+                        "les dossiers portent les noms des clients — et propose "
+                        "`liste_clients` pour vérifier l'orthographe exacte."),
         }
 
     # ── Le recoupement : combien, pour combien, dans quel jeu ──────────────

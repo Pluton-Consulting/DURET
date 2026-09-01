@@ -29,7 +29,49 @@ tête de corps.
 """
 from __future__ import annotations
 
-from emails.marque import LOGO_CONTENT_ID, MARQUE, logo_image
+from emails.marque import (LOGO_CONTENT_ID, LOGO_PORTE_LE_NOM, MARQUE,
+                           logo_image)
+
+
+def _entete_html() -> str:
+    """Le bandeau de marque du mail, dans la forme que le logo disponible permet.
+
+    DEUX FORMES, ET C'EST UNE QUESTION DE LISIBILITÉ, PAS DE GOÛT.
+
+    · AVEC LE VRAI LOGO (`emails/logo.png`) : fond CLAIR et logotype seul, comme
+      dans l'en-tête de l'application. Le logotype de la maison est un MOT écrit
+      en vert forêt : posé sur le vert très foncé du bandeau, il serait
+      illisible. Et le nom n'est pas répété à côté, puisque le logotype le
+      contient déjà — c'est précisément ce qui le distingue d'un symbole.
+
+    · SANS LUI : le bandeau sombre et la pastille dessinée, tels qu'avant. Cette
+      forme ne dépend d'aucun fichier, elle est donc le repli sûr.
+    """
+    if logo_image() is None:
+        return (
+            f'<tr><td style="background:{MARQUE["fond"]};padding:28px 40px">'
+            f'<table cellpadding="0" cellspacing="0" border="0"><tr>'
+            f'<td style="vertical-align:middle;padding-right:14px">{MARQUE["logo"]}</td>'
+            f'<td style="vertical-align:middle">'
+            f'<div style="color:#ffffff;font-size:18px;font-weight:800;'
+            f'letter-spacing:-0.3px;line-height:1.15">{MARQUE["nom"]}</div>'
+            f'<div style="color:{MARQUE["baseline"]};font-size:11px;font-weight:500;'
+            f'margin-top:4px">Assistant IA interne</div>'
+            f'</td></tr></table></td></tr>')
+    # Le nom n'est répété QUE si le logo ne le porte pas : un logotype qui
+    # contient déjà le mot ferait doublon, un symbole seul laisserait le
+    # destinataire sans savoir de qui vient le message.
+    nom_ecrit = "" if LOGO_PORTE_LE_NOM else (
+        f'<div style="color:{MARQUE["fond"]};font-size:17px;font-weight:800;'
+        f'letter-spacing:-0.3px;margin-top:10px">{MARQUE["nom"]}</div>')
+    return (
+        f'<tr><td style="background:#ffffff;padding:26px 40px 22px;'
+        f'border-bottom:1px solid {_BORDURE}">'
+        f'{_logo_html()}'
+        f'{nom_ecrit}'
+        f'<div style="color:{_TEXTE_DOUX};font-size:11px;font-weight:500;'
+        f'margin-top:8px">Assistant IA interne</div>'
+        f'</td></tr>')
 
 
 def _logo_html() -> str:
@@ -47,7 +89,7 @@ def _logo_html() -> str:
     if logo_image() is None:
         return MARQUE["logo"]
     return (f'<img src="cid:{LOGO_CONTENT_ID}" alt="{MARQUE["nom"]}" '
-            f'height="36" style="height:36px;display:block;border:0" />')
+            f'height="30" style="height:30px;width:auto;display:block;border:0" />')
 
 # Les gris sont communs aux deux marques : seule la couleur d'accent change.
 # Les figer ici plutôt que dans `marque.py` évite qu'une duplication de projet
@@ -75,19 +117,7 @@ _ENVELOPPE = """<!DOCTYPE html>
       <table width="520" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(11,14,17,0.08)">
 
         <!-- ── En-tête : le SEUL endroit qui porte la marque ── -->
-        <tr>
-          <td style="background:{fond_marque};padding:28px 40px">
-            <table cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td style="vertical-align:middle;padding-right:14px">{logo}</td>
-                <td style="vertical-align:middle">
-                  <div style="color:#ffffff;font-size:18px;font-weight:800;letter-spacing:-0.3px;line-height:1.15">{nom}</div>
-                  <div style="color:{couleur_baseline};font-size:11px;font-weight:500;margin-top:4px">Assistant IA interne</div>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
+        {entete_marque}
 
         <!-- ── Corps ── -->
         <tr>
@@ -111,7 +141,7 @@ _ENVELOPPE = """<!DOCTYPE html>
       </table>
 
       <div style="max-width:520px;margin:18px auto 0;font-size:11px;color:{texte_doux};line-height:1.5;text-align:center">
-        {nom} · assistant interne — message automatique, merci de ne pas y répondre.
+        {nom} · assistant interne. Message automatique, merci de ne pas y répondre.
       </div>
 
     </td></tr>
@@ -147,9 +177,7 @@ def enveloppe(titre_mail: str, apercu: str, corps: str,
         bloc_cta = _CTA.format(couleur=MARQUE["couleur"], url=cta_url, libelle=cta_libelle)
     return _ENVELOPPE.format(
         fond_page=_FOND_PAGE,
-        fond_marque=MARQUE["fond"],
-        couleur_baseline=MARQUE["baseline"],
-        logo=_logo_html(),
+        entete_marque=_entete_html(),
         nom=MARQUE["nom"],
         titre=_TITRE,
         titre_mail=titre_mail,
@@ -177,14 +205,14 @@ def mail_connexion(lien: str, minutes: int) -> tuple[str, str, str]:
     que voit le destinataire dans sa boîte doit être reconnaissable d'un projet
     à l'autre, c'est ce qui fait qu'un mail n'est pas pris pour du hameçonnage.
     """
-    objet = f"Votre lien de connexion — {MARQUE['nom']}"
+    objet = f"Votre lien de connexion · {MARQUE['nom']}"
     apercu = f"Lien à usage unique, valable {minutes} minutes."
 
     corps = (
         paragraphe("Bonjour,") +
         paragraphe(
             f"Vous avez demandé à vous connecter à <strong>{MARQUE['nom']}</strong>. "
-            f"Le bouton ci-dessous vous ouvre la session directement — il n'y a "
+            f"Le bouton ci-dessous vous ouvre la session directement : il n'y a "
             f"ni mot de passe à retenir, ni code à recopier."
         ) +
         paragraphe(

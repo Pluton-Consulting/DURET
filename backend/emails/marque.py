@@ -41,6 +41,10 @@ _LOGO = """<table cellpadding="0" cellspacing="0" border="0" style="font-size:0;
 # téléphone hors réseau.
 LOGO_FICHIER = "logo.png"
 LOGO_CONTENT_ID = "logo-marque"
+# LE LOGO PORTE-T-IL DÉJÀ LE NOM ? Cette question est de la MARQUE, pas du
+# socle : ici le logo est un SYMBOLE (des carrés de couleur) : sans le nom écrit à
+    # côté, le destinataire ne saurait pas de qui vient le message.
+LOGO_PORTE_LE_NOM = False
 
 MARQUE = {
     "nom": "Duret & Sols",

@@ -82,7 +82,9 @@ verifier("une image sans octets est ignorée, elle ne part pas vide",
 
 # ── 2. Le repli : sans fichier, la pastille — et rien ne casse ───────────
 faux_marque = types.ModuleType("emails.marque")
-faux_marque.MARQUE = {"logo": "<table>PASTILLE</table>", "nom": "Symbiose Paysage"}
+faux_marque.MARQUE = {"logo": "<table>PASTILLE</table>", "nom": "Symbiose Paysage",
+                      "fond": "#0F1F0E", "baseline": "#9DB04F",
+                      "couleur": "#1D9E75"}
 faux_marque.LOGO_CONTENT_ID = "logo-marque"
 paquet = types.ModuleType("emails")
 paquet.__path__ = []
@@ -101,10 +103,59 @@ verifier("AVEC fichier : une balise img qui pointe le cid",
          'src="cid:logo-marque"' in espace["_logo_html"]())
 verifier("elle porte une hauteur en attribut ET en style "
          "(les vieux clients ignorent l'un ou l'autre)",
-         'height="36"' in espace["_logo_html"]()
-         and "height:36px" in espace["_logo_html"]())
+         'height="30"' in espace["_logo_html"]()
+         and "height:30px" in espace["_logo_html"]())
+verifier("la largeur est libre : le logotype est un MOT, pas un carré",
+         "width:auto" in espace["_logo_html"]())
 verifier("et un texte de remplacement, pour qui n'affiche pas les images",
          'alt="Symbiose Paysage"' in espace["_logo_html"]())
+
+# ── 2 bis. L'EN-TÊTE prend la forme que le logo permet ──────────────────
+espace2 = {"MARQUE": faux_marque.MARQUE, "LOGO_CONTENT_ID": "logo-marque",
+           "LOGO_PORTE_LE_NOM": True,
+           "_BORDURE": "#E5E7EB", "_TEXTE_DOUX": "#6B7280"}
+espace2["logo_image"] = lambda: None
+extraire(BACKEND / "emails" / "gabarit.py", {"_entete_html", "_logo_html"}, espace2)
+sombre = espace2["_entete_html"]()
+verifier("SANS logo : le bandeau sombre et le nom écrit, comme avant",
+         faux_marque.MARQUE["fond"] in sombre and "Symbiose Paysage</div>" in sombre)
+
+espace2["logo_image"] = lambda: {"content_id": "logo-marque", "octets": b"x"}
+clair = espace2["_entete_html"]()
+verifier("AVEC logo : fond CLAIR — un logotype vert forêt sur vert foncé "
+         "serait illisible",
+         "background:#ffffff" in clair and faux_marque.MARQUE["fond"] not in clair)
+verifier("et le nom n'est PAS répété : le logotype le contient déjà",
+         "Symbiose Paysage</div>" not in clair
+         and 'alt="Symbiose Paysage"' in clair)
+verifier("la baseline reste, dans une couleur lisible sur clair",
+         "Assistant IA interne" in clair and "#6B7280" in clair)
+
+# LE DRAPEAU EST UNE DONNÉE DE MARQUE, et il faut les deux cas : chez le jumeau
+# le logo est un SYMBOLE (des carrés), pas un logotype — sans le nom écrit à
+# côté, le destinataire ne saurait pas de qui vient le message.
+espace2["LOGO_PORTE_LE_NOM"] = False
+symbole = espace2["_entete_html"]()
+verifier("un logo SYMBOLE fait écrire le nom à côté",
+         "Symbiose Paysage</div>" in symbole and 'src="cid:logo-marque"' in symbole)
+
+# ── 2 ter. AUCUN TIRET CADRATIN NE PART DANS LE MAIL ────────────────────
+# Demande de Noa. La règle typographique du projet les interdit déjà dans les
+# mails rédigés par le modèle ; ceux du gabarit y échappaient, étant en dur.
+import ast as _ast  # noqa: E402
+_src = (BACKEND / "emails" / "gabarit.py").read_text(encoding="utf-8")
+_arbre = _ast.parse(_src)
+_docs = set()
+for _n in [_arbre] + [x for x in _ast.walk(_arbre)
+                      if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef,
+                                        _ast.ClassDef))]:
+    if _n.body and isinstance(_n.body[0], _ast.Expr) \
+            and isinstance(_n.body[0].value, _ast.Constant):
+        _docs.add(_n.body[0].value.lineno)
+_fautifs = [(n.lineno, n.value.strip()[:60]) for n in _ast.walk(_arbre)
+            if isinstance(n, _ast.Constant) and isinstance(n.value, str)
+            and ("—" in n.value or "–" in n.value) and n.lineno not in _docs]
+verifier("aucun tiret cadratin dans le texte envoyé", not _fautifs, str(_fautifs[:2]))
 
 # ── 3. `logo_image()` ne lève jamais, fichier ou pas ─────────────────────
 marque = extraire(BACKEND / "emails" / "marque.py",

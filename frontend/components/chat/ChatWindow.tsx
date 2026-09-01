@@ -97,6 +97,25 @@ function stepLabel(node: string | null | undefined): string {
   return NODE_LABELS[node] || "Traitement en cours"
 }
 
+// LA FRISE SUIT CE QUE LES ACTIONS FONT RÉELLEMENT (01/09). Tout le travail
+// des actions s'affichait sous « J'agis et je rédige » pendant que la ligne
+// d'activité disait « je cherche dans la mémoire d'entreprise » : les deux
+// affichages lisaient le même tour et racontaient deux histoires. Le serveur
+// émet désormais le skill en cours avec chaque événement de nœud ; cette
+// carte le traduit en étape de la frise — un geste de lecture (documents,
+// données, mails, Drive/serveur) allume l'étape mémoire, un geste web l'étape
+// web, le reste garde l'étape des actions.
+const SKILLS_WEB = new Set(["chercher_web", "ouvrir_page", "naviguer"])
+const PREFIXES_MEMOIRE = ["drive_", "nas_", "lire_", "liste_", "rechercher",
+  "interroger", "fiche_", "check_mails", "boites_mail", "prix_observes",
+  "dossiers_en_attente", "connaissances", "consignes"]
+function etapeDuSkill(skill: string): string | null {
+  if (!skill) return null
+  if (SKILLS_WEB.has(skill)) return "browser"
+  if (PREFIXES_MEMOIRE.some((p) => skill.startsWith(p))) return "recherche"
+  return null
+}
+
 export default function ChatWindow({ threadId: initialThreadId = null, token: tokenProp }: ChatWindowProps) {
   const { data: session } = useSession()
   const token = tokenProp || (session as any)?.backendToken
@@ -1041,9 +1060,23 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
               if (libelle) majCarteLocale(cible.carte, { activite: libelle })
               return
             }
-            if (n) {
+            // « anonymize » sans libellé = l'anonymisation est COUPÉE : le
+            // journal se tait (31/08), la frise ne coche donc pas non plus
+            // « Je protège les noms » — cocher une protection qui n'a pas eu
+            // lieu serait un mensonge d'écran.
+            if (n && (n !== "anonymize" || libelle)) {
               setThinkingNode(n)
               setThinkingSteps((prev) => (prev[prev.length - 1] === n ? prev : [...prev, n]))
+            }
+            // L'étape RÉELLE du travail : le skill émis par le serveur allume
+            // l'étape mémoire ou web de la frise, en DERNIER — c'est lui que
+            // la frise montre comme étape active, en accord avec la ligne
+            // d'activité qui décrit la même action.
+            const pseudo = etapeDuSkill(
+              typeof (event as any).skill === "string" ? (event as any).skill : "")
+            if (pseudo) {
+              setThinkingSteps((prev) =>
+                prev[prev.length - 1] === pseudo ? prev : [...prev, pseudo])
             }
             // Un noeud sans libelle laisse la ligne PRECEDENTE en place :
             // l'effacer ferait clignoter le bandeau a chaque etape muette.

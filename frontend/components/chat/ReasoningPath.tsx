@@ -24,8 +24,13 @@
 // de bibliothèque qu'on gagnerait à l'échanger.
 
 const STAGES: { label: string; desc: string; nodes: string[] }[] = [
-  { label: "Analyse", desc: "Nature de la demande", nodes: ["classify", "check_schedule"] },
-  { label: "Protection des données", desc: "Anonymisation", nodes: ["rag", "anonymize"] },
+  // `rag` a quitté l'étape de protection (01/09) : ce nœud PRÉPARE le contexte
+  // du tour, il ne masque rien — le laisser là cochait la protection même
+  // quand l'anonymisation est coupée, pendant que la ligne d'activité, elle,
+  // se taisait honnêtement. L'étape ne s'allume plus que sur `anonymize`,
+  // que l'écran n'envoie que si le masquage a réellement parlé.
+  { label: "Analyse", desc: "Nature de la demande", nodes: ["classify", "check_schedule", "rag"] },
+  { label: "Protection des données", desc: "Anonymisation", nodes: ["anonymize"] },
   { label: "Orientation", desc: "L'IA décide de la suite", nodes: ["routeur"] },
   { label: "Mémoire d'entreprise", desc: "Recherche documentaire (si besoin)", nodes: ["recherche", "search_docs", "similar_projects"] },
   { label: "Recherche web", desc: "Sources externes (si besoin)", nodes: ["browser"] },
@@ -88,9 +93,25 @@ export default function ReasoningPath({ steps, loading, rail }: Props) {
   const visited = new Set(steps.map(stageOf).filter((i) => i >= 0))
   const expert = expertDe(steps)
   const reached = visited.size ? Math.max(...Array.from(visited)) : -1
+  // L'ÉTAPE ACTIVE EST CELLE DU DERNIER NŒUD, PAS LA PLUS AVANCÉE (01/09).
+  // La frise marquait « active » l'étape la plus LOINTAINE déjà atteinte :
+  // quand une recherche repartait après un début de rédaction, la ligne
+  // d'activité disait « je cherche dans la mémoire » pendant que la frise
+  // restait sur « J'agis et je rédige » — deux affichages du même tour qui se
+  // contredisaient. Le travail d'un tour fait des allers-retours ; la frise
+  // les suit, elle ne les lisse plus.
+  const courant = (() => {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const s = stageOf(steps[i])
+      if (s >= 0) return s
+    }
+    return -1
+  })()
+  const actif = courant >= 0 ? courant : reached
 
   const stateOf = (i: number): string => {
-    if (visited.has(i)) return loading && i === reached ? "active" : "done"
+    if (loading && i === actif) return "active"
+    if (visited.has(i)) return "done"
     if (!loading) return "idle"
     return i < reached ? "skipped" : "pending"
   }

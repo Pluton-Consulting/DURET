@@ -259,6 +259,30 @@ def libelle(node: str, update: dict | None = None) -> str:
     return LIBELLES.get(node, "")
 
 
+def skill_du_moment(node: str, update: dict | None = None) -> str:
+    """Le skill que le nœud d'actions vient d'exécuter (ou attend), sinon « ».
+
+    Émis avec chaque événement de nœud pour que la FRISE d'étapes de l'écran
+    allume la bonne étape. Relevé par Noa le 01/09 : tout le travail des
+    actions s'affichait sous « J'agis et je rédige » pendant que la ligne
+    d'activité disait « je cherche dans la mémoire d'entreprise » — les deux
+    affichages lisaient le même tour et racontaient deux histoires. Le nom du
+    skill est une MÉCANIQUE, jamais un contenu : rien de plus ne sort ici.
+    """
+    update = update if isinstance(update, dict) else {}
+    if node != "tools":
+        return ""
+    resultats = update.get("tool_results")
+    if isinstance(resultats, list) and resultats:
+        dernier = resultats[-1]
+        if isinstance(dernier, dict):
+            return str(dernier.get("skill") or "")
+    action = update.get("pending_action")
+    if isinstance(action, dict):
+        return str(action.get("skill") or "")
+    return ""
+
+
 def libelle_action(skill: str, args: dict | None = None) -> str:
     """Phrase pour une action sur le point d'être exécutée."""
     texte = _acte(skill) or f"j'exécute {skill}"

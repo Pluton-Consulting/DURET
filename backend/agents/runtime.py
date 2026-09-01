@@ -29,7 +29,7 @@ from agents.checkpointer import get_checkpointer, close_checkpointer
 from agents.router import build_main_graph
 from database.connection import get_db
 from config import settings
-from agents.journal import libelle
+from agents.journal import libelle, skill_du_moment
 
 logger = logging.getLogger("duret.runtime")
 
@@ -471,6 +471,7 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
                     _REPRISES[str(thread_id)] = {
                         "node": node_name,
                         "libelle": libelle(node_name, update if isinstance(update, dict) else {}),
+                        "skill": skill_du_moment(node_name, update if isinstance(update, dict) else {}),
                     }
         finally:
             _REPRISES.pop(str(thread_id), None)
@@ -546,9 +547,13 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                 else:
                     # `libelle` dit CE QUE l'assistant fait, en francais. Sans lui
                     # l'ecran n'affiche qu'un nom d'etape, et « redaction » pendant
-                    # quarante secondes n'apprend rien a personne.
+                    # quarante secondes n'apprend rien a personne. `skill` dit par
+                    # QUEL geste le travail passe : la frise d'etapes s'en sert
+                    # pour allumer « memoire » ou « web » quand une action de ce
+                    # type tourne (coherence frise / ligne d'activite, 01/09).
                     yield {"type": "node", "node": node_name, "data": _safe(update),
-                           "libelle": libelle(node_name, update if isinstance(update, dict) else {})}
+                           "libelle": libelle(node_name, update if isinstance(update, dict) else {}),
+                           "skill": skill_du_moment(node_name, update if isinstance(update, dict) else {})}
 
         snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else {}

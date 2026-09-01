@@ -73,8 +73,14 @@ async def list_users(current_user: User = Depends(get_current_user)):
                 ON u.id = uap_a2.user_id AND uap_a2.agent = 'agent2'
             LEFT JOIN user_agent_permissions uap_a3
                 ON u.id = uap_a3.user_id AND uap_a3.agent = 'agent3'
+            -- LA DIRECTION NE VOIT PAS LES SUPER_ADMIN (01/09, demande de
+            -- Noa) : elle n'a aucun pouvoir sur eux, elle ne doit même pas
+            -- les voir dans la liste. Le filtre est SERVEUR : un écran ne
+            -- suffit pas, l'API ne doit pas les livrer.
+            WHERE ($1 OR u.role <> 'super_admin')
             ORDER BY u.created_at DESC
-            """
+            """,
+            current_user.role == "super_admin",
         )
 
     result = []

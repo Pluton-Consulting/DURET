@@ -36,12 +36,14 @@ class AccesBoiteRefuse(HTTPException):
         super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
-# Rôle disposant d'un accès TOTAL aux boîtes, sans délégation préalable.
-# Décision explicite du propriétaire du produit : l'administrateur doit pouvoir
-# tout piloter depuis l'assistant. Les autres rôles, y compris `direction`,
-# restent soumis aux délégations — c'est ce qui empêche un employé, ou même un
-# cadre, d'écrire au nom d'un collègue. Chaque usage de ce contournement est
-# journalisé.
+# Rôles disposant d'un accès aux boîtes SUR DEMANDE, sans délégation préalable.
+# Décision de Noa du 01/09 : le super_admin ET la direction accèdent à toute
+# boîte qu'ils NOMMENT explicitement — mais leur DÉFAUT (rien de nommé) reste
+# leur propre boîte, comme tout le monde. Les autres rôles restent soumis aux
+# délégations — c'est ce qui empêche un employé d'écrire au nom d'un collègue.
+# Chaque usage de ce contournement est journalisé.
+ROLES_ACCES_SUR_DEMANDE = {"super_admin", "direction"}
+# Alias conservé : d'anciens appels ou sondes peuvent encore le lire.
 ROLE_ACCES_TOTAL = "super_admin"
 
 # Jeton signifiant « toutes les boîtes », consommé par le filtrage RAG.
@@ -54,7 +56,8 @@ def normaliser(adresse: Optional[str]) -> str:
 
 
 def acces_total(role: Optional[str]) -> bool:
-    return (role or "").strip().lower() == ROLE_ACCES_TOTAL
+    """Accès aux boîtes SUR DEMANDE (boîte nommée) : super_admin et direction."""
+    return (role or "").strip().lower() in ROLES_ACCES_SUR_DEMANDE
 
 
 async def delegations(user_id: str) -> list[dict]:
@@ -77,7 +80,7 @@ async def boites_autorisees(user) -> list[dict]:
     """Toutes les boîtes accessibles : la sienne (envoi permis) + les délégations."""
     if acces_total(getattr(user, "role", None)):
         return [{"mailbox": TOUTES_LES_BOITES, "can_send": True, "propre": False,
-                 "libelle": "Toutes les boîtes (administrateur)"}]
+                 "libelle": "Toutes les boîtes (sur demande explicite, journalisé)"}]
 
     propre = normaliser(getattr(user, "email", None))
     boites: list[dict] = []
@@ -104,9 +107,11 @@ async def boites_par_id(user_id: Optional[str]) -> list[str]:
         # une tâche différée créée quand il était encore actif.
         ligne = await conn.fetchrow(
             "SELECT email, role FROM users WHERE id = $1::uuid AND actif = true", str(user_id))
-    if ligne and acces_total(ligne["role"]):
-        return [TOUTES_LES_BOITES]      # l'administrateur voit tous les mails
-
+    # LE DÉFAUT EST SA BOÎTE, POUR TOUT LE MONDE (01/09, décision de Noa) :
+    # même le super_admin et la direction ne voient PAR DÉFAUT que leur boîte
+    # et leurs délégations — l'accès élargi ne passe que par une boîte NOMMÉE
+    # explicitement (verifier_acces), et il est journalisé. L'ancien raccourci
+    # rendait « toutes les boîtes » à l'administrateur dès la recherche.
     boites = []
     propre = normaliser(ligne["email"] if ligne else None)
     if propre:

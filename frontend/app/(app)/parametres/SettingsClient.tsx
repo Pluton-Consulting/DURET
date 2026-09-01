@@ -41,7 +41,8 @@ const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
   { key: "utilisateurs", label: "Utilisateurs", roles: ["super_admin", "direction"] },
   { key: "plages", label: "Plages horaires", roles: ["super_admin", "direction"] },
   { key: "rbac", label: "Permissions RBAC", roles: ["super_admin", "direction"] },
-  { key: "agents", label: "États des agents", roles: ["super_admin", "direction"] },
+  // 01/09 (Noa) : « États des agents » rejoint l'administration système.
+  { key: "agents", label: "États des agents", roles: ["super_admin"] },
   { key: "quotas", label: "Quotas", roles: ["super_admin"] },
   { key: "services", label: "Services connectés", roles: ["super_admin"] },
   { key: "import", label: "Import de données", roles: ["super_admin", "direction"] },

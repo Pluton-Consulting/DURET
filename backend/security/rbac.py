@@ -82,7 +82,10 @@ ALL_FEATURES = [
     "view_dashboard_global", "view_costs_global", "view_audit_log",
     "validate_skills", "configure_agents", "manage_agent3",
     "manage_users", "manage_system", "run_browser_agent", "import_documents",
-    "manage_mailboxes",
+    # `manage_mailboxes` a QUITTÉ la matrice (01/09, demande de Noa : la
+    # colonne « Gérer les boîtes » disparaît de l'onglet Permissions). La
+    # permission EXISTE toujours (délégations, routers/mail.py) et garde ses
+    # défauts par rôle : elle ne se règle simplement plus depuis cet écran.
 ]
 
 FEATURE_LABELS = {

@@ -714,6 +714,59 @@ async def boites_mail(data: dict, user) -> dict:
 SKILLS_NATIFS["boites_mail"] = boites_mail
 
 
+async def preparer_envois(data: dict, user) -> dict:
+    """UNE carte de mail par destinataire — gabarit à variables, sans limite.
+
+    Demande de Noa du 01/09 : « un mail à 100 clients → 100 cartes ». Les
+    cartes se FABRIQUENT (mail/publipostage.py), le modèle n'écrit que le
+    gabarit — ou un corps sur mesure par destinataire. Rien ne part d'ici :
+    chaque envoi repasse par `envoyer_email` et sa validation.
+    """
+    from mail.publipostage import construire_cartes
+
+    sujet = str(data.get("sujet") or data.get("objet") or "").strip()
+    gabarit = str(data.get("gabarit") or data.get("corps")
+                  or data.get("message") or "").strip()
+    destinataires = data.get("destinataires") or data.get("clients") or []
+    if isinstance(destinataires, str):
+        destinataires = [d.strip() for d in destinataires.split(",") if d.strip()]
+    if not sujet:
+        raise MailSkillError("Donne le `sujet` du mail (les variables {nom}… y sont permises).")
+    if not destinataires:
+        raise MailSkillError("Donne `destinataires` : une liste d'adresses, ou "
+                             "d'objets {email, nom, …} tirés des données.")
+    if not gabarit and not any(isinstance(d, dict)
+                               and (d.get("reponse") or d.get("message"))
+                               for d in destinataires):
+        raise MailSkillError("Donne le `gabarit` du corps (variables {nom}, {email}…), "
+                             "ou un corps par destinataire (clé `reponse`).")
+
+    r = construire_cartes(sujet, gabarit, destinataires, page=data.get("page") or 1)
+    cartes = r.pop("cartes")
+    if not cartes:
+        return {**r, "message_final": "Aucune carte : aucun destinataire de cette "
+                                      "page ne porte d'adresse.",
+                "a_faire": "Dis-le, et vérifie les adresses des destinataires."}
+    r["bloc_ui"] = {"type": "reponses_mail", "titre": f"Envois préparés — {sujet}",
+                    "reponses": cartes}
+    r["bloc_garanti"] = True
+    r["message_final"] = (f"{r['nombre']} destinataire(s), {len(cartes)} carte(s) "
+                          "préparée(s)"
+                          + (f" (page {r['page']} sur {r['pages']})" if r["pages"] > 1 else "")
+                          + ". Rien ne part sans votre validation.")
+    r["a_faire"] = ("Les cartes sont DÉJÀ affichées (éditables, cochables) : ne les "
+                    "recopie pas. "
+                    + ("ENCHAÎNE avec la page suivante jusqu'à couvrir tous les "
+                       "destinataires. " if r["pages"] > 1 else "")
+                    + "Rien ne part d'ici : chaque envoi repassera par "
+                      "`envoyer_email` et sa validation.")
+    return r
+
+
+SKILLS_NATIFS["preparer_envois"] = preparer_envois
+
+
+
 async def connaissances_acquises(data: dict, user) -> dict:
     from skills.connaissances import connaissances_acquises as _acquis
     return await _acquis(data, user)
@@ -902,6 +955,7 @@ EFFETS_NATIFS = {
     "lire_piece_jointe": "lecture",
     # Lister les boîtes accessibles : lecture de la configuration et de l'annuaire.
     "boites_mail": "lecture",
+    "preparer_envois": "lecture",
     # Inventaire de ce qui a été appris : lecture pure, filtrée par rôle.
     "connaissances_acquises": "lecture",
     # Compte et filtre sur les donnees importees : lecture, filtree par role.

@@ -379,6 +379,15 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "demande « quelles boîtes / adresses mail as-tu », « liste les comptes mail », "
         "« à qui as-tu accès » — ne dis JAMAIS que tu n'as pas de commande pour ça",
         [], []),
+    "preparer_envois": (
+        "PREPARE un meme mail pour PLUSIEURS destinataires (10, 100, sans limite) : UNE "
+        "carte editable par destinataire, fabriquee MECANIQUEMENT depuis un `gabarit` a "
+        "variables ({nom}, {email}, ou toute cle du destinataire) — ou un corps SUR "
+        "MESURE par destinataire (cle `reponse`). `destinataires` : liste d'adresses ou "
+        "d'objets {email, nom, ...} tires des gestes de donnees. Cartes par pages de 40 "
+        "(`page`) : enchaine jusqu'a couvrir tout le monde. RIEN ne part : chaque envoi "
+        "passe par `envoyer_email` et sa validation",
+        ["sujet", "destinataires"], ["gabarit", "page"]),
     "lire_piece_jointe": (
         "RÉCUPÈRE UNE pièce jointe d'un mail, la rend téléchargeable avec son aperçu (carte "
         "ajoutée automatiquement sous ta réponse) et la LIT : PDF et Word en texte, Excel en "

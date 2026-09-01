@@ -692,6 +692,18 @@ async def boites_mail(data: dict, user) -> dict:
                 annuaire = ("annuaire Microsoft 365 du domaine" if decouvertes else
                             "l'annuaire du domaine n'a pas pu être lu (permission User.Read.All "
                             "absente ?) : seules les boîtes configurées ou déjà lues sont listées")
+            # LA VOIE GMAIL N'AVAIT JAMAIS ÉTÉ BRANCHÉE (01/09) : ce projet lit
+            # dans Google Workspace, et `boites_du_domaine` existe bien dans
+            # `ingestion/connectors/gmail.py` — mais seule la branche Outlook
+            # était écrite (le skill vient du socle, posé le 31/08 côté jumeau).
+            # « Liste toutes les adresses mail » ne rendait donc ici que les
+            # boîtes déjà configurées, jamais l'annuaire du domaine.
+            elif fournisseur() == "gmail":
+                from ingestion.connectors.gmail import boites_du_domaine
+                decouvertes = [normaliser(b) for b in await boites_du_domaine()]
+                annuaire = ("annuaire Google Workspace du domaine" if decouvertes else
+                            "l'annuaire du domaine n'a pas pu être lu (délégation annuaire "
+                            "absente ?) : seules les boîtes configurées ou déjà lues sont listées")
         except Exception as e:  # noqa: BLE001 - l'annuaire est un complément
             logger.info("Annuaire des boîtes indisponible : %s", e)
             annuaire = "annuaire du domaine indisponible : boîtes configurées ou déjà lues seulement"

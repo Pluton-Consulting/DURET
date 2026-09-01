@@ -156,20 +156,81 @@ def _motif(resultat: dict) -> str:
 
 
 def _detail(args: dict) -> str:
-    """Le « sur quoi » de l'action : un chemin, un dossier.
+    """Le « sur quoi » de l'action : un chemin, un motif, une page.
 
-    On ne prend QUE des repères de LOCALISATION, jamais du contenu. La règle
-    n'était pas tenue : `motif` est une requête de recherche et `titre` un
-    texte libre dicté par l'utilisateur — tous deux passaient en clair sur un
-    écran qui promet de n'afficher aucun contenu. Un journal d'activité ne doit
-    pas devenir une seconde voie de lecture, échappant au cloisonnement.
+    LA DEMANDE N'EST PAS DU CONTENU (01/09, décision de Noa : « les textes de
+    thinking doivent être les plus précis possible »). L'ancienne règle
+    écartait `motif` et `titre` au nom du cloisonnement — mais ces valeurs
+    sont LA DEMANDE, tapée par la personne qui lit l'écran, pas un contenu lu
+    dans un document ou un mail. Ce qui reste interdit ici n'a pas bougé : le
+    contenu RAPPORTÉ (texte d'un document, corps d'un mail, réponse en cours)
+    n'entre jamais dans le journal.
     """
     if not isinstance(args, dict):
         return ""
+    morceaux: list[str] = []
+    # Ce que l'action cherche ou vise, entre guillemets : c'est la demande.
+    for cle in ("motif", "requete", "query", "client", "nom", "objet",
+                "titre", "fichier", "outil"):
+        valeur = args.get(cle)
+        if valeur and isinstance(valeur, str) and valeur.strip():
+            morceaux.append(f"« {valeur.strip()[:MAX_DETAIL]} »")
+            break
+    # Où elle regarde.
     for cle in ("chemin", "dossier", "source_type", "mailbox"):
         valeur = args.get(cle)
-        if valeur and isinstance(valeur, str):
-            return valeur.strip()[:MAX_DETAIL]
+        if valeur and isinstance(valeur, str) and valeur.strip():
+            morceaux.append(valeur.strip()[:MAX_DETAIL])
+            break
+    # Où elle en est : la page dit qu'un long travail AVANCE, au lieu de
+    # laisser croire qu'il refait la même chose.
+    page = args.get("page")
+    if isinstance(page, (int, float, str)) and str(page).strip() not in ("", "1"):
+        morceaux.append(f"page {str(page).strip()[:6]}")
+    elif args.get("lettre"):
+        morceaux.append(f"lettre {str(args['lettre']).strip()[:3]}")
+    elif args.get("avant"):
+        morceaux.append("messages plus anciens")
+    if isinstance(args.get("depuis"), str) and args["depuis"].strip():
+        morceaux.append(f"sur {args['depuis'].strip()[:30]}")
+    return ", ".join(morceaux[:3])
+
+
+def _bilan(resultat: dict) -> str:
+    """Le « combien » d'une action réussie, lu dans son résultat.
+
+    « je cherche dans les documents » laisse attendre ; « je cherche dans les
+    documents — 12 document(s) » dit que le travail a rendu quelque chose, et
+    combien. On ne lit que des COMPTES, jamais un extrait : le docstring du
+    module fait loi. Le résultat est du JSON possiblement tronqué par le
+    plafond : toute lecture est tolérante, un échec rend simplement « ».
+    """
+    import json as _json
+    import re as _re
+    brut = str(resultat.get("resultat_masque") or "")
+    i = brut.find("{")
+    if i < 0:
+        return ""
+    unites = (("nombre", "résultat(s)"), ("total_documents", "document(s)"),
+              ("compte", "message(s)"), ("total_periode", "message(s)"),
+              ("total_fichiers", "fichier(s)"), ("total_dossiers", "dossier(s)"),
+              ("groupes_total", "groupe(s)"), ("nombre_lu", "fichier(s) lu(s)"),
+              ("correspondances_totales", "correspondance(s)"))
+    try:
+        d = _json.loads(brut[i:])
+    except ValueError:
+        # Tronqué au plafond : on repêche le premier compte au motif, sans parser.
+        for cle, unite in unites:
+            m = _re.search(rf'"{cle}"\s*:\s*(\d+)', brut)
+            if m:
+                return f"{m.group(1)} {unite}"
+        return ""
+    if not isinstance(d, dict):
+        return ""
+    for cle, unite in unites:
+        v = d.get(cle)
+        if isinstance(v, (int, float)) and v >= 0:
+            return f"{int(v)} {unite}"
     return ""
 
 
@@ -218,6 +279,13 @@ def libelle(node: str, update: dict | None = None) -> str:
         if dernier.get("ok") is False:
             motif = _motif(dernier)
             texte += f", sans succès ({motif})" if motif else ", sans succès"
+        else:
+            # Le « combien » du résultat : la précision demandée par Noa le
+            # 01/09 — une ligne qui dit ce que l'action a RENDU, pas
+            # seulement qu'elle a tourné.
+            bilan = _bilan(dernier)
+            if bilan:
+                texte += f" — {bilan}"
 
         # OÙ ON EN EST DANS LE BUDGET — SEULEMENT QUAND ÇA VEUT DIRE QUELQUE CHOSE.
         #

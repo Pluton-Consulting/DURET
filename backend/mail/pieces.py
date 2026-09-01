@@ -289,6 +289,17 @@ CONSIGNE_VISION = (
     "légendes, cartouche, montants, noms). Réponds en français, sans introduction. "
     "N'invente rien : ce qui est illisible est dit illisible.")
 
+# LA TRANSCRIPTION, quand tesseract a déjà lu quelque chose : le modèle reçoit
+# l'ébauche et l'image, et rend le texte FIDÈLE — accents, montants, tableaux,
+# tout ce que l'OCR optique écorche (01/09, Noa : « l'OCR fait encore des
+# erreurs »). L'ébauche n'est qu'un guide : la vérité est dans l'image.
+CONSIGNE_OCR = (
+    "Tu lis une pièce jointe d'un mail professionnel. TRANSCRIS fidèlement TOUT "
+    "le texte de l'image, dans l'ordre de lecture ; les tableaux en lignes "
+    "« colonne : valeur ». N'invente rien : ce qui est illisible est dit "
+    "illisible. Réponds en français, sans introduction ni commentaire. Une "
+    "première lecture optique, à corriger d'après l'image : {ebauche}")
+
 
 async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str) -> dict:
     """UNE pièce → déposée (téléchargeable, aperçu) et LUE. Ne lève jamais."""
@@ -346,12 +357,24 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
         except Exception as e:  # noqa: BLE001
             logger.info("Vignette DWG non exploitable : %s", e)
 
-    # Une image dont l'OCR ne dit presque rien : la vision la décrit.
-    if est_image(nom, mime) and len(texte) < OCR_MINIMUM:
-        description = await decrire_image(brut, (mime or "image/png").split(";")[0], CONSIGNE_VISION)
+    # LA VISION LIT D'ABORD (01/09, Noa : « l'OCR est bien mais fait encore des
+    # erreurs »). Tesseract lit vite mais écorche — accents, montants, colonnes
+    # de tableaux. Quand un modèle de vision répond, c'est LUI qui transcrit,
+    # l'ébauche tesseract en guide ; sans réponse (pas de clé, panne réseau),
+    # le texte tesseract reste, comme avant — le secours ne disparaît pas.
+    if est_image(nom, mime):
+        ocr_suffisant = len(texte) >= OCR_MINIMUM
+        consigne = (CONSIGNE_OCR.format(ebauche=texte[:1500]) if ocr_suffisant
+                    else CONSIGNE_VISION)
+        description = await decrire_image(brut, (mime or "image/png").split(";")[0], consigne)
         if description:
-            texte = (texte + "\n\n" + description).strip() if texte else description
-            methode = "OCR + description par la vision" if lu.get("texte") else "description par la vision"
+            if ocr_suffisant:
+                texte = description
+                methode = "transcription par la vision (OCR en ébauche)"
+            else:
+                texte = (texte + "\n\n" + description).strip() if texte else description
+                methode = ("OCR + description par la vision" if lu.get("texte")
+                           else "description par la vision")
 
     if complement:
         texte = (complement + ("\n\n" + texte if texte else "")).strip()

@@ -148,7 +148,20 @@ if pieces:
     r = asyncio.run(pieces.analyser("scan.png", "image/png", b"\x89PNG" + b"\x00" * 20, "u1"))
     verifier("une image est déposée en visuel et rend un bloc `visuel` (aperçu + téléchargement)",
              depots["visuels"][-1][1] == "image/png" and r["bloc"]["type"] == "visuel" and r["bloc"]["images"][0]["cle"].startswith("cle"))
-    verifier("l'OCR suffit : pas de vision appelée, méthode OCR", r["methode"] == "OCR de l'image" and "SIRET" in r["texte"])
+    verifier("sans modèle de vision, tesseract fait foi (le secours ne disparaît pas)",
+             r["methode"] == "OCR de l'image" and "SIRET" in r["texte"])
+    # LA VISION TRANSCRIT D'ABORD (01/09) : OCR suffisant + modèle disponible →
+    # c'est la transcription du modèle qui fait foi, l'ébauche tesseract dans
+    # la consigne — plus l'inverse.
+    consignes_vues: list = []
+    async def _transcrit(octets, mime, consigne):
+        consignes_vues.append(consigne)
+        return "FACTURE n°44 du 12/05 — SIRET 123 456 789 00012 — total 1 234,56 € TTC"
+    pieces.decrire_image = _transcrit
+    r = asyncio.run(pieces.analyser("scan2.png", "image/png", b"\x89PNG" + b"\x00" * 20, "u1"))
+    verifier("OCR suffisant + vision disponible : la VISION transcrit, tesseract en ébauche",
+             "1 234,56" in r["texte"] and "transcription par la vision" in r["methode"]
+             and "TRANSCRIS" in consignes_vues[-1] and "SIRET 123 456 789 00012" in consignes_vues[-1])
     faux_parsers.ocr_image = lambda b: "x"
     async def _vision(octets, mime, consigne): return "Photo d'un jardin en pente avec une haie."
     pieces.decrire_image = _vision

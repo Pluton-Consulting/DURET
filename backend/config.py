@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     model_anthropic_vision: str = "claude-sonnet-4-6"
 
+    # LA VISION PAR OPENROUTER — préparamétrée pour l'OCR (01/09, demande de
+    # Noa : « l'OCR fait encore des erreurs, préparamètre un meilleur modèle,
+    # OpenRouter est déjà utilisé »). Gemini 2.5 Pro lit les factures, scans
+    # et tableaux bien mieux que tesseract et que le flash de la cascade ; la
+    # clé OpenRouter est déjà celle des deux modèles de l'assistant. Entré
+    # dans la cascade vision derrière Anthropic : les plans gardent leur
+    # meilleur lecteur quand la clé existe, tout le reste monte en qualité.
+    model_openrouter_vision: str = "google/gemini-2.5-pro"
+
     # UN MODÈLE MIS EN TÊTE, POUR ESSAYER, SANS TOUCHER AU CODE.
     #
     # Comparer deux modèles sur des tours réels est le seul moyen de trancher :

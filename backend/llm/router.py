@@ -635,7 +635,12 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
     if not getattr(s, "vision_enabled", True):
         return []
     sortie: list[tuple[Any, str]] = []
+    # OpenRouter en deuxième (01/09) : Gemini 2.5 Pro y lit les scans et
+    # factures bien mieux que le flash direct — c'est le modèle d'OCR
+    # préparamétré, servi par la clé OpenRouter déjà en place. Anthropic garde
+    # la tête quand sa clé existe (meilleure lecture de plans).
     for provider, model in (("anthropic", s.model_anthropic_vision),
+                            ("openrouter", s.model_openrouter_vision),
                             ("google", s.model_google_vision),
                             ("google", s.model_google_vision_secours),
                             ("groq", s.model_groq_vision)):

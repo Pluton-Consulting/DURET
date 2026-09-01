@@ -590,6 +590,18 @@ function ReglageConcurrence({ apiUrl, backendToken }: { apiUrl: string; backendT
         </>
       )}
       {busy && <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>Enregistrement…</div>}
+      {/* UNE MIGRATION NON APPLIQUÉE N'EST PAS UNE PANNE : c'est un geste qui
+          reste à faire, et l'écran le NOMME. Avant, la carte affichait
+          « HTTP 500 », qui ne dit pas lequel des deux gestes manque. */}
+      {etat?.migration_absente && (
+        <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8,
+                      padding: "8px 10px", borderRadius: 8,
+                      background: "rgba(0,0,0,0.04)" }}>
+          Les plafonds par rôle et par compte attendent une migration : appliquez{" "}
+          <code>{etat.migration_absente}</code> sur le serveur. Le plafond global,
+          lui, s'applique déjà.
+        </div>
+      )}
       {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
       {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
     </div>

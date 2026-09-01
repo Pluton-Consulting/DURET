@@ -232,23 +232,37 @@ async def lire_concurrence(current_user: User = Depends(get_current_user)):
     """
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from database.connection import schema_incomplet
     from llm.concurrence import etat
     from llm.reglages import valeur as reglage
-    async with get_db() as conn:
-        roles = await conn.fetch(
-            "SELECT role, concurrent_limit FROM role_quota_config ORDER BY role")
-        comptes = await conn.fetch(
-            "SELECT id, email, name, role, llm_simultanes FROM users "
-            "WHERE COALESCE(actif, true) ORDER BY email")
-    return {
+    base = {
         **etat(),
         "origine_global": "parametres" if (reglage("llm_simultanes") or "").strip() else "code",
-        "par_role": {r["role"]: r["concurrent_limit"] for r in roles},
-        "par_utilisateur": [
-            {"id": str(c["id"]), "email": c["email"], "nom": c["name"],
-             "role": c["role"], "plafond": c["llm_simultanes"]}
-            for c in comptes],
+        "par_role": {}, "par_utilisateur": [],
     }
+    # LA MIGRATION PEUT NE PAS ÊTRE PASSÉE, et c'est un état NORMAL entre le
+    # déploiement du code et son application à la main. Sans cette garde, la
+    # carte rendait « HTTP 500 » — un message qui ne dit pas lequel des deux
+    # gestes manque. On rend donc les plafonds du CODE (qui, eux, s'appliquent
+    # bel et bien) en nommant la migration à poser.
+    try:
+        async with get_db() as conn:
+            roles = await conn.fetch(
+                "SELECT role, concurrent_limit FROM role_quota_config ORDER BY role")
+            comptes = await conn.fetch(
+                "SELECT id, email, name, role, llm_simultanes FROM users "
+                "WHERE COALESCE(actif, true) ORDER BY email")
+    except Exception as e:  # noqa: BLE001
+        if not schema_incomplet(e):
+            raise
+        logger.warning("Concurrence : migration 029 non appliquée")
+        return {**base, "migration_absente": "029_concurrence_llm.sql"}
+    base["par_role"] = {r["role"]: r["concurrent_limit"] for r in roles}
+    base["par_utilisateur"] = [
+        {"id": str(c["id"]), "email": c["email"], "nom": c["name"],
+         "role": c["role"], "plafond": c["llm_simultanes"]}
+        for c in comptes]
+    return base
 
 
 @router.put("/concurrence")
@@ -277,17 +291,32 @@ async def ecrire_concurrence(body: ConcurrenceBody,
                                                str(current_user.id))
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
-    async with get_db() as conn:
-        for role, v in (body.par_role or {}).items():
-            await conn.execute(
-                "UPDATE role_quota_config SET concurrent_limit = $2 WHERE role = $1",
-                role, _borne(v))
-            fait.setdefault("roles", []).append(role)
-        for uid, v in (body.par_utilisateur or {}).items():
-            await conn.execute(
-                "UPDATE users SET llm_simultanes = $2 WHERE id = $1::uuid",
-                str(uid), _borne(v))
-            fait.setdefault("comptes", []).append(str(uid))
+    from database.connection import schema_incomplet
+    try:
+        async with get_db() as conn:
+            for role, v in (body.par_role or {}).items():
+                await conn.execute(
+                    "UPDATE role_quota_config SET concurrent_limit = $2 WHERE role = $1",
+                    role, _borne(v))
+                fait.setdefault("roles", []).append(role)
+            for uid, v in (body.par_utilisateur or {}).items():
+                await conn.execute(
+                    "UPDATE users SET llm_simultanes = $2 WHERE id = $1::uuid",
+                    str(uid), _borne(v))
+                fait.setdefault("comptes", []).append(str(uid))
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        if not schema_incomplet(e):
+            raise
+        # Le plafond GLOBAL a pu être posé (il vit dans `reglages`, table
+        # ancienne) : on le dit, plutôt que de laisser croire que rien n'a
+        # marché. Ce qui manque est nommé, avec le geste qui le répare.
+        raise HTTPException(
+            status_code=409,
+            detail=("Les plafonds par rôle et par compte exigent la migration "
+                    "029_concurrence_llm.sql, qui n'est pas encore appliquée sur "
+                    "ce serveur. Le plafond global, lui, fonctionne déjà."))
     # Le cache des plafonds vit 60 s : on le vide pour que le réglage se voie
     # tout de suite, sinon l'écran montrerait une valeur déjà changée.
     try:

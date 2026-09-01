@@ -13,6 +13,9 @@ interface Etat {
   connecte: boolean
   email?: string | null
   depuis?: string | null
+  // Migration pas encore appliquée : ce n'est PAS « pas encore relié », et le
+  // dire ainsi serait un mensonge — le bouton ne marcherait pas davantage.
+  migration_absente?: string | null
 }
 
 export default function GoogleTab({ apiUrl, backendToken, currentRole }:
@@ -93,6 +96,12 @@ export default function GoogleTab({ apiUrl, backendToken, currentRole }:
       <div style={carte}>
         {etat === null ? (
           <p>Chargement…</p>
+        ) : etat.migration_absente ? (
+          <p style={{ opacity: 0.85 }}>
+            {currentRole === "super_admin"
+              ? "La table des connexions Google n'existe pas encore sur ce serveur : appliquez la migration des connexions Google, puis rechargez la page."
+              : "La connexion Google n'est pas encore installée sur cette application. Votre administrateur doit terminer la mise en service."}
+          </p>
         ) : !etat.disponible ? (
           // Pas configuré côté serveur : le collaborateur n'y peut rien, on ne
           // lui montre pas des noms de variables ; l'administrateur, si.

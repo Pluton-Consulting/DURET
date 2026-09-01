@@ -75,7 +75,19 @@ async def retour(code: str | None = None, state: str | None = None,
 async def etat(current_user: User = Depends(get_current_user)):
     """Ce que l'onglet affiche. `disponible` distingue « pas configuré »
     (message pour l'administrateur) de « pas encore relié » (bouton)."""
-    ligne = await google_perso.etat(str(current_user.id))
+    from database.connection import schema_incomplet
+    try:
+        ligne = await google_perso.etat(str(current_user.id))
+    except Exception as e:  # noqa: BLE001
+        if not schema_incomplet(e):
+            raise
+        # Même raison qu'ailleurs : entre le déploiement du code et
+        # l'application des migrations, cette table peut ne pas exister. Rendre
+        # « pas encore relié » serait un MENSONGE (le bouton ne marcherait pas
+        # davantage) : on nomme la migration qui manque.
+        logger.warning("Connexions Google : migration non appliquée")
+        return {"disponible": False, "connecte": False, "email": None,
+                "depuis": None, "migration_absente": "connexions_google"}
     return {
         "disponible": google_perso.configurable(),
         "connecte": ligne is not None,

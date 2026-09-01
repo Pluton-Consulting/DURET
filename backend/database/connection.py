@@ -43,3 +43,33 @@ async def get_rls_db(user_id: str, role: str) -> AsyncGenerator[asyncpg.Connecti
             await conn.execute("SELECT set_config('app.current_user_id', $1, true)", user_id)
             await conn.execute("SELECT set_config('app.current_role', $1, true)", role)
             yield conn
+
+
+def schema_incomplet(e: BaseException) -> bool:
+    """L'erreur vient-elle d'une migration NON APPLIQUÉE (table ou colonne
+    absente), plutôt que d'une vraie panne ?
+
+    POURQUOI CETTE FONCTION EXISTE (01/09). Le code part sur le VPS par
+    `pluton deployer`, les migrations s'appliquent à la main : entre les deux,
+    le backend tourne du code neuf sur une base ancienne. Une route qui lit une
+    colonne pas encore créée rendait alors un HTTP 500 nu — l'écran affichait
+    « HTTP 500 » sans dire lequel des deux gestes manquait, et la personne
+    devant l'écran n'avait aucun moyen de le deviner.
+
+    Ce n'est PAS une excuse pour avaler l'erreur : l'appelant doit répondre en
+    NOMMANT la migration qui manque. Une dégradation muette serait pire que le
+    500, parce qu'elle ferait croire à une absence de données.
+    """
+    try:
+        import asyncpg
+        if isinstance(e, (asyncpg.UndefinedColumnError,
+                          asyncpg.UndefinedTableError)):
+            return True
+    except ImportError:
+        # Le pilote n'est pas là (un banc hors conteneur) : la reconnaissance
+        # par le TEXTE suffit, et c'est elle qui compte de toute façon — le
+        # pool enveloppe parfois l'erreur dans un autre type.
+        pass
+    texte = str(e).lower()
+    return ("does not exist" in texte
+            and ("column" in texte or "relation" in texte or "table" in texte))

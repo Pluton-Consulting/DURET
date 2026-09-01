@@ -177,7 +177,27 @@ async def oublier_cache(boite: str = "") -> None:
 async def enregistrer(boite: str, html_: str, texte: str, images: list,
                       source: str, user_id=None) -> None:
     """Range la signature de cette boîte. Écrase la précédente : il n'y en a
-    qu'une en vigueur, et garder l'historique d'une signature n'apprend rien."""
+    qu'une en vigueur, et garder l'historique d'une signature n'apprend rien.
+
+    Une migration non appliquée se DIT (elle est nommée), au lieu de remonter
+    en HTTP 500 nu : c'est un état normal entre le déploiement du code et son
+    application à la main sur le serveur.
+    """
+    from database.connection import schema_incomplet
+    try:
+        await _ecrire(boite, html_, texte, images, source, user_id)
+    except Exception as e:  # noqa: BLE001
+        if not schema_incomplet(e):
+            raise
+        raise RuntimeError(
+            "La signature ne peut pas être enregistrée : la migration "
+            "030_signatures_mail.sql n'est pas encore appliquée sur ce "
+            "serveur.") from e
+    await oublier_cache(boite)
+
+
+async def _ecrire(boite: str, html_: str, texte: str, images: list,
+                  source: str, user_id=None) -> None:
     import json
 
     from database.connection import get_db
@@ -194,7 +214,6 @@ async def enregistrer(boite: str, html_: str, texte: str, images: list,
                    updated_by = EXCLUDED.updated_by""",
             (boite or "").strip().lower(), html_[:MAX_SIGNATURE_HTML], texte[:4000],
             json.dumps(images or [], ensure_ascii=False), source[:300], user_id)
-    await oublier_cache(boite)
 
 
 async def apprendre(boite: str, user, ref: str = "") -> dict:

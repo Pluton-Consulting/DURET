@@ -352,11 +352,20 @@ async def get_thread_messages(thread_id: str, current_user: User = Depends(get_c
     """Historique des messages d'un thread (RLS : uniquement les siens)."""
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
         rows = await conn.fetch(
+            # LA QUESTION AVANT SA RÉPONSE, MÊME À ÉGALITÉ DE DATE (01/09).
+            # Les deux messages d'un tour sont insérés dans la MÊME transaction
+            # (`_persist_messages`, executemany) : NOW() y est figé, ils portent
+            # donc le MÊME created_at, et un ORDER BY sur la seule date rendait
+            # leur ordre au hasard du plan d'exécution. Relevé par Noa : en
+            # revenant sur la page, sa question s'affichait SOUS la réponse.
+            # Le départage par rôle tranche : dans un tour, l'humain parle
+            # d'abord.
             """SELECT m.id, m.role, m.content, m.metadata, m.created_at
                FROM messages m
                JOIN threads t ON t.id = m.thread_id
                WHERE t.langgraph_thread_id = $1
-               ORDER BY m.created_at ASC""",
+               ORDER BY m.created_at ASC,
+                        CASE WHEN m.role = 'user' THEN 0 ELSE 1 END ASC""",
             thread_id,
         )
         return [dict(row) for row in rows]

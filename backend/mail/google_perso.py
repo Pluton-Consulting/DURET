@@ -60,6 +60,14 @@ USAGE_STATE = "connexion_google"
 
 # email normalisé -> refresh_token. Voir « LE CACHE » ci-dessus.
 _CACHE: dict[str, str] = {}
+# DEUX ENTRÉES POUR LA MÊME LIGNE, parce que les deux socles ne posent pas la
+# même question. Le mail demande « le jeton de CETTE boîte » ; le socle
+# documentaire du jumeau demande « le jeton de la PERSONNE qui parle » — et son
+# adresse Google peut différer de son compte applicatif. Chercher par email
+# relierait le mauvais compte au premier salarié dont les deux adresses
+# divergent. Inutilisé ici (Duret est sur NAS) : présent pour que le module ne
+# diverge de celui du jumeau que par ses SCOPES.
+_PAR_USER: dict[str, dict] = {}      # user_id -> {"email": …, "refresh_token": …}
 _CACHE_QUAND: float = 0.0
 _CACHE_TTL_S = 300
 
@@ -207,17 +215,21 @@ async def deconnecter(user_id: str) -> bool:
 
 async def rafraichir(force: bool = False) -> None:
     """Recharge le cache email -> refresh_token depuis la base."""
-    global _CACHE, _CACHE_QUAND
+    global _CACHE, _PAR_USER, _CACHE_QUAND
     if not force and (time.monotonic() - _CACHE_QUAND) < _CACHE_TTL_S:
         return
     from database.connection import get_db
     try:
         async with get_db() as conn:
-            lignes = await conn.fetch("SELECT email, refresh_token FROM connexions_google")
+            lignes = await conn.fetch(
+                "SELECT user_id, email, refresh_token FROM connexions_google")
     except Exception as e:  # noqa: BLE001 - table absente (migration pas passée) : cache vide
         logger.info("Connexions Google non chargées : %s", e)
         return
     _CACHE = {_normaliser(l["email"]): l["refresh_token"] for l in lignes}
+    _PAR_USER = {str(l["user_id"]): {"email": _normaliser(l["email"]),
+                                     "refresh_token": l["refresh_token"]}
+                 for l in lignes}
     _CACHE_QUAND = time.monotonic()
     logger.info("Connexions Google : %d boîte(s) reliée(s)", len(_CACHE))
 
@@ -241,6 +253,37 @@ def credentials_pour_boite(boite: str):
     return Credentials(
         token=None,
         refresh_token=jeton,
+        token_uri=URL_JETON,
+        client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret,
+        scopes=[s for s in SCOPES if s.startswith("https://")],
+    )
+
+
+def compte_connecte(user_id: str) -> Optional[str]:
+    """L'adresse Google reliée par cette personne, ou None. Lecture du cache."""
+    entree = _PAR_USER.get(str(user_id or ""))
+    return entree["email"] if entree else None
+
+
+def credentials_pour_utilisateur(user_id: str):
+    """Les identifiants OAuth de la PERSONNE qui demande, ou None.
+
+    Rendre None n'est PAS une panne : c'est « elle n'a pas relié son compte »,
+    et l'appelant décide. Synchrone, comme `credentials_pour_boite` : appelée
+    depuis les threads du connecteur, où aucune boucle asyncio ne tourne.
+
+    Le test `configurable()` est là pour la même raison qu'au-dessus : sans lui,
+    un `.env` amputé produirait des `Credentials` sans `client_id`, et l'échec
+    surviendrait au premier appel au lieu d'ici.
+    """
+    entree = _PAR_USER.get(str(user_id or ""))
+    if not entree or not entree.get("refresh_token") or not configurable():
+        return None
+    from google.oauth2.credentials import Credentials
+    return Credentials(
+        token=None,
+        refresh_token=entree["refresh_token"],
         token_uri=URL_JETON,
         client_id=settings.google_oauth_client_id,
         client_secret=settings.google_oauth_client_secret,

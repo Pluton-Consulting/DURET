@@ -26,6 +26,7 @@ logger = logging.getLogger("duret.llm.cles")
 # Clés surchargeables. Liste FERMÉE : on ne veut pas qu'une ligne fantaisiste en
 # base puisse redéfinir n'importe quel réglage de l'application.
 CLES_CONNUES = (
+    "ollama_cloud_api_key",
     "longcat_api_key",
     "deepseek_api_key",
     "openrouter_api_key",

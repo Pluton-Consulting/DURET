@@ -16,6 +16,7 @@ interface Cle {
 }
 
 const LIBELLES: Record<string, { nom: string; role: string }> = {
+  ollama_cloud_api_key: { nom: "Ollama Cloud", role: "Abonnement : modèle rapide, modèle puissant et lecture d'images" },
   longcat_api_key: { nom: "LongCat", role: "Modèle principal pour la rédaction courante" },
   deepseek_api_key: { nom: "DeepSeek", role: "Flash pour l'orientation, Pro pour l'analyse" },
   openrouter_api_key: { nom: "OpenRouter", role: "Passerelle : mêmes modèles, second chemin" },
@@ -470,6 +471,132 @@ function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backen
   )
 }
 
+/** COMBIEN D'APPELS DE MODÈLE PARTENT EN MÊME TEMPS.
+ *
+ *  L'abonnement du fournisseur en autorise un nombre fixe : au-delà, il met en
+ *  file puis refuse — et un refus coûte cinq minutes de quarantaine côté
+ *  serveur. Le plafond se règle donc ici, sans redéploiement : globalement, et
+ *  par personne pour qu'un seul compte ne prenne pas tous les créneaux.
+ *
+ *  Un champ vide sur une personne veut dire « elle suit le plafond de son
+ *  rôle » — ce n'est pas zéro : un plafond nul l'empêcherait de travailler.
+ */
+function ReglageConcurrence({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [etat, setEtat] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/concurrence`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setEtat(await res.json()); setErreur("")
+    } catch (e: any) { setErreur(e?.message || "Chargement impossible") }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  async function envoyer(corps: any, message: string) {
+    setBusy(true); setNote(""); setErreur("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/concurrence`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify(corps),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || `HTTP ${res.status}`)
+      setNote(message); await charger()
+    } catch (e: any) { setErreur(e?.message || "Enregistrement impossible") }
+    finally { setBusy(false) }
+  }
+
+  const champ: React.CSSProperties = {
+    width: 64, padding: "6px 10px", border: "1px solid var(--marque-border)",
+    borderRadius: 8, fontSize: 13, textAlign: "center",
+    color: "var(--marque-text-primary)", background: "var(--marque-surface)",
+  }
+
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "16px 18px", marginBottom: 22,
+    }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+        Appels simultanés au modèle
+      </div>
+      <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2, maxWidth: "70ch" }}>
+        L'abonnement en autorise un nombre limité à la fois. Au-delà, le fournisseur refuse et le
+        modèle est mis de côté cinq minutes : mieux vaut attendre ici. Un champ vide sur une
+        personne signifie qu'elle suit le plafond de son rôle.
+      </div>
+
+      {etat && (
+        <>
+          <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", marginTop: 14 }}>
+            <label style={{ fontSize: 13, color: "var(--marque-text-body)" }}>
+              Plafond global{" "}
+              <input type="number" min={1} max={64} defaultValue={etat.plafond_global} style={champ}
+                onBlur={(e) => {
+                  const v = parseInt(e.target.value, 10)
+                  if (v && v !== etat.plafond_global) envoyer({ global_max: v }, `Plafond global : ${v}.`)
+                }} />
+            </label>
+            <span style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>
+              {etat.libres !== null && etat.libres !== undefined
+                ? `${etat.libres} créneau(x) libre(s) à l'instant`
+                : "aucun appel en cours"}
+              {" · défaut par personne : "}{etat.plafond_personne_defaut}
+              {" · tâches de fond : "}{etat.plafond_fond}
+              {" · attente maximale : "}{etat.attente_max_s}{" s"}
+            </span>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--marque-text-muted)",
+                          textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>
+              Par personne
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+              {(etat.par_utilisateur || []).map((u: any) => (
+                <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10,
+                                         padding: "8px 10px", border: "1px solid var(--marque-border)",
+                                         borderRadius: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--marque-text-primary)",
+                                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {u.nom || u.email}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>
+                      {u.role}{u.plafond === null ? ` · suit son rôle (${etat.par_role?.[u.role] ?? "—"})` : ""}
+                    </div>
+                  </div>
+                  <input type="number" min={1} max={64} placeholder="—" style={champ}
+                    defaultValue={u.plafond ?? ""}
+                    onBlur={(e) => {
+                      const brut = e.target.value.trim()
+                      const v = brut === "" ? null : parseInt(brut, 10)
+                      if (v !== (u.plafond ?? null)) {
+                        envoyer({ par_utilisateur: { [u.id]: v } },
+                                `${u.nom || u.email} : ${v === null ? "suit son rôle" : v + " appels"}.`)
+                      }
+                    }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+      {busy && <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>Enregistrement…</div>}
+      {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
+      {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
+
 export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
   const [cles, setCles] = useState<Cle[]>([])
   const [saisies, setSaisies] = useState<Record<string, string>>({})
@@ -521,6 +648,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
       <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageConcurrence apiUrl={apiUrl} backendToken={backendToken} />
 
       <p style={{ margin: "0 0 6px", fontSize: 14, color: "var(--marque-text-body)",
                   maxWidth: "72ch", lineHeight: 1.55 }}>

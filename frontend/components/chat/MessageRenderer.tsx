@@ -319,13 +319,33 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     // Les réponses proposées à plusieurs mails : le bouton écrit dans le chat
     // (même canal que les suggestions), chaque envoi repasse par la validation.
     case "reponses_mail": return <ReponsesMail titre={p.titre} reponses={p.reponses} onAction={onAction} />
-    case "quick_replies": return (
-      <Suggestions>
-        {(p.options as string[]).map((o) => (
-          <Suggestion key={o} suggestion={o} onClick={onAction} />
-        ))}
-      </Suggestions>
-    )
+    // LA RANGÉE DE SUITES, sous la DERNIÈRE réponse seulement (01/09).
+    // Depuis que les suggestions sont posées mécaniquement à la fin de chaque
+    // réponse (`backend/agents/suggestions.py`), toutes les bulles du fil en
+    // portent. Or un clic ENVOIE aussitôt (`onAction` = `sendMessage`) : garder
+    // les rangées d'il y a dix messages, c'est semer des boutons qui relancent
+    // une conversation close. On n'affiche donc que la dernière.
+    // Deux bornes de plus, apprises du code : `Suggestions` ne replie pas les
+    // libellés (une seule rangée qui DÉFILE), et la barre horizontale que la
+    // bibliothèque passe en enfant atterrit DANS le viewport, où Radix ne la
+    // reconnaît pas — on demande donc l'orientation à la zone elle-même, sans
+    // toucher au fichier `ai-elements/` (règle n°4). Enfin `key={o}` casserait
+    // sur deux libellés identiques : on dédoublonne avant de rendre.
+    case "quick_replies": {
+      if (acces?.dernier === false) return null
+      const suites = Array.from(new Set(
+        (p.options as string[] | undefined)?.filter(
+          (o) => typeof o === "string" && o.trim()) ?? []
+      )).slice(0, 4)
+      if (!suites.length) return null
+      return (
+        <Suggestions orientation="horizontal">
+          {suites.map((o) => (
+            <Suggestion key={o} suggestion={o} onClick={onAction} />
+          ))}
+        </Suggestions>
+      )
+    }
     default:              return null
   }
 }

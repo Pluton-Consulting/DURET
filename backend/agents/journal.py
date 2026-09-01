@@ -90,6 +90,8 @@ ACTES = {
     "envoyer_email": "j'envoie le message",
     "resume_fil_email": "je résume le fil de discussion",
     "apprendre_style_email": "j'apprends le style d'écriture",
+    "apprendre_signature": "j'apprends la signature",
+    "ma_signature": "je relis la signature",
     "creer_tache_agent": "je programme la tâche",
     "triage_email_entrant": "je classe le message",
     "creer_document": "je prépare le document",

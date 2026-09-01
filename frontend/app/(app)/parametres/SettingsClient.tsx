@@ -37,7 +37,7 @@ function canTogglePerm(mgr: string, _agent: Agent, target: Role): boolean {
 // filtrait à l'entrée (super_admin/direction) — la restriction descend ici.
 const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
   // Sans `roles` : visible de chacun — l'onglet ne parle que de SA boîte.
-  { key: "google", label: "Ma boîte Google" },
+  { key: "google", label: "Mon compte Google" },
   { key: "utilisateurs", label: "Utilisateurs", roles: ["super_admin", "direction"] },
   { key: "plages", label: "Plages horaires", roles: ["super_admin", "direction"] },
   { key: "rbac", label: "Permissions RBAC", roles: ["super_admin", "direction"] },

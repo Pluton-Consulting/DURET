@@ -21,7 +21,7 @@ export default async function ParametresPage() {
 
   // Paramètres est ouvert à TOUS les rôles connectés : chacun y relie sa
   // boîte Google. Ce sont les ONGLETS qui portent les restrictions — un
-  // collaborateur ne voit que « Ma boîte Google », et le serveur revérifie de
+  // collaborateur ne voit que « Mon compte Google », et le serveur revérifie de
   // toute façon chaque endpoint d'administration.
   if (!user) {
     redirect("/login")

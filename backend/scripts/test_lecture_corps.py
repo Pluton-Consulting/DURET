@@ -60,6 +60,8 @@ try:
     import types as _types
     _faux = _types.ModuleType("mail.pieces")
     _faux.liens_du_texte = lambda t: []
+    # 01/09 : `lire_message` rapproche les `cid:` du corps de ses pièces.
+    _faux.cids_du_html = lambda h: []
     _faux.MAX_PIECES_PAR_MAIL = 8
     async def _analyser(nom, mime, brut, proprietaire):
         return {"nom": nom, "texte": "", "methode": "doublure", "lisible": False, "url": None, "bloc": None}
@@ -210,7 +212,11 @@ verifier("effet LECTURE déclaré (fail-closed sinon)", re.search(r'"lire_mail":
 verifier("le skill résout la boîte et vérifie l'accès comme lire_mails",
          re.search(r"async def lire_mail\(.*?_boite_a_lire\(data, user\).*?verifier_acces\(user, cible\)", skills, re.S) is not None)
 protocole = lire("skills/protocol.py")
-verifier("catalogue : `lire_mail` avec ref / objet / de", re.search(r'"lire_mail": \(.*?\["ref", "objet", "de", "rang", "pieces", "dossier", "mailbox"\]', protocole, re.S) is not None)
+verifier("catalogue : `lire_mail` avec ref / objet / de",
+         re.search(r'"lire_mail": \(.*?\["ref", "objet", "de", "rang", "pieces"',
+                   protocole, re.S) is not None)
+verifier("catalogue : `inline` ouvre les images DU CORPS (signature, logo)",
+         re.search(r'"lire_mail": \(.*?"inline".*?\]\)', protocole, re.S) is not None)
 verifier("catalogue : lire_mails dit que l'aperçu est un EXTRAIT", "EXTRAIT, pas le message" in protocole)
 agent1 = lire("agents/agent1.py")
 m = re.search(r"RESULTATS_GENEREUX = \{([^}]*)\}", agent1)

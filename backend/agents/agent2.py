@@ -209,7 +209,11 @@ async def vision_node(state: AgentState, config=None) -> dict:
     derniere = None
     for llm, label in candidats:
         try:
-            response = await llm.ainvoke([message], config=config)
+            # Hors cascade : la porte se pose ici aussi, sinon la vision
+            # échapperait au plafond du fournisseur.
+            from llm.concurrence import porte_llm
+            async with porte_llm():
+                response = await llm.ainvoke([message], config=config)
             usage = getattr(response, "usage_metadata", None) or {}
             return {
                 "vision_analysis": response.content,
@@ -494,6 +498,18 @@ async def prechiffrage_node(state: AgentState) -> dict:
     # même jeton dans la question et dans l'analyse, et la carte du fil — qui
     # est cumulative — reste exacte pour la réhydratation des tours suivants.
     question = state.get("anonymized_query") or state.get("query") or ""
+
+    # L'EXPERT VISION N'A JAMAIS PROPOSÉ DE SUITE (01/09) : son graphe se
+    # termine sur `prechiffrage`, sans `rehydrate_node`. Une analyse de plan
+    # restait un cul-de-sac à l'écran, alors que la suite est presque toujours
+    # la même — chiffrer, retrouver le dossier, simuler. Les libellés sont fixes
+    # et ne citent RIEN du plan : ils n'ont donc pas à être masqués, et
+    # `messages` continue de ne porter que `resume_masque`.
+    from agents.suggestions import poser as _poser_suites
+    from agents.suggestions import suggestions_du_tour
+    summary_ecran = _poser_suites(
+        summary, suggestions_du_tour(summary, [], expert="agent2"))
+
     try:
         masques, carte = await asyncio.to_thread(
             anonymizer.anonymize_chunks, [question, summary],
@@ -504,14 +520,14 @@ async def prechiffrage_node(state: AgentState) -> dict:
         # on rend l'analyse sans l'archiver plutôt que de perdre le tour.
         logger.warning("Analyse non mémorisée (masquage indisponible) : %s", e)
         return {
-            "final_response": summary,
+            "final_response": summary_ecran,
             "requires_validation": False,
             "validation_reason": None,
             "validation_payload": None,
         }
 
     return {
-        "final_response": summary,
+        "final_response": summary_ecran,
         "requires_validation": False,
         "validation_reason": None,
         "validation_payload": None,

@@ -87,6 +87,33 @@ def extension(nom: str, mime: Optional[str] = None) -> str:
     return _MIME_EXT.get((mime or "").split(";")[0].strip().lower(), "")
 
 
+def extension_du_mime(mime: str) -> str:
+    """L'extension d'un type MIME, ou "" — nommer une image en ligne qui n'a
+    pas de nom de fichier (le cas d'une signature Gmail native)."""
+    return _MIME_EXT.get((mime or "").split(";")[0].strip().lower(), "")
+
+
+_RE_CID = re.compile(r"""src\s*=\s*["']?\s*cid:([^"'>\s]+)""", re.I)
+
+
+def cids_du_html(html: str) -> list:
+    """Les références `cid:` d'un corps HTML, dans l'ordre, sans doublon.
+
+    C'est le SEUL lien entre le corps et ses images : le fournisseur rend d'un
+    côté un HTML plein de `<img src="cid:image001.png@01DA...">`, de l'autre
+    une liste de pièces portant un `contentId`. Sans ce rapprochement, une
+    signature reste ce que l'assistant en disait en production : « des
+    références cid: internes, sans fichier rattachable ».
+    """
+    vus, sortie = set(), []
+    for brut in _RE_CID.findall(html or ""):
+        cid = brut.strip().strip("<>")
+        if cid and cid.lower() not in vus:
+            vus.add(cid.lower())
+            sortie.append(cid)
+    return sortie
+
+
 def est_image(nom: str, mime: Optional[str] = None) -> bool:
     return extension(nom, mime) in EXT_IMAGE or (mime or "").lower().startswith("image/")
 
@@ -274,7 +301,9 @@ async def decrire_image(octets: bytes, mime: str, consigne: str) -> str:
     ])
     for llm, label in candidats:
         try:
-            reponse = await llm.ainvoke([message])
+            from llm.concurrence import porte_llm
+            async with porte_llm():
+                reponse = await llm.ainvoke([message])
             texte = reponse.content if isinstance(reponse.content, str) else str(reponse.content)
             if texte and texte.strip():
                 return texte.strip()

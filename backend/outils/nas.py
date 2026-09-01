@@ -485,6 +485,62 @@ async def ouvrir(nom_ou_chemin: str) -> dict:
                      if autres else "")}
 
 
+# Un fichier joint à un mail : le plafond du message commande, pas celui d'une
+# lecture dans le chat. `mail/attaches.py` ré-applique le sien par-dessus.
+MAX_OCTETS_PIECE = 20 * 1024 * 1024
+
+
+async def octets(nom_ou_chemin: str) -> tuple:
+    """(octets, nom réel, mime) d'un fichier du NAS, par son nom ou son chemin.
+
+    Le pendant exact de `drive.octets()` chez le jumeau : même résolution que
+    `ouvrir()` — un chemin s'ouvre directement, un nom se cherche —, mais on
+    rapatrie le BINAIRE au lieu d'en extraire du texte. Joindre un PDF à un
+    mail n'a pas besoin de savoir le lire, et passer par l'extracteur perdrait
+    justement ce qu'on veut envoyer.
+
+    `verifier()` (appelé dans `_telecharger` comme dans `_lire_ouvert`) borne
+    au périmètre autorisé : composer deux gestes ne compose pas les droits.
+    Lève `NasRefuse` avec une phrase lisible, que `mail/attaches.resoudre`
+    restitue telle quelle comme raison de refus.
+    """
+    import mimetypes
+
+    from ingestion.connectors import synology as c
+    from nas.acces import NasRefuse, _chercher_ouvert, connexion, verifier
+
+    demande = (nom_ou_chemin or "").strip()
+    if not demande:
+        raise NasRefuse("Donne le nom ou le chemin du fichier à joindre.")
+
+    async with connexion() as (client, base, sid):
+        chemin = ""
+        if demande.startswith("/"):
+            chemin = verifier(demande)
+        else:
+            trouve = await _chercher_ouvert(client, base, sid,
+                                            posixpath.basename(demande) or demande)
+            fichiers = [r for r in (trouve.get("resultats") or [])
+                        if not r.get("dossier")]
+            if not fichiers:
+                raise NasRefuse(
+                    f"Aucun fichier nommé « {demande} » sur le serveur. Ce n'est "
+                    "pas une preuve qu'il n'existe pas : il peut être hors du "
+                    "périmètre autorisé.")
+            chemin = verifier(fichiers[0]["chemin"])
+        brut = await c._telecharger(client, base, sid, chemin)
+
+    if not brut:
+        raise NasRefuse(f"« {demande} » est introuvable ou vide sur le serveur.")
+    if len(brut) > MAX_OCTETS_PIECE:
+        raise NasRefuse(
+            f"« {posixpath.basename(chemin)} » pèse trop lourd pour un message "
+            f"({len(brut) // (1024 * 1024)} Mo). Envoie plutôt le chemin.")
+    nom = posixpath.basename(chemin)
+    devine, _ = mimetypes.guess_type(nom)
+    return brut, nom, devine or "application/octet-stream"
+
+
 async def lire_lot(motif: str, dossier: Optional[str] = None,
                    limite: int = MAX_LOT) -> dict:
     """Lit plusieurs fichiers d'un coup — « tous les CCTP du chantier 2031 ».

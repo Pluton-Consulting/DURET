@@ -352,6 +352,13 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
             "action précédente. Tranchez-la, ou lancez votre demande en file "
             "d'attente.")
 
+    # QUI CONSOMME LES CRÉNEAUX DU FOURNISSEUR (01/09). Le plafond est lu UNE
+    # fois par tour — le relire à chaque appel de modèle coûterait une requête
+    # par appel, quinze par tour. La variable de contexte suit la tâche asyncio
+    # et tous ses `await` descendants, à travers LangGraph : c'est pourquoi ce
+    # n'est pas un argument à faire passer par quinze signatures.
+    from llm.concurrence import limite_de, porter
+    porter(f"user:{user_id}", await limite_de(user_id, user_role))
     with _Verrou(thread_id):
         result = await graph.ainvoke(
             _initial_state(query, user_id, user_role, has_attachment, thread_id,
@@ -524,6 +531,13 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
             "action précédente. Tranchez-la, ou lancez votre demande en file "
             "d'attente.")
 
+    # QUI CONSOMME LES CRÉNEAUX DU FOURNISSEUR (01/09). Le plafond est lu UNE
+    # fois par tour — le relire à chaque appel de modèle coûterait une requête
+    # par appel, quinze par tour. La variable de contexte suit la tâche asyncio
+    # et tous ses `await` descendants, à travers LangGraph : c'est pourquoi ce
+    # n'est pas un argument à faire passer par quinze signatures.
+    from llm.concurrence import limite_de, porter
+    porter(f"user:{user_id}", await limite_de(user_id, user_role))
     with _Verrou(thread_id):
         # subgraphs=True : remonte AUSSI les sous-étapes internes des agents (recherche mémoire,
         # anonymisation, rédaction, vision…) et pas seulement les gros nœuds (agent1/agent2).

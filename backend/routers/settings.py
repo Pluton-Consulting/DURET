@@ -215,6 +215,92 @@ async def ecrire_reglage(body: ReglageBody, current_user: User = Depends(get_cur
             "note": "Prise en compte immédiate, sans redéploiement."}
 
 
+class ConcurrenceBody(BaseModel):
+    global_max: Optional[int] = None          # plafond tous appels confondus
+    par_role: Optional[dict] = None           # {rôle: plafond}
+    par_utilisateur: Optional[dict] = None    # {id: plafond}, None = suit son rôle
+
+
+@router.get("/concurrence")
+async def lire_concurrence(current_user: User = Depends(get_current_user)):
+    """Combien d'appels de modèle peuvent partir en même temps, et par qui.
+
+    L'abonnement du fournisseur en autorise un nombre fixe : au-delà il met en
+    file puis refuse, et un refus coûte cinq minutes de quarantaine. Cet écran
+    est donc le seul endroit où l'on voit, d'un coup d'œil, ce que l'on peut
+    consommer et ce qui reste libre.
+    """
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.concurrence import etat
+    from llm.reglages import valeur as reglage
+    async with get_db() as conn:
+        roles = await conn.fetch(
+            "SELECT role, concurrent_limit FROM role_quota_config ORDER BY role")
+        comptes = await conn.fetch(
+            "SELECT id, email, name, role, llm_simultanes FROM users "
+            "WHERE COALESCE(actif, true) ORDER BY email")
+    return {
+        **etat(),
+        "origine_global": "parametres" if (reglage("llm_simultanes") or "").strip() else "code",
+        "par_role": {r["role"]: r["concurrent_limit"] for r in roles},
+        "par_utilisateur": [
+            {"id": str(c["id"]), "email": c["email"], "nom": c["name"],
+             "role": c["role"], "plafond": c["llm_simultanes"]}
+            for c in comptes],
+    }
+
+
+@router.put("/concurrence")
+async def ecrire_concurrence(body: ConcurrenceBody,
+                             current_user: User = Depends(get_current_user)):
+    """Règle le plafond global, celui d'un rôle, ou celui d'un compte."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+
+    def _borne(v):
+        # NULL = « suit le rang au-dessus ». Zéro n'est pas admis : un plafond
+        # nul empêcherait quelqu'un de se servir de l'assistant.
+        if v is None or str(v).strip() == "":
+            return None
+        n = int(v)
+        if not (1 <= n <= 64):
+            raise HTTPException(status_code=422,
+                                detail="Plafond attendu entre 1 et 64.")
+        return n
+
+    fait = {}
+    if body.global_max is not None:
+        from llm.reglages import enregistrer
+        try:
+            fait["global"] = await enregistrer("llm_simultanes", str(_borne(body.global_max)),
+                                               str(current_user.id))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    async with get_db() as conn:
+        for role, v in (body.par_role or {}).items():
+            await conn.execute(
+                "UPDATE role_quota_config SET concurrent_limit = $2 WHERE role = $1",
+                role, _borne(v))
+            fait.setdefault("roles", []).append(role)
+        for uid, v in (body.par_utilisateur or {}).items():
+            await conn.execute(
+                "UPDATE users SET llm_simultanes = $2 WHERE id = $1::uuid",
+                str(uid), _borne(v))
+            fait.setdefault("comptes", []).append(str(uid))
+    # Le cache des plafonds vit 60 s : on le vide pour que le réglage se voie
+    # tout de suite, sinon l'écran montrerait une valeur déjà changée.
+    try:
+        from llm.concurrence import _CACHE
+        _CACHE.clear()
+    except Exception:  # noqa: BLE001
+        pass
+    await log_action(action="concurrence_modifiee", user_id=str(current_user.id),
+                     metadata=fait)
+    return {"applique": fait, "note": "Prise en compte immédiate. Les appels déjà "
+                                      "en vol gardent l'ancien plafond quelques secondes."}
+
+
 @router.get("/cles-api")
 async def lire_cles(current_user: User = Depends(get_current_user)):
     """Ce qui est configuré, et d'où ça vient. Jamais la valeur."""

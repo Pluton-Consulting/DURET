@@ -44,7 +44,13 @@ class LLMTier(Enum):
 # ── Disponibilité & construction des fournisseurs ────────────────────────
 
 # Fournisseurs OpenAI-compatibles (base_url + clé configurables) : direct ou via passerelle.
-_OPENAI_COMPAT = ("openrouter", "deepseek", "longcat", "google")
+# `ollama_cloud` N'EST PAS `ollama`. Le premier est le service HÉBERGÉ, joint
+# par son API compatible OpenAI avec une clé Bearer ; le second est un Ollama
+# LOCAL sans clé, construit plus bas par ChatOllama et toujours déclaré
+# « disponible » (c'est lui qui écrit « All connection attempts failed » dans
+# les journaux). Les nommer pareil confondrait deux pannes qui n'ont rien à
+# voir : un service qui refuse, et un poste où rien ne tourne.
+_OPENAI_COMPAT = ("ollama_cloud", "openrouter", "deepseek", "longcat", "google")
 
 
 def _cle(provider: str) -> Optional[str]:
@@ -250,6 +256,11 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         # il repasse devant sans rien changer d'autre — et depuis que le 404
         # est reconnu comme définitif, l'essai ne coûte plus qu'un aller-retour.
         chain = [
+            # L'abonnement est payé et sert un modèle de chaque taille :
+            # il passe en tête. Le reste de la cascade demeure derrière,
+            # comme filet — et n'est de toute façon plus consulté dès que
+            # les deux modèles sont choisis dans Paramètres.
+            ("ollama_cloud", s.model_ollama_cloud_rapide),
             ("deepseek", s.model_deepseek_flash),          # tête tant que le petit Groq est indisponible
             # Gemini léger : ~1 s au sondage du 30/08, et la seule clé encore
             # vivante ce jour-là. Derrière DeepSeek (mesuré), devant le reste.
@@ -284,6 +295,11 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         # secondes. DeepSeek reste juste derrière : il prend le relais si Groq
         # sature, et son délai est désormais borné, ce qui n'était pas le cas.
         chain = [
+            # L'abonnement est payé et sert un modèle de chaque taille :
+            # il passe en tête. Le reste de la cascade demeure derrière,
+            # comme filet — et n'est de toute façon plus consulté dès que
+            # les deux modèles sont choisis dans Paramètres.
+            ("ollama_cloud", s.model_ollama_cloud_rapide),
             ("groq", s.model_groq_large),
             ("deepseek", s.model_deepseek_flash),
             ("openrouter", s.model_or_deepseek_flash),
@@ -308,6 +324,11 @@ def _tier_chain(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
         # latence qu'au palier STANDARD : un secours à 60-190 s l'appel
         # transforme la panne du principal en gel de l'application.
         chain = [
+            # L'abonnement est payé et sert un modèle de chaque taille :
+            # il passe en tête. Le reste de la cascade demeure derrière,
+            # comme filet — et n'est de toute façon plus consulté dès que
+            # les deux modèles sont choisis dans Paramètres.
+            ("ollama_cloud", s.model_ollama_cloud_puissant),
             ("deepseek", s.model_deepseek),                # V4 Pro — raisonnement
             ("openrouter", s.model_or_deepseek_pro),
             ("anthropic", s.model_anthropic_vision),
@@ -463,6 +484,10 @@ def catalogue_modeles() -> list[dict]:
     configuration, et ceux que le disjoncteur écarte en ce moment."""
     s = settings
     fiches = [
+        ("ollama_cloud", "Ollama Cloud", [s.model_ollama_cloud_rapide,
+                                          s.model_ollama_cloud_puissant,
+                                          s.model_ollama_cloud_vision,
+                                          s.model_ollama_cloud_vision_secours]),
         ("longcat", "LongCat", [s.model_longcat]),
         ("google", "Google Gemini", [s.model_google_texte, s.model_google_texte_leger]),
         ("deepseek", "DeepSeek", [s.model_deepseek_flash, s.model_deepseek]),
@@ -551,7 +576,17 @@ class ResilientLLM:
             attempt = -1
             while (attempt := attempt + 1) < tentatives:
                 try:
-                    result = await llm.ainvoke(messages, **kwargs)
+                    # LA PORTE : un créneau du fournisseur, tenu le temps
+                    # de l'appel et rien de plus. Pas autour de la cascade — un
+                    # candidat mort retiendrait un créneau pendant qu'on essaie
+                    # le suivant ; pas autour du tour non plus — quinze appels
+                    # séquentiels n'occupent qu'un créneau à la fois, ce qui est
+                    # exactement ce que compte l'abonnement. Le backoff, plus
+                    # bas, reste HORS de la porte : attendre en tenant un
+                    # créneau serait absurde.
+                    from llm.concurrence import porte_llm
+                    async with porte_llm():
+                        result = await llm.ainvoke(messages, **kwargs)
                     if _contenu_vide(result):
                         if not budget_double:
                             budget_double = True
@@ -641,6 +676,14 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
     # la tête quand sa clé existe (meilleure lecture de plans).
     for provider, model in (("anthropic", s.model_anthropic_vision),
                             ("openrouter", s.model_openrouter_vision),
+                            # Ollama Cloud lit aussi les images. Placé DERRIÈRE
+                            # Gemini 2.5 Pro tant qu'aucune mesure n'a comparé
+                            # les deux sur de vraies factures : le modèle d'OCR
+                            # en place a été choisi sur un constat, pas sur une
+                            # préférence. Pour basculer, remonter ces deux
+                            # lignes — après avoir mesuré.
+                            ("ollama_cloud", s.model_ollama_cloud_vision),
+                            ("ollama_cloud", s.model_ollama_cloud_vision_secours),
                             ("google", s.model_google_vision),
                             ("google", s.model_google_vision_secours),
                             ("groq", s.model_groq_vision)):

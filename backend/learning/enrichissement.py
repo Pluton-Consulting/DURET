@@ -91,7 +91,8 @@ FOURNISSEUR_PRINCIPAL = "longcat"
 # (gratuits OpenRouter, Ollama local), pas contre un pair. La confiance est
 # donc une LISTE, pas un seul nom : ce qui s'écrit en mémoire doit venir d'un
 # de ces fournisseurs — et de rien d'autre.
-FOURNISSEURS_DE_CONFIANCE = ("longcat", "google", "deepseek", "anthropic")
+FOURNISSEURS_DE_CONFIANCE = ("ollama_cloud", "longcat", "google", "deepseek",
+                             "anthropic")
 
 
 def modele_de_confiance(modele: str) -> bool:
@@ -383,6 +384,11 @@ async def executer(lance_par: str, collecter: bool = True,
                    acces_skills: str = "all") -> dict:
     """Déroule la campagne. Longue : à lancer en tâche de fond."""
     from learning.debrief import enregistrer
+    # LES TÂCHES DE FOND ONT LEUR PROPRE BUDGET (01/09) : sans lui, une
+    # campagne prendrait tous les créneaux du fournisseur et gèlerait le chat.
+    from config import settings
+    from llm.concurrence import porter
+    porter("fond:enrichissement", int(getattr(settings, "llm_simultanes_fond", 2) or 2))
 
     boites = await _boites_du_corpus()
     _reinitialiser(lance_par, boites)

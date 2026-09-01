@@ -168,8 +168,8 @@ routeur = source(BACKEND / "routers" / "google_perso.py")
 verifier("routeur : le refresh token ne sort jamais par l'API",
          "refresh_token" not in routeur.replace('infos["refresh_token"]', ""))
 ecran = source(FRONTEND / "app" / "(app)" / "parametres" / "SettingsClient.tsx")
-verifier("écran : l'onglet Ma boîte Google existe, sans restriction de rôle",
-         '{ key: "google", label: "Ma boîte Google" }' in ecran)
+verifier("écran : l'onglet Mon compte Google existe, sans restriction de rôle",
+         '{ key: "google", label: "Mon compte Google" }' in ecran)
 verifier("écran : la page Paramètres ne rejette plus les collaborateurs",
          '["super_admin", "direction"].includes' not in source(
              FRONTEND / "app" / "(app)" / "parametres" / "page.tsx"))

@@ -444,34 +444,85 @@ async def _ouvrir_outlook(boite: str, identifiant: str) -> dict:
         pieces = []
         if m.get("hasAttachments"):
             try:
-                ra = await client.get(base + "/attachments",
-                                      params={"$select": "id,name,size,contentType,isInline"},
-                                      headers=entetes)
+                ra = await client.get(
+                    base + "/attachments",
+                    params={"$select": "id,name,size,contentType,isInline,contentId"},
+                    headers=entetes)
                 ra.raise_for_status()
-                # Les images EN LIGNE (logos de signature) ne sont pas des pièces
-                # jointes au sens de la personne : écartées.
+                # LES IMAGES EN LIGNE NE SONT PLUS JETÉES (01/09). Elles étaient
+                # écartées comme « pas des pièces au sens de la personne » : vrai
+                # pour un logo de pied de page, FAUX dès qu'on cherche la
+                # SIGNATURE de quelqu'un, qui n'existe QUE là. C'est ce que
+                # l'assistant disait en production, mot pour mot : « les corps
+                # contiennent des références cid: internes, sans fichier
+                # rattachable ». On les garde en les MARQUANT : `inline` et
+                # `content_id` permettent au corps HTML de les retrouver, et à
+                # l'affichage de ne pas les compter comme des pièces ordinaires.
                 pieces = [{"id": p.get("id"), "nom": p.get("name") or "(sans nom)",
-                           "taille": p.get("size"), "type": p.get("contentType")}
-                          for p in ra.json().get("value", []) if not p.get("isInline")]
+                           "taille": p.get("size"), "type": p.get("contentType"),
+                           "inline": bool(p.get("isInline")),
+                           "content_id": (p.get("contentId") or "").strip("<>")}
+                          for p in ra.json().get("value", [])]
             except Exception as e:  # noqa: BLE001 — les pièces jointes sont un complément
                 logger.info("Pièces jointes non listées pour %s : %s", boite, e)
+        # LE HTML EN PLUS DU TEXTE, pour UN message seulement. La liste garde
+        # son corps texte (c'est un budget d'extrait, pas une lecture) ; ici on
+        # OUVRE un message, et le HTML est la SEULE forme qui porte les `cid:`
+        # — donc la seule où l'on puisse voir qu'une image EST la signature.
+        # Sans l'en-tête `Prefer`, Graph rend le corps dans son type natif.
+        corps_html = ""
+        try:
+            rh = await client.get(base, params={"$select": "body"},
+                                  headers={"Authorization": f"Bearer {jeton}"})
+            rh.raise_for_status()
+            corps_html = ((rh.json().get("body") or {}).get("content") or "")
+        except Exception as e:  # noqa: BLE001 — le HTML est un complément
+            logger.info("Corps HTML non lu pour %s : %s", boite, e)
     fiche = _fiche_outlook(m, boite, MAX_APERCU)
     fiche["corps"] = _corps_outlook(m)
+    fiche["corps_html"] = corps_html
     fiche["pieces_jointes"] = pieces
     return fiche
 
 
 def _pieces_gmail(charge: dict) -> list[dict]:
+    """Les pièces d'un message Gmail, EN LIGNE COMPRISES (01/09).
+
+    Le test portait sur `filename` seul. Une signature en image est un
+    `Content-ID` SANS nom de fichier : elle disparaissait donc en silence — et
+    celles qui en avaient un (`image001.png`, le cas Outlook vers Gmail)
+    étaient rendues sans qu'on sache qu'elles étaient en ligne, ni à quel
+    `cid:` du corps elles répondaient. Les en-têtes de partie n'étaient jamais
+    lus ; c'est là que tout se joue.
+    """
+    from mail.pieces import extension_du_mime
     pieces = []
 
+    def _entete_partie(partie: dict, nom: str) -> str:
+        for h in partie.get("headers") or []:
+            if str(h.get("name", "")).lower() == nom:
+                return str(h.get("value") or "")
+        return ""
+
     def _parcourir(partie: dict):
-        if partie.get("filename"):
-            corps = partie.get("body") or {}
-            pieces.append({"id": corps.get("attachmentId") or partie.get("partId") or partie["filename"],
-                           "nom": partie["filename"], "taille": corps.get("size"),
-                           "type": partie.get("mimeType"),
-                           # Une petite pièce arrive parfois EN LIGNE dans le message.
-                           "data": corps.get("data")})
+        corps = partie.get("body") or {}
+        cid = _entete_partie(partie, "content-id").strip().strip("<>")
+        disposition = _entete_partie(partie, "content-disposition").lower()
+        inline = bool(cid) or disposition.startswith("inline")
+        nom = partie.get("filename") or ""
+        mime = str(partie.get("mimeType") or "")
+        # Une partie de CORPS (text/plain, text/html) n'est pas une pièce, même
+        # si elle porte une disposition : on ne retient que ce qui a un nom, ou
+        # un Content-ID accompagné d'un contenu qui n'est pas du texte.
+        if nom or (inline and not mime.startswith("text/")
+                   and (corps.get("attachmentId") or corps.get("data"))):
+            pieces.append({
+                "id": corps.get("attachmentId") or partie.get("partId") or nom,
+                "nom": nom or ((cid or "image") + (extension_du_mime(mime) or "")),
+                "taille": corps.get("size"), "type": mime,
+                "inline": inline, "content_id": cid,
+                # Une petite pièce arrive parfois EN LIGNE dans le message.
+                "data": corps.get("data")})
         for sous in partie.get("parts") or []:
             _parcourir(sous)
 
@@ -556,6 +607,34 @@ async def _lire_gmail(boite: str, dossier: str, limite: int,
     return await asyncio.to_thread(_travail)
 
 
+def _html_gmail(charge: dict) -> str:
+    """La partie `text/html` d'un message Gmail, brute.
+
+    `_texte_du_message` du connecteur préfère `text/plain` et n'expose jamais
+    le HTML : sans cette fonction, aucun `cid:` n'est visible côté Gmail.
+    """
+    import base64
+
+    trouve = [""]
+
+    def _parcourir(partie: dict):
+        if trouve[0]:
+            return
+        if str(partie.get("mimeType") or "") == "text/html":
+            donnees = (partie.get("body") or {}).get("data") or ""
+            if donnees:
+                try:
+                    trouve[0] = base64.urlsafe_b64decode(donnees).decode(
+                        "utf-8", "replace")
+                except Exception:  # noqa: BLE001 — un corps illisible n'arrête rien
+                    trouve[0] = ""
+        for sous in partie.get("parts") or []:
+            _parcourir(sous)
+
+    _parcourir(charge or {})
+    return trouve[0]
+
+
 async def _ouvrir_gmail(boite: str, identifiant: str) -> dict:
     import asyncio
 
@@ -566,6 +645,8 @@ async def _ouvrir_gmail(boite: str, identifiant: str) -> dict:
         fiche = _fiche_gmail(m, boite, MAX_APERCU, _entete, _texte_du_message)
         charge = m.get("payload") or {}
         fiche["corps"] = _texte_lisible(_texte_du_message(charge))
+        # Le HTML porte les `cid:` ; le texte, jamais. Voir le pendant Graph.
+        fiche["corps_html"] = _html_gmail(charge)
         fiche["pieces_jointes"] = _pieces_gmail(charge)
         return fiche
 
@@ -737,7 +818,8 @@ async def telecharger_piece(boite: str, info: dict) -> bytes:
 
 
 async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str = "recus",
-                       rang=None, pieces=False, proprietaire: str = "") -> dict:
+                       rang=None, pieces=False, proprietaire: str = "",
+                       inline=False) -> dict:
     """UN message, en entier : le corps complet (borné à MAX_CORPS, et la
     coupure est dite), les pièces jointes nommées — avec leur `ref` —, les
     liens du corps ; et, si `pieces` est vrai, chaque pièce RÉCUPÉRÉE,
@@ -748,7 +830,8 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     n'est modifié : le message n'est pas marqué lu. L'appelant DOIT avoir
     vérifié l'accès.
     """
-    from mail.pieces import liens_du_texte, analyser, MAX_PIECES_PAR_MAIL
+    from mail.pieces import (liens_du_texte, analyser, cids_du_html,
+                             MAX_PIECES_PAR_MAIL)
 
     nom = fournisseur()
     cle = "envoyes" if str(dossier or "").lower().startswith("env") else "recus"
@@ -792,12 +875,31 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     brutes = [p for p in (fiche.get("pieces_jointes") or []) if isinstance(p, dict)]
     for p in brutes:
         p["ref"] = _memoriser_piece(boite, identifiant, p)
-    pieces_jointes = [{k: v for k, v in p.items() if k not in ("id", "data", "partId")} for p in brutes]
+
+    # LE RAPPROCHEMENT (01/09). Une pièce dont le `content_id` figure dans le
+    # HTML est AFFICHÉE DANS le corps, à un endroit précis : ce n'est pas un
+    # fichier joint, c'est une partie du message. On le dit — le modèle saura
+    # que « l'image en bas du message » et « la pièce jointe » sont deux
+    # choses, et la signature cesse d'être une référence orpheline.
+    cids = cids_du_html(fiche.get("corps_html") or "")
+    for p in brutes:
+        cid = p.get("content_id") or ""
+        if cid and cid in cids:
+            p["dans_le_corps"] = True
+            p["position"] = cids.index(cid)
+    # Les images EN LIGNE ne sont pas des pièces jointes ORDINAIRES : les
+    # compter ferait dire « ce message porte 4 pièces jointes » de tout message
+    # signé, et le modèle le réciterait. Elles ne sont LUES que sur demande
+    # (`inline`), sinon chaque logo de pied de page paierait un appel de vision.
+    ordinaires = [p for p in brutes if not p.get("inline")]
+    a_lire = brutes if inline else ordinaires
+    pieces_jointes = [{k: v for k, v in p.items() if k not in ("id", "data", "partId")}
+                      for p in (brutes if inline else ordinaires)]
     liens = liens_du_texte(corps)
 
     lues, blocs = [], []
-    if pieces and brutes:
-        for p in brutes[:MAX_PIECES_PAR_MAIL]:
+    if pieces and a_lire:
+        for p in a_lire[:MAX_PIECES_PAR_MAIL]:
             try:
                 octets = await telecharger_piece(boite, _PIECES[p["ref"]])
                 lu = await analyser(p.get("nom") or "", p.get("type"), octets, proprietaire)
@@ -837,10 +939,27 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     })
     if lues:
         fiche["pieces_lues"] = lues
-        if len(brutes) > MAX_PIECES_PAR_MAIL:
-            fiche["pieces_non_lues"] = len(brutes) - MAX_PIECES_PAR_MAIL
+        if len(a_lire) > MAX_PIECES_PAR_MAIL:
+            fiche["pieces_non_lues"] = len(a_lire) - MAX_PIECES_PAR_MAIL
     if blocs:
         fiche["bloc_ui"] = blocs
+    # Combien d'images vivent DANS le corps — l'information qui manquait :
+    # « la signature est une image » se lit ici, et nulle part ailleurs.
+    en_ligne = [p for p in brutes if p.get("inline")]
+    if en_ligne:
+        fiche["images_dans_le_corps"] = len(en_ligne)
+        if not inline:
+            fiche["a_faire"] = (fiche.get("a_faire") or "") + (
+                f" {len(en_ligne)} image(s) sont AFFICHÉES DANS le corps (logo, "
+                "signature, capture collée) : ce ne sont pas des pièces jointes. "
+                "Pour les récupérer et les lire, rappelle `lire_mail` avec "
+                "`inline: true`.")
+    # Le corps HTML a servi au rapprochement ; il ne remonte pas au modèle, où
+    # il coûterait trois fois le texte pour la même information. Il reste quand
+    # `inline` est demandé : c'est ce que lit l'apprentissage de la signature,
+    # qui a besoin de savoir OÙ, dans le HTML, le bloc commence.
+    if not inline:
+        fiche.pop("corps_html", None)
     fiche.pop("apercu", None)
     return fiche
 

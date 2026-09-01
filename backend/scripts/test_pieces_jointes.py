@@ -189,6 +189,8 @@ try:
     faux_pieces = types.ModuleType("mail.pieces")
     faux_pieces.liens_du_texte = pieces.liens_du_texte if pieces else (lambda t: [])
     faux_pieces.MAX_PIECES_PAR_MAIL = 8
+    faux_pieces.cids_du_html = (pieces.cids_du_html if pieces
+                                else (lambda h: []))
     lus = []
     async def _analyser(nom, mime, brut, proprietaire):
         lus.append((nom, brut, proprietaire))

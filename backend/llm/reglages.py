@@ -26,6 +26,11 @@ logger = logging.getLogger("duret.llm.reglages")
 # pouvoir redéfinir n'importe quel attribut de la configuration.
 REGLAGES_CONNUS = (
     "llm_tete",
+    # Combien d'appels de modèle partent EN MÊME TEMPS (01/09). L'abonnement du
+    # fournisseur en autorise un nombre fixe ; au-delà il met en file puis
+    # refuse, et un refus coûte cinq minutes de quarantaine. Se règle à l'écran
+    # parce que le plafond change avec l'offre, pas avec le code.
+    "llm_simultanes",
     "kpi_depuis",   # AAAA-MM-JJ — les indicateurs ne comptent rien avant cette date
     # L'anonymisation PII se coupe d'un clic (demande de Noa, 30/08 : elle
     # cassait des flux réels — adresse tapée masquée en boucle, balises dans
@@ -47,7 +52,8 @@ REGLAGES_CONNUS = (
 # Les fournisseurs de TEXTE que le routeur sait construire (llm/router.py).
 # Dupliqué ici plutôt qu'importé : reglages.py est lu par le routeur, pas
 # l'inverse, et un import croisé au démarrage a déjà coûté une matinée.
-FOURNISSEURS_TEXTE = ("longcat", "deepseek", "openrouter", "google", "groq", "anthropic")
+FOURNISSEURS_TEXTE = ("ollama_cloud", "longcat", "deepseek", "openrouter",
+                      "google", "groq", "anthropic")
 
 # Un réglage dont la valeur finit DANS du SQL doit être validé à l'écriture ET
 # à la lecture. On l'oblige à n'être qu'un instant ISO, ce qui le rend
@@ -126,6 +132,10 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom == "anonymisation" and (brut or "").strip() \
             and (brut or "").strip().lower() not in ("active", "desactivee"):
         raise ValueError("Valeur attendue : « active » ou « desactivee ».")
+    if nom == "llm_simultanes" and (brut or "").strip():
+        valeur = (brut or "").strip()
+        if not valeur.isdigit() or not (1 <= int(valeur) <= 64):
+            raise ValueError("Nombre attendu entre 1 et 64 (l'abonnement en autorise 10).")
     if nom in ("modele_rapide", "modele_puissant") and (brut or "").strip():
         f, _, m = (brut or "").strip().partition(":")
         if f.strip().lower() not in FOURNISSEURS_TEXTE or not m.strip():

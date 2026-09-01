@@ -216,6 +216,21 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     sortie = {"pending_action": None,
               "final_response": ((state.get("final_response") or "").rstrip()
                                  + f"\n\n{message}").strip()}
+    # LA SUITE APRÈS UN ACCORD (01/09). Ce chemin ne passe PAS par
+    # `rehydrate_node` : jusqu'ici, un visuel tiré ou un mail parti n'a jamais
+    # porté la moindre suggestion — alors que c'est le moment où la suite est
+    # la plus évidente (une variante, une relance, un dépôt). Le plan approuvé
+    # est exclu d'office : le bloc plus bas remet `final_response` à None.
+    try:
+        from agents.suggestions import poser as _poser_suites
+        from agents.suggestions import suggestions_du_tour
+        _suites = suggestions_du_tour(sortie["final_response"],
+                                      [{"skill": action["skill"], "ok": True}],
+                                      expert=str(state.get("target_agent") or ""))
+        if _suites:
+            sortie["final_response"] = _poser_suites(sortie["final_response"], _suites)
+    except Exception:  # noqa: BLE001 — une suggestion ne casse jamais une reprise
+        pass
     # L'ATTRIBUTION D'ÉCRAN SUIT LE TRAVAIL : un skill qui déclare son expert
     # (un tirage de visuel = conception) crédite le tour à cet expert, pour que
     # `agent_used`, le tableau de bord et l'historique du fil disent qui a

@@ -108,6 +108,11 @@ async def _terminer(run_id, statut: str, resultat=None, erreur: Optional[str] = 
 async def _executer(run: dict) -> None:
     """Exécute une tâche, au nom de son créateur, dans le graphe habituel."""
     from agents import runtime
+    # LES TÂCHES DE FOND ONT LEUR PROPRE BUDGET (01/09) : sans lui, une
+    # campagne prendrait tous les créneaux du fournisseur et gèlerait le chat.
+    from config import settings
+    from llm.concurrence import porter
+    porter("fond:taches", int(getattr(settings, "llm_simultanes_fond", 2) or 2))
 
     async with get_db() as conn:
         tache = await conn.fetchrow("SELECT * FROM agent_tasks WHERE id = $1", run["task_id"])

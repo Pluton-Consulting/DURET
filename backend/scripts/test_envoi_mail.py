@@ -148,7 +148,8 @@ verifier("un [À COMPLÉTER] résiduel ne part jamais non plus",
 appels = []
 
 
-async def _faux_envoi(boite, destinataire, objet, corps, cc=None):
+async def _faux_envoi(boite, destinataire, objet, corps, cc=None,
+                      pieces=None, html=""):
     appels.append((boite, destinataire, objet, corps, cc))
     return {"envoye": True, "boite": boite, "destinataire": destinataire, "objet": objet}
 
@@ -177,7 +178,9 @@ verifier("le skill est enregistré dans SKILLS_NATIFS",
 
 protocole = (racine / "skills" / "protocol.py").read_text(encoding="utf-8")
 verifier("le catalogue exige destinataire, objet et corps",
-         '["destinataire", "objet", "corps"], ["mailbox", "cc"])' in protocole)
+         '["destinataire", "objet", "corps"], ["mailbox", "cc"' in protocole)
+verifier("le catalogue accepte des pièces jointes et le retrait de signature",
+         '"pieces", "signature"]' in protocole)
 verifier("le catalogue distingue ENVOYER de rédiger",
          "redaction_email" in protocole.split('"envoyer_email"')[1][:900])
 

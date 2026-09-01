@@ -786,7 +786,7 @@ DOCUMENTS. Un cahier des charges, un rapport, un compte rendu, une note, un mém
 
 LE WEB, QUAND IL FAUT. `chercher_web`, `ouvrir_page` et `naviguer` existent : ne réponds jamais que tu ne peux pas accéder à internet. Mais ils servent à l'information PUBLIQUE (prix public, norme, fournisseur, contenu d'un site) ou à ce que l'utilisateur te demande d'aller voir, jamais aux données de l'entreprise (voir OÙ EST CHAQUE DONNÉE). Si une page ne rend rien d'exploitable — site qui n'affiche rien sans JavaScript, bannière de cookies, information à plusieurs clics —, PASSE À `naviguer` : il voit la page et clique comme le ferait un humain. Il est lent, garde-le pour ces cas-là.
 
-SUGGESTIONS. Termine par `quick_replies` (2 à 4 options) dès qu’une suite est naturelle, écrites comme l’utilisateur les dirait — « Ajoute le lot arrosage », « Chiffre la variante en pierre naturelle ». Pas de suggestions quand la demande est close.
+SUGGESTIONS. Termine par `quick_replies` (2 ou 3 options) quand TU vois une suite précise que l’écran ne devinerait pas — « Chiffre la variante en pierre naturelle », « Relance le devis de mars ». Sinon n’en écris pas : une suite générique est ajoutée toute seule. Jamais une question dans une pastille.
 
 SCHEMAS. Pour un enchainement d'etapes, une arborescence, un organigramme ou un circuit de validation, ecris un bloc ```mermaid (PAS ```ui, ce n'est pas un composant : c'est un dessin). Le schema se dessine aux couleurs du client, tu n'as donc aucune couleur ni aucun style a indiquer, seulement la structure. Exemple :
 ```mermaid
@@ -1754,7 +1754,15 @@ def _dedoublonner_blocs(texte: str) -> str:
             bloc = _j.loads(m.group(1))
         except ValueError:
             return m.group(0)
-        if not isinstance(bloc, dict) or str(bloc.get("type")) == "quick_replies":
+        if not isinstance(bloc, dict):
+            return m.group(0)
+        # Les suggestions ne comptent pas comme un CONTENU dupliqué — elles ne
+        # doivent jamais faire disparaître un tableau qui répète leurs mots.
+        # Mais un message ne porte qu'UNE rangée de pastilles : la première.
+        if str(bloc.get("type")) == "quick_replies":
+            if "quick_replies" in vus:
+                return ""
+            vus.add("quick_replies")
             return m.group(0)
         sig = _signature_bloc(bloc)
         if sig in vus:
@@ -2252,6 +2260,24 @@ async def rehydrate_node(state: AgentState) -> dict:
         bloc = _json_ui.dumps({"type": "quick_replies", "options": _options},
                               ensure_ascii=False)
         sortie["final_response"] += "\n\n```ui\n" + bloc + "\n```"
+    else:
+        # ET S'IL N'EN A PAS ÉCRIT, ON EN POSE (01/09). Une question à choix du
+        # modèle reste préférable — ses libellés collent au tour ; à défaut, la
+        # table mécanique propose la suite qui correspond à ce qui vient de se
+        # passer. Elle se tait quand une validation attend ou quand le message
+        # porte déjà un bloc interactif : voir `suggestions_du_tour`. Posé ICI,
+        # donc APRÈS la réhydratation et AVANT `sortie["messages"]`, qui est
+        # construit à partir de `text` (masqué) : les pastilles n'entrent pas
+        # dans l'historique du modèle, et ne peuvent porter aucun jeton.
+        from agents.suggestions import poser as _poser_suites
+        from agents.suggestions import suggestions_du_tour
+        _suites = suggestions_du_tour(
+            sortie["final_response"], state.get("tool_results") or [],
+            expert=str(state.get("target_agent") or ""),
+            pending=bool(state.get("pending_action")
+                         or state.get("requires_validation")))
+        if _suites:
+            sortie["final_response"] = _poser_suites(sortie["final_response"], _suites)
 
     # UN TOUR SANS EFFET NE S'ÉCRIT PAS DANS L'HISTORIQUE.
     #
@@ -2281,6 +2307,14 @@ async def rehydrate_node(state: AgentState) -> dict:
         sortie["final_response"] = (
             "Je n'ai pas réussi à exécuter l'action : rien n'a été fait. "
             "Reformulez la demande, ou découpez-la en une seule étape à la fois.")
+        # Trois portes qui marchent, plutôt qu'un cul-de-sac : on ne commente
+        # pas l'échec, on rouvre. (La phrase ci-dessus, elle, est un message
+        # déterministe antérieur à la règle du 30/08 — signalé à Noa, non traité
+        # ici : le corriger est une décision, pas un correctif.)
+        from agents.suggestions import poser as _poser_suites
+        from agents.suggestions import suites_d_echec
+        sortie["final_response"] = _poser_suites(sortie["final_response"],
+                                                 suites_d_echec())
         return sortie
 
     # L'historique est émis ICI, et non dans `llm_node` : ce nœud s'exécute
@@ -2463,6 +2497,21 @@ def _apercu_avant_accord(skill: str, args: dict, texte: str) -> str:
             if cc:
                 lignes.append("Copie : " + ", ".join(str(c) for c in cc[:10]))
             lignes.append(f"Objet : {args.get('objet', '')}")
+            # LES PIÈCES SE VOIENT AVANT L'ACCORD (01/09). Un envoi qu'on
+            # approuve emporte des FICHIERS hors de l'entreprise : « Approuver »
+            # sans la liste de ce qui part est le même clic à l'aveugle que la
+            # retouche d'image sans sa photo, juste en dessous. On se contente
+            # de lignes de texte : un bloc ```ui `fichier` construit ici
+            # risquerait d'être effacé par `_livrables_a_l_ecran`, dont la
+            # référence n'existe pas encore au moment de l'armement.
+            jointes = (args.get("pieces") or args.get("pieces_jointes")
+                       or args.get("fichiers") or args.get("attachments") or [])
+            if isinstance(jointes, (str, dict)):
+                jointes = [jointes]
+            if jointes:
+                lignes.append("Pièces jointes : " + ", ".join(
+                    str(p.get("nom") or p.get("ref") or p) if isinstance(p, dict)
+                    else str(p) for p in jointes[:10]))
             corps = str(args.get("corps") or "")
             if len(corps) > 1500:
                 corps = corps[:1500] + "…"

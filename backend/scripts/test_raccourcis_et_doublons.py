@@ -56,7 +56,17 @@ try:
     verifier("une vignette `doc` du même fichier que la carte `fichier` disparaît",
              dedup(ui(fichier) + "\n\n" + ui(doc)).count("```ui") == 1)
     qr = {"type": "quick_replies", "options": ["Oui", "Non"]}
-    verifier("les quick_replies ne sont jamais dédoublonnées avec un contenu", dedup(ui(qr) + "\n\n" + ui(qr)).count("```ui") == 2)
+    # 01/09 : ce contrôle s'est RETOURNÉ. Depuis que les suggestions sont
+    # posées mécaniquement (agents/suggestions.py), deux rangées de pastilles
+    # pouvaient se retrouver dans le même message — une du modèle, une du
+    # filet. Une rangée reste hors du dédoublonnage par CONTENU (elle ne doit
+    # jamais effacer un tableau qui répète ses mots), mais un message n'en
+    # porte qu'UNE : la première.
+    verifier("deux rangées de pastilles : la première seule survit",
+             dedup(ui(qr) + "\n\n" + ui(qr)).count("```ui") == 1)
+    _tab = {"type": "table", "colonnes": ["Oui"], "lignes": [["Non"]]}
+    verifier("une rangée de pastilles n'efface pas un tableau qui partage ses mots",
+             dedup(ui(qr) + "\n\n" + ui(_tab)).count("```ui") == 2)
     verifier("un bloc illisible est gardé tel quel", "```ui" in dedup("```ui\n{cassé\n```"))
     verifier("un texte sans bloc ressort intact", dedup("Bonjour, rien à signaler.") == "Bonjour, rien à signaler.")
 except Exception as e:  # noqa: BLE001

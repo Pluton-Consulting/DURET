@@ -369,10 +369,13 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "`pieces: true` RÉCUPÈRE ses pièces jointes, les rend téléchargeables (cartes) et les LIT "
         "(PDF, Word, Excel, image par OCR puis vision, DWG par sa vignette, DXF) — à demander "
         "dès qu'on parle du contenu d'une pièce jointe. Le résultat donne aussi les `liens` du "
-        "corps (`ouvrir_page` pour les lire). Un message par appel. Ne marque "
+        "corps (`ouvrir_page` pour les lire). `inline: true` récupère AUSSI les images "
+        "AFFICHÉES DANS le corps (logo, signature en image, capture collée) : sans lui "
+        "elles ne sont ni lues ni affichées, car ce ne sont pas des pièces jointes au sens "
+        "ordinaire. Un message par appel. Ne marque "
         "rien comme lu. dossier : recus (défaut) ou envoyes. Sans mailbox, la boîte de "
         "la personne connectée",
-        [], ["ref", "objet", "de", "rang", "pieces", "dossier", "mailbox"]),
+        [], ["ref", "objet", "de", "rang", "pieces", "inline", "dossier", "mailbox"]),
     "boites_mail": (
         "LISTE les boîtes et adresses mail auxquelles la personne connectée a accès "
         "(pour un administrateur : tout l'annuaire du domaine). À appeler dès qu'on "
@@ -435,8 +438,16 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "un texte sans l'envoyer, c'est `redaction_email`. Donne le `corps` "
         "COMPLET et definitif : ce qui est valide part tel quel, aucun "
         "[A COMPLETER] ne doit rester. L'envoi passe par la validation humaine. "
+        "PIECES JOINTES : `pieces` = une LISTE de references DEJA rendues par un geste "
+        "precedent, recopiees telles quelles — le jeton ou l'url d'un document que tu "
+        "viens de produire, la cle d'une image, la `ref` d'une piece d'un mail ouvert "
+        "avec `lire_mail`, ou le NOM exact d'un fichier du Drive. N'invente JAMAIS une "
+        "reference et n'ecris jamais un chemin de fichier : produis ou ouvre d'abord la "
+        "piece, puis recopie ce qu'on t'a rendu. Un lien de telechargement dans le corps "
+        "n'est PAS une piece jointe : quand on demande de joindre, tu joins. 10 pieces au "
+        "plus, 20 Mo chacune. `signature: false` retire la signature de la boite. "
         "Sans `mailbox`, la boite de la personne connectee. `cc` : adresses en copie",
-        ["destinataire", "objet", "corps"], ["mailbox", "cc"]),
+        ["destinataire", "objet", "corps"], ["mailbox", "cc", "pieces", "signature"]),
     "resume_fil_email": (
         "Résume un échange de mails et en extrait les engagements. `fil` : les "
         "messages, colles tels quels. Meme regle qu'au triage : ne reclame "
@@ -444,6 +455,18 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         ["fil"], ["mailbox"]),
     "apprendre_style_email": (
         "Apprend le style d'écriture d'une boîte à partir de ses messages envoyés",
+        [], ["mailbox"]),
+    "apprendre_signature": (
+        "Va CHERCHER la signature (nom, fonction, telephone, mentions, logo) dans "
+        "les derniers messages ENVOYES de la boite, et l'enregistre : elle sera "
+        "apposee automatiquement a chaque envoi. C'est le geste a faire quand on "
+        "demande de retrouver, mettre a jour ou corriger la signature. `ref` "
+        "l'apprend depuis UN message precis. N'ecris JAMAIS une signature "
+        "toi-meme : elle se reproduit a l'identique, elle ne se redige pas.",
+        [], ["mailbox", "ref"]),
+    "ma_signature": (
+        "Remontre la signature en vigueur d'une boite : son texte, ses images, "
+        "d'ou elle vient et quand elle a ete apprise",
         [], ["mailbox"]),
     "lancer_enrichissement": (
         "ADMINISTRATION UNIQUEMENT. LA seule action capable d'analyser TOUT le "

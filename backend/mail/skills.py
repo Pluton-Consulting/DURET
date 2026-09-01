@@ -82,6 +82,9 @@ _CONSIGNE_COMMUNE = (
     "telles quelles, ne crée jamais de balise toi-même.\n"
     "- N'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emploie plutôt "
     "une virgule, un deux-points, une parenthèse ou un point.\n"
+    "- N'ÉCRIS PAS de signature (nom, fonction, téléphone, mentions légales) : celle de "
+    "la boîte est apposée mécaniquement à l'envoi. En écrire une produirait un message "
+    "signé deux fois, dont une fois de mémoire.\n"
     "- Tu ne peux pas envoyer de message : tu produis uniquement un brouillon."
 )
 
@@ -267,6 +270,11 @@ async def envoyer_email(data: dict, user) -> dict:
     destinataire = (data.get("destinataire") or "").strip()
     objet = (data.get("objet") or "").strip()
     corps = (data.get("corps") or data.get("message") or "").strip()
+    # Les alias, comme partout ailleurs : refuser l'action pour un NOM de
+    # paramètre est le piège déjà payé avec `url` (`ouvrir_page`, 30/08).
+    brut_pieces = (data.get("pieces") or data.get("pieces_jointes")
+                   or data.get("fichiers") or data.get("attachments")
+                   or data.get("piece") or data.get("fichier"))
     if not destinataire or "@" not in destinataire:
         raise MailSkillError(
             "Il faut `destinataire` : l'adresse exacte de la personne. Si elle "
@@ -290,13 +298,43 @@ async def envoyer_email(data: dict, user) -> dict:
             "Le corps contient encore des mentions [À COMPLÉTER] : complète le "
             "brouillon avant de demander l'envoi.")
 
+    from mail.attaches import resoudre
+    pieces, refusees = await resoudre(brut_pieces, user, boite)
+    # UNE PIÈCE QUI NE PEUT PAS PARTIR ARRÊTE L'ENVOI. Le compte rendu d'un
+    # envoi incomplet est un mensonge par omission : le destinataire lit
+    # « veuillez trouver ci-joint » et ne trouve rien. On refuse en nommant la
+    # pièce ET la cause — c'est réparable au tour suivant.
+    if refusees:
+        raise MailSkillError(
+            "Ces pièces n'ont pas pu être jointes, rien n'a été envoyé : "
+            + " ; ".join(f"« {r['nom']} » ({r['raison']})" for r in refusees)
+            + ".")
+    # Le NOM d'une pièce sort de l'entreprise comme le corps du message : la
+    # règle du jeton orphelin vaut pour lui aussi (« Devis [PER_1].pdf »).
+    for p in pieces:
+        if porte_un_jeton(p["nom"]):
+            raise MailSkillError(
+                f"Le nom de pièce « {p['nom']} » contient une balise de "
+                "masquage : renomme-la avant l'envoi.")
+
+    # La signature de la boîte, apposée sur le corps DÉFINITIF. Ce n'est pas du
+    # contenu à valider : c'est l'en-tête de la maison, reproduit à l'octet.
+    from mail.signature import apposer
+    corps, html, pieces = await apposer(boite, corps, pieces,
+                                        demandee=data.get("signature"))
     try:
         resultat = await envoyer_message(boite, destinataire, objet, corps,
-                                         cc=data.get("cc"))
+                                         cc=data.get("cc"), pieces=pieces,
+                                         html=html)
     except RuntimeError as e:
         raise MailSkillError(str(e))
+    jointes = [{"nom": p["nom"], "octets": len(p["octets"])}
+               for p in pieces if not p.get("inline")]
+    resultat["pieces_jointes"] = jointes
     resultat["message_final"] = (
-        f"Message envoyé à {destinataire} depuis {boite} (objet : « {objet} »).")
+        f"Message envoyé à {destinataire} depuis {boite} (objet : « {objet} »)"
+        + (", avec " + ", ".join(p["nom"] for p in jointes) + " en pièce jointe"
+           if jointes else "") + ".")
     return resultat
 
 
@@ -376,6 +414,84 @@ async def apprendre_style(data: dict, user) -> dict:
 
 
 # Registre consommé par l'exécuteur de skills.
+async def apprendre_signature(data: dict, user) -> dict:
+    """Va CHERCHER la signature dans les messages ENVOYÉS de la boîte.
+
+    Même parcours libre-service qu'`apprendre_style_email` : sans `mailbox`,
+    la boîte de la personne connectée, et c'est `verifier_acces` qui borne le
+    périmètre. `ref` apprend depuis UN message précis, quand les derniers
+    envois ne sont pas représentatifs.
+
+    Ce qui est appris n'est PAS une description : c'est le bloc HTML tel quel,
+    ses images comprises. Le modèle ne le rédige jamais — il ne fait que le
+    voir. C'est aussi pourquoi le résultat porte un bloc GARANTI : on veut que
+    la personne LISE ce qui partira désormais sous ses messages.
+    """
+    boite = await verifier_acces(user, data.get("mailbox")
+                                 or getattr(user, "email", None))
+    from mail.signature import apprendre
+    resultat = await apprendre(boite, user, ref=str(data.get("ref") or ""))
+    if not resultat.get("trouvee"):
+        return {**resultat, "boite": boite,
+                "message": resultat.get("message", ""),
+                "a_faire": ("Aucune signature reconnue. Dis-le, et propose "
+                            "d'apprendre depuis UN message précis en donnant "
+                            "sa `ref` (`lire_mails dossier: envoyes` la rend).")}
+    return await _fiche_signature(boite, appris=True, occurrences=resultat)
+
+
+async def ma_signature(data: dict, user) -> dict:
+    """Remontre la signature en vigueur pour une boîte."""
+    boite = await verifier_acces(user, data.get("mailbox")
+                                 or getattr(user, "email", None))
+    return await _fiche_signature(boite, appris=False)
+
+
+async def _fiche_signature(boite: str, appris: bool, occurrences=None) -> dict:
+    """La signature telle qu'on la MONTRE — un bloc mécanique, jamais rédigé.
+
+    Le logo est redéposé pour être servi par `/api/visuels/{clé}` : le dépôt
+    est adressé par le contenu, redéposer la même image ne crée pas de doublon.
+    """
+    from mail.signature import _cles_deposees, enregistree
+    signature = await enregistree(boite)
+    if not signature:
+        return {"boite": boite, "signature": None,
+                "message": "Aucune signature enregistrée pour cette boîte.",
+                "a_faire": ("Dis qu'il n'y en a pas, et propose "
+                            "`apprendre_signature` pour aller la chercher "
+                            "dans les messages envoyés.")}
+    cles = _cles_deposees(signature.get("images") or [])
+    blocs = [{"type": "keyvalue", "titre": f"Signature de {boite}",
+              "paires": [
+                  {"cle": "Apprise le",
+                   "valeur": str(signature.get("derniere_maj") or "")[:10]},
+                  {"cle": "Source", "valeur": signature.get("source") or "—"},
+                  {"cle": "Images", "valeur": str(len(cles))}]},
+             {"type": "text", "contenu": signature.get("texte") or ""}]
+    if cles:
+        blocs.append({"type": "visuel", "titre": "Images de la signature",
+                      "images": cles})
+    return {
+        "boite": boite,
+        "signature": {"texte": signature.get("texte") or "",
+                      "images": len(cles),
+                      "source": signature.get("source")},
+        "apprise": bool(appris),
+        "occurrences": (occurrences or {}).get("occurrences"),
+        "bloc_ui": blocs,
+        # Le bloc est MÉCANIQUE : il s'affiche que le modèle le recopie ou non.
+        "bloc_garanti": True,
+        "message_final": (
+            f"Signature de {boite} " + ("apprise" if appris else "en vigueur")
+            + (f", avec {len(cles)} image(s)." if cles else ".")),
+        "a_faire": ("La signature est affichée automatiquement sous ta réponse : "
+                    "n'écris aucun bloc ```ui pour elle. Dis en une phrase ce "
+                    "qu'elle contient, et qu'elle sera apposée à chaque envoi "
+                    "(`signature: false` la retire pour un message)."),
+    }
+
+
 SKILLS_NATIFS = {
     "triage_email_entrant": triage_email_entrant,
     "redaction_email": rediger_email,
@@ -383,6 +499,8 @@ SKILLS_NATIFS = {
     "resume_fil_email": resumer_fil,
     "profil_style_email": profil_style,
     "apprendre_style_email": apprendre_style,
+    "apprendre_signature": apprendre_signature,
+    "ma_signature": ma_signature,
 }
 
 
@@ -631,10 +749,16 @@ async def lire_mail(data: dict, user) -> dict:
     # `pieces` : récupérer, déposer et LIRE les pièces jointes (31/08).
     brut_pieces = data.get("pieces") or data.get("pieces_jointes") or data.get("attachments")
     pieces = str(brut_pieces).strip().lower() in ("true", "1", "oui", "toutes", "all", "yes")
+    # `inline` : AUSSI les images affichées DANS le corps (logo, signature en
+    # image, capture collée). Séparé de `pieces` à dessein : sans ce partage,
+    # chaque logo de pied de page paierait un appel de vision, à chaque mail.
+    brut_inline = data.get("inline") or data.get("images") or data.get("dans_le_corps")
+    inline = str(brut_inline).strip().lower() in ("true", "1", "oui", "toutes", "all", "yes")
     try:
         return await lire_message(boite, ref=ref, objet=objet, de=de,
                                   dossier=data.get("dossier") or "recus", rang=rang,
-                                  pieces=pieces, proprietaire=str(user.id))
+                                  pieces=pieces, proprietaire=str(user.id),
+                                  inline=inline)
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except (LookupError, ValueError) as e:
@@ -972,6 +1096,10 @@ EFFETS_NATIFS = {
     "envoyer_email": "externe",
     "profil_style_email": "ecriture_interne",
     "apprendre_style_email": "ecriture_interne",
+    # Apprendre une signature ÉCRIT dans l'application (une table), rien n'en
+    # sort ; la relire ne fait que lire.
+    "apprendre_signature": "ecriture_interne",
+    "ma_signature": "lecture",
     # Créer une tâche n'a aucun effet hors du système : quand elle s'exécutera,
     # elle repassera par tous les contrôles, validation humaine comprise.
     "creer_tache_agent": "ecriture_interne",

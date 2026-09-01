@@ -134,6 +134,35 @@ class Settings(BaseSettings):
     vision_enabled: bool = True
 
     # Ollama (local, dernier recours 100 % gratuit)
+    # ── Ollama Cloud (abonnement) — API compatible OpenAI ────────────────
+    # À NE PAS CONFONDRE avec `ollama_*` juste en dessous, qui désigne un
+    # Ollama LOCAL sans clé (dernier recours hors ligne). Ici c'est le service
+    # HÉBERGÉ : une clé Bearer, une URL publique. Deux fournisseurs distincts
+    # dans le routeur (`ollama_cloud` et `ollama`), parce qu'une panne de l'un
+    # ne dit rien de l'autre — les confondre reviendrait à lire « le service
+    # est en panne » là où le vrai message est « rien ne tourne sur ce poste ».
+    ollama_cloud_api_key: Optional[str] = None
+    ollama_cloud_base_url: str = "https://ollama.com/v1"
+    # Identifiants tels que les sert `GET /v1/models`, SANS le suffixe
+    # « :cloud » qu'affiche le site — celui-là est la forme du client en ligne
+    # de commande, et rend 404 sur cette API.
+    model_ollama_cloud_rapide: str = "deepseek-v4-flash:0731"   # 1M de contexte
+    model_ollama_cloud_puissant: str = "deepseek-v4-pro:0813"   # 1M de contexte
+    # Vision et OCR : les deux modèles du catalogue qui déclarent lire les
+    # images, un très gros lecteur et un très rapide.
+    model_ollama_cloud_vision: str = "qwen3.5:397b"
+    model_ollama_cloud_vision_secours: str = "glm-5.3-flash"
+
+    # ── Appels de modèle simultanés (llm/concurrence.py) ─────────────────
+    # L'abonnement autorise 10 appels de front ; au-delà, le fournisseur met en
+    # file puis refuse — et un refus coûte cinq minutes de quarantaine dans le
+    # disjoncteur. On garde donc une marge sous son plafond, et l'on attend
+    # CHEZ NOUS, où l'attente est bornée et mesurable.
+    llm_simultanes: int = 8              # plafond global, tous appels confondus
+    llm_simultanes_personne: int = 3     # défaut par personne
+    llm_simultanes_fond: int = 2         # budget des tâches de fond et campagnes
+    llm_attente_max_s: int = 90          # au-delà, on renonce : jamais d'attente sans fin
+
     ollama_base_url: str = "http://localhost:11434"
     ollama_model_light: str = "mistral:7b"
 

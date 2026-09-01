@@ -89,10 +89,18 @@ config = (BACKEND / "config.py").read_text(encoding="utf-8")
 verifier("config : model_openrouter_vision préréglé sur Gemini 2.5 Pro",
          re.search(r'model_openrouter_vision: str = "google/gemini-2\.5-pro"', config))
 routeur = (BACKEND / "llm" / "router.py").read_text(encoding="utf-8")
-m = re.search(r"for provider, model in \(\(\"anthropic\", s\.model_anthropic_vision\),\s*"
-              r"\(\"openrouter\", s\.model_openrouter_vision\),\s*"
-              r"\(\"google\", s\.model_google_vision\)", routeur)
-verifier("cascade vision : OpenRouter derrière Anthropic, devant Google", bool(m))
+# L'ORDRE, PAS L'ADJACENCE. Le contrat est « Anthropic d'abord, puis le modèle
+# d'OCR mesuré, puis Google » — d'autres candidats peuvent s'intercaler (Ollama
+# Cloud est arrivé le 01/09 entre les deux). Exiger qu'ils soient collés
+# faisait tomber ce banc sur un ajout parfaitement conforme.
+_casc = routeur.split("for provider, model in (")[1].split("):")[0]
+_rang = {f: _casc.find(f'"{f}", s.model_{p}')
+         for f, p in (("anthropic", "anthropic_vision"),
+                      ("openrouter", "openrouter_vision"),
+                      ("google", "google_vision"))}
+verifier("cascade vision : OpenRouter derrière Anthropic, devant Google",
+         all(v >= 0 for v in _rang.values())
+         and _rang["anthropic"] < _rang["openrouter"] < _rang["google"])
 pieces = (BACKEND / "mail" / "pieces.py").read_text(encoding="utf-8")
 verifier("la transcription vision existe, l'ébauche tesseract dans la consigne",
          "CONSIGNE_OCR" in pieces and "{ebauche}" in pieces

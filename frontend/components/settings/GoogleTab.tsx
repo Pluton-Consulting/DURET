@@ -1,5 +1,5 @@
 "use client"
-// Ma boîte Google — la « sous-connexion » de chaque utilisateur.
+// Mon compte Google — la « sous-connexion » de chaque utilisateur.
 //
 // On se connecte à l'application par lien magique ; ICI, chacun relie SA boîte
 // Google (consentement OAuth individuel, chez Google). Une fois reliée, la
@@ -83,7 +83,7 @@ export default function GoogleTab({ apiUrl, backendToken, currentRole }:
 
   return (
     <div>
-      <h2 style={{ fontSize: "1.05rem", fontWeight: 700, marginBottom: "0.75rem" }}>Ma boîte Google</h2>
+      <h2 style={{ fontSize: "1.05rem", fontWeight: 700, marginBottom: "0.75rem" }}>Mon compte Google</h2>
       {notice && (
         <p role="status" style={{ marginBottom: "0.9rem", fontWeight: 600,
           color: notice.ton === "ok" ? "var(--marque, inherit)" : "#b3261e" }}>
@@ -112,7 +112,7 @@ export default function GoogleTab({ apiUrl, backendToken, currentRole }:
               </p>
             )}
             <p style={{ opacity: 0.85, fontSize: "0.9rem", marginBottom: "0.9rem" }}>
-              L'assistant peut lire vos messages quand vous le lui demandez. La
+              L'assistant travaille avec VOS accès : il ne voit que ce que vous voyez. La
               connexion se maintient toute seule : rien à refaire.
             </p>
             <button type="button" onClick={deconnecter} disabled={occupe} style={bouton}>

@@ -97,6 +97,18 @@ verifier("la carte des plafonds affiche la migration attendue",
          "migration_absente" in carte)
 verifier("et dit que le plafond global fonctionne déjà",
          "s'applique déjà" in carte)
+# Le blocage exact que Noa décrivait : « je ne peux pas choisir le modèle
+# Ollama ». La clé était enregistrée, mais la carte des modèles ne relisait
+# jamais son catalogue — deux composants sœurs, deux états — donc `cle_presente`
+# restait faux et « Appliquer » restait grisé jusqu'au rechargement de la page.
+verifier("enregistrer une clé fait RELIRE le catalogue des modèles",
+         "signal={clesModifiees}" in cles
+         and "setClesModifiees((n) => n + 1)" in cles
+         and "[charger, signal]" in cles)
+verifier("le bouton reste bien conditionné à la présence d'une clé "
+         "(choisir un modèle sans clé garantirait l'échec)",
+         "fiche?.cle_presente" in cles)
+
 tab = (FRONTEND / "components" / "settings" / "GoogleTab.tsx").read_text(encoding="utf-8")
 verifier("l'onglet du compte Google aussi", "migration_absente" in tab)
 verifier("le message d'un collaborateur ne cite aucun nom de fichier ni de table",

@@ -266,7 +266,18 @@ function LigneModele({ titre, aide, actuel, fiches, busy, onChoisir, onRetirer }
   )
 }
 
-function ReglageModeles({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+// UNE CLÉ QUI VIENT D'ÊTRE SAISIE DOIT SE VOIR ICI TOUT DE SUITE (01/09).
+//
+// Cette carte et la liste des clés sont deux composants SŒURS, chacun avec son
+// état : enregistrer une clé rechargeait la liste des clés, jamais le catalogue
+// des modèles. Or le bouton « Appliquer » exige `cle_presente` — choisir un
+// modèle dont la clé manque garantirait l'échec. Résultat mesuré en production
+// (relevé de Noa) : la clé était bien enregistrée, et le modèle restait
+// impossible à choisir jusqu'au rechargement de la page, sans que rien ne
+// l'explique. `signal` est incrémenté par le parent après chaque
+// enregistrement : la carte relit, et la clé apparaît.
+function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
+  { apiUrl: string; backendToken: string; signal?: number }) {
   const [fiches, setFiches] = useState<FicheFournisseur[]>([])
   const [rapide, setRapide] = useState("")
   const [puissant, setPuissant] = useState("")
@@ -291,7 +302,9 @@ function ReglageModeles({ apiUrl, backendToken }: { apiUrl: string; backendToken
       setErreur(e?.message || "chargement impossible")
     }
   }, [apiUrl, backendToken])
-  useEffect(() => { charger() }, [charger])
+  // `signal` n'est pas lu dans `charger` : il n'a qu'un rôle, déclencher une
+  // relecture quand le parent dit qu'une clé a bougé.
+  useEffect(() => { charger() }, [charger, signal])
 
   const ecrire = async (cle: string, valeur: string, message: string) => {
     setBusy(true); setNote("")
@@ -614,6 +627,9 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
   const [saisies, setSaisies] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState("")
   const [message, setMessage] = useState("")
+  // Incrémenté à chaque clé enregistrée ou retirée : c'est ce qui fait relire
+  // le catalogue des modèles à la carte du dessus.
+  const [clesModifiees, setClesModifiees] = useState(0)
   const [erreur, setErreur] = useState("")
 
   const charger = useCallback(async () => {
@@ -647,6 +663,9 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
         ? `${LIBELLES[cle]?.nom || cle} : retour à la valeur du fichier de configuration.`
         : `${LIBELLES[cle]?.nom || cle} enregistrée. Prise en compte immédiate.`)
       setErreur("")
+      // La carte des modèles doit relire son catalogue : sans ce signal, elle
+      // continue de croire que la clé manque, et « Appliquer » reste grisé.
+      setClesModifiees((n) => n + 1)
       await charger()
     } catch (e: any) {
       setErreur(e?.message || "enregistrement impossible")
@@ -657,7 +676,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
 
   return (
     <div>
-      <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} signal={clesModifiees} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageConcurrence apiUrl={apiUrl} backendToken={backendToken} />

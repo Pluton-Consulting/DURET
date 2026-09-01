@@ -77,7 +77,7 @@ async def list_users(current_user: User = Depends(get_current_user)):
             -- Noa) : elle n'a aucun pouvoir sur eux, elle ne doit même pas
             -- les voir dans la liste. Le filtre est SERVEUR : un écran ne
             -- suffit pas, l'API ne doit pas les livrer.
-            WHERE ($1 OR u.role <> 'super_admin')
+            WHERE ($1::boolean OR u.role <> 'super_admin')
             ORDER BY u.created_at DESC
             """,
             current_user.role == "super_admin",

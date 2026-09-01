@@ -29,7 +29,25 @@ tête de corps.
 """
 from __future__ import annotations
 
-from emails.marque import MARQUE
+from emails.marque import LOGO_CONTENT_ID, MARQUE, logo_image
+
+
+def _logo_html() -> str:
+    """Le vrai logo s'il est fourni, la pastille dessinée sinon.
+
+    L'image est référencée par `cid:` : elle voyage AVEC le message, en pièce
+    jointe « inline ». C'est la seule façon d'afficher un logo qui s'affiche
+    vraiment — le SVG du site n'est rendu par aucun client de messagerie, et une
+    image distante est bloquée par défaut (et ici inatteignable, le site vivant
+    derrière le VPN).
+
+    La hauteur est fixée en attribut ET en style : les vieux clients ignorent
+    l'un ou l'autre, et une image sans dimension casse la mise en page.
+    """
+    if logo_image() is None:
+        return MARQUE["logo"]
+    return (f'<img src="cid:{LOGO_CONTENT_ID}" alt="{MARQUE["nom"]}" '
+            f'height="36" style="height:36px;display:block;border:0" />')
 
 # Les gris sont communs aux deux marques : seule la couleur d'accent change.
 # Les figer ici plutôt que dans `marque.py` évite qu'une duplication de projet
@@ -131,7 +149,7 @@ def enveloppe(titre_mail: str, apercu: str, corps: str,
         fond_page=_FOND_PAGE,
         fond_marque=MARQUE["fond"],
         couleur_baseline=MARQUE["baseline"],
-        logo=MARQUE["logo"],
+        logo=_logo_html(),
         nom=MARQUE["nom"],
         titre=_TITRE,
         titre_mail=titre_mail,

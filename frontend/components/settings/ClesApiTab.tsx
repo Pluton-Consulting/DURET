@@ -494,8 +494,17 @@ function ReglageAnonymisation({ apiUrl, backendToken }: { apiUrl: string; backen
  *  Un champ vide sur une personne veut dire « elle suit le plafond de son
  *  rôle » — ce n'est pas zéro : un plafond nul l'empêcherait de travailler.
  */
+// LES APPELS SIMULTANÉS — UN SEUL CHIFFRE, TOUS COMPTES CONFONDUS.
+//
+// Décision de Noa (01/09) : « ce paramètre concerne l'ensemble des comptes
+// cumulés ». L'abonnement du fournisseur autorise un nombre fixe d'appels de
+// front ; au-delà il met en file puis refuse, et un refus coûte cinq minutes de
+// quarantaine dans le disjoncteur. Ce qui compte est donc le TOTAL, pas sa
+// répartition — les tableaux par rôle et par compte ont été retirés, avec eux
+// la seule dépendance de cette carte à l'état des migrations.
 function ReglageConcurrence({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
   const [etat, setEtat] = useState<any>(null)
+  const [saisie, setSaisie] = useState("")
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState("")
   const [erreur, setErreur] = useState("")
@@ -506,19 +515,21 @@ function ReglageConcurrence({ apiUrl, backendToken }: { apiUrl: string; backendT
         headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setEtat(await res.json()); setErreur("")
+      const json = await res.json()
+      setEtat(json); setErreur("")
+      setSaisie(json?.origine_global === "parametres" ? String(json?.plafond_global ?? "") : "")
     } catch (e: any) { setErreur(e?.message || "Chargement impossible") }
   }, [apiUrl, backendToken])
 
   useEffect(() => { charger() }, [charger])
 
-  async function envoyer(corps: any, message: string) {
+  async function envoyer(valeur: string | null, message: string) {
     setBusy(true); setNote(""); setErreur("")
     try {
       const res = await fetch(`${apiUrl}/api/settings/concurrence`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
-        body: JSON.stringify(corps),
+        body: JSON.stringify({ global_max: valeur }),
       })
       if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || `HTTP ${res.status}`)
       setNote(message); await charger()
@@ -526,95 +537,55 @@ function ReglageConcurrence({ apiUrl, backendToken }: { apiUrl: string; backendT
     finally { setBusy(false) }
   }
 
-  const champ: React.CSSProperties = {
-    width: 64, padding: "6px 10px", border: "1px solid var(--marque-border)",
-    borderRadius: 8, fontSize: 13, textAlign: "center",
-    color: "var(--marque-text-primary)", background: "var(--marque-surface)",
-  }
-
   return (
-    <div className="sym-card" style={{
-      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
-      borderRadius: "var(--marque-radius-card-sm)", padding: "16px 18px", marginBottom: 22,
-    }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>
+    <div style={{ border: "1px solid var(--marque-border)", borderRadius: 12,
+                  padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>
         Appels simultanés au modèle
       </div>
-      <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2, maxWidth: "70ch" }}>
-        L'abonnement en autorise un nombre limité à la fois. Au-delà, le fournisseur refuse et le
-        modèle est mis de côté cinq minutes : mieux vaut attendre ici. Un champ vide sur une
-        personne signifie qu'elle suit le plafond de son rôle.
+      <div style={{ fontSize: 13, color: "var(--marque-text-muted)", marginTop: 4 }}>
+        Tous comptes confondus. Au-delà, les demandes attendent leur tour.
       </div>
 
-      {etat && (
-        <>
-          <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", marginTop: 14 }}>
-            <label style={{ fontSize: 13, color: "var(--marque-text-body)" }}>
-              Plafond global{" "}
-              <input type="number" min={1} max={64} defaultValue={etat.plafond_global} style={champ}
-                onBlur={(e) => {
-                  const v = parseInt(e.target.value, 10)
-                  if (v && v !== etat.plafond_global) envoyer({ global_max: v }, `Plafond global : ${v}.`)
-                }} />
-            </label>
-            <span style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>
-              {etat.libres !== null && etat.libres !== undefined
-                ? `${etat.libres} créneau(x) libre(s) à l'instant`
-                : "aucun appel en cours"}
-              {" · défaut par personne : "}{etat.plafond_personne_defaut}
-              {" · tâches de fond : "}{etat.plafond_fond}
-              {" · attente maximale : "}{etat.attente_max_s}{" s"}
-            </span>
-          </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14,
+                    flexWrap: "wrap" }}>
+        <input
+          type="number" min={1} max={64} value={saisie} disabled={busy}
+          onChange={(e) => setSaisie(e.target.value)}
+          placeholder={String(etat?.plafond_global ?? "")}
+          style={{ width: 88, padding: "8px 10px", fontSize: 14,
+                   border: "1px solid var(--marque-border)",
+                   borderRadius: "var(--marque-radius-pill)" }} />
+        <button
+          type="button" disabled={busy || !saisie.trim()}
+          onClick={() => envoyer(saisie.trim(), "Plafond enregistré.")}
+          style={{ padding: "8px 16px", borderRadius: "var(--marque-radius-pill)",
+                   border: "none", fontSize: 13, fontWeight: 600,
+                   cursor: busy || !saisie.trim() ? "default" : "pointer",
+                   opacity: busy || !saisie.trim() ? 0.5 : 1,
+                   background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+                   color: "var(--marque-text-on-dark)" }}>
+          Appliquer
+        </button>
+        {etat?.origine_global === "parametres" && (
+          <button
+            type="button" disabled={busy}
+            onClick={() => envoyer(null, "Retour au plafond par défaut.")}
+            style={{ padding: "8px 14px", borderRadius: "var(--marque-radius-pill)",
+                     border: "1px solid var(--marque-border)", fontSize: 13,
+                     background: "var(--marque-canvas)", cursor: "pointer" }}>
+            Retirer
+          </button>
+        )}
+        <span style={{ fontSize: 12.5, color: "var(--marque-text-muted)" }}>
+          {etat === null ? "…"
+            : etat.origine_global === "parametres"
+              ? `${etat.plafond_global} en vigueur`
+              : `${etat.plafond_global} par défaut`}
+          {typeof etat?.libres === "number" ? ` · ${etat.libres} libre(s)` : ""}
+        </span>
+      </div>
 
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--marque-text-muted)",
-                          textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>
-              Par personne
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
-              {(etat.par_utilisateur || []).map((u: any) => (
-                <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10,
-                                         padding: "8px 10px", border: "1px solid var(--marque-border)",
-                                         borderRadius: 10 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--marque-text-primary)",
-                                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {u.nom || u.email}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>
-                      {u.role}{u.plafond === null ? ` · suit son rôle (${etat.par_role?.[u.role] ?? "—"})` : ""}
-                    </div>
-                  </div>
-                  <input type="number" min={1} max={64} placeholder="—" style={champ}
-                    defaultValue={u.plafond ?? ""}
-                    onBlur={(e) => {
-                      const brut = e.target.value.trim()
-                      const v = brut === "" ? null : parseInt(brut, 10)
-                      if (v !== (u.plafond ?? null)) {
-                        envoyer({ par_utilisateur: { [u.id]: v } },
-                                `${u.nom || u.email} : ${v === null ? "suit son rôle" : v + " appels"}.`)
-                      }
-                    }} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-      {busy && <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>Enregistrement…</div>}
-      {/* UNE MIGRATION NON APPLIQUÉE N'EST PAS UNE PANNE : c'est un geste qui
-          reste à faire, et l'écran le NOMME. Avant, la carte affichait
-          « HTTP 500 », qui ne dit pas lequel des deux gestes manque. */}
-      {etat?.migration_absente && (
-        <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8,
-                      padding: "8px 10px", borderRadius: 8,
-                      background: "rgba(0,0,0,0.04)" }}>
-          Les plafonds par rôle et par compte attendent une migration : appliquez{" "}
-          <code>{etat.migration_absente}</code> sur le serveur. Le plafond global,
-          lui, s'applique déjà.
-        </div>
-      )}
       {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
       {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
     </div>
@@ -680,18 +651,6 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageConcurrence apiUrl={apiUrl} backendToken={backendToken} />
-
-      <p style={{ margin: "0 0 6px", fontSize: 14, color: "var(--marque-text-body)",
-                  maxWidth: "72ch", lineHeight: 1.55 }}>
-        Ces clés déterminent quels modèles répondent. Une clé saisie ici <b>prend effet
-        immédiatement</b>, sans redéploiement, et prime sur le fichier de configuration
-        du serveur.
-      </p>
-      <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--marque-text-muted)",
-                  maxWidth: "72ch", lineHeight: 1.5 }}>
-        Le serveur ne renvoie jamais une clé : seule une empreinte est affichée. Les champs
-        restent donc vides, et laisser un champ vide ne supprime rien.
-      </p>
 
       {erreur && <div className="sym-pop" style={{ color: "var(--marque-error-text)",
                                                    fontSize: 13, marginBottom: 12 }}>⚠ {erreur}</div>}

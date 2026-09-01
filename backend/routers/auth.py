@@ -43,7 +43,12 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
         # Pas de return : l'email part quand même en mode debug.
 
     objet, _apercu, html = mail_connexion(magic_link, MAGIC_LINK_EXPIRE_MINUTES)
-    await envoyer(to_email, objet, html)
+    # Le logo voyage AVEC le message (pièce jointe « inline », référencée par
+    # `cid:` dans l'en-tête du gabarit) : un logo distant serait bloqué par la
+    # plupart des clients, et celui-ci vit derrière le VPN de toute façon.
+    from emails.marque import logo_image
+    logo = logo_image()
+    await envoyer(to_email, objet, html, images=[logo] if logo else None)
 
 
 @router.post("/magic-link/request")

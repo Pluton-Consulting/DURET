@@ -65,21 +65,20 @@ if gardes:
 # ── 2. Les trois routes, lues dans le source livré ───────────────────────
 st = (BACKEND / "routers" / "settings.py").read_text(encoding="utf-8")
 lecture = st.split('@router.get("/concurrence")')[1].split("@router.put")[0]
-verifier("lecture des plafonds : la migration est reconnue, pas propagée en 500",
-         "schema_incomplet" in lecture)
-verifier("elle est NOMMÉE dans la réponse", '"029_concurrence_llm.sql"' in lecture)
-verifier("les plafonds DU CODE sont quand même rendus (ils s'appliquent, eux)",
-         "**base" in lecture and "etat()" in lecture)
-verifier("une vraie panne remonte toujours",
-         "if not schema_incomplet(e):\n            raise" in lecture)
-
+# 01/09 soir : LA MEILLEURE PARADE A ÉTÉ DE SUPPRIMER LA DÉPENDANCE. Sur
+# décision de Noa (« ce paramètre concerne l'ensemble des comptes cumulés »),
+# la carte ne règle plus qu'UN plafond, qui vit dans la table `reglages` — donc
+# elle ne lit plus aucune colonne ajoutée par une migration récente, et ne peut
+# plus tomber pour cette raison. Le durcissement reste utile ailleurs.
+verifier("la lecture des plafonds ne dépend plus d'aucune migration récente",
+         "role_quota_config" not in lecture and "llm_simultanes" in lecture)
+verifier("elle passe par `texte()`, pas par un `.strip()` sur un réglage typé",
+         "from llm.reglages import texte" in lecture and '.strip()' not in lecture)
 ecriture = st.split('@router.put("/concurrence")')[1].split("@router.")[0]
-verifier("écriture des plafonds : refus EXPLICITE, avec le geste qui répare",
-         "status_code=409" in ecriture and "029_concurrence_llm.sql" in ecriture)
-verifier("le refus dit ce qui marche déjà (le plafond global vit ailleurs)",
-         "plafond global" in ecriture)
-verifier("un refus de validation (422) n'est pas confondu avec un défaut de schéma",
-         "except HTTPException:\n        raise" in ecriture)
+verifier("l'écriture non plus", "role_quota_config" not in ecriture
+         and "UPDATE users" not in ecriture)
+verifier("vider le champ rend la main au défaut, il n'impose pas zéro",
+         "il n'impose pas zéro" in ecriture)
 
 gp = (BACKEND / "routers" / "google_perso.py").read_text(encoding="utf-8")
 verifier("compte Google : la migration est reconnue", "schema_incomplet" in gp)
@@ -93,10 +92,13 @@ verifier("signature : l'enregistrement nomme sa migration",
 # ── 3. L'écran le dit, au lieu d'afficher « HTTP 500 » ───────────────────
 cles = (FRONTEND / "components" / "settings" / "ClesApiTab.tsx").read_text(encoding="utf-8")
 carte = cles.split("function ReglageConcurrence")[1]
-verifier("la carte des plafonds affiche la migration attendue",
-         "migration_absente" in carte)
-verifier("et dit que le plafond global fonctionne déjà",
-         "s'applique déjà" in carte)
+# La notice « migration absente » a disparu de CETTE carte avec les tableaux
+# qu'elle expliquait : la carte ne lit plus la base. Ce qu'on exige désormais,
+# c'est qu'elle n'ait plus aucune raison de tomber.
+verifier("la carte des plafonds ne dépend plus d'une migration",
+         "migration_absente" not in carte.split("export default")[0])
+verifier("elle dit que le plafond vaut pour tous les comptes",
+         "Tous comptes confondus" in carte)
 # Le blocage exact que Noa décrivait : « je ne peux pas choisir le modèle
 # Ollama ». La clé était enregistrée, mais la carte des modèles ne relisait
 # jamais son catalogue — deux composants sœurs, deux états — donc `cle_presente`

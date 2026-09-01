@@ -81,8 +81,12 @@ def _boucle():
 def plafond_global() -> int:
     """Le plafond global : réglage en base d'abord, défaut du code ensuite."""
     try:
-        from llm.reglages import valeur
-        brut = (valeur("llm_simultanes") or "").strip()
+        from llm.reglages import texte
+        # `texte()` et pas `valeur()` : ce réglage est un ENTIER dans la
+        # configuration, et `8.strip()` levait — l'exception était avalée juste
+        # en dessous, si bien que le réglage d'écran n'avait AUCUN effet. Un
+        # bug muet, pire que le 500 qu'il causait ailleurs.
+        brut = texte("llm_simultanes")
         if brut.isdigit() and 1 <= int(brut) <= 64:
             return int(brut)
     except Exception:  # noqa: BLE001 - un réglage illisible ne bloque pas les appels

@@ -31,6 +31,17 @@ _LOGO = """<table cellpadding="0" cellspacing="0" border="0" style="font-size:0;
                     </tr>
                   </table>"""
 
+# LE VRAI LOGO, quand il est fourni. Le fichier est cherché à côté de ce
+# module ; s'il manque, on garde la pastille dessinée ci-dessus — un mail sans
+# logo reste lisible, un mail avec un cadre vide fait négligé.
+#
+# POURQUOI UN PNG ET PAS UN SVG : aucun client de messagerie ne rend le SVG. Et
+# pourquoi pas une image distante : la plupart les bloquent par défaut, et
+# celle-ci vivrait de toute façon derrière le VPN, donc inatteignable depuis un
+# téléphone hors réseau.
+LOGO_FICHIER = "logo.png"
+LOGO_CONTENT_ID = "logo-marque"
+
 MARQUE = {
     "nom": "Duret & Sols",
     "couleur": "#0A6FB4",          # le bouton : bleu de la charte
@@ -39,3 +50,21 @@ MARQUE = {
     "logo": _LOGO,
     "expediteur_defaut": "Duret & Sols <Duret-Sols@duret-sols.fr>",
 }
+
+
+def logo_image():
+    """Les octets du vrai logo, ou None. Ne lève jamais.
+
+    Rendre None n'est pas une panne : le gabarit retombe sur la pastille
+    dessinée en HTML, qui ne dépend d'aucun fichier.
+    """
+    import pathlib as _p
+
+    chemin = _p.Path(__file__).with_name(LOGO_FICHIER)
+    try:
+        if chemin.exists() and chemin.stat().st_size > 0:
+            return {"content_id": LOGO_CONTENT_ID, "nom": LOGO_FICHIER,
+                    "mime": "image/png", "octets": chemin.read_bytes()}
+    except OSError:
+        pass
+    return None

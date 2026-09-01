@@ -115,6 +115,22 @@ def valeur(nom: str) -> str | None:
     return getattr(settings, nom, None)
 
 
+def texte(nom: str) -> str:
+    """La valeur d'un réglage, TOUJOURS en chaîne propre.
+
+    POURQUOI CETTE FONCTION EXISTE (01/09, troisième occurrence du même bug).
+    `valeur()` rend ce que porte la configuration, et tous les réglages n'y sont
+    pas des chaînes : `llm_simultanes` est un ENTIER. Trois appelants ont écrit
+    `(valeur(nom) or "").strip()` — et `8.strip()` lève, ce qui a mis « HTTP
+    500 » dans Paramètres trois fois de suite, à trois endroits différents.
+
+    La parade n'est pas de corriger la ligne, c'est de retirer l'occasion : qui
+    veut du texte appelle CECI, et n'a plus à savoir de quel type est le
+    réglage. Le banc refuse tout `.strip()` posé directement sur `valeur(...)`.
+    """
+    return str(valeur(nom) or "").strip()
+
+
 async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     """Écrit ou supprime une surcharge. Retourne la valeur effective.
 
@@ -189,7 +205,7 @@ def date_kpi() -> str | None:
     comme absente — un tableau de bord qui compte trop est un désagrément, un
     tableau de bord qui tombe n'aide personne.
     """
-    v = (valeur("kpi_depuis") or "").strip()
+    v = texte("kpi_depuis")
     return v if _FORMAT_INSTANT.match(v) else None
 
 

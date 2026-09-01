@@ -350,13 +350,31 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
             c.alignment = Alignment(vertical="top", wrap_text=True)
         ligne_courante += 1
 
-    nouvelle(entete["titre"])
-    ecrire([entete["titre"]], gras=False)
-    feuille.cell(row=1, column=1).font = Font(bold=True, size=14)
-    ligne_courante = 3
+    def garantir():
+        """Ouvre la feuille d'accueil, mais SEULEMENT si quelque chose y va.
+
+        AVANT (relevé de Noa, 01/09) : « à chaque fois que je demande des Excel,
+        il me fait toujours deux feuilles — une avec un titre qui est inutile et
+        une autre avec les vraies infos ». La feuille d'accueil était créée
+        d'office, puis chaque bloc `feuille` créait la sienne : un classeur avec
+        un onglet ne portant qu'un titre, et un onglet de données à côté.
+
+        Elle n'est donc plus ouverte qu'à la demande. Un document fait
+        uniquement de blocs `feuille` — le cas de tous les exports de listes —
+        n'en a plus du tout, et l'onglet porte directement le nom des données.
+        """
+        nonlocal ligne_courante
+        if feuille is not None:
+            return
+        nouvelle(entete["titre"])
+        ecrire([entete["titre"]], gras=False)
+        feuille.cell(row=1, column=1).font = Font(bold=True, size=14)
+        ligne_courante = 3
 
     for e in elements:
         bloc = e["bloc"]
+        if bloc != "feuille":
+            garantir()
         if bloc == "feuille":
             nouvelle(e.get("nom") or "Feuille")
             if e["entetes"]:
@@ -389,6 +407,10 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
                 ecrire([f"{i}." if e["ordonnee"] else "•", item])
         elif bloc in ("saut_page", "separateur"):
             ligne_courante += 1
+
+    # Un classeur SANS AUCUNE feuille est un fichier qu'Excel refuse d'ouvrir :
+    # si le document était vide, on ouvre la feuille d'accueil pour de bon.
+    garantir()
 
     # Largeurs : un classeur dont tout est tronqué à l'écran passe pour cassé.
     for ws in classeur.worksheets:

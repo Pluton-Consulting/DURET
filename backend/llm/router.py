@@ -159,8 +159,8 @@ def _tete(tier: LLMTier) -> list[tuple[str, Optional[str]]]:
     # Paramètres d'abord, `.env` ensuite. Ce réglage sert à essayer un modèle
     # sur des tours réels : il doit se poser et se retirer depuis l'interface,
     # pas par une session SSH et une recréation de conteneur sur CHAQUE serveur.
-    from llm.reglages import valeur as reglage
-    brut = (reglage("llm_tete") or "").strip()
+    from llm.reglages import texte as reglage_texte
+    brut = reglage_texte("llm_tete")
     if not brut:
         return []
     sortie: list[tuple[str, Optional[str]]] = []
@@ -219,9 +219,9 @@ def _modeles_choisis(tier: LLMTier) -> list[tuple[str, str]]:
     modèles, deux comportements, une facture lisible. Les deux vides = la
     cascade habituelle, `llm_tete` compris.
     """
-    from llm.reglages import valeur as reglage
-    rapide = _lire_couple(reglage("modele_rapide"))
-    puissant = _lire_couple(reglage("modele_puissant"))
+    from llm.reglages import texte as reglage_texte
+    rapide = _lire_couple(reglage_texte("modele_rapide"))
+    puissant = _lire_couple(reglage_texte("modele_puissant"))
     if not rapide and not puissant:
         return []
     ordre = [puissant, rapide] if tier == LLMTier.COMPLEX else [rapide, puissant]

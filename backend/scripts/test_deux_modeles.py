@@ -35,6 +35,10 @@ def verifier(nom, cond, detail=""):
 reglages_valeurs: dict = {}
 faux_reglages = types.ModuleType("llm.reglages")
 faux_reglages.valeur = lambda nom: reglages_valeurs.get(nom)
+# 01/09 : les appelants passent par `texte()`, qui garantit une CHAÎNE — tous
+# les réglages ne sont pas des chaînes dans la configuration, et `8.strip()`
+# a mis « HTTP 500 » dans Paramètres trois fois.
+faux_reglages.texte = lambda nom: str(reglages_valeurs.get(nom) or "").strip()
 sys.modules.setdefault("llm", types.ModuleType("llm"))
 sys.modules["llm.reglages"] = faux_reglages
 

@@ -223,9 +223,17 @@ verifier("un plafond de zéro est refusé (il empêcherait de travailler)",
          "1 <= n <= 64" in settings_py)
 cles_tsx = (FRONTEND / "components" / "settings" / "ClesApiTab.tsx").read_text(encoding="utf-8")
 verifier("l'écran propose la clé Ollama Cloud", "ollama_cloud_api_key:" in cles_tsx)
-verifier("l'écran règle le plafond global ET celui de chaque personne",
-         "ReglageConcurrence" in cles_tsx and "par_utilisateur" in cles_tsx
-         and "suit son rôle" in cles_tsx)
+# 01/09 soir : ce contrôle a été RESSERRÉ, sur décision de Noa — « ce paramètre
+# concerne l'ensemble des comptes cumulés ». Les tableaux par rôle et par compte
+# ont disparu de l'écran, et avec eux la seule dépendance de cette carte à
+# l'état des migrations. Le plafond par personne reste un garde INTERNE, dont la
+# valeur vient du code.
+verifier("l'écran règle UN plafond, tous comptes confondus",
+         "ReglageConcurrence" in cles_tsx
+         and "Tous comptes confondus" in cles_tsx
+         and "par_utilisateur" not in cles_tsx)
+verifier("le garde par personne existe toujours, hors de l'écran",
+         "llm_simultanes_personne" in (BACKEND / "config.py").read_text(encoding="utf-8"))
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

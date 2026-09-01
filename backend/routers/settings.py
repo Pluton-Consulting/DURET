@@ -223,111 +223,59 @@ class ConcurrenceBody(BaseModel):
 
 @router.get("/concurrence")
 async def lire_concurrence(current_user: User = Depends(get_current_user)):
-    """Combien d'appels de modèle peuvent partir en même temps, et par qui.
+    """Combien d'appels de modèle peuvent partir en même temps, TOUS COMPTES
+    CONFONDUS.
 
-    L'abonnement du fournisseur en autorise un nombre fixe : au-delà il met en
-    file puis refuse, et un refus coûte cinq minutes de quarantaine. Cet écran
-    est donc le seul endroit où l'on voit, d'un coup d'œil, ce que l'on peut
-    consommer et ce qui reste libre.
+    UN SEUL CHIFFRE, et c'est une décision de Noa (01/09) : « ce paramètre
+    concerne l'ensemble des comptes cumulés ». L'abonnement du fournisseur en
+    autorise un nombre fixe ; au-delà il met en file puis refuse, et un refus
+    coûte cinq minutes de quarantaine. Ce qui compte est donc le total, pas sa
+    répartition.
+
+    Le plafond PAR PERSONNE reste, mais comme garde interne non réglable ici :
+    il empêche une seule personne de prendre tous les créneaux, et sa valeur
+    vient du code. Rien à lire en base — c'est aussi ce qui rend cette route
+    insensible à l'état des migrations.
     """
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=403, detail="Réservé à l'administration système")
-    from database.connection import schema_incomplet
     from llm.concurrence import etat
-    from llm.reglages import valeur as reglage
-    base = {
-        **etat(),
-        "origine_global": "parametres" if (reglage("llm_simultanes") or "").strip() else "code",
-        "par_role": {}, "par_utilisateur": [],
-    }
-    # LA MIGRATION PEUT NE PAS ÊTRE PASSÉE, et c'est un état NORMAL entre le
-    # déploiement du code et son application à la main. Sans cette garde, la
-    # carte rendait « HTTP 500 » — un message qui ne dit pas lequel des deux
-    # gestes manque. On rend donc les plafonds du CODE (qui, eux, s'appliquent
-    # bel et bien) en nommant la migration à poser.
-    try:
-        async with get_db() as conn:
-            roles = await conn.fetch(
-                "SELECT role, concurrent_limit FROM role_quota_config ORDER BY role")
-            comptes = await conn.fetch(
-                "SELECT id, email, name, role, llm_simultanes FROM users "
-                "WHERE COALESCE(actif, true) ORDER BY email")
-    except Exception as e:  # noqa: BLE001
-        if not schema_incomplet(e):
-            raise
-        logger.warning("Concurrence : migration 029 non appliquée")
-        return {**base, "migration_absente": "029_concurrence_llm.sql"}
-    base["par_role"] = {r["role"]: r["concurrent_limit"] for r in roles}
-    base["par_utilisateur"] = [
-        {"id": str(c["id"]), "email": c["email"], "nom": c["name"],
-         "role": c["role"], "plafond": c["llm_simultanes"]}
-        for c in comptes]
-    return base
+    from llm.reglages import texte
+    return {**etat(),
+            "origine_global": "parametres" if texte("llm_simultanes") else "code"}
 
 
 @router.put("/concurrence")
 async def ecrire_concurrence(body: ConcurrenceBody,
                              current_user: User = Depends(get_current_user)):
-    """Règle le plafond global, celui d'un rôle, ou celui d'un compte."""
+    """Règle le plafond global — le seul réglage de cette carte."""
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.reglages import enregistrer
 
-    def _borne(v):
-        # NULL = « suit le rang au-dessus ». Zéro n'est pas admis : un plafond
-        # nul empêcherait quelqu'un de se servir de l'assistant.
-        if v is None or str(v).strip() == "":
-            return None
-        n = int(v)
+    brut = body.global_max
+    if brut is None or str(brut).strip() == "":
+        # Vider le champ rend la main au défaut du code, il n'impose pas zéro :
+        # un plafond nul empêcherait tout le monde de travailler.
+        valeur_a_poser = ""
+    else:
+        n = int(brut)
         if not (1 <= n <= 64):
             raise HTTPException(status_code=422,
                                 detail="Plafond attendu entre 1 et 64.")
-        return n
-
-    fait = {}
-    if body.global_max is not None:
-        from llm.reglages import enregistrer
-        try:
-            fait["global"] = await enregistrer("llm_simultanes", str(_borne(body.global_max)),
-                                               str(current_user.id))
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-    from database.connection import schema_incomplet
+        valeur_a_poser = str(n)
     try:
-        async with get_db() as conn:
-            for role, v in (body.par_role or {}).items():
-                await conn.execute(
-                    "UPDATE role_quota_config SET concurrent_limit = $2 WHERE role = $1",
-                    role, _borne(v))
-                fait.setdefault("roles", []).append(role)
-            for uid, v in (body.par_utilisateur or {}).items():
-                await conn.execute(
-                    "UPDATE users SET llm_simultanes = $2 WHERE id = $1::uuid",
-                    str(uid), _borne(v))
-                fait.setdefault("comptes", []).append(str(uid))
-    except HTTPException:
-        raise
-    except Exception as e:  # noqa: BLE001
-        if not schema_incomplet(e):
-            raise
-        # Le plafond GLOBAL a pu être posé (il vit dans `reglages`, table
-        # ancienne) : on le dit, plutôt que de laisser croire que rien n'a
-        # marché. Ce qui manque est nommé, avec le geste qui le répare.
-        raise HTTPException(
-            status_code=409,
-            detail=("Les plafonds par rôle et par compte exigent la migration "
-                    "029_concurrence_llm.sql, qui n'est pas encore appliquée sur "
-                    "ce serveur. Le plafond global, lui, fonctionne déjà."))
+        await enregistrer("llm_simultanes", valeur_a_poser, str(current_user.id))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     # Le cache des plafonds vit 60 s : on le vide pour que le réglage se voie
     # tout de suite, sinon l'écran montrerait une valeur déjà changée.
     try:
         from llm.concurrence import _CACHE
         _CACHE.clear()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — un cache non vidé se périme seul
         pass
-    await log_action(action="concurrence_modifiee", user_id=str(current_user.id),
-                     metadata=fait)
-    return {"applique": fait, "note": "Prise en compte immédiate. Les appels déjà "
-                                      "en vol gardent l'ancien plafond quelques secondes."}
+    return {"global": valeur_a_poser or "défaut du code"}
 
 
 @router.get("/cles-api")
@@ -367,11 +315,11 @@ async def modeles_disponibles(current_user: User = Depends(get_current_user)):
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=403, detail="Réservé à l'administration système")
     from llm.router import catalogue_modeles
-    from llm.reglages import rafraichir, valeur
+    from llm.reglages import rafraichir, texte
     await rafraichir(force=True)
-    return {"modele_rapide": (valeur("modele_rapide") or "").strip(),
-            "modele_puissant": (valeur("modele_puissant") or "").strip(),
-            "llm_tete": (valeur("llm_tete") or "").strip(),
+    return {"modele_rapide": texte("modele_rapide"),
+            "modele_puissant": texte("modele_puissant"),
+            "llm_tete": texte("llm_tete"),
             "fournisseurs": catalogue_modeles()}
 
 

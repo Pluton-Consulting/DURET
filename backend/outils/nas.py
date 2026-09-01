@@ -33,7 +33,9 @@ logger = logging.getLogger("duret.outils.nas")
 MAX_PROFONDEUR = 20
 MAX_DOSSIERS_ARBRE = 400
 MAX_SCHEMA_CARACTERES = 9000
-DELAI_ARBRE_S = 90
+# 90 → 300 (01/09, règle de Noa : une recherche ne se bloque jamais en temps).
+# À 90 s, un serveur chargé rendait un arbre partiel sur des demandes légitimes.
+DELAI_ARBRE_S = 300
 _LISTAGES_DE_FRONT = 6
 MAX_LOT = 5
 

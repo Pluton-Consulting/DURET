@@ -47,9 +47,12 @@ async def chercher_web(data: dict, user) -> dict:
         nombre = int(data.get("nombre") or 3)
     except (TypeError, ValueError):
         nombre = 3
-    # Trois pages suffisent à répondre, et chacune coûte un chargement complet.
-    # Au-delà de cinq, le texte cumulé dépasse ce qu'un tour peut porter.
-    nombre = max(1, min(nombre, 5))
+    # Trois pages par défaut ; jusqu'à dix quand la demande l'exige (01/09,
+    # règle de Noa : une recherche ne se bloque pas en quantité). Chaque page
+    # coûte un chargement complet : le défaut reste bas, le plafond ne mord
+    # plus une vraie recherche — et rien n'empêche de rappeler le geste avec
+    # d'autres termes pour couvrir davantage.
+    nombre = max(1, min(nombre, 10))
 
     r = await web_search(query=requete, user_id=str(getattr(user, "id", "")),
                          agent_id="agent1", max_results=nombre)
@@ -148,9 +151,14 @@ async def naviguer(data: dict, user) -> dict:
             getattr(user, "id", None), tache, domaines)
 
     try:
+        # La borne d'étapes vient de la CONFIGURATION (40 par défaut), plus du
+        # code : 14 en dur coupait les navigations réelles à mi-chemin alors
+        # que `browser_agent_max_steps` existait et n'était jamais lu (01/09,
+        # règle de Noa : une recherche ne se bloque ni en quantité ni en temps).
+        from config import settings as _settings
         await agent_navigateur.start_task_sur(
             str(job), tache, domaines, str(getattr(user, "id", "")),
-            readonly=True, max_steps=14)
+            readonly=True, max_steps=int(getattr(_settings, "browser_agent_max_steps", 40)))
     except agent_navigateur.NavigateurCoupe as e:
         async with get_db() as conn:
             await conn.execute(
@@ -160,8 +168,11 @@ async def naviguer(data: dict, user) -> dict:
 
     # ON ATTEND, MAIS PAS INDÉFINIMENT. Le tour de conversation est synchrone :
     # rendre la main sans résultat obligerait à redemander, sans savoir quand.
-    # Trois minutes couvrent une navigation ordinaire.
-    fin = asyncio.get_event_loop().time() + 180
+    # L'attente SUIT la borne d'étapes (01/09) : trois minutes coupaient une
+    # navigation de quarante étapes en plein travail — chaque étape est un
+    # aller-retour de modèle, on compte large (25 s chacune, plancher 5 min).
+    fin = asyncio.get_event_loop().time() + max(
+        300, int(getattr(_settings, "browser_agent_max_steps", 40)) * 25)
     etat = None
     while asyncio.get_event_loop().time() < fin:
         await asyncio.sleep(3)

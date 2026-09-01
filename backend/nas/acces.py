@@ -358,16 +358,21 @@ async def _chercher_ouvert(client, base, sid, motif: str,
         if not tache:
             return []
         res: dict = {}
-        for _ in range(25):          # la recherche DSM est asynchrone
+        # 25 × 0,4 s = 10 s coupaient une recherche encore en cours (01/09,
+        # règle de Noa : jamais bloqué en temps) : on laisse au serveur jusqu'à
+        # une minute, et un inachèvement se DIT au lieu de passer pour un
+        # résultat complet.
+        for _ in range(150):         # la recherche DSM est asynchrone
             await asyncio.sleep(0.4)
             res = await c._appel(client, base, "SYNO.FileStation.Search", "list", 2,
-                                 sid=sid, taskid=tache, limit=50,
+                                 sid=sid, taskid=tache, limit=200,
                                  additional='["size"]')
             if res.get("finished"):
                 break
         sortie = [{"nom": f.get("name"), "chemin": f.get("path"),
-                   "dossier": bool(f.get("isdir"))}
-                  for f in (res.get("files") or [])[:50]]
+                   "dossier": bool(f.get("isdir")),
+                   "inacheve": not res.get("finished") or None}
+                  for f in (res.get("files") or [])[:200]]
         await c._appel(client, base, "SYNO.FileStation.Search", "stop", 2,
                        sid=sid, taskid=tache)
         return sortie
@@ -383,8 +388,14 @@ async def _chercher_ouvert(client, base, sid, motif: str,
             continue
         trouves.extend(g)
 
-    return {"motif": motif, "nombre": len(trouves), "resultats": trouves[:50],
-            "dossiers_explores": racines}
+    inacheve = any(t.pop("inacheve", None) for t in trouves)
+    sortie = {"motif": motif, "nombre": len(trouves), "resultats": trouves[:200],
+              "dossiers_explores": racines}
+    if inacheve:
+        sortie["note"] = ("Recherche INTERROMPUE avant la fin sur au moins une "
+                          "racine : résultats partiels, une absence n'est pas "
+                          "prouvée — dis-le tel quel.")
+    return sortie
 
 
 async def chercher(motif: str, dossier: Optional[str] = None) -> dict:

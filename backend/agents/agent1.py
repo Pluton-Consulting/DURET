@@ -97,7 +97,10 @@ Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emp
 # quelque part », et mal. Le vrai signal d'un tour qui tourne en rond est
 # l'ENLISEMENT, pas le nombre d'actions — c'est lui qui est mesuré plus bas.
 # Ce plafond-ci ne sert plus qu'à empêcher une boucle folle de durer des heures.
-MAX_ACTIONS_PAR_TOUR = 40
+# 40 → 120 (01/09, règle de Noa : une recherche ne doit JAMAIS être bloquée en
+# quantité — enchaîner cinquante pages de mails ou de documents est un travail
+# qui avance, pas une boucle).
+MAX_ACTIONS_PAR_TOUR = 120
 # Un même skill rappelé sans fin avec des paramètres qui changent un peu à
 # chaque fois — le 31/08 : DIX-SEPT `interroger_donnees` en neuf minutes pour
 # « dégager 10 missions types » de 1 398 titres de devis, ce que ce skill ne
@@ -108,6 +111,26 @@ MAX_ACTIONS_PAR_TOUR = 40
 # rapport de douze sections, c'est douze `ajouter_document` légitimes.
 MAX_APPELS_MEME_SKILL = 10
 SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
+
+# LA PAGINATION N'EST PAS DE L'ACHARNEMENT (01/09, règle de Noa : une recherche
+# ne se bloque jamais en quantité). « Les 60 suivants », « page 4 », « avant » :
+# le même skill rappelé avec la SEULE pagination qui change est un travail qui
+# AVANCE — le compter dans MAX_APPELS_MEME_SKILL coupait « lis TOUS les mails »
+# à la dixième page, exactement le comportement que TOUT SIGNIFIE TOUT exige.
+# Les vraies variations (filtres, motifs qui changent à chaque essai — les
+# 17 `interroger_donnees` du 31/08) comptent toujours.
+_CLES_PAGINATION = frozenset({"page", "avant", "lettre"})
+
+
+def _est_une_page_de_plus(avant: dict, courant: dict) -> bool:
+    """Deux appels du même skill qui ne diffèrent QUE par la pagination."""
+    avant, courant = avant or {}, courant or {}
+    if avant == courant:
+        return False
+    cles = set(avant) | set(courant)
+    if not any(avant.get(k) != courant.get(k) for k in cles & _CLES_PAGINATION):
+        return False
+    return all(avant.get(k) == courant.get(k) for k in cles - _CLES_PAGINATION)
 
 # LE FILET CONTRE L'ERRANCE — PAS CONTRE L'EXPLORATION.
 #
@@ -1005,7 +1028,11 @@ async def tools_node(state: AgentState, config=None) -> dict:
             for k, v in action["args"].items()}
 
     empreinte = hash_payload(action["skill"], args)
-    memes = sum(1 for r in resultats if r.get("skill") == action["skill"])
+    # Une page de plus ne compte pas : enchaîner les pages est le comportement
+    # DEMANDÉ (TOUT SIGNIFIE TOUT), pas une boucle.
+    memes = sum(1 for r in resultats
+                if r.get("skill") == action["skill"]
+                and not _est_une_page_de_plus(r.get("args"), action.get("args")))
     if memes >= MAX_APPELS_MEME_SKILL and action["skill"] not in SKILLS_SANS_PLAFOND:
         return _sortir(f"l'action « {action['skill']} » a déjà été appelée {memes} fois "
                        "ce tour sans que la demande aboutisse : elle ne donnera pas "

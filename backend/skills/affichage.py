@@ -174,13 +174,20 @@ def garantir_recherche(resultat: dict, motif: str) -> dict:
                            "columns": ["Nom", "Type", "Emplacement"],
                            "rows": lignes}
     resultat["bloc_garanti"] = True
-    resultat["message_final"] = (f"« {motif} » : {dossiers} dossier(s) et "
-                                 f"{fichiers} fichier(s) trouvés par leur nom.")
+    pages = int(resultat.get("pages") or 1)
+    resultat["message_final"] = (
+        f"« {motif} » : {dossiers} dossier(s) et {fichiers} fichier(s) trouvés "
+        "par leur nom"
+        + (f" (page {resultat.get('page', 1)} sur {pages})" if pages > 1 else "")
+        + ".")
     resultat["a_faire"] = (
         "Les résultats sont DÉJÀ affichés à l'écran par un bloc mécanique : ne "
         "les recopie pas, n'écris aucun bloc doc ou fichier pour eux. Rédige "
         "une ou deux phrases sur ce qui a été trouvé, puis PROPOSE la suite : "
         "ouvrir un fichier trouvé, explorer un dossier trouvé, ou pousser la "
         "recherche plus loin (contenu des documents, autre orthographe) — "
-        "c'est à l'utilisateur de dire s'il veut aller plus loin.")
+        "c'est à l'utilisateur de dire s'il veut aller plus loin."
+        + (" Le résultat est PAGINÉ : si la demande porte sur tout, enchaîne "
+           "les pages (`page` suivante) — rien ne te limite en nombre de pages."
+           if pages > 1 else ""))
     return resultat

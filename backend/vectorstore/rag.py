@@ -150,7 +150,12 @@ async def retrieve(
 # avant de grouper par document. Assez pour paginer loin (20 documents par
 # page × plusieurs pages), borné pour qu'une question vague ne rapatrie pas
 # le corpus.
-PROFONDEUR_MAX = 400
+# 400 → 2000 (01/09, règle de Noa : une recherche ne se bloque jamais en
+# quantité). À 400, la page 6 d'une recherche à 20 documents retombait dans la
+# même fenêtre que la page 5 : les pages profondes existaient à l'écran et
+# n'existaient pas en base. La profondeur suit toujours la page — le coût ne
+# monte que quand quelqu'un va réellement chercher loin.
+PROFONDEUR_MAX = 2000
 
 
 async def rechercher(

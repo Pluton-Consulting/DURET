@@ -513,3 +513,30 @@ def demande_sur_le_passe(texte: str) -> bool:
     if not isinstance(texte, str) or not texte.strip():
         return False
     return bool(_QUESTION_SUR_LE_PASSE.search(_sans_accent(texte)))
+
+
+# ── La photo qui doit rester LA MÊME ────────────────────────────────────────
+# Relevé en prod le 01/09 : « je joins une photo du jardin : fais une
+# simulation avant/après … garde tout le reste à l'identique » → le modèle a
+# appelé l'ESSAI depuis un brief TEXTE. Le moteur d'images n'a jamais VU la
+# photo : il a rendu une AUTRE maison, qui « ressemble mais c'est quand même
+# une autre maison » (mot pour mot). Ce prédicat reconnaît la demande qui
+# RETOUCHE une image existante — c'est l'appelant qui vérifie qu'une image
+# vit bien dans le fil avant de refuser l'essai depuis un texte.
+_RETOUCHE_LA_PHOTO = re.compile(
+    r"a l['’]identique|identique"
+    r"|garde[rz]? (?:la |le |les |tout|cette )"
+    r"|meme maison|meme batiment|meme facade"
+    r"|avant[ /-]?apres"
+    r"|sur (?:cette|la|ma|cet) (?:photo|image)"
+    r"|de (?:cette|la|ma) (?:photo|image)"
+    r"|(?:retouche|modifie|transforme|reprend)[a-z]* (?:cette|la|ma|l['’])\s?(?:photo|image)"
+    r"|cette (?:photo|image)",
+    re.IGNORECASE)
+
+
+def demande_de_garder_la_photo(texte: str) -> bool:
+    """La demande veut-elle transformer une photo EN LA GARDANT reconnaissable ?"""
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    return bool(_RETOUCHE_LA_PHOTO.search(_sans_accent(texte)))

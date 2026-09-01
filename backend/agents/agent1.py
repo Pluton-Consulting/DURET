@@ -1131,6 +1131,24 @@ async def tools_node(state: AgentState, config=None) -> dict:
         return _sortir("ce compte n'est plus actif, aucune action n'a pu être exécutée.")
 
     try:
+        # UNE PHOTO JOINTE NE SE RÉINVENTE PAS (01/09). « Simulation
+        # avant/après, garde tout le reste à l'identique » sur une photo du
+        # fil → le modèle appelait l'ESSAI depuis un brief TEXTE : le moteur
+        # d'images n'a jamais VU la photo, et rend une AUTRE maison qui
+        # ressemble. Quand le fil porte une image et que la demande dit de la
+        # garder, l'essai et le tirage depuis un texte sont REFUSÉS : le refus
+        # nomme la voie (modifier_visuel, avec la clé de l'image), et le
+        # modèle se corrige au tour de boucle suivant.
+        if (action["skill"] in ("tester_visuel", "generer_visuel")
+                and not (args.get("image") or args.get("cle_image"))):
+            from agents.annonce import demande_de_garder_la_photo
+            cles = cles_images_du_fil(state)
+            if cles and demande_de_garder_la_photo(state.get("query") or ""):
+                raise SkillError(
+                    "cette demande RETOUCHE une photo du fil (« à l'identique », "
+                    "avant/après) : un essai depuis un brief texte réinventerait "
+                    "une AUTRE maison. Appelle `modifier_visuel` avec "
+                    f'image="{cles[-1]}" et la liste des changements demandés.')
         brut = await execute_skill(
             action["skill"], args, user=utilisateur,
             trigger={"type": state.get("trigger_kind") or "chat",

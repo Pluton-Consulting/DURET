@@ -133,8 +133,14 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
             and (brut or "").strip().lower() not in ("active", "desactivee"):
         raise ValueError("Valeur attendue : « active » ou « desactivee ».")
     if nom == "llm_simultanes" and (brut or "").strip():
-        valeur = (brut or "").strip()
-        if not valeur.isdigit() or not (1 <= int(valeur) <= 64):
+        # ⚠️ NE JAMAIS APPELER CETTE VARIABLE `valeur` : ce module expose une
+        # FONCTION `valeur()`, appelée au `return` de cette même fonction. Une
+        # assignation locale, même dans une branche jamais prise, rend le nom
+        # local À TOUTE LA FONCTION — et le retour levait alors
+        # `UnboundLocalError` pour TOUS les réglages, pas seulement celui-ci.
+        # C'est ce qui a mis « HTTP 500 » partout dans Paramètres le 01/09.
+        nombre = (brut or "").strip()
+        if not nombre.isdigit() or not (1 <= int(nombre) <= 64):
             raise ValueError("Nombre attendu entre 1 et 64 (l'abonnement en autorise 10).")
     if nom in ("modele_rapide", "modele_puissant") and (brut or "").strip():
         f, _, m = (brut or "").strip().partition(":")
@@ -163,7 +169,10 @@ async def etat() -> list[dict]:
     lignes = []
     for nom in REGLAGES_CONNUS:
         surcharge = _CACHE.get(nom)
-        depuis_env = (getattr(settings, nom, None) or "").strip()
+        # `str()` AVANT `.strip()` : tous les réglages ne sont pas des chaînes
+        # dans la configuration — `llm_simultanes` est un entier, et `8.strip()`
+        # faisait tomber l'écran ENTIER des réglages, pas seulement sa ligne.
+        depuis_env = str(getattr(settings, nom, None) or "").strip()
         lignes.append({
             "cle": nom,
             "valeur": surcharge or depuis_env or "",

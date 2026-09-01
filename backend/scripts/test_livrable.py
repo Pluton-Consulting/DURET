@@ -314,6 +314,7 @@ espace2.update({
     "propose_au_lieu_d_agir": _annonce.propose_au_lieu_d_agir,
     "renvoie_au_deja_fait": _annonce.renvoie_au_deja_fait,
     "demande_sur_le_passe": _annonce.demande_sur_le_passe,
+    "_reponses_mail_manquantes": lambda state, texte: False,
     "MAX_FORCAGES_PAR_TOUR": 2,
 })
 extraire(racine / "agents" / "agent1.py",

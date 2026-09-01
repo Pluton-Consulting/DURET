@@ -867,6 +867,18 @@ Voici les messages trouvés :
                 "cette phrase, et rien d'autre : pour lui, tu n'as rien produit. "
                 "Écris MAINTENANT le contenu lui-même, en entier, dans ta réponse. "
                 "N'annonce rien, ne décris pas ce que tu vas faire.")
+        elif _reponses_mail_manquantes(state, _precedente):
+            # LA MOITIÉ D'UNE DEMANDE N'EST PAS UNE RÉPONSE (01/09) : la
+            # synthèse est arrivée, les propositions de réponse jamais.
+            redaction_a_reprendre = True
+            system_prompt += (
+                "\n⚠ La demande réclamait AUSSI une PROPOSITION DE RÉPONSE pour "
+                "chaque message qui en appelle une : ta réponse précédente n'en "
+                "portait aucune. Reprends ta synthèse telle quelle et ajoute à la "
+                "fin UN bloc ```ui reponses_mail — une carte par message qui "
+                "appelle une réponse (ref, de, objet, synthese, reponse), aucune "
+                "pour les messages automatiques. N'envoie rien : chaque envoi "
+                "repassera par sa validation.")
         # La raison d'une sortie sans résultat est expliquée par le modèle, dans
         # ses mots : l'utilisateur mérite une phrase, pas un code d'erreur.
         note = state.get("note_sortie")
@@ -2607,6 +2619,25 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
                             + _json.dumps(action, ensure_ascii=False) + "\n```"}
 
 
+def _reponses_mail_manquantes(state: AgentState, texte: str) -> bool:
+    """La demande voulait des PROPOSITIONS DE RÉPONSE aux mails, la rédaction
+    n'en porte pas — alors que les mails ont bien été lus.
+
+    Relevé le 01/09 : « fais le point sur tous mes mails … et propose une
+    réponse pour chacun » → la synthèse seule. La moitié d'une demande n'est
+    pas une réponse : la rédaction est reprise UNE fois (bornée par
+    `redaction_forcee`), avec le manque nommé.
+    """
+    from agents.annonce import demande_des_reponses_mail
+    if not demande_des_reponses_mail(state.get("query") or ""):
+        return False
+    if "reponses_mail" in (texte or ""):
+        return False
+    return any(isinstance(r, dict) and r.get("ok")
+               and r.get("skill") in ("check_mails", "lire_mails", "lire_mail")
+               for r in state.get("tool_results") or [])
+
+
 async def rediger_node(state: AgentState, config=None) -> dict:
     """Les résultats sont là, le modèle a promis au lieu d'écrire : on ferme la
     boucle d'actions et on lui redonne la main pour RÉDIGER.
@@ -2697,7 +2728,8 @@ def route_apres_llm(state: AgentState) -> str:
         # même titre qu'une promesse.
         if not state.get("redaction_forcee") and (est_une_annonce(texte)
                                                   or promesse_sans_suite(texte)
-                                                  or not _texte_visible(texte)):
+                                                  or not _texte_visible(texte)
+                                                  or _reponses_mail_manquantes(state, texte)):
             logger.info("Dernière passe sans réponse utilisable : rédaction redemandée")
             # « rediger », PAS « llm ». La table des arêtes de ce routeur ne
             # connaît que tools / forcer / rediger / rehydrate : renvoyer « llm »
@@ -2808,6 +2840,16 @@ def route_apres_llm(state: AgentState) -> str:
     # budget d'actions du tour borne le reste.
     if cloture_attendue(state.get("tool_results")):
         return "forcer"
+    # LA MOITIÉ D'UNE DEMANDE N'EST PAS UNE RÉPONSE (01/09). « Fais le point
+    # ET propose une réponse pour chacun » : la synthèse arrive, les cartes de
+    # réponse jamais. La rédaction est reprise UNE fois (rediger →
+    # redaction_forcee), avec la consigne qui nomme le manque — jamais de
+    # contenu écrit en dur.
+    if not state.get("redaction_forcee") and _reponses_mail_manquantes(state, visible):
+        logger.info("La demande voulait des réponses aux mails : rédaction reprise")
+        _tracer_filet(state, "forcage", "reponses_mail_manquantes",
+                      forcages_deja=state.get("forcages") or 0)
+        return "rediger"
     return "rehydrate"
 
 

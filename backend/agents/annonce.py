@@ -540,3 +540,28 @@ def demande_de_garder_la_photo(texte: str) -> bool:
     if not isinstance(texte, str) or not texte.strip():
         return False
     return bool(_RETOUCHE_LA_PHOTO.search(_sans_accent(texte)))
+
+
+# ── Le point sur les mails qui réclame AUSSI des réponses ───────────────────
+# Relevé en prod le 01/09 : « fais le point sur tous mes mails … et propose
+# une réponse pour chacun de ceux qui en appellent une » → la synthèse est
+# arrivée, les propositions jamais. La moitié d'une demande n'est pas une
+# réponse : quand ce prédicat reconnaît la demande, que les mails ONT été lus
+# et que la rédaction ne porte aucun bloc `reponses_mail`, la rédaction est
+# reprise UNE fois avec le manque nommé. Volontairement étroit : il vise le
+# POINT sur plusieurs messages (« chacun », « ceux qui », « des réponses »),
+# jamais « réponds à ce mail » qui se règle par une seule rédaction.
+_DEMANDE_REPONSES_MAIL = re.compile(
+    r"propos\w{0,4} (?:une |la )?reponse pour (?:chacun|chaque|ceux|celles|tous|toutes)"
+    r"|propos\w{0,4} (?:des|les) (?:projets? de )?reponses?"
+    r"|(?:prepare|redige)\w{0,3} (?:des|les) reponses?"
+    r"|(?:une |la )?reponse pour chacun"
+    r"|reponds a (?:chacun|chaque|tous|ceux)",
+    re.IGNORECASE)
+
+
+def demande_des_reponses_mail(texte: str) -> bool:
+    """La demande réclame-t-elle des PROPOSITIONS de réponse pour plusieurs mails ?"""
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    return bool(_DEMANDE_REPONSES_MAIL.search(_sans_accent(texte)))

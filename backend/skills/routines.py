@@ -755,6 +755,12 @@ async def check_mails(data: dict, user) -> dict:
     brut = await lire_mails({"mailbox": data.get("mailbox"),
                              "dossier": data.get("dossier") or "recus",
                              "limite": limite, "depuis": depuis,
+                             # LA PAGE SUIVANTE (01/09) : « TOUS mes mails des
+                             # 7 derniers jours » sur 63 messages n'était PAS
+                             # couvrable — le détail est borné à 25 et ce skill
+                             # ne transmettait même pas `avant`. Le point
+                             # s'enchaîne désormais page par page.
+                             "avant": data.get("avant") or data.get("avant_le"),
                              "apercu": apercu}, user)
 
     messages = brut.get("messages") or brut.get("mails") or []
@@ -807,6 +813,7 @@ async def check_mails(data: dict, user) -> dict:
     total = brut.get("total_periode")
     tronque = bool(brut.get("tronque"))
     compte = brut.get("compte") or f"{len(releve)} message(s)."
+    plus_ancien = brut.get("plus_ancien")
 
     return {
         "nombre": len(releve),
@@ -816,6 +823,15 @@ async def check_mails(data: dict, user) -> dict:
         "reponses_dans_un_fil": fils,
         "non_lus": non_lus,
         "boite": brut.get("boite") or brut.get("mailbox"),
+        "plus_ancien": plus_ancien,
+        # LA PAGE SUIVANTE, MÉCANIQUE (01/09, règle « une recherche ne se
+        # bloque jamais ») : quand la période compte plus de messages que le
+        # détail, le point s'ENCHAÎNE — le modèle n'a rien à calculer.
+        "pour_continuer": (
+            f"Le détail couvre {len(releve)} message(s) sur {total} : rappelle "
+            f"check_mails avec les MÊMES paramètres et avant={plus_ancien} pour "
+            "les précédents, et enchaîne jusqu'à couvrir le total AVANT de rédiger."
+            if plus_ancien and total and int(total) > len(releve) else None),
         "messages": releve,
         "message_final": (compte
                           + (f" Parmi les détaillés : {fils} réponse(s) à un fil en cours" if fils else "")
@@ -825,8 +841,13 @@ async def check_mails(data: dict, user) -> dict:
         "a_faire": (
             "Commence par le COMPTE, mot pour mot : « " + compte + " » — c'est le "
             "total qui répond à « combien », pas le nombre de messages détaillés. "
-            + ("Le détail ne couvre PAS toute la période : dis-le, et propose de "
-               "cibler (un expéditeur, un sujet, une journée) si l'utilisateur veut le reste. "
+            # « Propose de cibler » a vécu (01/09) : « fais le point sur TOUS
+            # mes mails » sur 63 messages rendait 25 et s'arrêtait là — TOUT
+            # SIGNIFIE TOUT, la suite s'enchaîne, elle ne se propose pas.
+            + ("Le détail ne couvre PAS toute la période : ENCHAÎNE — rappelle "
+               "ce skill avec `avant` (voir pour_continuer) jusqu'à couvrir le "
+               "compte, PUIS rédige UNE SEULE synthèse pour l'ensemble. Ne "
+               "présente jamais les premiers messages comme le tout. "
                if tronque else "")
             + "Fais le point en UN SEUL message, sans rappeler ce skill. Pour chaque "
             "message : l'expéditeur, l'objet, et UNE phrase de résumé tirée de "
@@ -1312,8 +1333,10 @@ SKILLS = {
             "`redaction_email` et sa validation. `depuis` : OBLIGATOIRE des qu'une "
             "periode est nommee (« cette semaine » → \"7j\", « ce mois » → \"30j\", ou "
             "une date AAAA-MM-JJ) : le resultat donne alors le TOTAL EXACT de la "
-            "periode en plus du detail des 25 plus recents. `limite` : 1 a 25 (defaut 15)"),
-        requis=[], optionnels=["mailbox", "dossier", "limite", "depuis"],
+            "periode en plus du detail des 25 plus recents — s'il y en a PLUS, "
+            "ENCHAINE avec `avant` (rendu par pour_continuer) jusqu'a tout couvrir, "
+            "PUIS redige UNE synthese. `limite` : 1 a 25 (defaut 15)"),
+        requis=[], optionnels=["mailbox", "dossier", "limite", "depuis", "avant"],
         effet="lecture",
         libelle="je fais le point sur les mails"),
 }

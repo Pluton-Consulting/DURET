@@ -48,7 +48,11 @@ async def mes_droits(data: dict, user) -> dict:
     except Exception as e:  # noqa: BLE001 - un rôle reste descriptible sans les boîtes
         logger.info("Boîtes indisponibles pour la description des droits : %s", e)
 
-    toutes = boites == ["*"]
+    # Décrire un droit, ce n'est pas l'exercer : le super_admin et la direction
+    # PEUVENT accéder à une autre boîte en la nommant, `mes_droits` doit le dire
+    # même si leur défaut de lecture est désormais leur seule boîte (01/09).
+    from mail.authorization import acces_total
+    toutes = boites == ["*"] or acces_total(role)
     connu = role in ROLE_ACCESS_LEVELS
 
     return {

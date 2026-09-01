@@ -433,7 +433,14 @@ async def boites_visibles(user) -> list[str]:
     except Exception as e:  # noqa: BLE001 - dans le doute, ne rien nommer
         logger.info("Boîtes autorisées illisibles : %s", e)
         return []
-    if autorisees == ["*"]:
+    # LE NOMMAGE SUIT LE RÔLE, PAS LE DÉFAUT DE LECTURE (01/09). Depuis que
+    # `boites_par_id` ne rend plus le jeton « toutes les boîtes » (le défaut de
+    # chacun est SA boîte), ce test ne pouvait plus être vrai : le super_admin
+    # ne voyait plus AUCUNE autre adresse, donc ne pouvait plus en NOMMER une —
+    # et la règle « s'ils la demandent, ils y ont accès » devenait inapplicable.
+    # On teste donc le rôle : qui peut demander une boîte doit pouvoir la nommer.
+    from mail.authorization import acces_total
+    if autorisees == ["*"] or acces_total(getattr(user, "role", None)):
         return connues
     permis = {normaliser(b) for b in autorisees}
     return [b for b in connues if b in permis]
@@ -684,7 +691,11 @@ async def boites_mail(data: dict, user) -> dict:
         autorisees = []
     decouvertes: list[str] = []
     annuaire = ""
-    if autorisees == ["*"]:
+    # Même raison que dans `boites_visibles` : ce skill EST la demande explicite
+    # (« liste les adresses mail »), il suit donc le rôle et non le défaut de
+    # lecture, sans quoi l'annuaire du domaine n'était plus jamais consulté.
+    from mail.authorization import acces_total as _acces_total
+    if autorisees == ["*"] or _acces_total(getattr(user, "role", None)):
         try:
             if fournisseur() == "outlook":
                 from ingestion.connectors.outlook import boites_du_domaine

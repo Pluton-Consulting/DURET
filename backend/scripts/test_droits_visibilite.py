@@ -81,6 +81,20 @@ verifier("le DÉFAUT (recherche, rien de nommé) est SA boîte, même pour l'adm
 verifier("l'accès à une boîte NOMMÉE reste journalisé", "logger.info(\"Accès administrateur" in src_az
          or "Accès administrateur à la boîte" in src_az)
 
+# ── 2bis. Le NOMMAGE d'une boîte suit le RÔLE, pas le défaut de lecture ──
+skills_mail = (BACKEND / "mail" / "skills.py").read_text(encoding="utf-8")
+verifier("boites_visibles laisse super_admin/direction NOMMER toutes les boîtes connues",
+         "acces_total(getattr(user, \"role\", None))" in skills_mail
+         and skills_mail.count("acces_total") >= 2)
+verifier("boites_mail (geste explicite) lit encore l'annuaire du domaine pour ces rôles",
+         "_acces_total(getattr(user, \"role\", None))" in skills_mail)
+droits_py = (BACKEND / "skills" / "droits.py").read_text(encoding="utf-8")
+verifier("mes_droits DIT la capacité réelle (toutes les boîtes sur demande)",
+         "acces_total(role)" in droits_py)
+rag_py = (BACKEND / "vectorstore" / "rag.py").read_text(encoding="utf-8")
+verifier("le filtrage RAG (le DÉFAUT) reste restreint : il ne teste que le jeton reçu",
+         'if "*" in autorisees' in rag_py and "acces_total" not in rag_py)
+
 # ── 3. La direction ne voit pas les super_admin ──────────────────────────
 users = (BACKEND / "routers" / "users.py").read_text(encoding="utf-8")
 verifier("la liste des utilisateurs filtre les super_admin CÔTÉ SERVEUR pour la direction",

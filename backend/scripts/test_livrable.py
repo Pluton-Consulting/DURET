@@ -315,6 +315,7 @@ espace2.update({
     "renvoie_au_deja_fait": _annonce.renvoie_au_deja_fait,
     "demande_sur_le_passe": _annonce.demande_sur_le_passe,
     "_reponses_mail_manquantes": lambda state, texte: False,
+    "demande_un_visuel": _annonce.demande_un_visuel,
     "MAX_FORCAGES_PAR_TOUR": 2,
 })
 extraire(racine / "agents" / "agent1.py",
@@ -326,6 +327,18 @@ verifier("« j'ai créé le document » sans production part au FORCEUR",
          route({"llm_response": "C'est bon, le document Word a été créé et le "
                                 "fichier est téléchargeable.",
                 "query": "fais un word avec toutes les infos de l'entreprise",
+                "tool_results": [], "forcages": 0,
+                "messages": fil_fournisseurs}) == "forcer")
+
+# 22bis. Le fantôme VISUEL (01/09 au soir, prod sur le code du jour) : la
+# retouche « décrite » au passé, sans skill, sans image, sans validation.
+verifier("un VISUEL demandé sans production part au FORCEUR",
+         route({"llm_response": "Voici la retouche demandée.\n\nCe qui change : remove "
+                                "all plants, shrubs and flower beds. Le jardin est "
+                                "débarrassé de toute végétation ornementale.",
+                "query": "Je joins une photo du jardin : fais une simulation avant/après "
+                         "en ajoutant supprime les plantes du jardin. Garde la maison et "
+                         "tout le reste à l'identique.",
                 "tool_results": [], "forcages": 0,
                 "messages": fil_fournisseurs}) == "forcer")
 

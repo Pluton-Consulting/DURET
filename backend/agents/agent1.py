@@ -215,7 +215,7 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
                             options_proposees, reclame_un_prealable,
                             pretend_avoir_livre, demande_une_production,
                             propose_au_lieu_d_agir, renvoie_au_deja_fait,
-                            demande_sur_le_passe)
+                            demande_sur_le_passe, demande_un_visuel)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -2773,7 +2773,11 @@ def route_apres_llm(state: AgentState) -> str:
     fantome = (
         not _blocs_livrables(state.get("tool_results") or [])
         and not state.get("pending_action")
-        and ((demande_une_production(state.get("query") or "") and "?" not in visible)
+        # Un VISUEL demandé sans image produite est un fantôme au même titre
+        # qu'un fichier (01/09 : la retouche « décrite » au passé, sans skill
+        # ni carte de validation — le modèle imitait le tour précédent).
+        and (((demande_une_production(state.get("query") or "")
+               or demande_un_visuel(state.get("query") or "")) and "?" not in visible)
              or (pretend_avoir_livre(visible)
                  and not _montre_un_fichier_du_fil(visible, state))))
     if fantome:

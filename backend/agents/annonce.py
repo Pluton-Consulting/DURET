@@ -302,6 +302,29 @@ _DEMANDE_PRODUCTION = re.compile(
     r"|rapports?|tableur)\b",
     re.IGNORECASE)
 
+# LA LIVRAISON FANTÔME VAUT AUSSI POUR LES IMAGES (01/09 au soir, en prod sur
+# le code du jour) : « fais une simulation avant/après : supprime les plantes,
+# garde tout à l'identique » → le modèle a DÉCRIT la retouche au passé (« le
+# jardin est débarrassé de toute végétation… ») sans appeler le moindre skill —
+# ni image, ni carte de validation. Il imitait le message du tour précédent.
+# Le filet des fichiers ne connaissait que word/excel/pdf : celui-ci reconnaît
+# la demande d'un VISUEL, et l'appelant force quand rien n'a été produit.
+_DEMANDE_VISUEL = re.compile(
+    r"\b(?:fais|faire|refais|refaire|cree|creer|genere|generer|produis"
+    r"|produire|lance|lancer|montre|montrer|modifie|modifier|retouche"
+    r"|retoucher|ajoute|ajouter|supprime|supprimer|enleve|enlever|change"
+    r"|changer)\b"
+    r"[^.!?\n]{0,120}?\b(?:simulation|rendus?|visuels?|images?|retouches?"
+    r"|avant[ /-]?apres)\b",
+    re.IGNORECASE)
+
+
+def demande_un_visuel(texte: str) -> bool:
+    """La demande réclame-t-elle la PRODUCTION ou la RETOUCHE d'une image ?"""
+    if not isinstance(texte, str) or not texte:
+        return False
+    return bool(_DEMANDE_VISUEL.search(_sans_accent(texte)))
+
 
 def pretend_avoir_livre(texte: str) -> bool:
     """Le texte affirme-t-il qu'un fichier existe ou est téléchargeable ?"""

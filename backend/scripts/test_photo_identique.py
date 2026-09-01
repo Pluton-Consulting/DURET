@@ -52,8 +52,8 @@ def extraire(chemin, noms, espace):
 print(f"\n═══ PHOTO IDENTIQUE ET 503 — {BACKEND.resolve().parent}\n")
 
 espace = extraire(BACKEND / "agents" / "annonce.py",
-                  {"demande_de_garder_la_photo", "_RETOUCHE_LA_PHOTO",
-                   "_sans_accent", "_ACCENTS", "re"}, {})
+                  {"demande_de_garder_la_photo", "_RETOUCHE_LA_PHOTO", "demande_un_visuel",
+                   "_DEMANDE_VISUEL", "_sans_accent", "_ACCENTS", "re"}, {})
 p = espace["demande_de_garder_la_photo"]
 verifier("la demande EXACTE de prod est reconnue",
          p("Je joins une photo du jardin : fais une simulation avant/après en ajoutant "
@@ -68,6 +68,17 @@ verifier("une CRÉATION libre n'est pas reconnue",
          not p("Crée un visuel de jardin méditerranéen avec oliviers et graviers clairs."))
 verifier("vide → faux", not p("") and not p(None))
 
+pv = espace.get("demande_un_visuel")
+verifier("le prédicat `demande_un_visuel` existe", callable(pv))
+if callable(pv):
+    verifier("la demande de simulation EXACTE de prod est un visuel demandé",
+             pv("Je joins une photo du jardin : fais une simulation avant/après en "
+                "ajoutant supprime les plantes du jardin. Garde la maison et tout le "
+                "reste à l'identique."))
+    verifier("« fais une image d'une maison moderne » est un visuel demandé",
+             pv("Fais une image d'une maison moderne sur le bassin d'Arcachon."))
+    verifier("« décris-moi la maison » n'en est pas un", not pv("Décris-moi la maison."))
+
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("la garde refuse l'essai TEXTE quand le fil porte une image à garder",
          re.search(r"action\[\"skill\"\] in \(\"tester_visuel\", \"generer_visuel\"\).*?"
@@ -75,6 +86,8 @@ verifier("la garde refuse l'essai TEXTE quand le fil porte une image à garder",
                    r"modifier_visuel", agent1, re.S))
 verifier("le refus passe par SkillError : le modèle se corrige au tour suivant",
          "réinventerait" in agent1 and 'image="{cles[-1]}"' in agent1)
+verifier("le fantôme couvre les VISUELS : une simulation demandée sans image produite force",
+         "or demande_un_visuel(state.get(\"query\") or \"\")" in agent1)
 
 if (BACKEND / "skills" / "visuels.py").exists():
     visuels = (BACKEND / "skills" / "visuels.py").read_text(encoding="utf-8")

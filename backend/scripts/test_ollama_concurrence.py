@@ -63,8 +63,14 @@ verifier("le catalogue de l'écran le montre en premier",
 cles = (BACKEND / "llm" / "cles.py").read_text(encoding="utf-8")
 verifier("la clé est connue du gestionnaire (base > .env)", '"ollama_cloud_api_key"' in cles)
 reglages = (BACKEND / "llm" / "reglages.py").read_text(encoding="utf-8")
+# Le split visait le NOM de la constante, qui apparaît aussi dans les
+# commentaires : on vise la DÉCLARATION, seule à porter le signe égal.
 verifier("le fournisseur est acceptable dans « les modèles de l'assistant » (sinon 422)",
-         '"ollama_cloud"' in reglages.split("FOURNISSEURS_TEXTE")[1][:200])
+         '"ollama_cloud"' in reglages.split("FOURNISSEURS_TEXTE = (")[1][:200])
+# 02/09 : les embeddings ont leur propre liste — un fournisseur de texte ne
+# sait pas forcément vectoriser, et l'inverse est vrai aussi.
+verifier("et il l'est aussi pour les embeddings",
+         '"ollama_cloud"' in reglages.split("FOURNISSEURS_EMBEDDING = (")[1][:200])
 enrich = (BACKEND / "learning" / "enrichissement.py").read_text(encoding="utf-8")
 verifier("les campagnes lui font confiance (sinon un repli est refusé d'écrire)",
          '"ollama_cloud"' in enrich.split("FOURNISSEURS_DE_CONFIANCE")[1][:200])

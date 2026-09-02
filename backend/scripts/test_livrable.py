@@ -316,6 +316,10 @@ espace2.update({
     "demande_sur_le_passe": _annonce.demande_sur_le_passe,
     "_reponses_mail_manquantes": lambda state, texte: False,
     "demande_un_visuel": _annonce.demande_un_visuel,
+    # 02/09 : le filet « une seule salve de questions » traverse aussi
+    # `route_apres_llm` — sans lui dans l'espace doublé, la fonction lève.
+    "deuxieme_salve_de_questions": _annonce.deuxieme_salve_de_questions,
+    "_derniere_reponse_assistant": lambda state: "",
     "MAX_FORCAGES_PAR_TOUR": 2,
 })
 extraire(racine / "agents" / "agent1.py",

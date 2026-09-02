@@ -63,6 +63,18 @@ REGLAGES_CONNUS = (
 # Les fournisseurs de TEXTE que le routeur sait construire (llm/router.py).
 # Dupliqué ici plutôt qu'importé : reglages.py est lu par le routeur, pas
 # l'inverse, et un import croisé au démarrage a déjà coûté une matinée.
+# LES EMBEDDINGS N'ONT PAS LES MÊMES FOURNISSEURS QUE LE TEXTE (02/09).
+#
+# `modele_embedding` était validé contre FOURNISSEURS_TEXTE : l'écran
+# acceptait donc « longcat:… » ou « deepseek:… », que le moteur d'embedding
+# ne sait pas exécuter — il retombait sur « fournisseur inconnu » et plus
+# rien n'était vectorisé, en silence. Le piège le plus vicieux était
+# « google » : c'est le nom du fournisseur dans la cascade de texte, mais le
+# moteur d'embedding l'appelle « gemini ». Le choix le plus naturel de tous
+# cassait donc la vectorisation. Les deux noms sont acceptés ici, et
+# `embeddings.py` les ramène au même fournisseur.
+FOURNISSEURS_EMBEDDING = ("ollama_cloud", "ollama", "gemini", "google", "openai")
+
 FOURNISSEURS_TEXTE = ("ollama_cloud", "longcat", "deepseek", "openrouter",
                       "google", "groq", "anthropic")
 
@@ -172,9 +184,11 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom in ("modele_rapide", "modele_puissant",
                "modele_vision", "modele_embedding") and (brut or "").strip():
         f, _, m = (brut or "").strip().partition(":")
-        if f.strip().lower() not in FOURNISSEURS_TEXTE or not m.strip():
+        admis = (FOURNISSEURS_EMBEDDING if nom == "modele_embedding"
+                 else FOURNISSEURS_TEXTE)
+        if f.strip().lower() not in admis or not m.strip():
             raise ValueError("Forme attendue : « fournisseur:modele », fournisseur parmi "
-                             + ", ".join(FOURNISSEURS_TEXTE) + ".")
+                             + ", ".join(admis) + ".")
     from database.connection import get_db
 
     v = (brut or "").strip()

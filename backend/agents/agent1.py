@@ -44,7 +44,7 @@ OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de r
 4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
 La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, produire un visuel), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
 
-AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » ni « je n'ai pas de commande pour » : la plupart de ces demandes se composent de gestes que tu as déjà — relis le catalogue, compose-les. ESSAIE D'ABORD : exécute la voie la plus directe et montre le résultat ; ne demande une précision QUE si, sans elle, le résultat serait FAUX (le destinataire d'un envoi, le montant d'une facture) — jamais « que préférez-vous ? » entre deux voies que tu peux toutes les deux prendre, jamais « voulez-vous que je… ? » pour un geste de lecture : fais-le. Si la marche à suivre a demandé plusieurs gestes et qu'elle a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
+AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » ni « je n'ai pas de commande pour » : la plupart de ces demandes se composent de gestes que tu as déjà — relis le catalogue, compose-les. ESSAIE D'ABORD : exécute la voie la plus directe et montre le résultat ; ne demande une précision QUE si, sans elle, le résultat serait FAUX (le destinataire d'un envoi, le montant d'une facture) — jamais « que préférez-vous ? » entre deux voies que tu peux toutes les deux prendre, jamais « voulez-vous que je… ? » pour un geste de lecture : fais-le. UNE SEULE SALVE DE QUESTIONS, JAMAIS DEUX : si tu dois demander une précision, pose TOUT ce qui te manque en UN message, puis agis avec ce qu'on te répond. Ne reviens pas demander autre chose au tour suivant — ce qui manque encore, tu le cherches (une adresse est dans l'annuaire, une période se déduit de la date du jour, un client se retrouve par son nom) ou tu prends l'hypothèse la plus raisonnable EN LA DISANT. Zéro question vaut mieux qu'une, et une vaut infiniment mieux que deux. Si la marche à suivre a demandé plusieurs gestes et qu'elle a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
 
 LE TRAVAIL LONG S'ANNONCE AVANT DE COMMENCER. Quand une demande tient en PLUSIEURS gestes distincts (analyser un document PUIS retrouver un client PUIS produire un fichier PUIS rédiger un mail), n'attaque pas : appelle `proposer_plan` avec les étapes, en français, dans l'ordre. La personne approuve, et tu exécutes alors TOUT d'un coup, sans redemander d'accord, pour rendre UNE SEULE réponse à la fin. Pour un travail qui tient en un seul geste, ne planifie rien : fais-le. Ne l'utilise jamais pour une question, une salutation ou une rédaction simple.
 
@@ -217,10 +217,27 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
                             options_proposees, reclame_un_prealable,
                             pretend_avoir_livre, demande_une_production,
                             propose_au_lieu_d_agir, renvoie_au_deja_fait,
-                            demande_sur_le_passe, demande_un_visuel)
+                            demande_sur_le_passe, demande_un_visuel,
+                            deuxieme_salve_de_questions)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
+
+def _derniere_reponse_assistant(state) -> str:
+    """La dernière chose que l'assistant a dite dans ce fil, avant ce tour.
+
+    Sert à voir une RÉPÉTITION : certains défauts ne se lisent pas dans une
+    réponse isolée, seulement dans son rapport à la précédente. Poser des
+    questions est légitime ; en poser deux tours de suite sans avoir rien fait
+    entre les deux ne l'est pas.
+    """
+    for m in reversed(state.get("messages") or []):
+        if getattr(m, "type", "") != "ai" and m.__class__.__name__ != "AIMessage":
+            continue
+        contenu = getattr(m, "content", "")
+        return contenu if isinstance(contenu, str) else str(contenu)
+    return ""
+
 
 async def rag_node(state: AgentState) -> dict:
     """Prépare le contexte immédiat du tour. NE FAIT PLUS de recherche.
@@ -2903,8 +2920,27 @@ def route_apres_llm(state: AgentState) -> str:
         _tracer_filet(state, "forcage", "renvoi_au_deja_fait",
                       forcages_deja=state.get("forcages") or 0)
 
+    # DEUX SALVES DE QUESTIONS D'AFFILÉE (02/09). Règle de Noa : « au maximum
+    # UN message avec une ou des questions complémentaires avant d'agir ; s'il
+    # peut y en avoir zéro ou trouver la réponse tout seul, qu'il le fasse ».
+    #
+    # Une question de clarification est légitime — les filets précédents la
+    # laissent passer, et c'est voulu. Ce qui ne l'est pas, c'est la SECONDE :
+    # deux tours entiers dépensés sans qu'aucun travail n'avance. Le défaut ne
+    # se voit pas dans la réponse seule, seulement dans son rapport à la
+    # précédente ; d'où la comparaison avec le dernier message de l'assistant.
+    deux_salves = (
+        deuxieme_salve_de_questions(visible, _derniere_reponse_assistant(state))
+        and not any(r.get("ok") for r in (state.get("tool_results") or []))
+        and not state.get("pending_action"))
+    if deux_salves and not fantome and not sans_agir and not deja_fait:
+        logger.info("Deuxième salve de questions sans acte : la demande n'avance "
+                    "pas — forçage")
+        _tracer_filet(state, "forcage", "deuxieme_salve_de_questions",
+                      forcages_deja=state.get("forcages") or 0)
+
     if (est_une_annonce(texte) or promesse_sans_suite(texte) or not visible
-            or fantome or sans_agir or deja_fait):
+            or fantome or sans_agir or deja_fait or deux_salves):
         # L'ORDRE COMPTE, ET IL A ÉTÉ FAUX UNE SOIRÉE. Première version : une
         # annonce après un résultat réussi allait droit à la rédaction. Or
         # l'annonce porte souvent sur l'étape SUIVANTE (« je lance le tirage »

@@ -277,7 +277,12 @@ class VectorStoreClient:
         #
         # On marque donc le job en ÉCHEC, avec sa raison : il consomme un essai,
         # s'arrête après le troisième, et la cause est lisible.
-        attendue = int(getattr(settings, "embedding_dimensions", 1536) or 1536)
+        # 02/09 : la dimension vient de la COLONNE, pas de la configuration.
+        # Après une re-vectorisation, une valeur figée dans le fichier aurait
+        # fait refuser tous les vecteurs du nouveau modèle, en accusant le
+        # modèle alors que la base était d'accord avec lui.
+        from vectorstore.revectorisation import dimension_attendue
+        attendue = await dimension_attendue()
         if embedding is not None and len(embedding) != attendue:
             await self.mark_job_failed(
                 job_id,

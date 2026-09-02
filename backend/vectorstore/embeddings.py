@@ -193,13 +193,14 @@ def _client():
     return _CLIENT
 
 
-async def _embed_openai(texts: list[str]) -> list[Optional[list[float]]]:
+async def _embed_openai(texts: list[str], modele: str = "") -> list[Optional[list[float]]]:
     client = _openai()
     if client is None:
         _warn_once("OPENAI_API_KEY absente : embeddings openai désactivés (dégradation pg_trgm).")
         return [None] * len(texts)
     try:
-        resp = await client.embeddings.create(model=settings.embedding_model, input=texts)
+        resp = await client.embeddings.create(
+            model=modele or settings.embedding_model, input=texts)
         return [d.embedding for d in resp.data]
     except Exception as e:
         logger.warning("Échec embeddings OpenAI (%s) — mode dégradé", type(e).__name__)
@@ -207,7 +208,7 @@ async def _embed_openai(texts: list[str]) -> list[Optional[list[float]]]:
 
 
 # ── Gemini (Google AI Studio, REST) ───────────────────────────────────────
-async def _embed_gemini(texts: list[str]) -> list[Optional[list[float]]]:
+async def _embed_gemini(texts: list[str], modele: str = "") -> list[Optional[list[float]]]:
     if not settings.google_api_key:
         _warn_once("GOOGLE_API_KEY absente : embeddings gemini désactivés (dégradation pg_trgm).")
         return [None] * len(texts)
@@ -217,7 +218,15 @@ async def _embed_gemini(texts: list[str]) -> list[Optional[list[float]]]:
         _warn_once(f"Embeddings Gemini en pause ({reason}) — chunks conservés, reprise auto.")
         return [None] * len(texts)
 
-    model = settings.gemini_embedding_model
+    model = modele or settings.gemini_embedding_model
+    # La dimension que la colonne attend ; sans base lisible, celle de la
+    # configuration — un embedding vaut mieux qu'aucun.
+    cible = settings.embedding_dimensions
+    try:
+        from vectorstore.revectorisation import dimension_attendue
+        cible = await dimension_attendue()
+    except Exception:  # noqa: BLE001 — la configuration reste le repli
+        pass
     max_chars = settings.embedding_max_chars
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"{model}:batchEmbedContents?key={settings.google_api_key}")
@@ -226,7 +235,13 @@ async def _embed_gemini(texts: list[str]) -> list[Optional[list[float]]]:
             {
                 "model": f"models/{model}",
                 "content": {"parts": [{"text": t[:max_chars]}]},
-                "outputDimensionality": settings.embedding_dimensions,
+                # LA CIBLE SUIT LA BASE, PAS LA CONFIGURATION (02/09).
+                # Gemini est le seul fournisseur qui CHOISIT sa dimension
+                # (les autres la subissent) : après une re-vectorisation
+                # vers 768, il aurait continué de réclamer les 1536 de
+                # `config.py` et chacun de ses vecteurs aurait été refusé
+                # par le garde-fou, sans que rien ne relie les deux.
+                "outputDimensionality": cible,
             }
             for t in texts
         ]
@@ -256,14 +271,15 @@ async def _embed_gemini(texts: list[str]) -> list[Optional[list[float]]]:
 
 
 # ── Ollama (local) ────────────────────────────────────────────────────────
-async def _embed_ollama(texts: list[str]) -> list[Optional[list[float]]]:
+async def _embed_ollama(texts: list[str], modele: str = "") -> list[Optional[list[float]]]:
     out: list[Optional[list[float]]] = []
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             for t in texts:
                 r = await client.post(
                     f"{settings.ollama_base_url}/api/embeddings",
-                    json={"model": settings.ollama_embedding_model, "prompt": t},
+                    json={"model": modele or settings.ollama_embedding_model,
+                          "prompt": t},
                 )
                 r.raise_for_status()
                 out.append(r.json().get("embedding") or None)
@@ -273,11 +289,61 @@ async def _embed_ollama(texts: list[str]) -> list[Optional[list[float]]]:
         return out + [None] * (len(texts) - len(out))
 
 
-_PROVIDERS = {"gemini": _embed_gemini, "openai": _embed_openai, "ollama": _embed_ollama}
+# ── Ollama Cloud (abonnement, API compatible OpenAI) ──────────────────────
+#
+# CE FOURNISSEUR MANQUAIT (02/09). Le réglage « modèle des embeddings »
+# proposait les modèles d'Ollama Cloud, mais `_PROVIDERS` n'en connaissait
+# pas le nom : le choix retombait sur « fournisseur inconnu », et plus rien
+# n'était vectorisé. Le fournisseur `ollama` existant, lui, vise
+# `ollama_base_url` — l'instance LOCALE, absente des serveurs. Les deux
+# sont donc bien deux fournisseurs distincts, comme pour le texte (§4.5).
+#
+# La clé passe par `llm.cles`, jamais par la configuration seule : une clé
+# saisie dans Paramètres prime sur le `.env`, et le cache est rafraîchi au
+# démarrage (piège du §4.6).
+async def _embed_ollama_cloud(texts: list[str], modele: str = "") -> list[Optional[list[float]]]:
+    from llm.cles import valeur as _cle_valeur
+    cle = _cle_valeur("ollama_cloud_api_key") or ""
+    if not cle:
+        _warn_once("Clé Ollama Cloud absente : embeddings désactivés "
+                   "(la recherche reste servie par la voie lexicale).")
+        return [None] * len(texts)
+    nom = modele or settings.ollama_cloud_embedding_model
+    base = (settings.ollama_cloud_base_url or "").rstrip("/")
+    max_chars = settings.embedding_max_chars
+    try:
+        r = await _client().post(
+            f"{base}/embeddings",
+            headers={"Authorization": f"Bearer {cle}"},
+            json={"model": nom, "input": [t[:max_chars] for t in texts]})
+        r.raise_for_status()
+        # L'ordre de `data` suit celui de l'entrée, mais le contrat OpenAI
+        # porte un `index` : on s'y fie plutôt qu'à la position, sans quoi
+        # une réponse réordonnée collerait les vecteurs aux mauvais textes.
+        out: list[Optional[list[float]]] = [None] * len(texts)
+        for item in (r.json().get("data") or []):
+            i = item.get("index")
+            if isinstance(i, int) and 0 <= i < len(texts):
+                out[i] = item.get("embedding") or None
+        return out
+    except Exception as e:  # noqa: BLE001 — jamais d'exception vers l'appelant
+        logger.warning("Échec embeddings Ollama Cloud (%s) — mode dégradé",
+                       type(e).__name__)
+        return [None] * len(texts)
+
+
+_PROVIDERS = {"gemini": _embed_gemini, "openai": _embed_openai,
+              "ollama": _embed_ollama, "ollama_cloud": _embed_ollama_cloud,
+              # « google » est le nom du fournisseur dans la cascade de texte et
+              # dans le catalogue de l'écran ; « gemini » celui du moteur
+              # d'embedding. Le même service sous deux noms : sans cet alias, le
+              # choix le plus naturel de l'écran coupait la vectorisation.
+              "google": _embed_gemini}
 
 
 # ── API publique ──────────────────────────────────────────────────────────
-async def embed_texts(texts: list[str]) -> list[Optional[list[float]]]:
+async def embed_texts(texts: list[str],
+                      modele_force: str = "") -> list[Optional[list[float]]]:
     """
     Vectorise un lot de textes. Ordre de sortie = ordre d'entrée. Textes vides →
     None sans appel réseau. Ne lève jamais ; renvoie [None,…] si indisponible.
@@ -297,11 +363,19 @@ async def embed_texts(texts: list[str]) -> list[Optional[list[float]]]:
     # sur Gemini : un nom mal écrit dans la configuration donnait un système
     # qui semble obéir et n'obéit pas — le pire des deux mondes, puisque rien
     # ne le signale.
+    # UN MODÈLE PEUT ÊTRE ESSAYÉ SANS ÊTRE CHOISI (02/09). Sans ce paramètre,
+    # la seule façon de connaître la dimension d'un modèle était de le POSER en
+    # réglage — c'est-à-dire de basculer tout le système dessus pour savoir
+    # s'il convenait. On veut l'inverse : mesurer, montrer, puis choisir.
     nom_fournisseur = (settings.embedding_provider or "gemini").strip().lower()
     modele_choisi = ""
+    if modele_force and ":" in modele_force:
+        f, _, m = modele_force.partition(":")
+        if f.strip() and m.strip():
+            nom_fournisseur, modele_choisi = f.strip().lower(), m.strip()
     try:
         from llm.reglages import texte as _reglage_texte
-        brut = _reglage_texte("modele_embedding")
+        brut = "" if modele_force else _reglage_texte("modele_embedding")
         if brut:
             f, _, m = brut.partition(":")
             if f.strip() and m.strip():
@@ -323,7 +397,12 @@ async def embed_texts(texts: list[str]) -> list[Optional[list[float]]]:
         if t not in seen:
             seen[t] = len(unique_texts)
             unique_texts.append(t)
-    unique_vectors = await provider(unique_texts)
+    # LE MODÈLE CHOISI ÉTAIT CALCULÉ PUIS JETÉ (corrigé le 02/09) : seul le
+    # FOURNISSEUR était retenu, et chaque fonction reprenait le modèle par
+    # défaut de la configuration. Choisir « ollama_cloud:embeddinggemma » à
+    # l'écran vectorisait donc avec un autre modèle que celui affiché — et
+    # rien ne le disait.
+    unique_vectors = await provider(unique_texts, modele_choisi)
 
     results: list[Optional[list[float]]] = [None] * len(texts)
     for orig_idx, t in to_embed:

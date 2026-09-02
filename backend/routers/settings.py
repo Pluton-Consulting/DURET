@@ -356,3 +356,105 @@ async def sante_de_la_cascade(current_user: User = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Réservé à l'administration système")
     from llm.router import sante_cascade
     return sante_cascade()
+
+
+# ── Re-vectorisation du corpus ────────────────────────────────────────────
+#
+# CHANGER DE MODÈLE D'EMBEDDING N'EST PAS UN RÉGLAGE COMME UN AUTRE. Deux
+# vecteurs ne sont comparables que s'ils viennent du MÊME modèle : garder les
+# anciens ne casse rien de visible, ce qui est bien pire qu'une panne — la
+# recherche continue de répondre, avec des résultats faux que rien ne signale.
+#
+# Les deux routes ci-dessous séparent volontairement REGARDER et AGIR : on
+# mesure d'abord ce que rend le modèle choisi, on lit ce que ça coûtera, et
+# c'est seulement ensuite qu'on efface. Une opération qui vide 9 400 vecteurs
+# ne se déclenche pas au premier clic d'un menu déroulant.
+
+class RevectoriserRequest(BaseModel):
+    # La dimension MESURÉE, telle que la route d'inspection l'a rendue. On la
+    # redemande plutôt que de la recalculer : c'est la preuve que l'écran a bien
+    # montré à la personne le chiffre sur lequel elle s'engage.
+    dimension: int
+
+
+@router.get("/embeddings")
+async def etat_des_embeddings(current_user: User = Depends(get_current_user)):
+    """Où en est la vectorisation, et ce que rendrait le modèle actuellement
+    choisi. Ne modifie RIEN."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from vectorstore import revectorisation as rv
+
+    etat = await rv.etat()
+    mesuree, detail = await rv.mesurer_dimension()
+    attendue = await rv.dimension_attendue()
+    return {
+        **etat,
+        "dimension_base": attendue,
+        "dimension_modele": mesuree,
+        "detail": detail,
+        # LE VERDICT EST CALCULÉ ICI, PAS À L'ÉCRAN : c'est la même donnée qui
+        # décide de l'affichage et qui autorisera l'opération.
+        "revectorisation_necessaire": bool(mesuree and mesuree != attendue),
+        "mesure_possible": mesuree is not None,
+    }
+
+
+@router.post("/embeddings/revectoriser")
+async def lancer_revectorisation(body: RevectoriserRequest,
+                                 current_user: User = Depends(get_current_user)):
+    """Vide les vecteurs, aligne la base sur la dimension mesurée, et remet tout
+    le corpus en file d'attente.
+
+    La re-vectorisation elle-même est faite par le worker déjà en place, à sa
+    cadence et avec ses pauses de quota : on ne lance pas ici 9 400 appels au
+    fournisseur, on remplit une file que quelqu'un draine déjà.
+    """
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from vectorstore import revectorisation as rv
+
+    # LA DIMENSION EST RE-MESURÉE AVANT D'EFFACER. Celle du corps de la requête
+    # peut dater de plusieurs minutes, et le modèle a pu changer entre-temps
+    # (deux onglets, deux administrateurs). Effacer un corpus sur une valeur
+    # périmée le laisserait à une dimension que plus aucun modèle ne rend.
+    mesuree, detail = await rv.mesurer_dimension()
+    if mesuree is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+    if mesuree != body.dimension:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(f"Le modèle rend {mesuree} dimensions, l'écran en annonçait "
+                    f"{body.dimension}. Rien n'a été effacé : rechargez la page "
+                    "pour repartir de la mesure à jour."))
+
+    await log_action(action="revectorisation_lancee",
+                     user_id=str(current_user.id),
+                     metadata={"dimension": mesuree})
+    resultat = await rv.revectoriser(mesuree)
+    return {
+        **resultat,
+        "note": (f"Les vecteurs ont été effacés et la base est passée à "
+                 f"{mesuree} dimensions. Les {resultat['morceaux_en_file']} "
+                 "morceaux se re-vectorisent en tâche de fond. Pendant ce "
+                 "temps, la recherche continue de répondre par sa voie "
+                 "textuelle : les résultats sont moins fins, pas absents."),
+    }
+
+
+@router.get("/embeddings/catalogue")
+async def catalogue_des_embeddings(rafraichir: bool = False,
+                                   current_user: User = Depends(get_current_user)):
+    """Les modèles d'embedding accessibles avec les clés posées, chacun avec sa
+    DIMENSION mesurée.
+
+    C'est la seule façon honnête de répondre à « quels modèles ai-je ? » : le
+    catalogue du fournisseur ne rend que des noms, et la dimension — qui décide
+    de tout ici — n'est annoncée nulle part. On la mesure.
+    """
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from vectorstore.revectorisation import catalogue_embeddings, dimension_attendue
+
+    return {"dimension_base": await dimension_attendue(),
+            "modeles": await catalogue_embeddings(rafraichir=rafraichir)}

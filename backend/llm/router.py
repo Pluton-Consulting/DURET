@@ -519,6 +519,41 @@ def _modeles_ollama_cloud() -> list[str]:
     return noms
 
 
+# À QUOI SERT UN MODÈLE, DÉDUIT DE SON NOM (02/09, demande de Noa : « dis-moi
+# quels modèles j'ai accès pour l'embedding et l'OCR/vision avec ma clé, et
+# fais en sorte que je puisse les sélectionner dans l'interface »).
+#
+# LE CATALOGUE DU FOURNISSEUR NE LE DIT PAS. `GET /v1/models` rend des noms,
+# rien d'autre : ni la modalité, ni la dimension. Or proposer `bge-m3` pour la
+# vision ou `qwen2.5-vl` pour les embeddings ne produit pas une erreur claire,
+# ça produit du silence — un fournisseur qui répond mal, ou pas du tout.
+#
+# On déduit donc l'usage du NOM, et c'est une heuristique assumée : elle peut
+# se tromper sur un modèle exotique. Deux garde-fous à cela : le champ reste
+# LIBRE (on peut toujours écrire un identifiant que l'heuristique ignore), et
+# pour les embeddings la DIMENSION EST MESURÉE avant tout usage — un modèle mal
+# classé se trahit là, avant d'avoir touché au corpus.
+_MARQUES_EMBEDDING = ("embed", "bge-", "bge_", "gte-", "e5-", "minilm",
+                      "nomic", "mxbai", "arctic-embed", "granite-embedding")
+_MARQUES_VISION = ("-vl", "vl-", "vision", "llava", "moondream", "pixtral",
+                   "-v:", "minicpm-v", "granite3.2-vision", "internvl")
+
+
+def usage_du_modele(nom: str) -> str:
+    """« embedding », « vision » ou « texte » — d'après le nom du modèle.
+
+    L'ordre compte : `qwen3-embedding` porte les deux familles de marques si
+    l'on cherche « -v » avant « embed ». On teste donc l'embedding EN PREMIER,
+    parce que ses marques sont les plus spécifiques.
+    """
+    n = (nom or "").lower()
+    if any(m in n for m in _MARQUES_EMBEDDING):
+        return "embedding"
+    if any(m in n for m in _MARQUES_VISION):
+        return "vision"
+    return "texte"
+
+
 def catalogue_modeles() -> list[dict]:
     """Pour l'écran « Le modèle de l'assistant » : chaque fournisseur de texte,
     sa clé (présente ou non — jamais la valeur), ses modèles connus de la
@@ -548,7 +583,11 @@ def catalogue_modeles() -> list[dict]:
         sortie.append({
             "fournisseur": provider, "libelle": libelle,
             "cle_presente": _provider_available(provider),
-            "modeles": [{"id": m, "ecarte": m in ecartes, "raison": ecartes.get(m, "")}
+            "modeles": [{"id": m, "ecarte": m in ecartes,
+                          "raison": ecartes.get(m, ""),
+                          # L'écran s'en sert pour ne proposer, sur chaque
+                          # ligne, que les modèles qui savent faire le travail.
+                          "usage": usage_du_modele(m)}
                         for m in dict.fromkeys(x for x in modeles if x)],
         })
     return sortie

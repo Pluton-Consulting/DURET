@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import RevectorisationCarte from "./RevectorisationCarte"
 
 // Saisie des clés d'API des fournisseurs de modèles, réservée à
 // l'administration système. La valeur n'est JAMAIS renvoyée par le serveur :
@@ -172,18 +173,36 @@ interface FicheFournisseur {
   fournisseur: string
   libelle: string
   cle_presente: boolean
-  modeles: { id: string; ecarte: boolean; raison: string }[]
+  // « embedding » | « vision » | « texte », déduit du nom par le serveur.
+  // Proposer bge-m3 pour la vision ne produit pas une erreur claire, ça
+  // produit du silence : chaque ligne ne montre donc que ce qui sait faire
+  // son travail.
+  modeles: { id: string; ecarte: boolean; raison: string; usage?: string }[]
 }
 
-function LigneModele({ titre, aide, actuel, fiches, busy, onChoisir, onRetirer,
-                      avertissement }: {
+function LigneModele({ titre, aide, actuel, fiches: toutesFiches, busy, onChoisir,
+                      onRetirer, avertissement, usage }: {
   titre: string; aide: string; actuel: string; fiches: FicheFournisseur[]; busy: boolean
   onChoisir: (valeur: string) => void; onRetirer: () => void
+  // L'usage attendu sur CETTE ligne. Absent = tout est proposé (le texte, qui
+  // n'a pas de contrainte de modalité).
+  usage?: "embedding" | "vision"
   // Ce qu'un changement COÛTE, dit AVANT le clic. Les embeddings sont le seul
   // réglage de cette carte dont le changement impose un travail derrière : les
   // vecteurs déjà calculés ne se comparent pas à ceux d'un autre modèle.
   avertissement?: string
 }) {
+  // LE FILTRE EST UNE AIDE, PAS UNE BARRIÈRE. Un fournisseur dont AUCUN modèle
+  // ne correspond garde sa liste entière plutôt que de se vider : l'heuristique
+  // du serveur déduit l'usage d'un NOM, elle peut se tromper sur un modèle
+  // exotique, et un menu vide empêcherait de choisir ce qu'on sait bon. Le
+  // champ libre à côté reste de toute façon ouvert.
+  const fiches = usage
+    ? toutesFiches.map((f) => {
+        const gardes = f.modeles.filter((m) => m.usage === usage)
+        return gardes.length ? { ...f, modeles: gardes } : f
+      })
+    : toutesFiches
   const [fournisseur, setFournisseur] = useState("")
   const [modele, setModele] = useState("")
   const [autre, setAutre] = useState("")
@@ -371,15 +390,20 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
         actuel={puissant} fiches={fiches} busy={busy}
         onChoisir={(v) => ecrire("modele_puissant", v, `${v} prend désormais les grosses tâches. Effet immédiat.`)}
         onRetirer={() => ecrire("modele_puissant", "", "Modèle puissant retiré.")} />
-      <LigneModele titre="Vision et OCR" aide="lecture des plans, des photos et des pièces jointes scannées"
+      <LigneModele titre="Vision et OCR" usage="vision" aide="lecture des plans, des photos et des pièces jointes scannées"
         actuel={vision} fiches={fiches} busy={busy}
         onChoisir={(v) => ecrire("modele_vision", v, `${v} lit désormais les images. Effet immédiat.`)}
         onRetirer={() => ecrire("modele_vision", "", "Modèle de vision retiré : la cascade reprend.")} />
-      <LigneModele titre="Embeddings" aide="la recherche documentaire et la mémoire de conversation"
+      <LigneModele titre="Embeddings" usage="embedding" aide="la recherche documentaire et la mémoire de conversation"
         actuel={embedding} fiches={fiches} busy={busy}
         avertissement={`Changer de modèle impose de re-vectoriser tout le corpus : les vecteurs existants (${dimensions} dimensions) ne se comparent pas à ceux d'un autre modèle. Un modèle qui rend une autre dimension est refusé à l'écriture, sans rien casser.`}
         onChoisir={(v) => ecrire("modele_embedding", v, `${v} vectorise désormais. Re-vectorisation nécessaire.`)}
         onRetirer={() => ecrire("modele_embedding", "", "Modèle d'embedding retiré.")} />
+
+      {/* L'avertissement au-dessus annonçait la re-vectorisation sans
+          permettre de la faire : exact, et sans issue. Cette carte mesure
+          l'écart, montre l'avancement, et ouvre l'opération. */}
+      <RevectorisationCarte apiUrl={apiUrl} backendToken={backendToken} />
 
       {/* LA GÉNÉRATION D'IMAGES SE MONTRE, ELLE NE SE CHOISIT PAS — décision de
           Noa. On l'affiche pour qu'on sache ce qui tire les visuels : ne rien

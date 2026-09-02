@@ -265,6 +265,15 @@ class Settings(BaseSettings):
     gemini_embedding_model: str = "gemini-embedding-001"
     embedding_model: str = "text-embedding-3-small"   # si provider=openai
     ollama_embedding_model: str = "bge-m3"            # si provider=ollama (⚠ 1024 dims → migration schéma)
+    # Si provider=ollama_cloud. Modèle par DÉFAUT seulement : celui qu'on choisit
+    # à l'écran (réglage `modele_embedding`) prime, et sa dimension est MESURÉE
+    # avant d'écrire quoi que ce soit — voir `vectorstore/dimension.py`.
+    ollama_cloud_embedding_model: str = "embeddinggemma"
+    # LA DIMENSION QUE LA BASE ATTEND. Ce n'est pas un réglage de confort : la
+    # colonne est déclarée `vector(N)`, et un vecteur d'une autre taille est
+    # refusé à l'écriture. Changer de modèle d'embedding impose donc de
+    # re-vectoriser tout le corpus, parce que des vecteurs de modèles
+    # différents ne se comparent pas — même à dimension égale.
     embedding_dimensions: int = 1536
     # Worker de vectorisation : draine embedding_jobs en tâche de fond (dans le backend).
     embedding_worker_enabled: bool = True

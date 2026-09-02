@@ -158,6 +158,26 @@ async def retrieve(
 PROFONDEUR_MAX = 2000
 
 
+_DIMENSION_DITE: set = set()
+
+
+def _avertir_dimension(rendue: int, attendue: int) -> None:
+    """Dit UNE fois que le modèle et la base ne s'accordent pas.
+
+    Une ligne par requête noierait le journal ; aucune laisserait une recherche
+    silencieusement amputée de sa moitié fine. Le message nomme le geste qui
+    répare, parce que la cause n'est pas devinable depuis un résultat pauvre.
+    """
+    if (rendue, attendue) in _DIMENSION_DITE:
+        return
+    _DIMENSION_DITE.add((rendue, attendue))
+    logger.warning(
+        "Le modèle d'embedding rend %d dimensions, la base en attend %d : la "
+        "recherche vectorielle est écartée et seule la voie plein texte "
+        "répond. Re-vectorisez le corpus (Paramètres, Clés API) pour la "
+        "rétablir.", rendue, attendue)
+
+
 async def rechercher(
     query: str,
     user_role: str,
@@ -190,9 +210,39 @@ async def rechercher(
         profondeur = min(PROFONDEUR_MAX, max(60, limite * page * 4))
         types = list(source_types) if source_types else None
         voies: dict = {}
+        # LA VOIE VECTORIELLE A SON PROPRE FILET (02/09).
+        #
+        # Les deux voies partageaient ce `try` : quand la première levait, la
+        # SECONDE n'était jamais appelée et la recherche rendait VIDE. Or elle
+        # lève précisément dans le cas qu'on prétendait couvrir — un modèle
+        # d'embedding dont la dimension ne correspond plus à la colonne fait
+        # échouer le cast `::vector`. L'écran promettait « refusé à l'écriture,
+        # sans rien casser » : l'écriture était bien protégée, la LECTURE ne
+        # l'était pas, et changer de modèle vidait toute la recherche.
+        #
+        # On écarte donc l'embedding AVANT de l'envoyer quand sa taille ne
+        # correspond pas : inutile de payer un aller-retour SQL voué à l'échec.
         if embedding:
-            voies["vecteur"] = await vectorstore.search(
-                embedding, user_role, types, top_k=profondeur, fichier=fichier)
+            # La mesure préalable est une ÉCONOMIE, pas la garantie : elle évite
+            # un aller-retour SQL voué à l'échec. La garantie, c'est le `try`
+            # ci-dessous. L'import reste donc tolérant — il tire la couche base
+            # de données, et une recherche ne doit pas dépendre de sa présence
+            # pour rendre son résultat lexical.
+            attendue = 0
+            try:
+                from vectorstore.revectorisation import dimension_attendue
+                attendue = await dimension_attendue()
+            except Exception:  # noqa: BLE001 — sans mesure, le filet suffit
+                attendue = 0
+            if attendue and len(embedding) != attendue:
+                _avertir_dimension(len(embedding), attendue)
+            else:
+                try:
+                    voies["vecteur"] = await vectorstore.search(
+                        embedding, user_role, types, top_k=profondeur, fichier=fichier)
+                except Exception as e:  # noqa: BLE001 — la voie lexicale doit survivre
+                    logger.warning("Voie vectorielle écartée (%s) : la recherche "
+                                   "continue en plein texte", type(e).__name__)
         voies["texte"] = await vectorstore.search_lexical(
             query, user_role, types, top_k=profondeur, fichier=fichier)
         total_morceaux, total_documents = await vectorstore.count_lexical(

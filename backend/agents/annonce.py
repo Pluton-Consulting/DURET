@@ -588,3 +588,74 @@ def demande_des_reponses_mail(texte: str) -> bool:
     if not isinstance(texte, str) or not texte.strip():
         return False
     return bool(_DEMANDE_REPONSES_MAIL.search(_sans_accent(texte)))
+
+
+# ── Une seule salve de questions, jamais deux ────────────────────────────
+#
+# RÈGLE DE NOA (02/09), verbatim : « il faut qu'il soit tout le temps très
+# proactif, qu'il trouve des solutions de lui-même et qu'il ne fasse pas
+# beaucoup de demandes avant d'agir : au maximum UN message avec une ou des
+# questions complémentaires avant d'agir, mais s'il peut y en avoir zéro ou
+# trouver la réponse tout seul, qu'il le fasse. »
+#
+# CE QUI EXISTAIT DÉJÀ, ET CE QUI MANQUAIT. La règle « ESSAIE D'ABORD » (31/08)
+# et le prédicat `propose_au_lieu_d_agir` couvrent le cas où l'assistant OFFRE
+# de faire au lieu de faire. Ils ne couvrent PAS la question de clarification,
+# qui est légitime — une fois. Rien ne bornait leur nombre : deux, trois tours
+# de questions d'affilée passaient tous les filets, chacun étant défendable
+# isolément. C'est la RÉPÉTITION qui est le défaut, et elle ne se voit qu'en
+# regardant le tour précédent.
+#
+# Le prédicat ci-dessous ne juge donc pas une réponse seule : il demande si
+# l'assistant vient DÉJÀ de poser des questions au tour d'avant. Une deuxième
+# salve sans le moindre geste entre les deux part au forceur.
+
+# Une vraie demande de précision se termine par un point d'interrogation et
+# s'adresse à la personne. On ne compte pas les questions rhétoriques d'une
+# analyse (« quelle surface ? 32 m² ») : elles portent leur réponse.
+_QUESTION_A_LA_PERSONNE = re.compile(
+    r"(?:^|[.!?\n])\s*(?:[^.!?\n]{0,160}?)"
+    r"\b(?:quel|quelle|quels|quelles|qui|quand|combien|comment|ou|pouvez-vous|"
+    r"pourriez-vous|souhaitez-vous|voulez-vous|preferez-vous|confirmez-vous)\b"
+    r"[^.!?\n]{0,200}\?",
+    re.IGNORECASE)
+
+# UNE DEMANDE N'A PAS BESOIN D'UN POINT D'INTERROGATION POUR EN ÊTRE UNE.
+# « J'ai besoin de savoir sur quelle période porter la recherche. » réclame
+# exactement autant qu'une question, et c'est même la tournure la plus
+# fréquente quand le modèle veut paraître affirmatif. Ces formules valent donc
+# demande à elles seules, sans « ? ».
+_DEMANDE_SANS_POINT = re.compile(
+    r"\b(?:j'ai besoin de (?:savoir|connaitre)|il me faut (?:savoir|connaitre)|"
+    r"merci de (?:me )?(?:preciser|indiquer|confirmer|communiquer)|"
+    r"(?:pouvez|pourriez)-vous (?:me )?(?:preciser|indiquer|confirmer|communiquer)|"
+    r"precisez[- ]moi|indiquez[- ]moi|dites[- ]moi (?:quel|quelle|combien|ou)|"
+    r"j'aurais besoin de)\b",
+    re.IGNORECASE)
+
+
+def pose_des_questions(texte: str) -> bool:
+    """La réponse demande-t-elle une précision à la personne ?
+
+    Vrai pour « Quelle est l'adresse du destinataire ? », faux pour une réponse
+    qui contient un point d'interrogation sans rien demander (« et pourquoi
+    cette différence ? parce que … »). On exige donc un mot interrogatif ou une
+    formule d'adresse, ET un point d'interrogation dans la même phrase.
+    """
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    nu = _sans_accent(texte)
+    return bool(_QUESTION_A_LA_PERSONNE.search(nu)
+                or _DEMANDE_SANS_POINT.search(nu))
+
+
+def deuxieme_salve_de_questions(texte: str, precedent: str) -> bool:
+    """Vrai quand l'assistant repose des questions alors qu'il vient d'en poser.
+
+    `precedent` est la DERNIÈRE réponse de l'assistant dans ce fil. Deux salves
+    d'affilée signifient qu'un tour entier a été dépensé sans qu'aucun travail
+    n'avance : c'est ce que la règle de Noa interdit. La première reste permise,
+    et le prédicat ne dit rien d'un tour où un geste a tourné — c'est à
+    l'appelant de le vérifier, comme pour `propose_au_lieu_d_agir`.
+    """
+    return pose_des_questions(texte) and pose_des_questions(precedent)

@@ -148,5 +148,71 @@ verifier("un tiret simple sert de puce, jamais un cadratin (même piège)",
          "—" not in texte and "–" not in texte)
 verifier("il demande de joindre le plan", texte.count("Je joins un plan") == 1)
 
+# ── 3. MESURER SUR UNE PHOTO ─────────────────────────────────────────────
+# UN PLAN EST À L'ÉCHELLE PARTOUT, UNE PHOTO NE L'EST NULLE PART. Sans les
+# règles ci-dessous, le modèle rend des mètres carrés avec l'aplomb qu'il
+# aurait sur un plan coté : le chiffrage part alors sur des quantités fausses
+# que rien ne signale. C'est le pire cas, pire qu'un refus de mesurer.
+verifier("le préprompt traite la mesure SUR PHOTO à part",
+         "SUR UNE PHOTO, l'échelle se construit autrement" in prompt)
+verifier("l'étalon doit être NOMMÉ, pas seulement utilisé",
+         "NOMME-le" in prompt)
+verifier("RÉFLEXE 1 — compter un motif répété plutôt qu'estimer une longueur",
+         "COMPTE PLUTÔT QUE D'ESTIMER" in prompt)
+verifier("et l'exemple montre le calcul, pas seulement la consigne",
+         "font 9 m" in prompt or "font 1,95 m" in prompt)
+verifier("RÉFLEXE 2 — les trois limites se DISENT, elles ne se taisent pas",
+         "à DIRE, jamais à taire" in prompt)
+for limite, marque in (
+        ("ce qui fuit vers le fond est sous-estimé", "FUIT vers le fond"),
+        ("l'étalon ne vaut qu'à sa propre distance", "à la MÊME distance que lui"),
+        ("le biais et le grand angle déforment", "grand angle")):
+    verifier(f"    · {limite}", marque in prompt)
+verifier("sur photo, la fourchette s'élargit et on dit pourquoi",
+         "élargis la fourchette et dis pourquoi" in prompt)
+
+verifier("le recalage photo/plan est demandé AVANT toute comparaison",
+         avant("dis D'ABORD d'où la photo est prise", "répartis", prompt))
+verifier("chacun son rôle : le plan dit les DIMENSIONS",
+         "pour les DIMENSIONS, le plan fait foi" in prompt)
+verifier("la photo dit l'ÉTAT", "pour l'ÉTAT réel" in prompt)
+verifier("ce que l'un montre et que l'autre ignore est signalé (c'est ce "
+         "qui coûte)",
+         "est justement ce " in prompt and "qui coûte : signale-le" in prompt)
+verifier("une contradiction entre photo et plan se dit EN CLAIR",
+         "CONTRADICTION" in prompt and "se dit en clair" in prompt)
+
+verifier("le raccourci « Mesurer d'après une photo » existe",
+         "libelle: \"Mesurer d'après une photo\"" in raccourcis)
+d2 = raccourcis.find("libelle: \"Mesurer d'après une photo\"")
+photo = raccourcis[d2:].split("` }")[0] if d2 >= 0 else ""
+n2 = re.findall(r"\n(\d)\. [A-ZÉÈ]", photo)
+verifier("il impose six étapes séparées, numérotées sans trou",
+         "six étapes SÉPARÉES" in photo and n2 == ["1", "2", "3", "4", "5", "6"],
+         str(n2))
+verifier("étape 1 : recaler la photo sur le plan quand il y en a un",
+         "QUELLE zone du plan elle montre" in photo)
+verifier("étape 2 : l'étalon est nommé AVEC la valeur qu'on lui prête",
+         "avec la valeur que tu lui prêtes" in photo)
+# LE CONTRÔLE LE PLUS IMPORTANT DE CETTE SECTION. Sans étalon, une mesure
+# photographique n'existe pas. Un modèle qui « estime quand même » produit le
+# chiffre le plus dangereux du dossier : faux, et présenté comme les autres.
+verifier("SANS ÉTALON, on le dit plutôt que de produire un chiffre",
+         "sans étalon, aucune mesure n'est possible" in photo
+         and "mieux le dire que produire un chiffre" in photo)
+verifier("étape 3 : compter d'abord, l'étalon ensuite",
+         "COMPTE les unités et multiplie" in photo)
+verifier("étape 4 : chaque mesure dit ce qui la fragilise",
+         "dis ce qui la rend fragile" in photo)
+verifier("étape 5 : la règle de partage plan/photo est rappelée",
+         "le plan fait foi" in photo and "c'est la photo" in photo)
+verifier("étape 6 : la méthode de chaque mesure est portée au tableau",
+         "comptage, étalon, ordre de grandeur" in photo)
+verifier("et ce que la photo NE permet pas se renvoie au terrain",
+         "parce que la photo ne le permet pas" in photo)
+verifier("aucun prix ici non plus", "Ne donne aucun prix" in photo)
+verifier("aucun tiret cadratin dans ce raccourci",
+         "—" not in photo and "–" not in photo)
+
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

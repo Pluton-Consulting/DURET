@@ -62,4 +62,47 @@ Ce qui coûte sans apparaître dans une surface : siphons, trappes, regards, ré
 
 6. SYNTHÈSE.
 Un tableau des quantités par poste : quantité, unité, fiabilité de la mesure. Puis dis-moi ce qui manque pour chiffrer vraiment, ce qu'il faut vérifier sur site, et si ce métré est exploitable tel quel ou s'il demande une reprise. Ne donne aucun prix.` },
+  // MESURER SUR UNE PHOTO (02/09, demande de Noa) : « il doit être capable
+  // d'analyser une image et faire des liens avec un plan 2D, ou trouver des
+  // éléments sur l'image qui lui permettent d'établir une échelle pour
+  // mesurer ».
+  //
+  // UN PLAN EST À L'ÉCHELLE PARTOUT, UNE PHOTO NE L'EST NULLE PART. C'est
+  // toute la difficulté, et c'est pourquoi ce raccourci est séparé de
+  // « Chiffrer un plan » plutôt que fondu dedans : la méthode n'est pas la
+  // même. Deux réflexes portent la fiabilité, et ils sont contre-intuitifs :
+  //
+  //  · COMPTER PLUTÔT QUE MESURER. Dès qu'un motif se répète (carreaux,
+  //    lames, marches, parpaings), compter les unités et multiplier par la
+  //    dimension unitaire bat très largement une longueur jugée à l'œil.
+  //  · DIRE CE QUI FRAGILISE LA MESURE. Ce qui fuit vers le fond est
+  //    sous-estimé, l'étalon ne vaut qu'à sa propre distance, un grand angle
+  //    déforme les bords. Une mesure photographique qui tait ses limites se
+  //    fait prendre pour une cote.
+  //
+  // Et quand un plan accompagne la photo, chacun son rôle : le plan dit les
+  // dimensions, la photo dit l'état. Ce que l'un montre et que l'autre ignore
+  // est justement ce qui coûte.
+  { libelle: "Mesurer d'après une photo",
+    prompt: `Je joins une ou plusieurs photos (et le plan, si j'en ai un). Sers-t'en pour mesurer et préparer le chiffrage.
+
+Procède en six étapes SÉPARÉES, dans cet ordre.
+
+1. CE QUE MONTRE LA PHOTO.
+Décris la scène : local ou zone, nature du sol en place, état, ce qui est visiblement à déposer. Si un plan est joint, dis D'OÙ la photo est prise et QUELLE zone du plan elle montre, en t'appuyant sur des repères communs (ouvertures, poteaux, angles, changements de revêtement).
+
+2. L'ÉTALON.
+Cherche dans l'image un objet de dimension connue et nomme-le, avec la valeur que tu lui prêtes : porte (0,83 ou 0,93 m de passage, 2,04 m de haut), marche (giron 25 à 30 cm), carreau, plinthe (7 à 10 cm), prise (8,5 cm), interrupteur (1,10 m du sol), parpaing (20 x 20 x 50), palette (80 x 120), personne (1,70 m). Si rien de connu n'est visible, dis-le : sans étalon, aucune mesure n'est possible sur photo, et il vaut mieux le dire que produire un chiffre.
+
+3. LES MESURES, EN COMPTANT D'ABORD.
+Dès qu'un motif se répète, COMPTE les unités et multiplie : quinze carreaux de 60 cm font 9 m, c'est bien plus sûr qu'une longueur estimée. Vaut pour les carreaux, les lames, les marches, les parpaings, les dalles de plafond, les poteaux. Ce qui ne se compte pas se mesure par comparaison avec l'étalon de l'étape 2, en rappelant lequel.
+
+4. CE QUI FRAGILISE CHAQUE MESURE.
+Pour chaque quantité, dis ce qui la rend fragile : longueur qui fuit vers le fond (sous-estimée, ordre de grandeur seulement), élément plus loin ou plus près que l'étalon, photo prise en biais, bords déformés par un grand angle, zone masquée. Donne des fourchettes, plus larges que sur un plan.
+
+5. PHOTO ET PLAN, CHACUN SON RÔLE (si un plan est joint).
+Pour les DIMENSIONS, le plan fait foi. Pour l'ÉTAT réel, c'est la photo : dégradations, supports, existant à déposer, réseaux apparents, obstacles, accès. Dis ce que la photo apprend et que le plan ne dit pas, c'est ce qui coûte. Signale en clair toute CONTRADICTION (cloison ajoutée, revêtement différent de celui prévu).
+
+6. SYNTHÈSE.
+Un tableau : poste, quantité, unité, méthode (comptage, étalon, ordre de grandeur), fiabilité. Puis ce qu'il faut aller mesurer sur site parce que la photo ne le permet pas, et si ce relevé est exploitable tel quel. Ne donne aucun prix.` },
 ]

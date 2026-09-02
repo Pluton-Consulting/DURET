@@ -56,6 +56,26 @@ VISION_PROMPT = (
     "second). Sans aucune cote, appuie-toi sur des références de taille connues et "
     "dis laquelle : porte 0,90 m, baie vitrée 2,20 à 2,40 m, hauteur d'étage "
     "2,70 m, place de voiture 2,50 × 5 m, carreau standard 60 × 60 cm.\n"
+    # MESURER SUR UNE PHOTO N'EST PAS MESURER SUR UN PLAN (02/09, demande de
+    # Noa). Un plan est à l'échelle partout ; une photo ne l'est nulle part.
+    # Sans ces règles, le modèle rend des mètres carrés avec l'aplomb qu'il
+    # aurait sur un plan coté, et un chiffrage part sur des quantités fausses
+    # que rien ne signale. Les deux apports qui changent tout : COMPTER un
+    # motif répété au lieu d'estimer une longueur, et DIRE les trois limites
+    # qui rendent une mesure photographique fragile.
+    "SUR UNE PHOTO, l'échelle se construit autrement. Cherche dans la scène un "
+    "objet de dimension connue et NOMME-le : porte (0,83 ou 0,93 m de passage, "
+    "2,04 m de haut), marche (giron 25 à 30 cm, hauteur 17 à 18 cm), carreau, "
+    "plinthe (7 à 10 cm), prise (8,5 cm), interrupteur (1,10 m du sol), "
+    "parpaing (20 × 20 × 50), palette (80 × 120), porte de garage (2,40 m), "
+    "personne (1,70 m). COMPTE PLUTÔT QUE D'ESTIMER dès qu'un motif se répète : "
+    "quinze carreaux de 60 cm font 9 m, et c'est bien plus sûr qu'une longueur "
+    "jugée à l'œil ; vaut pour les carreaux, les lames, les marches, les "
+    "parpaings, les poteaux, les dalles de plafond. Trois limites à DIRE, "
+    "jamais à taire : une longueur qui FUIT vers le fond est sous-estimée et ne "
+    "vaut qu'en ordre de grandeur ; l'étalon ne vaut que pour ce qui se trouve "
+    "à la MÊME distance que lui ; une photo prise en biais, ou au grand angle, "
+    "déforme les bords. Sur photo, élargis la fourchette et dis pourquoi.\n"
     "4. QUANTITATIFS ESTIMÉS : pour chaque poste chiffrable, donne surface (m²), "
     "linéaire (ml) ou nombre, en FOURCHETTE (« séjour : 32 à 36 m² »), avec la "
     "base de l'estimation. Trois régimes, jamais confondus : une mesure LUE se "
@@ -67,6 +87,21 @@ VISION_PROMPT = (
     "et correspondances avec le CCTP quand il est fourni. Si PLUSIEURS images ou "
     "pages sont fournies (plan + coupe + photo), CROISE-les : dis ce que chacune "
     "apporte et signale toute contradiction entre elles. "
+    # RECALER LA PHOTO SUR LE PLAN (02/09). « Croise-les » ne suffisait pas :
+    # le modèle décrivait les deux documents l'un après l'autre sans jamais
+    # dire QUELLE PARTIE du plan la photo montrait, ni lequel des deux croire.
+    # La règle de partage vient du métier : un plan dit les dimensions, une
+    # photo dit l'état. Confondre les deux fait chiffrer un local sur un plan
+    # périmé, ou mesurer une surface à l'œil quand la cote existe.
+    "PHOTO ET PLAN ENSEMBLE : dis D'ABORD d'où la photo est prise et quelle "
+    "zone du plan elle montre, en t'appuyant sur des repères communs "
+    "(ouvertures, poteaux, angles, changements de revêtement). Puis répartis "
+    "les rôles : pour les DIMENSIONS, le plan fait foi ; pour l'ÉTAT réel "
+    "(dégradations, existant à déposer, réseaux apparents, obstacles, accès), "
+    "c'est la photo. Ce que l'une montre et que l'autre ignore est justement ce "
+    "qui coûte : signale-le. Et toute CONTRADICTION (cloison ajoutée, "
+    "revêtement différent de celui prévu) se dit en clair : c'est souvent "
+    "l'information la plus chère du dossier. "
     # UN MÉTRÉ QUI NE DIT PAS SES TROUS SE FAIT PRENDRE POUR UN MÉTRÉ FINI.
     # Deuxième leçon du workflow multi-passes : sa dernière étape ne fusionne
     # pas seulement, elle JUGE son propre résultat. Sans ce verdict, une

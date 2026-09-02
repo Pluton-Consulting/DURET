@@ -20,6 +20,10 @@ interface Message {
   // doublee. Une reponse detachee de sa question ne se lit pas.
   tacheId?: string
   placeholder?: boolean
+  // Rang d'arrivee croissant : dit laquelle des reponses est la plus RECENTE,
+  // ce qui n'est plus la derniere de la liste des qu'une tache de fond repond
+  // dans sa bulle. Lu par MessageList (`estLaPlusRecente`).
+  arrivee?: number
   // D'OU vient la reponse, et ce qu'elle a coute. Attache AU MESSAGE et non au
   // tour : la provenance doit rester lisible trois questions plus tard, sinon
   // elle ne sert qu'a l'instant ou personne ne la lit.
@@ -236,7 +240,9 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     // qui respire dit « je suis toujours là-dessus » sans un mot de plus.
     setMessages((prev) => [...prev, {
       id: newId(), role: "assistant", content,
-      ...(vivant ? { placeholder: true } : {}),
+      // Une bulle d'attente n'est pas une arrivee : elle ne porte pas encore
+      // de reponse, et ne doit donc pas voler le rang a celle qui en porte une.
+      ...(vivant ? { placeholder: true } : { arrivee: prochaineArrivee() }),
       // Une bulle d'ATTENTE n'a pas de provenance : le tour n'est pas fini.
       ...(vivant ? {} : { provenance: instantane() }),
     }])
@@ -244,33 +250,64 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const majCarteLocale = (id: string, patch: Partial<TacheFond>) =>
     setTachesLocales((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
 
+  // TOUTES les taches dont une bulle d'attente vit dans le fil.
+  //
+  // POURQUOI CE REGISTRE (02/09). Le sondage ne regardait que `tacheActiveRef`,
+  // une place UNIQUE que `basculerActifVersCarte` remet a null juste apres
+  // avoir pose la bulle. Une tache ainsi detachee n'avait donc plus personne
+  // pour poser sa reponse : elle finissait en carte, et sa bulle « reponse en
+  // cours » battait indefiniment dans la conversation. Lancer trois demandes
+  // d'affilee n'en ramenait qu'une — c'est le « il en masque une » releve par
+  // Noa. Une bulle posee est une promesse d'affichage : ce qui la tient est
+  // l'appartenance a ce registre, pas le fait d'etre la derniere demande.
+  const tachesSuiviesRef = useRef<Set<string>>(new Set())
+
+  // Rang d'arrivee des reponses, monotone croissant. Un compteur et non
+  // l'horloge : deux reponses posees dans le meme milliseconde doivent quand
+  // meme s'ordonner.
+  const arriveeRef = useRef(0)
+  const prochaineArrivee = () => ++arriveeRef.current
+
   // L'echange part en arriere-plan : sa question passe en creux, et une bulle
   // d'attente tient la place de la reponse a venir.
-  const marquerEnAttente = (idMessage: string | null, tacheId: string) =>
-    setMessages((prev) => {
+  const marquerEnAttente = (idMessage: string | null, tacheId: string) => {
+    tachesSuiviesRef.current.add(tacheId)
+    return setMessages((prev) => {
       const suite = prev.map((m) =>
         m.id === idMessage ? { ...m, tacheId } : m)
       return [...suite, { id: newId(), role: "assistant" as const,
                           content: "réponse en cours", tacheId, placeholder: true }]
     })
+  }
+
+  /** Remplit la bulle d'une tache SANS la refermer : elle attend encore. */
+  const majBulle = (tacheId: string, contenu: string) =>
+    setMessages((prev) => prev.map((m) =>
+      (m.tacheId === tacheId && m.placeholder) ? { ...m, content: contenu } : m))
 
   // La reponse arrive : elle REMPLACE la bulle d'attente, et la question
   // reprend son aspect normal. Si le placeholder a disparu (fil recharge),
   // on ajoute a la suite plutot que de perdre la reponse.
-  const poserReponse = (tacheId: string, contenu: string) =>
-    setMessages((prev) => {
+  const poserReponse = (tacheId: string, contenu: string) => {
+    // La promesse est tenue : la tache sort du registre des bulles a remplir.
+    tachesSuiviesRef.current.delete(tacheId)
+    const rang = prochaineArrivee()
+    return setMessages((prev) => {
       let pose = false
       const suite = prev.map((m) => {
         if (m.tacheId !== tacheId) return m
         if (m.placeholder && !pose) {
           pose = true
-          return { ...m, content: contenu, tacheId: undefined, placeholder: false }
+          return { ...m, content: contenu, tacheId: undefined,
+                   placeholder: false, arrivee: rang }
         }
         return { ...m, tacheId: undefined }
       })
       return pose ? suite
-                  : [...suite, { id: newId(), role: "assistant" as const, content: contenu }]
+                  : [...suite, { id: newId(), role: "assistant" as const,
+                                 content: contenu, arrivee: rang }]
     })
+  }
 
   // ── Sondage : l'etat de la file et des accords, en une requete ───────
   // Non reentrant : un tick lent (le chargement du resultat d'une tache active
@@ -320,54 +357,62 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
 
       // La tache active pilote la banniere du chat : sa progression est LE
       // texte vivant, exactement comme pour une tache principale.
+      const toutes = res.taches || []
       const active = tacheActiveRef.current
-        ? (res.taches || []).find((t) => t.id === tacheActiveRef.current)
+        ? toutes.find((t) => t.id === tacheActiveRef.current)
         : null
-      if (active) {
-        if (active.status === "en_cours") {
-          if (active.progress) setActivite(active.progress)
-          if (active.node) {
-            setThinkingNode(active.node)
-            setThinkingSteps((prev) =>
-              prev[prev.length - 1] === active.node ? prev : [...prev, active.node])
-          }
-        } else if (active.status === "terminee") {
-          // Le resultat complet s'affiche dans le chat, comme si le tour s'y
-          // etait deroule ; la carte est refermee (deja lue). La REF est videe
-          // tout de suite : l'etat React ne se propage qu'au prochain rendu,
-          // et un tick parti entre-temps rejouerait cette branche.
+      if (active && active.status === "en_cours") {
+        if (active.progress) setActivite(active.progress)
+        if (active.node) {
+          setThinkingNode(active.node)
+          setThinkingSteps((prev) =>
+            prev[prev.length - 1] === active.node ? prev : [...prev, active.node])
+        }
+      }
+
+      // LES FINS DE TACHE — pour TOUTES celles qui ont une bulle dans le fil,
+      // et plus seulement pour l'active (02/09, cf. `tachesSuiviesRef`). La
+      // banniere, elle, reste au singulier : il n'y en a qu'une a l'ecran.
+      for (const t of toutes) {
+        const suivie = tachesSuiviesRef.current.has(t.id)
+        const etaitActive = t.id === tacheActiveRef.current
+        if (!suivie && !etaitActive) continue
+        if (t.status === "en_cours") continue
+        if (etaitActive) {
+          // La REF est videe tout de suite : l'etat React ne se propage qu'au
+          // prochain rendu, et un tick parti entre-temps rejouerait la branche.
           tacheActiveRef.current = null
           setTacheActive(null)
           setLoading(false)
           setThinkingNode(null)
+        }
+        if (t.status === "terminee") {
+          // Le resultat complet s'affiche dans le chat, comme si le tour s'y
+          // etait deroule ; la carte est refermee (deja lue).
+          tachesSuiviesRef.current.delete(t.id)
           try {
             const d = await apiRequest<{ response: string | null }>(
-              `/api/file/taches/${active.id}`, { token })
+              `/api/file/taches/${t.id}`, { token })
             // Demonte entre-temps (changement d'onglet) : on n'affiche rien, donc
             // on ne marque RIEN comme vu. Sans ce garde, la reponse disparaissait
             // de la colonne sans jamais avoir ete lue — l'echange d'une tache
             // differee vit sur son propre fil, il n'est pas dans l'historique.
             if (!monteRef.current) return
-            poserReponse(active.id, d.response || "La tâche s'est terminée sans réponse.")
-            await apiRequest(`/api/file/taches/${active.id}/vu`, { method: "POST", token })
+            poserReponse(t.id, d.response || "La tâche s'est terminée sans réponse.")
+            await apiRequest(`/api/file/taches/${t.id}/vu`, { method: "POST", token })
           } catch {
             if (monteRef.current) pushAssistant("La tâche est terminée. Sa carte reste dans la colonne de droite.")
           }
-        } else if (active.status === "echec" || active.status === "interrompue") {
-          setTacheActive(null)
-          setLoading(false)
-          setThinkingNode(null)
-          poserReponse(active.id,
-                       `La tâche n'a pas abouti${active.error ? ` : ${active.error}` : "."}`)
+        } else if (t.status === "echec" || t.status === "interrompue") {
+          tachesSuiviesRef.current.delete(t.id)
+          poserReponse(t.id,
+                       `La tâche n'a pas abouti${t.error ? ` : ${t.error}` : "."}`)
           if (monteRef.current) {
-            try { await apiRequest(`/api/file/taches/${active.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
+            try { await apiRequest(`/api/file/taches/${t.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
           }
-        } else if (active.status === "attente_validation") {
+        } else if (t.status === "attente_validation") {
           // Suspendue, pas finie : la decision se prend dans la colonne de
           // droite, aujourd'hui ou dans trois jours. Le chat redevient libre.
-          setTacheActive(null)
-          setLoading(false)
-          setThinkingNode(null)
           // CE QU'ON APPROUVE DOIT SE VOIR.
           //
           // Le backend construit, AVANT de demander l'accord, un aperçu de ce
@@ -380,12 +425,17 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           // L'aperçu remplace la phrase générique quand il existe ; il porte
           // déjà l'invitation à trancher. La bulle reste « vivante » : le tour
           // n'est pas fini, il attend une décision.
-          const apercu = (active.response || "").trim()
-          pushAssistant(
-            apercu
-              ? `${apercu}\n\n⏳ Votre accord est nécessaire : approuvez-la pour continuer.`
-              : "⏳ Une action attend votre accord : approuvez-la pour continuer.",
-            true)
+          const apercu = (t.response || "").trim()
+          const texte = apercu
+            ? `${apercu}\n\n⏳ Votre accord est nécessaire : approuvez-la pour continuer.`
+            : "⏳ Une action attend votre accord : approuvez-la pour continuer."
+          // LA BULLE RESTE ATTACHEE A SA TACHE. Elle etait posee par
+          // `pushAssistant`, donc SANS `tacheId` : apres l'accord, la reprise
+          // ne la retrouvait pas et sa reponse atterrissait tout en bas, la
+          // bulle d'origine battant pour toujours au-dessus. Une tache deja
+          // suivie remplit la sienne ; l'active, qui n'en a pas, en ouvre une.
+          if (!suivie) marquerEnAttente(idDerniereQuestionRef.current, t.id)
+          majBulle(t.id, texte)
         }
       }
     } catch { /* un sondage rate n'affiche rien : le suivant corrigera */ }
@@ -724,6 +774,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // La tache en cours glisse en carte dans la colonne de droite ; sa connexion
   // et son execution ne bougent pas. Seul l'AFFICHAGE change de place.
   const basculerActifVersCarte = () => {
+    // LA PROVENANCE PART AVEC SON TOUR (02/09). Elle s'accumule dans une ref
+    // unique, videe par le seul `instantane()` — c'est-a-dire au moment ou une
+    // reponse se pose dans le chat. Un tour qui glisse en carte n'en pose pas :
+    // les documents et les jetons qu'il avait deja rassembles restaient donc
+    // dans la ref, et s'affichaient sous la reponse SUIVANTE, sans rapport.
+    // Six sources sous un « bonjour ». Le tour s'en va, son compte aussi.
+    instantane()
     if (tacheActiveRef.current) {
       // Tache differee : elle apparait deja dans la liste sondee — la
       // « detacher » du chat suffit, sa carte prend le relais au prochain tick.

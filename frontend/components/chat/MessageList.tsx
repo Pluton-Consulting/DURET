@@ -53,6 +53,10 @@ interface Message_ {
   // Sans elle, la reponse d'une tache de fond apparaitrait bien plus bas,
   // apres les echanges qui l'ont doublee, detachee de sa question.
   placeholder?: boolean
+  // RANG D'ARRIVEE de la reponse, croissant. Sert a savoir laquelle est la
+  // plus RECENTE — ce qui n'est pas la meme chose que la derniere de la liste
+  // des qu'une tache de fond repond dans sa bulle, au milieu du fil.
+  arrivee?: number
   // D'OU vient la reponse, et ce qu'elle a coute. Attache au MESSAGE et non au
   // tour : la provenance doit rester lisible trois questions plus tard.
   provenance?: {
@@ -88,6 +92,23 @@ interface Message_ {
  */
 export default function MessageList({ messages, onAction, apiUrl, backendToken }:
   { messages: Message_[]; onAction?: (v: string) => void; apiUrl?: string; backendToken?: string }) {
+  // LAQUELLE EST « LA DERNIERE » ? — corrige le 02/09.
+  //
+  // Deux choses en dependent : la rangee de suggestions (une seule a l'ecran,
+  // sous la reponse la plus recente) et l'ouverture par defaut de l'apercu
+  // d'un fichier produit. C'etait `rang === messages.length - 1`, un critere
+  // de POSITION. Or la reponse d'une tache de fond remplace sa bulle d'attente
+  // AU MILIEU du fil : elle n'etait donc jamais « la derniere », et arrivait
+  // sans ses pastilles de suite, son Excel replie. La meme reponse, revenue en
+  // direct, s'affichait entiere — c'est le « elle peut s'afficher qu'a moitie »
+  // releve par Noa. Le critere devient donc chronologique.
+  //
+  // Repli sur la position quand aucun message ne porte de rang d'arrivee :
+  // c'est le cas d'un historique qu'on vient de recharger.
+  const dernierRang = messages.reduce((m, x) => Math.max(m, x.arrivee || 0), 0)
+  const estLaPlusRecente = (msg: Message_, rang: number) =>
+    dernierRang > 0 ? msg.arrivee === dernierRang : rang === messages.length - 1
+
   return (
     <Conversation initial="instant" resize="instant" data-testid="liste-messages">
       <CollerEnBas nombre={messages.length} />
@@ -183,7 +204,7 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
               <MessageContent data-testid="message-assistant" className="w-full max-w-full">
                 <MessageRenderer content={msg.content} onAction={onAction}
                                  apiUrl={apiUrl} backendToken={backendToken}
-                                 dernier={rang === messages.length - 1} />
+                                 dernier={estLaPlusRecente(msg, rang)} />
                 {/* D'ou vient cette reponse, sous elle et non ailleurs : une
                     provenance rangee dans un panneau lateral n'est jamais lue. */}
                 {msg.provenance && (

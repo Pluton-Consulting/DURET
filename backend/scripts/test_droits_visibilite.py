@@ -74,10 +74,25 @@ verifier("l'accès sur demande vaut pour super_admin ET direction",
 verifier("un rôle métier reste soumis aux délégations",
          not az["acces_total"]("commercial") and not az["acces_total"]("terrain"))
 src_az = (BACKEND / "mail" / "authorization.py").read_text(encoding="utf-8")
-verifier("le DÉFAUT (recherche, rien de nommé) est SA boîte, même pour l'administrateur",
-         "LE DÉFAUT EST SA BOÎTE, POUR TOUT LE MONDE" in src_az
+# 03/09 (Noa) : « supprime la limitation au mail de l'utilisateur en cours pour
+# le super admin : il doit pouvoir accéder à tous les mails, et par défaut à
+# celui d'un direction ». La règle du 01/09 reste pour la DIRECTION et les métiers.
+verifier("le DÉFAUT de la direction et des métiers reste SA boîte + délégations",
+         "LE DÉFAUT EST SA BOÎTE POUR LA DIRECTION ET LES MÉTIERS" in src_az
          and not re.search(r'if ligne and acces_total\(ligne\["role"\]\):\s*\n\s*return \[TOUTES_LES_BOITES\]',
                            src_az))
+verifier("LE SUPER_ADMIN VOIT TOUS LES MAILS (mémoire : jeton « toutes les boîtes »)",
+         re.search(r'== "super_admin":\s*\n\s*return \[TOUTES_LES_BOITES\]', src_az) is not None)
+verifier("le super_admin lit PAR DÉFAUT la boîte d'un dirigeant (le premier compte direction actif)",
+         "async def boite_par_defaut" in src_az
+         and "WHERE role = 'direction' AND actif = true" in src_az
+         and "ORDER BY created_at ASC LIMIT 1" in src_az)
+verifier("sans dirigeant en base, il retombe sur sa propre adresse (jamais sur rien)",
+         "return dirigeant or propre or None" in src_az)
+src_sk = (BACKEND / "mail" / "skills.py").read_text(encoding="utf-8")
+verifier("tous les gestes mail sans boîte nommée passent par ce défaut",
+         src_sk.count("await boite_par_defaut(user)") >= 5
+         and 'data.get("mailbox") or getattr(user, "email", None)' not in src_sk)
 verifier("l'accès à une boîte NOMMÉE reste journalisé", "logger.info(\"Accès administrateur" in src_az
          or "Accès administrateur à la boîte" in src_az)
 

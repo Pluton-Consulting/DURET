@@ -13,9 +13,16 @@ Principes de conception :
   * DEUX rôles contournent la délégation : `super_admin` et `direction` (cf.
     ROLES_ACCES_SUR_DEMANDE). Ils lisent, ET ÉCRIVENT AU NOM DE, toute boîte
     qu'ils NOMMENT explicitement — sans délégation préalable, `can_send` non
-    consulté. Leur DÉFAUT, lui, reste leur propre boîte (`boites_par_id`), et
-    chaque usage du contournement est tracé dans `audit_log`. Tous les autres
-    rôles restent strictement bornés par `user_mailboxes`.
+    consulté ; chaque usage du contournement est tracé dans `audit_log`. Le
+    DÉFAUT de la direction reste sa propre boîte. Tous les autres rôles restent
+    strictement bornés par `user_mailboxes`.
+  * LE SUPER_ADMIN VOIT TOUT (03/09, décision de Noa : « supprime la limitation
+    au mail de l'utilisateur en cours pour le super admin, il doit pouvoir
+    accéder à tous les mails, et par défaut celui d'un direction »). Il n'a pas
+    de boîte dans le domaine de l'entreprise — c'est le développeur — donc sa
+    « propre boîte » ne lisait rien : son défaut est la boîte d'un DIRIGEANT
+    (`boite_par_defaut`), et la mémoire lui montre tous les mails
+    (`boites_par_id` rend le jeton « toutes les boîtes »).
   * Comparaison insensible à la casse et aux espaces (les adresses arrivent de
     sources hétérogènes : Graph, saisie manuelle, base).
 """
@@ -121,11 +128,15 @@ async def boites_par_id(user_id: Optional[str]) -> list[str]:
         # une tâche différée créée quand il était encore actif.
         ligne = await conn.fetchrow(
             "SELECT email, role FROM users WHERE id = $1::uuid AND actif = true", str(user_id))
-    # LE DÉFAUT EST SA BOÎTE, POUR TOUT LE MONDE (01/09, décision de Noa) :
-    # même le super_admin et la direction ne voient PAR DÉFAUT que leur boîte
-    # et leurs délégations — l'accès élargi ne passe que par une boîte NOMMÉE
-    # explicitement (verifier_acces), et il est journalisé. L'ancien raccourci
-    # rendait « toutes les boîtes » à l'administrateur dès la recherche.
+    # LE DÉFAUT EST SA BOÎTE POUR LA DIRECTION ET LES MÉTIERS (01/09) ; LE
+    # SUPER_ADMIN, LUI, VOIT TOUT (03/09, retour de Noa). Le 01/09 avait retiré
+    # le jeton « toutes les boîtes » à l'administrateur ; à l'usage, un
+    # super_admin sans boîte dans le domaine ne voyait plus AUCUN mail dans la
+    # mémoire — la limitation ne protégeait personne, elle rendait le compte
+    # de test aveugle. La direction, elle, garde sa boîte + ses délégations,
+    # et n'ouvre une autre boîte qu'en la NOMMANT (journalisé).
+    if ligne and (ligne["role"] or "").strip().lower() == "super_admin":
+        return [TOUTES_LES_BOITES]
     boites = []
     propre = normaliser(ligne["email"] if ligne else None)
     if propre:
@@ -134,6 +145,31 @@ async def boites_par_id(user_id: Optional[str]) -> list[str]:
         if d["mailbox"] not in boites:
             boites.append(d["mailbox"])
     return boites
+
+
+async def boite_par_defaut(user) -> Optional[str]:
+    """La boîte qu'on ouvre quand personne n'en nomme une.
+
+    Pour tout le monde : la sienne. Pour le SUPER_ADMIN : celle d'un DIRIGEANT
+    (03/09, Noa) — le premier compte `direction` actif, par ancienneté, donc
+    toujours le même tant que les comptes ne bougent pas. Le super_admin est
+    le développeur : son adresse n'existe pas dans la messagerie de
+    l'entreprise, et « sa boîte » ne lisait rien. Sans dirigeant en base, on
+    retombe sur sa propre adresse, comme avant.
+    """
+    propre = normaliser(getattr(user, "email", None))
+    if (getattr(user, "role", "") or "").strip().lower() != "super_admin":
+        return propre or None
+    try:
+        async with get_db() as conn:
+            ligne = await conn.fetchrow(
+                "SELECT email FROM users WHERE role = 'direction' AND actif = true "
+                "ORDER BY created_at ASC LIMIT 1")
+    except Exception as e:  # noqa: BLE001 - une base muette ne doit pas bloquer la lecture
+        logger.warning("Boîte du dirigeant illisible : %s", e)
+        ligne = None
+    dirigeant = normaliser(ligne["email"] if ligne else None)
+    return dirigeant or propre or None
 
 
 async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> str:

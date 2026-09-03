@@ -23,7 +23,7 @@ from typing import Optional
 from fastapi import HTTPException, status
 
 from config import settings
-from mail.authorization import verifier_acces, normaliser
+from mail.authorization import verifier_acces, normaliser, boite_par_defaut
 from mail.style import consigne_style
 
 logger = logging.getLogger("duret.mail.skills")
@@ -365,7 +365,7 @@ async def resumer_fil(data: dict, user) -> dict:
 
 async def profil_style(data: dict, user) -> dict:
     """(Re)calcule le profil de style à partir des messages DÉJÀ ingérés."""
-    boite = await verifier_acces(user, data.get("mailbox") or getattr(user, "email", None))
+    boite = await verifier_acces(user, data.get("mailbox") or await boite_par_defaut(user))
     from mail.style import construire_profil
     return await construire_profil(boite, force=bool(data.get("force")))
 
@@ -379,7 +379,7 @@ async def apprendre_style(data: dict, user) -> dict:
     reconnu ; aucune permission d'administration n'est requise, c'est
     `verifier_acces` qui borne le périmètre.
     """
-    boite = await verifier_acces(user, data.get("mailbox") or getattr(user, "email", None))
+    boite = await verifier_acces(user, data.get("mailbox") or await boite_par_defaut(user))
 
     from mail.collecte import collecter_envoyes
     from mail.style import construire_profil
@@ -428,7 +428,7 @@ async def apprendre_signature(data: dict, user) -> dict:
     la personne LISE ce qui partira désormais sous ses messages.
     """
     boite = await verifier_acces(user, data.get("mailbox")
-                                 or getattr(user, "email", None))
+                                 or await boite_par_defaut(user))
     from mail.signature import apprendre
     resultat = await apprendre(boite, user, ref=str(data.get("ref") or ""))
     if not resultat.get("trouvee"):
@@ -443,7 +443,7 @@ async def apprendre_signature(data: dict, user) -> dict:
 async def ma_signature(data: dict, user) -> dict:
     """Remontre la signature en vigueur pour une boîte."""
     boite = await verifier_acces(user, data.get("mailbox")
-                                 or getattr(user, "email", None))
+                                 or await boite_par_defaut(user))
     return await _fiche_signature(boite, appris=False)
 
 
@@ -661,7 +661,16 @@ async def _boite_a_lire(data: dict, user) -> str:
     if demandee:
         return demandee
 
-    # Rien de demandé : la boîte de la personne connectée, si c'en est une.
+    # Rien de demandé. LE SUPER_ADMIN LIT LA BOÎTE D'UN DIRIGEANT (03/09) : son
+    # adresse à lui n'est pas dans la messagerie de l'entreprise, et la règle
+    # du 01/09 (« sa boîte, pour tout le monde ») le laissait sans rien à lire.
+    from mail.authorization import boite_par_defaut
+    if (getattr(user, "role", "") or "").strip().lower() == "super_admin":
+        defaut = await boite_par_defaut(user)
+        if defaut:
+            return defaut
+
+    # Sinon : la boîte de la personne connectée, si c'en est une.
     propre = normaliser(getattr(user, "email", None))
     domaine = normaliser(getattr(settings, "ms_domain", None)
                          or getattr(settings, "gmail_domain", None))

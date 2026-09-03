@@ -195,11 +195,28 @@ MAX_FORCAGES_PAR_TOUR = 2
 # Puis la recherche documentaire (jusqu'à 20 documents par page, extraits
 # fenêtrés) et les enregistrements filtrés (25 par page) : une page qui ne
 # passe pas entière est une page qu'on redemande.
+# Les écritures acceptées du jeton « le message de l'utilisateur, en entier ».
+# Plusieurs, parce qu'un modèle qui a compris l'idée n'écrit pas toujours le
+# mot exact — et qu'un jeton non reconnu partirait tel quel dans le skill.
+JETONS_MESSAGE = {"@message", "@transcription", "@texte", "@demande",
+                  "@ma_demande", "@message_utilisateur"}
+
+
+def _est_jeton_message(valeur) -> bool:
+    """La valeur est-elle le jeton « mets ici le message de l'utilisateur » ?"""
+    return isinstance(valeur, str) and valeur.strip().lower() in JETONS_MESSAGE
+
+
 RESULTATS_GENEREUX = {"drive_chercher", "nas_chercher", "drive_apercu",
                       "nas_apercu", "preparer_envois",
                       "drive_arborescence", "nas_arborescence",
                       "lire_mails", "lire_mail", "check_mails",
-                      "rechercher_documents", "interroger_donnees"}
+                      "rechercher_documents", "interroger_donnees",
+                      # Un compte rendu concis pese quand meme quelques milliers
+                      # de caracteres : coupe a 4 000, le modele n'en verrait que
+                      # le debut et enchainerait sur une reunion qu'il a lue a
+                      # moitie. Le bloc, lui, est deja hors de la coupe.
+                      "compte_rendu_reunion"}
 PLAFOND_RESULTAT = 4000
 PLAFOND_RESULTAT_GENEREUX = 12000
 
@@ -1064,6 +1081,24 @@ async def tools_node(state: AgentState, config=None) -> dict:
     carte = dict(state.get("entity_map") or {})
     args = {k: (anonymizer.rehydrate(v, carte) if isinstance(v, str) else v)
             for k, v in action["args"].items()}
+
+    # UN TEXTE LONG NE SE RECOPIE PAS DANS UNE ACTION (03/09).
+    #
+    # Une transcription de réunion fait 40 000 à 60 000 caractères. Demander au
+    # modèle de la réécrire dans son bloc ```action, c'est la lui faire payer
+    # deux fois — et surtout la voir RACCOURCIE : un modèle qui doit recopier
+    # un mur de texte en garde le début et la fin. Le compte rendu porterait
+    # alors sur la moitié de la réunion sans que rien ne le dise.
+    #
+    # Le modèle écrit donc le jeton `@message`, et c'est le serveur qui met à
+    # sa place le message de l'utilisateur — il l'a en entier, lui. Même esprit
+    # que `@moi` pour l'adresse de la session : ce que le serveur sait, on ne
+    # le fait pas transiter par le modèle.
+    #
+    # AVANT l'empreinte, jamais après : ce qui est haché doit être ce qui
+    # s'exécute, sinon la garantie « ce qui est validé est ce qui part » tombe.
+    args = {k: ((state.get("query") or "") if _est_jeton_message(v) else v)
+            for k, v in args.items()}
 
     empreinte = hash_payload(action["skill"], args)
     # Une page de plus ne compte pas : enchaîner les pages est le comportement

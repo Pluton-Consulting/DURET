@@ -11,6 +11,19 @@ export const RACCOURCIS: { libelle: string; prompt: string }[] = [
     prompt: "Fais le point sur tous mes mails des 7 derniers jours : une synthèse message par message, et propose une réponse pour chacun de ceux qui en appellent une." },
   { libelle: "Dossiers en attente",
     prompt: "Quels dossiers sont en attente d’une réponse ou d’une relance, du plus ancien au plus récent ?" },
+  // LE COMPTE RENDU DE REUNION (03/09, demande de Noa). Le raccourci PREREMPLIT
+  // la consigne et laisse le curseur a la fin : on colle la transcription
+  // dessous, on envoie. Le travail lui-meme est fait par le skill
+  // `compte_rendu_reunion` (backend/skills/reunion.py), qui decoupe et lit TOUT
+  // le texte -- c'est pour cela qu'on peut coller une heure de reunion sans
+  // rien elaguer.
+  { libelle: "Compte rendu de réunion",
+    prompt: `Fais le compte rendu de cette réunion : concis, avec les points clés, les décisions prises, et les actions (qui fait quoi, pour quand). Signale ce qui reste en suspens, et les réserves ou points bloquants s'il y en a.
+
+N'invente aucun responsable ni aucune échéance qui n'aurait pas été dit : laisse-les vides, je les compléterai.
+
+Transcription :
+` },
   { libelle: "Analyser un DCE",
     prompt: "Je joins une pièce du DCE : analyse-la (lots, contraintes, délais, pièges) et dis ce qu’il faut vérifier avant de chiffrer." },
   // LE CHIFFRAGE D'UN PLAN, EN PASSES SÉPARÉES (02/09, demande de Noa).

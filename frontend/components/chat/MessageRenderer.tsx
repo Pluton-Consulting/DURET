@@ -7,7 +7,7 @@ import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
 import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, SiteApercu, VisuelPaysager, FileCard, ContactCard, ProjectCard,
-  ReponsesMail,
+  ReponsesMail, CompteRendu,
   SimpleTable, StatusTable, KeyValueTable,
   BarChart, HBarChart, ProgressBars, DonutChart, LineChart, Gauge,
   Callout, StatTile, Badge, BulletList, PlanEtapes, Arbre,
@@ -171,6 +171,9 @@ const REQUIRED: Record<string, string[]> = {
   quick_replies: ["options"],
   // Les réponses proposées à plusieurs mails : sans la liste, rien à valider.
   reponses_mail: ["reponses"],
+  // Un compte rendu sans résumé n'a rien à dire : les rubriques, elles, peuvent
+  // manquer (une réunion sans décision est une réunion, pas une erreur).
+  compte_rendu: ["resume"],
   plan: ["etapes"],
 }
 
@@ -308,6 +311,9 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     // L'arborescence mécanique du Drive ou du serveur (01/09) : le backend
     // construit le bloc, le modèle n'a rien à recopier.
     case "arbre":         return <Arbre titre={p.titre} sous_titre={p.sous_titre} schema={p.schema} />
+    // Le compte rendu de réunion (03/09) : construit mécaniquement par
+    // `skills/reunion.py`, le modèle n'en recopie pas une ligne.
+    case "compte_rendu":  return <CompteRendu {...p} />
     case "plan":          return <PlanEtapes {...p} />
     case "badge":         return <Badge tone={p.tone}>{p.text}</Badge>
     case "callout":       return <Callout tone={p.tone} title={p.title}>{md(p.text)}</Callout>

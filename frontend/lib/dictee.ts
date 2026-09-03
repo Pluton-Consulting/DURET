@@ -36,9 +36,28 @@ function moteur(): any {
   return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null
 }
 
-/** Le navigateur sait-il écouter ? Sert à MONTRER ou non le bouton. */
-export function dicteeDisponible(): boolean {
-  return moteur() !== null
+/**
+ * Pourquoi la dictée ne peut pas fonctionner ici — ou `null` si tout va bien.
+ *
+ * POURQUOI CETTE FONCTION A REMPLACÉ UN SIMPLE « disponible ou non » (03/09,
+ * relevé de Noa : « le bouton vocal ne s'affiche pas »). Cacher le bouton
+ * quand l'API manque paraissait propre ; en pratique c'est le pire des
+ * comportements — il ne se passe RIEN, et personne ne peut deviner si c'est le
+ * navigateur, l'adresse, ou l'application qui est en retard. Le bouton reste
+ * donc toujours là, et c'est le clic qui explique.
+ *
+ * DEUX CAUSES, DEUX PHRASES. La reconnaissance vocale n'existe QUE dans un
+ * contexte sécurisé : ouverte en `http://` (par une adresse IP du VPN, par
+ * exemple), Chrome n'expose même pas l'objet — d'où un bouton qui semblait
+ * cassé sur le serveur alors qu'il marchait sur le poste de développement.
+ */
+export function raisonIndisponible(): string | null {
+  if (moteur()) return null
+  if (typeof window !== "undefined" && (window as any).isSecureContext === false) {
+    return "La dictée demande une adresse sécurisée (https). Ouvrez l'application "
+      + "par son adresse https, puis réessayez."
+  }
+  return "Ce navigateur ne sait pas transcrire la voix. Chrome, Edge ou Safari le savent."
 }
 
 export interface Dictee {

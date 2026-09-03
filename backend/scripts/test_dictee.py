@@ -85,14 +85,39 @@ verifier("aucun code technique ne peut atteindre l'écran",
 # ── 3. LE BOUTON ─────────────────────────────────────────────────────────
 verifier("le bouton existe dans la barre de saisie",
          'data-testid="dictee"' in barre and "MicIcon" in barre)
-verifier("IL N'APPARAÎT PAS là où le navigateur ne sait pas écouter",
-         "{micDisponible && (" in barre)
-verifier("la disponibilité est lue APRÈS le rendu (sinon l'hydratation diverge)",
-         "useEffect(() => { setMicDisponible(dicteeDisponible()) }, [])" in barre)
+# 03/09, relevé de Noa : « le bouton vocal ne s'affiche pas ». Le cacher quand
+# l'API manque paraissait propre ; en vrai, un bouton absent ne dit RIEN et l'on
+# cherche du côté de l'application. Il est TOUJOURS là, et le clic explique.
+verifier("LE BOUTON EST TOUJOURS LÀ, même si le navigateur ne sait pas écouter",
+         "micDisponible" not in barre)
+verifier("c'est le clic qui explique, en français",
+         "raisonIndisponible()" in barre and "setErreur(empeche)" in barre)
+verifier("l'adresse en http est nommée : c'est la cause la plus probable sur un serveur",
+         "isSecureContext" in texte and "adresse sécurisée (https)" in texte)
+verifier("un navigateur trop ancien est nommé aussi",
+         "Chrome, Edge ou Safari" in texte)
 verifier("un second clic arrête l'écoute", "if (ecoute) {" in barre and "arreter()" in barre)
 verifier("l'état d'écoute se voit (bordure) et s'entend des lecteurs d'écran",
          'aria-pressed={ecoute}' in barre and "Arrêter la dictée" in barre)
 verifier("le champ dit qu'on écoute", '"Je vous écoute…"' in barre)
+
+# ── 3bis. LA SAISIE : trois lignes, puis on défile ───────────────────────
+# Relevé de Noa le 03/09 : un raccourci préremplit une demande de trente lignes
+# et l'on n'en lisait qu'une — ni agrandissement, ni ascenseur.
+verifier("la hauteur est mesurée puis BORNÉE à trois lignes",
+         "LIGNES_VISIBLES = 3" in barre and "ligne * LIGNES_VISIBLES" in barre)
+verifier("au-delà, le champ défile (il ne coupe pas)",
+         'champ.style.overflowY = champ.scrollHeight > plafond ? "auto" : "hidden"' in barre)
+verifier("la hauteur redescend quand on efface",
+         'champ.style.height = "auto"' in barre)
+verifier("l'automatisme du navigateur est coupé EN STYLE, pas par une classe",
+         'setProperty("field-sizing", "auto")' in barre
+         and "[field-sizing:auto]" not in barre)
+verifier("le champ est branché par une référence",
+         "ref={champRef}" in barre)
+verifier("un raccourci prérempli met le curseur À LA FIN, champ déroulé",
+         "setSelectionRange(r.prompt.length, r.prompt.length)" in barre
+         and "champ.scrollTop = champ.scrollHeight" in barre)
 
 # ── 4. CE QUI ÉTAIT TAPÉ N'EST JAMAIS PERDU ──────────────────────────────
 verifier("la voix s'AJOUTE à ce qui était déjà écrit",

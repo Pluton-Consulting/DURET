@@ -13,7 +13,7 @@ import { MicIcon, PaperclipIcon, SquareIcon, XIcon, ZapIcon } from "lucide-react
 // La dictée du NAVIGATEUR : rien à installer, aucune clé, le son ne passe pas
 // par notre backend. Le bouton n'existe pas là où le navigateur ne sait pas
 // écouter (cf. lib/dictee.ts).
-import { creerDictee, dicteeDisponible, type Dictee } from "@/lib/dictee"
+import { creerDictee, raisonIndisponible, type Dictee } from "@/lib/dictee"
 // La liste des process fréquents est une donnée PAR CLIENT (lib/raccourcis.ts,
 // déclarée dans la dérive) : le menu, lui, est du socle.
 import { RACCOURCIS } from "@/lib/raccourcis"
@@ -157,18 +157,44 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
   // correction du moteur (il se reprend en cours de phrase) réécrirait tout le
   // champ, en emportant le texte tapé avant.
   const [ecoute, setEcoute] = useState(false)
-  const [micDisponible, setMicDisponible] = useState(false)
   const dicteeRef = useRef<Dictee | null>(null)
   const avantDictee = useRef("")
-
-  // Après le rendu, jamais pendant : `window` n'existe pas côté serveur, et
-  // lire la disponibilité au premier rendu ferait diverger le HTML du serveur
-  // de celui du navigateur (hydratation).
-  useEffect(() => { setMicDisponible(dicteeDisponible()) }, [])
 
   // Une dictée oubliée continuerait d'écouter après un changement de page :
   // le micro resterait allumé, et l'onglet le montrerait — pas nous.
   useEffect(() => () => { dicteeRef.current?.arreter() }, [])
+
+  // ── LA SAISIE GRANDIT JUSQU'À TROIS LIGNES, PUIS DÉFILE (03/09) ───────
+  //
+  // Relevé de Noa : un raccourci du menu éclair préremplit une demande de
+  // plusieurs lignes (« Chiffrer un plan » en fait trente), et l'on ne pouvait
+  // en lire qu'une seule — ni agrandissement, ni ascenseur. On tapait donc
+  // dans un texte qu'on ne voyait pas.
+  //
+  // POURQUOI EN JAVASCRIPT ET PAS EN CSS. La bibliothèque pose
+  // `field-sizing: content`, qui fait grandir le champ tout seul — mais
+  // seulement là où le navigateur le connaît (Chrome 123+), et sans plafond :
+  // une demande de trente lignes mangeait alors l'écran. Ici la hauteur est
+  // MESURÉE puis bornée : même résultat partout, et un ascenseur dès que le
+  // texte dépasse. On coupe l'automatisme du navigateur EN STYLE (et non par
+  // une classe : l'ordre des feuilles décide alors du gagnant, ce qui marche
+  // un jour sur deux) — sans quoi les deux se disputeraient la hauteur.
+  const champRef = useRef<HTMLTextAreaElement | null>(null)
+  const LIGNES_VISIBLES = 3
+  useEffect(() => {
+    const champ = champRef.current
+    if (!champ) return
+    champ.style.setProperty("field-sizing", "auto")
+    // Remise à zéro d'abord : sans elle, `scrollHeight` ne redescend jamais et
+    // le champ resterait grand après un effacement.
+    champ.style.height = "auto"
+    const style = window.getComputedStyle(champ)
+    const ligne = parseFloat(style.lineHeight) || 20
+    const marges = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+    const plafond = ligne * LIGNES_VISIBLES + marges
+    champ.style.height = `${Math.min(champ.scrollHeight, plafond)}px`
+    champ.style.overflowY = champ.scrollHeight > plafond ? "auto" : "hidden"
+  }, [texte])
 
   const basculerDictee = () => {
     if (ecoute) {
@@ -176,6 +202,16 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
       return
     }
     setErreur("")
+    // LE BOUTON EXISTE TOUJOURS, ET C'EST LE CLIC QUI EXPLIQUE (03/09).
+    // Le cacher quand le navigateur ne sait pas écouter paraissait propre, mais
+    // relevé de Noa : « le bouton vocal ne s'affiche pas » — sans bouton, il
+    // n'y a rien à comprendre, et l'on ne sait pas si c'est le navigateur,
+    // l'adresse (http au lieu d'https) ou l'application qui est en retard.
+    const empeche = raisonIndisponible()
+    if (empeche) {
+      setErreur(empeche)
+      return
+    }
     avantDictee.current = texte ? texte.replace(/\s+$/, "") + " " : ""
     const dictee = creerDictee({
       surTexte: (dit) => setTexte(avantDictee.current + dit),
@@ -183,7 +219,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
       surErreur: (message) => setErreur(message),
     })
     if (!dictee) {
-      setErreur("La dictée n'est pas disponible dans ce navigateur.")
+      setErreur("La dictée n'a pas pu démarrer. Réessayez.")
       return
     }
     dicteeRef.current = dictee
@@ -252,7 +288,21 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
             <button
               key={r.libelle}
               type="button"
-              onClick={() => { setTexte(r.prompt); setRaccourcisOuverts(false) }}
+              onClick={() => {
+                setTexte(r.prompt)
+                setRaccourcisOuverts(false)
+                // Le curseur À LA FIN, et le champ déroulé jusqu'en bas : une
+                // demande préremplie se complète par le bas (on y colle sa
+                // transcription, on y précise son dossier). Sans cela, on
+                // atterrit au début d'un texte de trente lignes.
+                requestAnimationFrame(() => {
+                  const champ = champRef.current
+                  if (!champ) return
+                  champ.focus()
+                  champ.setSelectionRange(r.prompt.length, r.prompt.length)
+                  champ.scrollTop = champ.scrollHeight
+                })
+              }}
               style={{ border: "1px solid var(--marque-border, #d8d8d8)", borderRadius: 999,
                        padding: "5px 12px", fontSize: 13, cursor: "pointer",
                        background: "var(--marque-surface, transparent)" }}
@@ -314,30 +364,30 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
             <ZapIcon className="size-4" />
           </PromptInputButton>
 
-          {/* LE MICRO N'APPARAÎT QUE SI LE NAVIGATEUR SAIT ÉCOUTER.
-              Un bouton présent qui ne fait rien est pire que pas de bouton :
-              on clique, on parle, rien ne s'écrit, et l'on croit l'application
-              cassée (Firefox ne connaît pas SpeechRecognition). */}
-          {micDisponible && (
-            <PromptInputButton
-              type="button"
-              data-testid="dictee"
-              onClick={basculerDictee}
-              disabled={disabled}
-              title={ecoute ? "Arrêter la dictée" : "Dicter le message"}
-              aria-label={ecoute ? "Arrêter la dictée" : "Dicter le message"}
-              aria-pressed={ecoute}
-              className="shrink-0"
-              style={ecoute ? {
-                border: "1px solid var(--marque-error-text)",
-                color: "var(--marque-error-text)",
-              } : undefined}
-            >
-              <MicIcon className="size-4" />
-            </PromptInputButton>
-          )}
+          {/* LE MICRO EST TOUJOURS LÀ. Il l'a été conditionnel une journée, et
+              c'était une erreur : quand le navigateur ne sait pas écouter, un
+              bouton absent ne dit RIEN, et l'on cherche du côté de
+              l'application. Désormais le clic explique — navigateur trop
+              ancien, ou adresse en http alors que la voix exige https. */}
+          <PromptInputButton
+            type="button"
+            data-testid="dictee"
+            onClick={basculerDictee}
+            disabled={disabled}
+            title={ecoute ? "Arrêter la dictée" : "Dicter le message"}
+            aria-label={ecoute ? "Arrêter la dictée" : "Dicter le message"}
+            aria-pressed={ecoute}
+            className="shrink-0"
+            style={ecoute ? {
+              border: "1px solid var(--marque-error-text)",
+              color: "var(--marque-error-text)",
+            } : undefined}
+          >
+            <MicIcon className="size-4" />
+          </PromptInputButton>
 
           <PromptInputTextarea
+            ref={champRef}
             data-testid="saisie-message"
             className="min-h-9 py-2"
             value={texte}

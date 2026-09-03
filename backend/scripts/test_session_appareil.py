@@ -301,12 +301,13 @@ verifier("« utiliser un autre email » vide vraiment le champ",
          "changerDAdresse" in login and "removeItem(CLE_DERNIER_EMAIL)" in login)
 
 reglages_ecran = (FRONTEND / "app" / "(app)" / "parametres" / "SettingsClient.tsx").read_text(encoding="utf-8")
-verifier("l'onglet « Mes appareils » est déclaré, pour tous les rôles",
-         '{ key: "appareils", label: "Mes appareils" }' in reglages_ecran
-         and "<AppareilsTab" in reglages_ecran)
-onglet = FRONTEND / "components" / "settings" / "AppareilsTab.tsx"
-verifier("l'onglet existe et sait fermer un appareil", onglet.exists()
-         and "appareils/tout-fermer" in onglet.read_text(encoding="utf-8"))
+# 03/09 soir : l'onglet « Mes appareils » a été RETIRÉ à la demande de Noa
+# (« inutile »). Les routes restent ; « Se déconnecter » ferme l'appareil.
+verifier("l'onglet « Mes appareils » n'existe plus (retiré à la demande de Noa)",
+         "<AppareilsTab" not in reglages_ecran
+         and not (FRONTEND / "components" / "settings" / "AppareilsTab.tsx").exists())
+verifier("les routes de gestion des appareils restent, pour l'administration",
+         '@router.post("/appareils/tout-fermer")' in routeur)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

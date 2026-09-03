@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
   PromptInput,
   PromptInputTextarea,
@@ -164,34 +164,43 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
   // le micro resterait allumé, et l'onglet le montrerait — pas nous.
   useEffect(() => () => { dicteeRef.current?.arreter() }, [])
 
-  // ── LA SAISIE GRANDIT JUSQU'À TROIS LIGNES, PUIS DÉFILE (03/09) ───────
+  // ── LA SAISIE GRANDIT JUSQU'À QUATRE LIGNES, PUIS DÉFILE ──────────────
   //
-  // Relevé de Noa : un raccourci du menu éclair préremplit une demande de
-  // plusieurs lignes (« Chiffrer un plan » en fait trente), et l'on ne pouvait
-  // en lire qu'une seule — ni agrandissement, ni ascenseur. On tapait donc
-  // dans un texte qu'on ne voyait pas.
+  // Relevé de Noa (03/09, deux fois) : un texte de plusieurs lignes dans le
+  // champ, et l'on ne voit qu'une ligne — ni agrandissement, ni ascenseur. On
+  // tape dans un texte qu'on ne voit pas. Quatre lignes visibles, puis un
+  // ascenseur.
   //
-  // POURQUOI EN JAVASCRIPT ET PAS EN CSS. La bibliothèque pose
-  // `field-sizing: content`, qui fait grandir le champ tout seul — mais
-  // seulement là où le navigateur le connaît (Chrome 123+), et sans plafond :
-  // une demande de trente lignes mangeait alors l'écran. Ici la hauteur est
-  // MESURÉE puis bornée : même résultat partout, et un ascenseur dès que le
-  // texte dépasse. On coupe l'automatisme du navigateur EN STYLE (et non par
-  // une classe : l'ordre des feuilles décide alors du gagnant, ce qui marche
-  // un jour sur deux) — sans quoi les deux se disputeraient la hauteur.
+  // DEUX CHEMINS, PAS UN SEUL. Une première version ne comptait que sur une
+  // mesure JavaScript ; Noa a revu le même défaut. Désormais :
+  //   · là où le navigateur sait faire grandir un champ tout seul
+  //     (`field-sizing: content`, Chrome 123+), on le LAISSE FAIRE et on ne
+  //     pose que le plafond (max-height + ascenseur) — aucune mesure, rien à
+  //     rater ;
+  //   · ailleurs, la hauteur est mesurée à chaque frappe et bornée.
+  // Le plafond est calculé sur la hauteur de ligne RÉELLE du champ, pas sur
+  // un nombre de pixels supposé.
   const champRef = useRef<HTMLTextAreaElement | null>(null)
-  const LIGNES_VISIBLES = 3
-  useEffect(() => {
+  const LIGNES_VISIBLES = 4
+  useLayoutEffect(() => {
     const champ = champRef.current
     if (!champ) return
-    champ.style.setProperty("field-sizing", "auto")
-    // Remise à zéro d'abord : sans elle, `scrollHeight` ne redescend jamais et
-    // le champ resterait grand après un effacement.
-    champ.style.height = "auto"
     const style = window.getComputedStyle(champ)
     const ligne = parseFloat(style.lineHeight) || 20
     const marges = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
     const plafond = ligne * LIGNES_VISIBLES + marges
+    const natif = typeof CSS !== "undefined" && CSS.supports?.("field-sizing", "content")
+    if (natif) {
+      champ.style.setProperty("field-sizing", "content")
+      champ.style.height = ""
+      champ.style.maxHeight = `${plafond}px`
+      champ.style.overflowY = "auto"
+      return
+    }
+    champ.style.setProperty("field-sizing", "auto")
+    // Remise à zéro d'abord : sans elle, `scrollHeight` ne redescend jamais et
+    // le champ resterait grand après un effacement.
+    champ.style.height = "auto"
     champ.style.height = `${Math.min(champ.scrollHeight, plafond)}px`
     champ.style.overflowY = champ.scrollHeight > plafond ? "auto" : "hidden"
   }, [texte])
@@ -388,6 +397,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
 
           <PromptInputTextarea
             ref={champRef}
+            rows={1}
             data-testid="saisie-message"
             className="min-h-9 py-2"
             value={texte}

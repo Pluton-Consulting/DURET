@@ -86,7 +86,8 @@ export const TABS: TabDef[] = [
     key: "gestion",
     label: "Pilotage",
     href: "/gestion",
-    roles: ["super_admin", "direction"],
+    // 03/09 (Noa) : « seul le super admin doit voir Pilotage et Connaissances ».
+    roles: ["super_admin"],
   },
   // L'ONGLET « RECHERCHE WEB » A ÉTÉ RETIRÉ DU MENU, ET C'EST UN GAIN.
   //
@@ -158,8 +159,9 @@ export const SECTIONS: TabDef[] = [
   { key: "connaissances", label: "Connaissances",
     // « ce que l'assistant sait faire et ce qu'il apprend » : validations,
     // débrief d'apprentissage, savoir-faire — réunis.
-    href: "/connaissances", roles: MANAGERS },
-  { key: "gestion",       label: "Pilotage",      href: "/gestion",     roles: ["super_admin", "direction"] },
+    // 03/09 (Noa) : Connaissances et Pilotage sont réservés au super_admin.
+    href: "/connaissances", roles: ["super_admin"] },
+  { key: "gestion",       label: "Pilotage",      href: "/gestion",     roles: ["super_admin"] },
   // Ouvert à TOUS : chacun y relie SA boîte Google ; les onglets
   // d'administration restent filtrés par rôle dans la page elle-même.
   { key: "parametres",    label: "Paramètres",    href: "/parametres",  roles: ALL_ROLES },

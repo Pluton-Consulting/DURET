@@ -5,9 +5,8 @@ import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
 import ClesApiTab from "@/components/settings/ClesApiTab"
 import GoogleTab from "@/components/settings/GoogleTab"
-import AppareilsTab from "@/components/settings/AppareilsTab"
 
-type SubTab = "google" | "appareils" | "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
+type SubTab = "google" | "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
 type Role = "super_admin" | "direction" | "commercial" | "bureau_etudes" | "conducteur" | "administratif" | "terrain"
 type Agent = "agent1" | "agent2" | "agent3"
 
@@ -39,10 +38,9 @@ function canTogglePerm(mgr: string, _agent: Agent, target: Role): boolean {
 const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
   // Sans `roles` : visible de chacun — l'onglet ne parle que de SA boîte.
   { key: "google", label: "Mon compte Google" },
-  // Voir et fermer les postes qui restent connectés : la contrepartie
-  // d'une session qui ne périme plus (03/09). Ouvert à tous, comme
-  // ci-dessus — il ne parle que de SES appareils.
-  { key: "appareils", label: "Mes appareils" },
+  // L'onglet « Mes appareils » a existé une journée (03/09) puis a été retiré
+  // à la demande de Noa (« inutile ») : « Se déconnecter » ferme l'appareil
+  // courant, et les routes /api/auth/appareils restent pour l'administration.
   { key: "utilisateurs", label: "Utilisateurs", roles: ["super_admin", "direction"] },
   { key: "plages", label: "Plages horaires", roles: ["super_admin", "direction"] },
   { key: "rbac", label: "Permissions RBAC", roles: ["super_admin", "direction"] },
@@ -965,10 +963,6 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
       {activeTab === "google" && (
         <GoogleTab apiUrl={apiUrl} backendToken={backendToken} currentRole={currentRole} />
       )}
-      {activeTab === "appareils" && (
-        <AppareilsTab apiUrl={apiUrl} backendToken={backendToken} currentRole={currentRole} />
-      )}
-
       {activeTab === "utilisateurs" && (
         <UsersTab initialUsers={initialUsers} backendToken={backendToken} currentRole={currentRole} apiUrl={apiUrl} />
       )}

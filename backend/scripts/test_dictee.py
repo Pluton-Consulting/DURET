@@ -104,15 +104,16 @@ verifier("le champ dit qu'on écoute", '"Je vous écoute…"' in barre)
 # ── 3bis. LA SAISIE : trois lignes, puis on défile ───────────────────────
 # Relevé de Noa le 03/09 : un raccourci préremplit une demande de trente lignes
 # et l'on n'en lisait qu'une — ni agrandissement, ni ascenseur.
-verifier("la hauteur est mesurée puis BORNÉE à trois lignes",
-         "LIGNES_VISIBLES = 3" in barre and "ligne * LIGNES_VISIBLES" in barre)
-verifier("au-delà, le champ défile (il ne coupe pas)",
-         'champ.style.overflowY = champ.scrollHeight > plafond ? "auto" : "hidden"' in barre)
-verifier("la hauteur redescend quand on efface",
-         'champ.style.height = "auto"' in barre)
-verifier("l'automatisme du navigateur est coupé EN STYLE, pas par une classe",
-         'setProperty("field-sizing", "auto")' in barre
-         and "[field-sizing:auto]" not in barre)
+verifier("la hauteur est BORNÉE à QUATRE lignes (03/09, seconde demande de Noa)",
+         "LIGNES_VISIBLES = 4" in barre and "ligne * LIGNES_VISIBLES" in barre)
+verifier("là où le navigateur sait grandir seul, on le laisse faire et on ne pose que le plafond",
+         'CSS.supports?.("field-sizing", "content")' in barre
+         and 'champ.style.maxHeight = `${plafond}px`' in barre)
+verifier("ailleurs, la hauteur est mesurée à chaque frappe, et redescend quand on efface",
+         'champ.style.height = "auto"' in barre
+         and 'champ.style.overflowY = champ.scrollHeight > plafond ? "auto" : "hidden"' in barre)
+verifier("la mesure a lieu AVANT le dessin (pas de saut visible)", "useLayoutEffect(() => {" in barre)
+verifier("le champ part d'une ligne", "rows={1}" in barre)
 verifier("le champ est branché par une référence",
          "ref={champRef}" in barre)
 verifier("un raccourci prérempli met le curseur À LA FIN, champ déroulé",

@@ -64,8 +64,17 @@ verifier("chaque envoi porte TOUT depuis le début (un mot coupé à la frontiè
          "new Blob(morceaux" in texte and "enr.start(1000)" in texte)
 verifier("rien de neuf depuis le dernier envoi = pas d'appel (on ne paie pas pour rien)",
          "morceaux.length === dernierEnvoye" in texte)
-verifier("l'arrêt envoie la version DÉFINITIVE, complète, puis seulement dit la fin",
-         "await transcrire(true)" in texte and texte.find("await transcrire(true)") < texte.find("options.surFin()", texte.find("await transcrire(true)")))
+# 03/09 (Noa) : « quand on clique pour arrêter il y a du délai le temps qu'il
+# finisse d'écrire ». Le bouton se relâche À L'INSTANT du clic ; la dernière
+# transcription arrive en arrière-plan, et « je transcris » le dit.
+verifier("l'arrêt relâche le bouton TOUT DE SUITE, la version définitive part en arrière-plan",
+         "options.surFin()\n        void transcrire(true)" in texte)
+verifier("une réponse plus ancienne n'écrase jamais une plus récente (numéro d'ordre)",
+         "if (mien < applique) return" in texte and "applique = mien" in texte)
+verifier("« je transcris » ne s'éteint qu'avec le DERNIER envoi en vol",
+         "options.surTravail?.(enVol > 0)" in texte)
+verifier("la barre dit qu'elle transcrit la fin, une fois l'écoute arrêtée",
+         '"Je transcris la fin de la dictée…"' in barre and "surFin: () => setEcoute(false)," in barre)
 
 # ── 3. LA BASCULE : un appui écoute, un second arrête ────────────────────
 verifier("un drapeau d'intention fait foi", "let voulu = false" in texte and "if (!voulu) return" in texte)

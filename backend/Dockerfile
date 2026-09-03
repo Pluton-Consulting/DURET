@@ -29,7 +29,7 @@ RUN python -m spacy download fr_core_news_md \
 # se télécharge pas ici (réseau), l'image se construit quand même : le modèle
 # viendra au premier usage, dans le volume des documents, et Google sert de
 # secours entre-temps.
-RUN python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')" \
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')" \
     || echo "modele Whisper non pre-telecharge : il viendra au premier usage"
 
 COPY . .

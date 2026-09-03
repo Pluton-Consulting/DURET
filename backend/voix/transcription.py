@@ -9,10 +9,12 @@ DEUX MOTEURS, DANS CET ORDRE :
 
   1. WHISPER LOCAL (`faster-whisper`, open source, sur le CPU du conteneur).
      Aucun appel externe, aucun jeton, le son ne quitte pas le serveur. Le
-     modèle `small` en français : ~460 Mo une fois, téléchargés au build de
-     l'image (ou au premier usage, dans le volume des documents, s'ils ne
-     l'étaient pas) ; ~500 Mo de mémoire vive quand il tourne ; à peu près le
-     temps réel sur deux cœurs. C'est le moteur PAR DÉFAUT.
+     modèle `base` en français (03/09 : `small` était « beaucoup trop lent »
+     sur le VPS — `base` va trois fois plus vite, en glouton, pour une dictée
+     qu'on relit de toute façon) : ~150 Mo téléchargés au build de l'image
+     (ou au premier usage, dans le volume des documents), préchargé au
+     démarrage du backend. `WHISPER_MODELE=small` si la machine suit. C'est le
+     moteur PAR DÉFAUT.
 
   2. GOOGLE (le modèle déjà payé pour la vision et les images) — le SECOURS,
      quand Whisper n'est pas installé, ou sur réglage `TRANSCRIPTION_MOTEUR=google`.
@@ -112,9 +114,12 @@ def _modele_local():
     with _MODELE_VERROU:
         if _MODELE is None:
             from faster_whisper import WhisperModel
-            nom = getattr(settings, "whisper_modele", "small") or "small"
+            nom = getattr(settings, "whisper_modele", "base") or "base"
             debut = time.monotonic()
+            # TOUS les cœurs : la transcription est le seul travail CPU lourd
+            # du conteneur, et une dictée attend qu'il soit fini.
             _MODELE = WhisperModel(nom, device="cpu", compute_type="int8",
+                                   cpu_threads=max(2, os.cpu_count() or 2),
                                    download_root=_dossier_modeles())
             logger.info("Whisper local « %s » chargé en %.1f s", nom, time.monotonic() - debut)
     return _MODELE
@@ -128,8 +133,11 @@ def _decoder(octets: bytes):
 
 def _transcrire_echantillons(audio, amorce: str = "") -> str:
     modele = _modele_local()
+    # `beam_size=1` (glouton) : deux fois plus rapide qu'un faisceau de 2, pour
+    # une dictée qu'on relit de toute façon. Relevé de Noa (03/09) : « ça
+    # fonctionne bien mais c'est beaucoup trop lent ».
     segments, _info = modele.transcribe(
-        audio, language="fr", beam_size=2, vad_filter=True,
+        audio, language="fr", beam_size=1, vad_filter=True,
         initial_prompt=(amorce[-200:] or None),
         condition_on_previous_text=False)
     return " ".join(s.text.strip() for s in segments if getattr(s, "text", "").strip()).strip()
@@ -282,6 +290,18 @@ def _nettoyer(texte: str) -> str:
     if len(t) >= 2 and t[0] in "\"«" and t[-1] in "\"»":
         t = t[1:-1].strip()
     return t
+
+
+async def prechauffer() -> None:
+    """Charge le modèle AU DÉMARRAGE, en arrière-plan : la première dictée ne
+    doit pas attendre les secondes du chargement — c'est là que « trop lent »
+    se ressent le plus. Ne bloque rien, ne lève rien."""
+    if moteur_choisi() != "local":
+        return
+    try:
+        await asyncio.to_thread(_modele_local)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Whisper local non préchargé (%s) : il se chargera à la première dictée", e)
 
 
 # ── L'ENTRÉE ─────────────────────────────────────────────────────────────

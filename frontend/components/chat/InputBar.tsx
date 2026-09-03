@@ -238,7 +238,10 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
       // Le texte rendu couvre TOUTE la dictée depuis le début : il remplace
       // ce qui avait été transcrit, jamais ce qui était tapé avant.
       surTexte: (dit) => setTexte(avantDictee.current + dit),
-      surFin: () => { setEcoute(false); setTranscrit(false) },
+      // La fin de l'ÉCOUTE relâche le bouton tout de suite ; la dernière
+      // transcription, elle, se signale à part (« je transcris… ») jusqu'à
+      // son arrivée — relevé de Noa : le bouton semblait ne pas répondre.
+      surFin: () => setEcoute(false),
       surErreur: (message) => setErreur(message),
       surTravail: (enCoursDeTranscription) => setTranscrit(enCoursDeTranscription),
     })
@@ -420,6 +423,8 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
             disabled={disabled}
             placeholder={ecoute
               ? (transcrit ? "Je vous écoute… (je transcris)" : "Je vous écoute…")
+              : transcrit
+              ? "Je transcris la fin de la dictée…"
               : modeFile
               ? "Écrivez pour mettre une autre tâche dans la file d'attente"
               : "Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"}

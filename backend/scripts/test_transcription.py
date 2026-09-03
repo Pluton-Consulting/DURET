@@ -204,7 +204,8 @@ class _Segment:
     def __init__(self, t): self.text = t
 
 class _Whisper:
-    def __init__(self, nom, device=None, compute_type=None, download_root=None):
+    def __init__(self, nom, device=None, compute_type=None, download_root=None, **kw):
+        ETAT["whisper_kw"] = kw
         ETAT["whisper_nom"] = nom; ETAT["whisper_root"] = download_root
     def transcribe(self, audio, **kw):
         APPELS.append({"n": len(audio), "amorce": kw.get("initial_prompt")})
@@ -255,8 +256,22 @@ requirements = (BACKEND / "requirements.txt").read_text(encoding="utf-8")
 dockerfile = (BACKEND / "Dockerfile").read_text(encoding="utf-8")
 verifier("faster-whisper est dans l'image", "faster-whisper" in requirements)
 verifier("le modèle est téléchargé AU BUILD, et un échec de téléchargement ne casse pas l'image",
-         "WhisperModel('small'" in dockerfile and "|| echo" in dockerfile)
+         "WhisperModel('" in dockerfile and "|| echo" in dockerfile)
 verifier("la route donne la clé du cache (qui dicte)", "cle_cache=str(current_user.id)" in chat)
+
+
+# ── 6. « BEAUCOUP TROP LENT » (03/09, sur la version déployée) ─────────────
+src = source.read_text(encoding="utf-8")
+verifier("le modèle par défaut est `base` (trois fois plus rapide que `small` sur un CPU)",
+         'whisper_modele: str = "base"' in config and 'getattr(settings, "whisper_modele", "base")' in src)
+verifier("décodage glouton (beam_size=1) : deux fois plus rapide pour une dictée qu'on relit",
+         "beam_size=1" in src and "beam_size=2" not in src)
+verifier("tous les cœurs du conteneur travaillent (cpu_threads transmis au modèle)",
+         "cpu_threads=max(2, os.cpu_count() or 2)" in src and ETAT.get("whisper_kw", {}).get("cpu_threads", 0) >= 2)
+verifier("le modèle est PRÉCHARGÉ au démarrage du backend (la première dictée n'attend pas)",
+         "async def prechauffer" in src
+         and "asyncio.create_task(prechauffer())" in (BACKEND / "main.py").read_text(encoding="utf-8"))
+verifier("l'image télécharge `base` au build", "WhisperModel('base'" in dockerfile)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

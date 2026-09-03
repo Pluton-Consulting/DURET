@@ -114,14 +114,23 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
   let butoir: ReturnType<typeof setTimeout> | null = null
   let envoiEnCours = false
   let dernierEnvoye = 0        // combien de morceaux couvrait le dernier envoi
+  // Numéro d'ordre des envois : une réponse plus ANCIENNE qu'une déjà
+  // appliquée ne doit pas écraser le texte (l'envoi définitif part sans
+  // attendre l'intermédiaire en vol ; les deux peuvent revenir dans le
+  // désordre).
+  let numero = 0
+  let applique = 0
+  let enVol = 0                // envois en cours : « je transcris » tant qu'il en reste un
 
   const transcrire = async (definitif: boolean) => {
     // Rien de neuf depuis le dernier envoi : inutile de payer un appel.
     if (morceaux.length === 0 || (!definitif && morceaux.length === dernierEnvoye)) return
     if (envoiEnCours && !definitif) return
     envoiEnCours = true
+    enVol += 1
     options.surTravail?.(true)
     const couvert = morceaux.length
+    const mien = ++numero
     try {
       const blob = new Blob(morceaux, { type: mime || "audio/webm" })
       const audio_b64 = await enBase64(blob)
@@ -136,13 +145,18 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
         if (res.status === 401) arreter()
         return
       }
+      if (mien < applique) return          // une réponse plus récente est déjà à l'écran
+      applique = mien
       dernierEnvoye = couvert
       options.surTexte(String(d.texte || "").trim(), definitif)
     } catch {
       options.surErreur("Le serveur n'a pas répondu pendant la transcription. Réessayez.")
     } finally {
       envoiEnCours = false
-      options.surTravail?.(false)
+      enVol -= 1
+      // L'envoi définitif peut finir AVANT un intermédiaire encore en vol :
+      // « je transcris » ne s'éteint qu'avec le dernier.
+      options.surTravail?.(enVol > 0)
     }
   }
 
@@ -158,13 +172,19 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
     if (!voulu) return
     voulu = false
     const enr = enregistreur
+    // LE BOUTON SE RELÂCHE TOUT DE SUITE (03/09, relevé de Noa : « quand on
+    // clique pour arrêter il y a du délai le temps qu'il finisse d'écrire »).
+    // L'écoute est finie à l'instant du clic ; la DERNIÈRE transcription,
+    // elle, arrive quand elle arrive — le champ dit « je transcris » pendant
+    // ce temps, et le texte se complète à son arrivée. Attendre le serveur
+    // pour relâcher le bouton faisait croire que le clic n'avait pas pris.
     if (enr && enr.state !== "inactive") {
       // `stop()` livre le dernier morceau PUIS déclenche `onstop` : c'est là
-      // qu'on envoie la version définitive, complète.
-      enr.onstop = async () => {
+      // qu'on envoie la version définitive, complète — en arrière-plan.
+      enr.onstop = () => {
         liberer()
-        await transcrire(true)
         options.surFin()
+        void transcrire(true)
       }
       try { enr.stop() } catch { liberer(); options.surFin() }
     } else {

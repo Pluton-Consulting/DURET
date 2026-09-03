@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re as _re_logs
 from fastapi import FastAPI
@@ -140,6 +141,15 @@ async def lifespan(app: FastAPI):
                 "Installez fr_core_news_md pour rétablir la protection des noms/adresses/organisations.",
                 settings.block_external_llm_without_ner,
             )
+    except Exception:
+        pass
+    # LA VOIX : le modèle Whisper local se charge en arrière-plan dès le
+    # démarrage, pour que la première dictée ne paie pas ses secondes de
+    # chargement (03/09, « beaucoup trop lent »). Fire-and-forget : rien
+    # n'attend, rien ne casse si le modèle manque.
+    try:
+        from voix.transcription import prechauffer
+        asyncio.create_task(prechauffer())
     except Exception:
         pass
     yield

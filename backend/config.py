@@ -99,7 +99,9 @@ class Settings(BaseSettings):
     # ~460 Mo, ~500 Mo de RAM, à peu près le temps réel sur deux cœurs ; `base`
     # si le VPS est petit, `medium` s'il est large (plus lent, plus juste).
     transcription_moteur: str = "local"
-    whisper_modele: str = "small"
+    # `base` (03/09 : `small` était « beaucoup trop lent » sur le VPS). `small`
+    # ou `medium` si la machine suit ; `tiny` en dernier recours.
+    whisper_modele: str = "base"
     # Second candidat Google, plus leger : au test, le premier a repondu 503
     # « forte demande » pendant que celui-ci lisait le plan en une seconde.
     model_google_vision_secours: str = "gemini-3.1-flash-lite"

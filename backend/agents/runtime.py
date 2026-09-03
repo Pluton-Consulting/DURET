@@ -199,9 +199,9 @@ async def get_graph():
 def _initial_state(query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
                    attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                    attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
-                   trigger_kind: str = "chat") -> dict:
+                   trigger_kind: str = "chat", attachment_rows: Optional[dict] = None) -> dict:
     _mime = attachment_mime or ""
-    return {
+    etat = {
         "query": query,
         "user_id": user_id,
         "user_role": user_role,
@@ -288,6 +288,12 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "cost_eur": 0.0,
         "messages": [],
     }
+    # LE TABLEAU JOINT N'EST POSÉ QUE S'IL Y EN A UN. Une clé absente de
+    # l'entrée garde sa valeur du checkpoint : c'est ce qui fait survivre le
+    # dernier tableau au tour suivant (« maintenant envoie-le à tous »).
+    if attachment_rows:
+        etat["dernier_tableau"] = attachment_rows
+    return etat
 
 
 def _extract_interrupt(result: Any):
@@ -337,6 +343,7 @@ async def _persist_validation(thread_id: str, user_id: str, state: dict, intr: O
 async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
                    attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                    attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
+                   attachment_rows: Optional[dict] = None,
                    trigger_kind: str = "chat") -> dict:
     """Exécute un tour de conversation. Peut suspendre (pending_validation).
 
@@ -369,7 +376,7 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
         result = await graph.ainvoke(
             _initial_state(query, user_id, user_role, has_attachment, thread_id,
                            attachment_b64, attachment_mime, attachment_name, attachment_text,
-                           trigger_kind), config
+                           trigger_kind, attachment_rows=attachment_rows), config
         )
 
         snapshot = await graph.aget_state(config)

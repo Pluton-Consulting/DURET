@@ -19,6 +19,11 @@ class AgentState(TypedDict):
     attachment_mime: Optional[str]  # 'image/jpeg', 'application/pdf', ...
     attachment_name: Optional[str]     # nom du fichier joint (traçabilité, invite)
     attachment_text: Optional[str]     # texte extrait d'un fichier non-image (Excel, Word, PDF, CSV…)
+    # LE DERNIER TABLEAU JOINT, en entier : {nom, colonnes, lignes}. PERSISTE
+    # d'un tour à l'autre (comme `entity_map`), jusqu'au prochain tableau :
+    # « maintenant envoie-le à tous » arrive souvent au tour SUIVANT celui du
+    # fichier. Les actions le prennent par `@tableau` (agent1).
+    dernier_tableau: Optional[dict]
     # Référence de la photo rangée au dépôt, quand l'offre visuelle existe :
     # c'est elle qui permet de RETOUCHER l'image plus tard (même maison,
     # quelques détails changés) au lieu d'en générer une autre.

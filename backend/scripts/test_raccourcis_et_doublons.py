@@ -86,9 +86,11 @@ verifier("bloc `reponses_mail` enregistré (champ requis : reponses)", 'reponses
 verifier("le composant reçoit onAction (le même canal que les suggestions)",
          re.search(r'case "reponses_mail":.*?onAction=\{onAction\}', rendu, re.S) is not None)
 composant = (FRONTEND / "components" / "blocks" / "business" / "ReponsesMail.tsx").read_text(encoding="utf-8")
-verifier("cartes horizontales, case par carte, un bouton groupé",
-         # 31/08 : le défilement horizontal vit désormais dans la feuille de style du composant.
-         "overflow-x:auto" in composant and 'type="checkbox"' in composant and "réponse(s) cochée(s)" in composant)
+verifier("cartes en pages (une, deux ou trois), case par carte, un bouton groupé",
+         # 03/09 : le rail horizontal a cédé la place à des pages avec deux flèches
+         # (relevé de Noa : « trop petit et pas pratique »). Voir test_cartes_mail_pages.
+         "sym-rm-pages" in composant and 'aria-label="Cartes suivantes"' in composant
+         and 'type="checkbox"' in composant and "réponse(s) cochée(s)" in composant)
 verifier("chaque carte montre la SYNTHÈSE du mail reçu (le contexte de la réponse)",
          "synthese" in composant and "sym-rm-contexte" in composant)
 verifier("le contrat du bloc et check_mails portent le champ synthese",

@@ -200,11 +200,18 @@ MAX_FORCAGES_PAR_TOUR = 2
 # mot exact — et qu'un jeton non reconnu partirait tel quel dans le skill.
 JETONS_MESSAGE = {"@message", "@transcription", "@texte", "@demande",
                   "@ma_demande", "@message_utilisateur"}
+# Et le jeton « toutes les lignes du tableau joint » (03/09) : un modèle qui
+# devait recopier 95 clients dans son bloc ```action en a recopié 30.
+JETONS_TABLEAU = {"@tableau", "@lignes", "@fichier_joint", "@excel", "@tableau_joint"}
 
 
 def _est_jeton_message(valeur) -> bool:
     """La valeur est-elle le jeton « mets ici le message de l'utilisateur » ?"""
     return isinstance(valeur, str) and valeur.strip().lower() in JETONS_MESSAGE
+
+
+def _est_jeton_tableau(valeur) -> bool:
+    return isinstance(valeur, str) and valeur.strip().lower() in JETONS_TABLEAU
 
 
 RESULTATS_GENEREUX = {"drive_chercher", "nas_chercher", "drive_apercu",
@@ -1099,6 +1106,13 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # s'exécute, sinon la garantie « ce qui est validé est ce qui part » tombe.
     args = {k: ((state.get("query") or "") if _est_jeton_message(v) else v)
             for k, v in args.items()}
+    # MÊME LOGIQUE POUR UN TABLEAU JOINT : les lignes du fichier (ou du dernier
+    # fichier tabulaire de la conversation) remplacent le jeton. Sans tableau
+    # connu, le jeton reste tel quel et le skill dira ce qui manque.
+    tableau = state.get("dernier_tableau") or {}
+    if isinstance(tableau, dict) and tableau.get("lignes"):
+        args = {k: (list(tableau["lignes"]) if _est_jeton_tableau(v) else v)
+                for k, v in args.items()}
 
     empreinte = hash_payload(action["skill"], args)
     # Une page de plus ne compte pas : enchaîner les pages est le comportement
@@ -1914,6 +1928,14 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
             # de mémoire (URL morte, image absente) ou c'est une version
             # périmée de ce que le tour vient de refaire. On l'efface.
             if ref not in references:
+                # Sauf une IMAGE que le fil connaît ou que le dépôt tient : le
+                # modèle la remontre, il ne l'invente pas (03/09, « montre moi
+                # la photo » effacé à l'écran).
+                if type_ == "visuel" and _image_connue(ref, state):
+                    if ref in affiches:
+                        return ""
+                    affiches.add(ref)
+                    return m.group(0)
                 inventes.append(bloc)
                 return ""
             # Le MÊME fichier écrit deux fois par le modèle : un seul aperçu.
@@ -2104,6 +2126,34 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
     return texte
 
 
+def _image_connue(cle: str, state) -> bool:
+    """Cette clé d'image désigne-t-elle une image RÉELLE de la conversation ?
+
+    LE CAS DU 03/09 (export Langfuse, 13:47). Photo jointe au tour précédent,
+    analysée par la vision ; « montre moi la photo » → le modèle écrit le bloc
+    `visuel` avec la BONNE clé — celle que la vision lui avait donnée. Deux
+    filets l'ont pris pour une invention : la livraison fantôme (forceur), puis
+    l'effacement du bloc. À l'écran : « Voici la photo du jardin : » et rien
+    dessous. Pourquoi : les deux filets ne connaissaient que les blocs ```ui
+    ÉMIS dans l'historique, or la vision n'écrivait la référence qu'en texte.
+
+    Deux sources, dans cet ordre : les clés du fil (`cles_images_du_fil`, qui
+    lit l'historique ET la photo jointe à l'instant), puis le DÉPÔT lui-même —
+    une image qui existe sur le disque n'est pas inventée, quoi qu'en dise
+    l'historique. C'est l'arbitre de dernier ressort, et il ne coûte qu'un
+    `stat`.
+    """
+    if not cle:
+        return False
+    if cle in cles_images_du_fil(state):
+        return True
+    try:
+        from visuels import depot
+        return depot._chemin(str(cle)) is not None
+    except Exception:  # noqa: BLE001 — pas de dépôt (Duret sans visuels) : rien de plus à savoir
+        return False
+
+
 def _montre_un_fichier_du_fil(texte: str, state) -> bool:
     """La réponse remontre-t-elle un VRAI fichier de la conversation ?
 
@@ -2114,14 +2164,18 @@ def _montre_un_fichier_du_fil(texte: str, state) -> bool:
     """
     import json as _j
     refs = {_reference_bloc(b) for b in fichiers_du_fil(state)} - {""}
-    if not refs:
-        return False
     for brut in _BLOC_UI_RE.findall(texte or ""):
         try:
             bloc = _j.loads(brut)
         except ValueError:
             continue
-        if isinstance(bloc, dict) and _reference_bloc(bloc) in refs:
+        if not isinstance(bloc, dict):
+            continue
+        ref = _reference_bloc(bloc)
+        if ref and ref in refs:
+            return True
+        # Une photo du fil, remontrée : légitime au même titre qu'un fichier.
+        if bloc.get("type") == "visuel" and _image_connue(ref, state):
             return True
     return False
 
@@ -2916,8 +2970,13 @@ def route_apres_llm(state: AgentState) -> str:
         # Un VISUEL demandé sans image produite est un fantôme au même titre
         # qu'un fichier (01/09 : la retouche « décrite » au passé, sans skill
         # ni carte de validation — le modèle imitait le tour précédent).
-        and (((demande_une_production(state.get("query") or "")
-               or demande_un_visuel(state.get("query") or "")) and "?" not in visible)
+        and (((demande_une_production(state.get("query") or "")) and "?" not in visible)
+             # Un visuel demandé et REMONTRÉ depuis le fil (« montre moi la
+             # photo » → le bloc avec la vraie clé) n'est pas un fantôme :
+             # 03/09, le forceur relançait, puis répondait « la photo est
+             # affichée ci-dessus » au-dessus de rien.
+             or (demande_un_visuel(state.get("query") or "") and "?" not in visible
+                 and not _montre_un_fichier_du_fil(visible, state))
              or (pretend_avoir_livre(visible)
                  and not _montre_un_fichier_du_fil(visible, state))))
     if fantome:

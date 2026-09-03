@@ -14,6 +14,7 @@ sur Microsoft 365, l'autre sur Google Workspace).
 from __future__ import annotations
 
 import logging
+import os
 
 from config import settings
 

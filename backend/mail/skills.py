@@ -912,9 +912,12 @@ async def preparer_envois(data: dict, user) -> dict:
         destinataires = [d.strip() for d in destinataires.split(",") if d.strip()]
     if not sujet:
         raise MailSkillError("Donne le `sujet` du mail (les variables {nom}… y sont permises).")
+    if isinstance(destinataires, str) and destinataires.strip().lower().startswith("@"):
+        raise MailSkillError("Aucun tableau n'est joint à cette conversation : joignez le "
+                             "fichier (Excel, CSV) puis redemandez, ou donnez la liste.")
     if not destinataires:
-        raise MailSkillError("Donne `destinataires` : une liste d'adresses, ou "
-                             "d'objets {email, nom, …} tirés des données.")
+        raise MailSkillError("Donne `destinataires` : `\"@tableau\"` (toutes les lignes du "
+                             "fichier joint), une liste d'adresses, ou d'objets {email, nom, …}.")
     if not gabarit and not any(isinstance(d, dict)
                                and (d.get("reponse") or d.get("message"))
                                for d in destinataires):

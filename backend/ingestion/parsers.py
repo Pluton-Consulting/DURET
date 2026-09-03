@@ -271,6 +271,19 @@ def lire_excel(brut: bytes) -> tuple[list[str], list[dict]]:
             entetes = [str(c).strip() if c is not None else "" for c in ligne][:MAX_COLONNES]
             break
 
+    # UNE COLONNE SANS EN-TÊTE N'EST PAS UNE COLONNE VIDE (03/09). Le fichier
+    # « tableau client entretien.xlsx » de Symbiose : 8 colonnes nommées à
+    # gauche, puis — pour la moitié des lignes, collées depuis un autre export —
+    # l'adresse mail en colonne AG, sous un en-tête VIDE. Chaque cellule sans
+    # en-tête était jetée : ces clients existaient sans adresse, et le
+    # publipostage n'en voyait que la moitié. Une colonne qui porte une valeur
+    # reçoit le nom de sa lettre Excel ; le modèle et les actions la voient.
+    vues: set[str] = set()
+    for i, e in enumerate(entetes):
+        if e and e in vues:             # deux colonnes « Nom » : la seconde se distingue
+            entetes[i] = f"{e} ({_lettre_colonne(i)})"
+        vues.add(entetes[i])
+
     lignes = []
     for i, ligne in enumerate(iterateur):
         if i >= MAX_LIGNES:
@@ -279,13 +292,30 @@ def lire_excel(brut: bytes) -> tuple[list[str], list[dict]]:
         if not ligne or not any(c is not None and str(c).strip() for c in ligne):
             continue
         d = {}
-        for entete, valeur in zip(entetes, ligne):
-            if entete and valeur is not None and str(valeur).strip():
-                d[entete] = str(valeur).strip()
+        for j, valeur in enumerate(ligne[:MAX_COLONNES]):
+            if valeur is None or not str(valeur).strip():
+                continue
+            entete = entetes[j] if j < len(entetes) else ""
+            if not entete:
+                entete = f"Colonne {_lettre_colonne(j)}"
+                if entete not in entetes:
+                    entetes.append(entete)
+            d[entete] = str(valeur).strip()
         if d:
             lignes.append(d)
     wb.close()
     return [e for e in entetes if e], lignes
+
+
+def _lettre_colonne(indice: int) -> str:
+    """0 → A, 25 → Z, 26 → AA : la lettre qu'Excel montre en tête de colonne."""
+    lettres = ""
+    n = indice
+    while True:
+        lettres = chr(ord("A") + n % 26) + lettres
+        n = n // 26 - 1
+        if n < 0:
+            return lettres
 
 
 def lire_pdf(brut: bytes) -> str:

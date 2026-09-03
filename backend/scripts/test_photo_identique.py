@@ -87,7 +87,10 @@ verifier("la garde refuse l'essai TEXTE quand le fil porte une image à garder",
 verifier("le refus passe par SkillError : le modèle se corrige au tour suivant",
          "réinventerait" in agent1 and 'image="{cles[-1]}"' in agent1)
 verifier("le fantôme couvre les VISUELS : une simulation demandée sans image produite force",
-         "or demande_un_visuel(state.get(\"query\") or \"\")" in agent1)
+         # 03/09 : le visuel REMONTRÉ depuis le fil (vraie clé) n'est plus un
+         # fantôme ; la demande sans image produite l'est toujours.
+         "or (demande_un_visuel(state.get(\"query\") or \"\") and \"?\" not in visible" in agent1
+         and "and not _montre_un_fichier_du_fil(visible, state))" in agent1)
 
 if (BACKEND / "skills" / "visuels.py").exists():
     visuels = (BACKEND / "skills" / "visuels.py").read_text(encoding="utf-8")

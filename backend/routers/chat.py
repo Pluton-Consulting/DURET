@@ -31,9 +31,25 @@ class ChatRequest(BaseModel):
     attachment_name: Optional[str] = None      # nom d'origine — sert à choisir le lecteur
 
 
+# Le tableau reproduit dans l'invite : TOUT ce qui tient dans ce budget, et
+# non « les 40 premières lignes ». À 40, un fichier de 95 clients n'en montrait
+# que 40 au modèle, qui en a traité 30 (03/09, Symbiose) — et la note lui
+# disait d'aller importer le fichier ailleurs. Les lignes complètes, elles,
+# voyagent À CÔTÉ (`attachment_rows`) pour les actions : `@tableau`.
+BUDGET_TABLEAU_INVITE = 40000
+
+
 async def _texte_piece_jointe(nom: Optional[str], b64: Optional[str],
                               mime: Optional[str]) -> Optional[str]:
-    """Extrait le texte d'un fichier joint au chat (Excel, Word, CSV, PDF, texte…).
+    """Le texte seul : l'ancienne signature, conservée pour ses appelants."""
+    texte, _ = await _piece_jointe(nom, b64, mime)
+    return texte
+
+
+async def _piece_jointe(nom: Optional[str], b64: Optional[str],
+                        mime: Optional[str]) -> tuple[Optional[str], Optional[dict]]:
+    """Extrait le texte d'un fichier joint au chat (Excel, Word, CSV, PDF, texte…),
+    et, pour un tableau, ses LIGNES complètes — {nom, colonnes, lignes}.
 
     Retourne None pour les IMAGES et les PDF sans couche texte : ceux-là partent
     vers la vision (agent2), qui sait décrire un plan ou une photo. Tout le reste
@@ -42,32 +58,32 @@ async def _texte_piece_jointe(nom: Optional[str], b64: Optional[str],
     Ne lève jamais : un fichier illisible ne doit pas faire échouer le message.
     """
     if not b64:
-        return None
+        return None, None
     if (mime or "").lower().startswith("image/"):
-        return None                      # une photo/un plan : c'est le travail de la vision
+        return None, None                # une photo/un plan : c'est le travail de la vision
 
     try:
         brut = base64.b64decode(b64)
     except Exception:
-        return None
+        return None, None
     if len(brut) > settings.max_body_mb * 1024 * 1024:
         logger.warning("Pièce jointe trop volumineuse (%d octets) — ignorée", len(brut))
-        return None
+        return None, None
 
     from ingestion.parsers import analyser, ligne_en_texte, famille, FichierNonSupporte
 
     nom = nom or "document"
     if famille(nom) is None:
-        return None                      # extension inconnue -> tentative vision en repli
+        return None, None                # extension inconnue -> tentative vision en repli
 
     try:
         structure = await asyncio.to_thread(analyser, nom, brut)
     except FichierNonSupporte as e:
         logger.info("Pièce jointe %s non exploitable en texte (%s)", nom, e)
-        return None                      # PDF scanné sans OCR, image illisible -> vision
+        return None, None                # PDF scanné sans OCR, image illisible -> vision
     except Exception as e:               # noqa: BLE001
         logger.warning("Lecture de la pièce jointe %s impossible : %s", nom, e)
-        return None
+        return None, None
 
     # UN PLAN N'EST PAS UN DOCUMENT TEXTE. Un PDF de plan porte souvent quelques
     # étiquettes vectorielles (cotes, légendes) : sa couche texte « existe », le
@@ -79,19 +95,32 @@ async def _texte_piece_jointe(nom: Optional[str], b64: Optional[str],
     if (structure["kind"] != "tabulaire"
             and ("pdf" in (mime or "").lower() or nom.lower().endswith(".pdf"))
             and len((structure.get("text") or "").strip()) < 300):
-        return None
+        return None, None
 
     if structure["kind"] == "tabulaire":
         lignes = structure["rows"]
-        # Un classeur de 5 000 lignes ne tient pas dans une fenêtre de contexte :
-        # on en donne un extrait représentatif et on annonce la troncature, plutôt
-        # que de laisser le modèle croire qu'il a tout vu.
-        extrait = [ligne_en_texte(l) for l in lignes[:40]]
-        entete = f"Tableau : {len(lignes)} lignes, colonnes : {', '.join(structure['columns'])}"
-        if len(lignes) > 40:
-            entete += (f"\n(Seules les 40 premières lignes sont reproduites ici. Pour exploiter "
-                       f"les {len(lignes)} lignes, importez le fichier via Paramètres > Import de données.)")
-        return entete + "\n\n" + "\n\n".join(extrait)
+        tableau = {"nom": nom, "colonnes": list(structure["columns"]), "lignes": lignes}
+        # TOUT ce qui tient dans le budget, ligne après ligne — et si ça ne
+        # tient pas, la coupe est DITE avec le moyen d'agir quand même : les
+        # lignes complètes accompagnent le tour, les actions les prennent par
+        # `@tableau`. Un classeur de 5 000 lignes reste hors de portée de
+        # l'invite ; il n'est plus hors de portée des actions.
+        morceaux: list[str] = []
+        poids = 0
+        for l in lignes:
+            bloc = ligne_en_texte(l)
+            if poids + len(bloc) > BUDGET_TABLEAU_INVITE:
+                break
+            morceaux.append(bloc)
+            poids += len(bloc) + 2
+        entete = (f"Tableau : {len(lignes)} lignes, colonnes : {', '.join(structure['columns'])}\n"
+                  f"Pour agir sur TOUTES ces lignes (publipostage, liste, export), passe "
+                  f"`\"@tableau\"` en paramètre d'action (ex. `\"destinataires\": \"@tableau\"`) : "
+                  f"le serveur y met les {len(lignes)} lignes, ne les recopie jamais toi-même.")
+        if len(morceaux) < len(lignes):
+            entete += (f"\n(Seules les {len(morceaux)} premières lignes sont reproduites ici, "
+                       f"faute de place ; `@tableau` porte bien les {len(lignes)}.)")
+        return entete + "\n\n" + "\n\n".join(morceaux), tableau
 
     return structure["text"]
 
@@ -272,7 +301,7 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
     success = True
     error_msg: Optional[str] = None
 
-    texte_joint = await _texte_piece_jointe(body.attachment_name, body.attachment_b64, body.attachment_mime)
+    texte_joint, tableau_joint = await _piece_jointe(body.attachment_name, body.attachment_b64, body.attachment_mime)
 
     try:
         result = await runtime.run_turn(
@@ -285,6 +314,7 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
             attachment_mime=body.attachment_mime,
             attachment_name=body.attachment_name,
             attachment_text=texte_joint,
+            attachment_rows=tableau_joint,
         )
     except HTTPException:
         raise
@@ -457,7 +487,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         await _dire(websocket, {"type": "error", "detail": e.detail})
         return
 
-    texte_joint = await _texte_piece_jointe(
+    texte_joint, tableau_joint = await _piece_jointe(
         data.get("attachment_name"), data.get("attachment_b64"), data.get("attachment_mime")
     )
 
@@ -477,6 +507,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
             attachment_mime=data.get("attachment_mime"),
             attachment_name=data.get("attachment_name"),
             attachment_text=texte_joint,
+            attachment_rows=tableau_joint,
         ):
             # L'expert effectif se lit sur TOUS les nœuds, pas seulement sur
             # `classify` : la boucle d'outils et `execute_action` réattribuent

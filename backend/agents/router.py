@@ -428,6 +428,12 @@ _SUITE_ATTENDUE = (
     "supprime", "installe", "mets ", "met ", "crée", "cree", "imagine", "simul",
     "visuel", "rendu", "projet", "illustr", "dessine", "variante", "version",
     "à la place", "a la place", "avec un", "avec une", "avec des",
+    # 03/09 (export Langfuse, 13:07) : « dans cette photo, intègre une piscine
+    # de 4,5 × 2,2 m » — aucun mot de la liste, la vision a rendu une ANALYSE
+    # DE CHIFFRAGE de quarante lignes et jamais l'image. Les verbes du
+    # paysagiste qui POSE quelque chose dans un jardin :
+    "intègr", "integr", "insèr", "inser", "incrust", "implant", "aménag",
+    "amenag", "construi", "creus", "pose ", "place ",
 )
 
 

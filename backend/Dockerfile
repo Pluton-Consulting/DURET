@@ -24,6 +24,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -m spacy download fr_core_news_md \
     || python -m spacy download fr_core_news_sm
 
+# Le modèle Whisper LOCAL (transcription de la voix sans jeton d'IA), téléchargé
+# AU BUILD pour que la première dictée ne fasse pas attendre 460 Mo. S'il ne
+# se télécharge pas ici (réseau), l'image se construit quand même : le modèle
+# viendra au premier usage, dans le volume des documents, et Google sert de
+# secours entre-temps.
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')" \
+    || echo "modele Whisper non pre-telecharge : il viendra au premier usage"
+
 COPY . .
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

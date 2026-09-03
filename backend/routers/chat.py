@@ -439,7 +439,10 @@ async def transcrire_voix(body: TranscriptionRequest, current_user: User = Depen
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="L'enregistrement n'a pas pu être lu.")
     try:
-        texte = await transcrire(octets, body.mime or "audio/webm")
+        # L'identifiant de la personne sert de clé au cache incrémental du
+        # moteur local : un enregistrement qui grandit n'est transcrit que
+        # pour sa partie neuve.
+        texte = await transcrire(octets, body.mime or "audio/webm", cle_cache=str(current_user.id))
     except TranscriptionIndisponible as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     return {"texte": texte}

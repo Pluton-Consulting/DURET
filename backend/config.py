@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     # LA VOIX (03/09) : le micro du chat enregistre, ce modèle transcrit. Même
     # clé Google que la vision et les images — rien de plus à configurer.
     model_google_audio: str = "gemini-flash-latest"
+    # SANS JETON D'IA (03/09, Noa) : Whisper LOCAL (faster-whisper, CPU) transcrit
+    # par défaut — aucun appel externe. « google » force le secours. `small` :
+    # ~460 Mo, ~500 Mo de RAM, à peu près le temps réel sur deux cœurs ; `base`
+    # si le VPS est petit, `medium` s'il est large (plus lent, plus juste).
+    transcription_moteur: str = "local"
+    whisper_modele: str = "small"
     # Second candidat Google, plus leger : au test, le premier a repondu 503
     # « forte demande » pendant que celui-ci lisait le plan en une seconde.
     model_google_vision_secours: str = "gemini-3.1-flash-lite"

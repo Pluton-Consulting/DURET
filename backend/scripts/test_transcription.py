@@ -151,7 +151,7 @@ ETAT["requetes"].clear()
 # Les pauses de réessai (3 s, 8 s) ne doivent pas ralentir le banc : le module
 # reçoit un `asyncio` doublé dont le sommeil est instantané.
 _vrai_sleep = asyncio.sleep
-module.asyncio = types.SimpleNamespace(sleep=lambda s: _vrai_sleep(0))
+module.asyncio = types.SimpleNamespace(sleep=lambda s: _vrai_sleep(0), to_thread=asyncio.to_thread)
 verifier("un 503 est réessayé, et la suite est rendue",
          asyncio.run(transcrire(b"x")) == "Après la surcharge." and len(ETAT["requetes"]) == 2)
 
@@ -190,6 +190,73 @@ verifier("la barre passe le jeton de session à la dictée",
          "token={token}" in (FRONTEND / "components" / "chat" / "ChatWindow.tsx").read_text(encoding="utf-8")
          and "apiUrl: API_URL," in barre and "token," in barre)
 verifier("le champ dit quand il transcrit", "(je transcris)" in barre)
+
+
+# ── 5. SANS JETON D'IA : WHISPER LOCAL, ET SON CACHE INCRÉMENTAL ──────────
+# Noa : « il n'y a pas une solution pour retranscrire sans token IA ? ». Si :
+# faster-whisper sur le CPU du conteneur. Le banc double la bibliothèque et
+# vérifie ce qui compte — qu'un enregistrement qui GRANDIT n'est transcrit
+# que pour sa partie neuve, avec un recouvrement, et que Google ne sert plus
+# que de secours.
+APPELS = []
+
+class _Segment:
+    def __init__(self, t): self.text = t
+
+class _Whisper:
+    def __init__(self, nom, device=None, compute_type=None, download_root=None):
+        ETAT["whisper_nom"] = nom; ETAT["whisper_root"] = download_root
+    def transcribe(self, audio, **kw):
+        APPELS.append({"n": len(audio), "amorce": kw.get("initial_prompt")})
+        # Le texte « entendu » dépend de la LONGUEUR : 16 000 échantillons = 1 s = un mot.
+        secondes = len(audio) // 16000
+        return ([_Segment(" ".join(f"mot{i}" for i in range(secondes)))], None)
+
+mod_fw = types.ModuleType("faster_whisper"); mod_fw.WhisperModel = _Whisper
+mod_fw_audio = types.ModuleType("faster_whisper.audio")
+# Chaque octet = un centième de seconde : 100 octets → 1 s → 16 000 échantillons.
+mod_fw_audio.decode_audio = lambda f, sampling_rate=16000: [0.0] * (len(f.getvalue()) * 160)
+sys.modules["faster_whisper"] = mod_fw; sys.modules["faster_whisper.audio"] = mod_fw_audio
+sys.modules["config"].settings.transcription_moteur = "local"
+sys.modules["config"].settings.whisper_modele = "small"
+module._LOCAL_INDISPONIBLE = None
+module._MODELE = None
+module._CACHE.clear()
+
+verifier("Whisper local est le moteur par défaut dès qu'il est installé",
+         module.moteur_choisi() == "local")
+ETAT["requetes"].clear()
+t1 = asyncio.run(transcrire(b"a" * 300, "audio/webm", cle_cache="noa"))     # 3 s
+verifier("une dictée de 3 s donne 3 mots, sans AUCUN appel Google",
+         t1 == "mot0 mot1 mot2" and not ETAT["requetes"], t1)
+verifier("le modèle demandé est celui du réglage, rangé dans le volume des documents",
+         ETAT["whisper_nom"] == "small" and ETAT["whisper_root"].endswith("modeles"))
+t2 = asyncio.run(transcrire(b"a" * 600, "audio/webm", cle_cache="noa"))     # 6 s, même début
+verifier("L'ENREGISTREMENT QUI GRANDIT N'EST TRANSCRIT QUE POUR SA PARTIE NEUVE (+1 s de recouvrement)",
+         APPELS[-1]["n"] == 4 * 16000, str(APPELS[-1]))
+verifier("le texte d'avant sert d'amorce à la suite", APPELS[-1]["amorce"] == "mot0 mot1 mot2")
+# Le modèle doublé nomme les mots par leur rang depuis le début de CE qu'on
+# lui donne : la fin relue (4 s) rend « mot0 mot1 mot2 mot3 », dont les trois
+# premiers sont le recouvrement déjà connu — ils ne doivent pas être répétés.
+verifier("le texte rendu est recollé sans répéter le recouvrement",
+         t2 == "mot0 mot1 mot2 mot3", t2)
+t3 = asyncio.run(transcrire(b"b" * 600, "audio/webm", cle_cache="noa"))     # un AUTRE début
+verifier("un autre enregistrement (autre début) repart de zéro", APPELS[-1]["n"] == 6 * 16000)
+verifier("« _recoller » retire les mots relus dans le recouvrement",
+         module._recoller("bonjour je voudrais un devis", "un devis pour une terrasse")
+         == "bonjour je voudrais un devis pour une terrasse")
+sys.modules["config"].settings.transcription_moteur = "google"
+verifier("le réglage « google » force le secours", module.moteur_choisi() == "google")
+sys.modules["config"].settings.transcription_moteur = "local"
+module._LOCAL_INDISPONIBLE = "faster-whisper absent"
+verifier("sans faster-whisper installé, Google prend le relais", module.moteur_choisi() == "google")
+module._LOCAL_INDISPONIBLE = None
+requirements = (BACKEND / "requirements.txt").read_text(encoding="utf-8")
+dockerfile = (BACKEND / "Dockerfile").read_text(encoding="utf-8")
+verifier("faster-whisper est dans l'image", "faster-whisper" in requirements)
+verifier("le modèle est téléchargé AU BUILD, et un échec de téléchargement ne casse pas l'image",
+         "WhisperModel('small'" in dockerfile and "|| echo" in dockerfile)
+verifier("la route donne la clé du cache (qui dicte)", "cle_cache=str(current_user.id)" in chat)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

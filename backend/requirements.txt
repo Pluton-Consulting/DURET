@@ -16,6 +16,9 @@ pyjwt[crypto]>=2.10.0
 httpx>=0.28.0
 pgvector>=0.3.0
 numpy>=1.26.0
+# Transcription de la voix SANS jeton d'IA : Whisper local sur CPU (03/09).
+# Embarque le décodage audio (PyAV) : webm/opus, mp4, ogg lus sans ffmpeg système.
+faster-whisper>=1.1.0
 openai>=1.50.0            # embeddings RAG (optionnel — clé OPENAI_API_KEY)
 pillow>=10.0.0            # suppression EXIF/GPS photos (Agent 2)
 pymupdf>=1.24.0          # rendu PDF→image pour la vision (Agent 2, import optionnel)

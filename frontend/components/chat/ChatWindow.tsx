@@ -9,6 +9,7 @@ import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { CLE_CONTEXTE, EVENEMENT_CONTEXTE, type ContextePrealable } from "@/components/tableau/TableauDeBord"
 import { EXPERTS } from "@/lib/permissions"
 import { apiRequest } from "@/lib/api"
+import { jetonFrais } from "@/lib/session"
 import { openChatSocket, sendQuery, sendStop, ChatEvent } from "@/lib/ws"
 import { detacherTour, majTourDetache, reprendreTour, terminerTourDetache, abonnerTour } from "@/lib/tourDetache"
 
@@ -1083,12 +1084,21 @@ ${texteAffiche}`)
           return
         }
         if (err?.status === 401) {
-          // La session a expiré (le JWT vit 24 h) alors que l'onglet est resté
-          // ouvert : rien d'autre ne marchera d'ici la reconnexion. On le dit
-          // en français et on y renvoie — « Erreur : Token invalide » (31/08)
-          // laissait la personne devant un chat mort.
+          // Le JWT a expiré dans un onglet resté ouvert (il vit 24 h). Depuis
+          // le 03/09, ça ne veut plus dire « retourne te connecter » : cet
+          // appareil a une session durable, et le jeton se renouvelle tout
+          // seul. On le redemande, puis on recharge la page pour que TOUT
+          // l'écran reparte avec le bon jeton.
           if (!monteRef.current) majTourDetache({ fini: true })
-          else pushAssistant("Erreur : session expirée, veuillez vous reconnecter.")
+          const frais = await jetonFrais()
+          if (frais) {
+            if (monteRef.current) pushAssistant("Reprise de la session en cours…")
+            setTimeout(() => window.location.reload(), 600)
+            return
+          }
+          // Session réellement fermée (déconnexion, appareil coupé, compte
+          // désactivé) : là seulement, retour à la connexion.
+          if (monteRef.current) pushAssistant("Erreur : session expirée, veuillez vous reconnecter.")
           setTimeout(() => window.location.assign("/login"), 2500)
           return
         }

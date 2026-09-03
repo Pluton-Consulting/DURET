@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # 24 h (31/08, décision de Noa) : 8 h expiraient en pleine journée dans un onglet
     # resté ouvert. Doit rester ÉGAL à `session.maxAge` de frontend/lib/auth.ts.
     jwt_expire_hours: int = 24
+    # LA SESSION D'APPAREIL (03/09, migration 034). Combien de jours un poste
+    # déjà connu reste connecté sans repasser par le lien magique.
+    # 0 = ILLIMITÉ, tant qu'on ne se déconnecte pas — décision de Noa. Toute
+    # autre valeur donne une échéance GLISSANTE, repoussée à chaque usage : un
+    # poste dont on se sert ne tombe jamais, un poste oublié finit par tomber.
+    session_appareil_jours: int = 0
 
     # ── LLM — stratégie multi-fournisseurs ───────────────────────────────
     # Cascade par palier : chaque candidat est essayé (retry+backoff) puis on

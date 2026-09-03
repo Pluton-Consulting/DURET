@@ -42,9 +42,15 @@ ws = (FRONTEND / "lib" / "ws.ts").read_text(encoding="utf-8")
 config = (BACKEND / "config.py").read_text(encoding="utf-8")
 auth_ts = (FRONTEND / "lib" / "auth.ts").read_text(encoding="utf-8")
 exemple = (BACKEND.parent / ".env.example").read_text(encoding="utf-8")
-verifier("la session dure 24 h, et backend, .env.example et NextAuth disent la MÊME chose",
-         "jwt_expire_hours: int = 24" in config and "JWT_EXPIRE_HOURS=24" in exemple
-         and "maxAge: 60 * 60 * 24" in auth_ts)
+# 03/09 : LE JWT ET LA SESSION D'ÉCRAN NE SONT PLUS LIÉS, et c'est voulu. Le
+# JWT reste court (24 h) parce qu'il ne se révoque qu'à la peine ; la session
+# d'écran est longue parce qu'un jeton d'appareil, lui, se coupe d'un clic
+# (Paramètres > Mes appareils). Les aligner de nouveau ramènerait le lien
+# magique quotidien — voir test_session_appareil.py.
+verifier("le JWT backend vit 24 h, et le .env d'exemple dit la même chose",
+         "jwt_expire_hours: int = 24" in config and "JWT_EXPIRE_HOURS=24" in exemple)
+verifier("l'écran, lui, tient sur le jeton d'appareil et se renouvelle seul",
+         "maxAge: 60 * 60 * 24 * 400" in auth_ts and "/api/auth/refresh" in auth_ts)
 verifier("le ticket WebSocket refusé en 401 porte le même message et son statut",
          "ticketRes.status === 401" in ws and "session expirée" in ws and "e.status = ticketRes.status" in ws)
 

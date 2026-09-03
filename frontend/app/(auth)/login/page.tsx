@@ -1,5 +1,12 @@
 "use client"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+
+// L'ADRESSE DE LA DERNIÈRE CONNEXION (03/09, demande de Noa : « sans resaisir
+// le mail »). Cet écran ne se voit plus qu'une fois par appareil — la session
+// dure ensuite d'elle-même — mais quand il se voit, l'adresse est déjà là.
+// C'est un CONFORT, pas une preuve : le lien magique reste envoyé à l'adresse,
+// et il faut toujours l'ouvrir. Rien de sensible ne dort donc ici.
+const CLE_DERNIER_EMAIL = "pluton.dernier_email"
 import { MarqueDuret } from "@/components/nav/Logo"
 
 type State = "idle" | "loading" | "sent" | "refused" | "error"
@@ -8,6 +15,25 @@ export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [state, setState] = useState<State>("idle")
   const [error, setError] = useState("")
+
+  // Après le rendu, jamais pendant : lire le stockage local au premier rendu
+  // ferait diverger le HTML du serveur et celui du navigateur (hydratation).
+  useEffect(() => {
+    try {
+      const retenu = window.localStorage.getItem(CLE_DERNIER_EMAIL)
+      if (retenu) setEmail(retenu)
+    } catch {
+      // Navigation privée, stockage refusé : l'écran marche comme avant.
+    }
+  }, [])
+
+  // « Utiliser un autre email » doit vraiment vider le champ — sinon le
+  // pré-remplissage le remettrait et le bouton ne servirait à rien.
+  const changerDAdresse = () => {
+    try { window.localStorage.removeItem(CLE_DERNIER_EMAIL) } catch { /* rien */ }
+    setState("idle")
+    setEmail("")
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -27,6 +53,7 @@ export default function LoginPage() {
       if (!res.ok) throw new Error()
       // Réponse volontairement uniforme côté serveur (anti-énumération de comptes) :
       // on affiche toujours "email envoyé", qu'il existe ou non.
+      try { window.localStorage.setItem(CLE_DERNIER_EMAIL, email.trim()) } catch { /* rien */ }
       setState("sent")
     } catch {
       setError("Une erreur est survenue. Réessayez.")
@@ -72,7 +99,7 @@ export default function LoginPage() {
               <strong>{email}</strong>
             </p>
             <button
-              onClick={() => { setState("idle"); setEmail("") }}
+              onClick={changerDAdresse}
               className="sym-tap sym-in sym-in-3"
               style={{ color: "var(--marque-primary)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}
             >
@@ -90,7 +117,7 @@ export default function LoginPage() {
               Contactez votre administrateur.
             </p>
             <button
-              onClick={() => { setState("idle"); setEmail("") }}
+              onClick={changerDAdresse}
               className="sym-tap sym-in sym-in-3"
               style={{ color: "var(--marque-primary)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}
             >

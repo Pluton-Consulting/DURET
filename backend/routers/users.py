@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
 from uuid import UUID
+from auth import appareil
 from auth.dependencies import get_current_user
 from database.models import User
 from database.connection import get_db
@@ -227,6 +228,12 @@ async def deactivate_user(
         if current_user.role == "direction" and target["role"] not in DIRECTION_CREATABLE_ROLES:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
         await conn.execute("UPDATE users SET actif = false WHERE id = $1", user_id)
+
+    # Ses appareils restaient « connectés » dans la liste (03/09). L'accès était
+    # déjà coupé — `compte_de` et `get_current_user` exigent tous deux un compte
+    # actif — mais laisser les lignes ouvertes ferait mentir l'écran, et une
+    # réactivation rouvrirait des postes que plus personne ne surveille.
+    await appareil.revoquer_tout(user_id)
 
     await log_action(
         action="user_deactivated",

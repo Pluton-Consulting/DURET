@@ -36,17 +36,23 @@ spec.loader.exec_module(publi)
 
 dests = [{"email": f"client{i}@ex.fr", "nom": f"Client {i}"} for i in range(100)]
 r = publi.construire_cartes("Relance {nom}", "Bonjour {nom},\nvotre devis {reference} attend.", dests)
-verifier("100 destinataires → 100 comptés, page 1 de 40 cartes, 3 pages",
-         r["nombre"] == 100 and r["pages"] == 3 and len(r["cartes"]) == 40
-         and "page=2" in r["pour_continuer"])
+# 03/09 : TOUTES les cartes d'un coup — la pagination du skill ne servait qu'à
+# multiplier les blocs (neuf appels, six blocs, 207 cartes pour 95 clients).
+# C'est l'écran qui pagine. La borne reste, très haute.
+verifier("100 destinataires → 100 comptés, 100 cartes, UNE page",
+         r["nombre"] == 100 and r["pages"] == 1 and len(r["cartes"]) == 100)
+verifier("la borne du skill est haute (mille), et l'écran pagine",
+         publi.PAR_PAGE >= 500)
 c = r["cartes"][0]
 verifier("les variables du gabarit ET du sujet sont substituées",
          c["objet"] == "Relance Client 0" and "Bonjour Client 0," in c["reponse"]
          and c["de"] == "client0@ex.fr")
 verifier("une variable absente devient [À COMPLÉTER], jamais une invention",
          "[À COMPLÉTER]" in c["reponse"])
-r3 = publi.construire_cartes("s", "g", dests, page=3)
-verifier("la page 3 rend la FIN (20 cartes), sans pour_continuer",
+# La borne existe toujours (pour un tableau de dix mille lignes) : on la
+# force à 40 pour l'exercer, puisque le défaut ne pagine plus 100 destinataires.
+r3 = publi.construire_cartes("s", "g", dests, page=3, par_page=40)
+verifier("au-delà de la borne, la page 3 rend la FIN (20 cartes), sans pour_continuer",
          len(r3["cartes"]) == 20 and "pour_continuer" not in r3)
 sur_mesure = publi.construire_cartes("Objet {nom}", "",
                                      [{"email": "a@b.fr", "nom": "Dupont",
@@ -82,6 +88,34 @@ verifier("trois régimes de mesure, jamais confondus : LU, ESTIMÉ, NON MESURABL
          and "NON MESURABLE" in agent2)
 verifier("plusieurs images se CROISENT (plan + photo), contradictions signalées",
          "CROISE-les" in agent2 and "contradiction" in agent2)
+
+
+# ── 03/09 : LA QUANTITÉ SANS DOUBLON ─────────────────────────────────────
+# Export Langfuse de 15:00 : `{Nom ?}` (l'en-tête EXACT du tableau) n'était pas
+# reconnu comme variable → 95 mails avec « {Nom ?} » en clair → envoi refusé →
+# le modèle a rappelé le skill neuf fois avec d'autres graphies → six blocs à
+# l'écran, 207 cartes.
+verifier("`{Nom ?}` — n'importe quel en-tête entre accolades — est une variable",
+         publi._substituer("Bonjour {Prénom} {Nom ?}", {"Prénom": "Karine", "Nom ?": "ASTRUC"})
+         == "Bonjour Karine ASTRUC")
+verifier("`{prenom}` retrouve « Prénom » (accents, casse, ponctuation ignorés)",
+         publi._substituer("{prenom}", {"Prénom": "Karine"}) == "Karine")
+verifier("les variables disponibles sont dites au modèle (il n'a plus à deviner)",
+         publi.variables_de([{"Prénom": "a", "Nom ?": "b", "E-mail": "c", "Colonne AG": "d"}])
+         == ["prenom", "nom", "email"])
+agent1_src = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
+verifier("UN SEUL bloc de cartes par message : le dernier remplace les précédents",
+         'uniques = ("reponses_mail",)' in agent1_src
+         and "[du_genre[-1]]" in agent1_src)
+verifier("un bloc de cartes recopié par le modèle cède la place au bloc mécanique",
+         '"bloc_unique_recopie"' in agent1_src)
+skills_src = (BACKEND / "mail" / "skills.py").read_text(encoding="utf-8")
+verifier("la consigne interdit de rappeler le skill dans le tour (un rappel REMPLACE)",
+         "NE RAPPELLE PAS ce skill dans ce tour" in skills_src)
+verifier("elle explique « [À COMPLÉTER] » au lieu de laisser le modèle réessayer",
+         "N'essaie pas d'autres noms de variables" in skills_src
+         and "cartes_avec_manque" in skills_src)
+verifier("elle nomme les variables reconnues", "Variables reconnues pour ces destinataires" in skills_src)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

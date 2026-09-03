@@ -2035,6 +2035,20 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
         if not isinstance(d, dict) or not d.get("bloc_garanti"):
             continue
         garantis.extend(_blocs_de(d.get("bloc_ui")))
+    # UN PUBLIPOSTAGE REFAIT REMPLACE LE PRÉCÉDENT, IL NE S'Y AJOUTE PAS (03/09,
+    # export Langfuse 15:00). Le modèle a appelé `preparer_envois` neuf fois
+    # dans le même tour en changeant le gabarit ({prenom} → {Prénom} → {Nom ?}
+    # → {Civilité}…) ; chaque appel rendait un bloc garanti, et l'écran a
+    # montré SIX blocs et 207 cartes pour 95 destinataires. Les cartes d'un
+    # tour sont UN objet : sa dernière version, et elle seule. Vaut pour tout
+    # bloc « unique » par nature — la liste des cartes, pas un tableau parmi
+    # d'autres.
+    uniques = ("reponses_mail",)
+    for genre in uniques:
+        du_genre = [g for g in garantis if g.get("type") == genre]
+        if len(du_genre) > 1:
+            garantis = [g for g in garantis if g.get("type") != genre] + [du_genre[-1]]
+    types_uniques_garantis = {g.get("type") for g in garantis if g.get("type") in uniques}
     if not garantis:
         return texte
     signatures_garanties = {_signature_bloc(g) for g in garantis}
@@ -2088,6 +2102,13 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
             return m.group(0)
         if not isinstance(bloc, dict):
             return m.group(0)
+        # Un bloc UNIQUE (les cartes de mail) écrit par le modèle cède la
+        # place au bloc mécanique de sa dernière version : il n'en existe
+        # qu'un par message, et c'est le skill qui le tient.
+        if bloc.get("type") in types_uniques_garantis and _signature_bloc(bloc) not in signatures_garanties:
+            _tracer_filet(state, "invention_effacee", "bloc_unique_recopie",
+                          type=str(bloc.get("type") or ""))
+            return ""
         # Une carte de document SANS url qui désigne un bloc garanti est la
         # signature exacte du défaut relevé : le vrai contenu la remplace.
         if (bloc.get("type") in ("doc", "doc_apercu")

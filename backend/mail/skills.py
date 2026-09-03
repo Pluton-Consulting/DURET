@@ -911,7 +911,7 @@ async def preparer_envois(data: dict, user) -> dict:
     gabarit — ou un corps sur mesure par destinataire. Rien ne part d'ici :
     chaque envoi repasse par `envoyer_email` et sa validation.
     """
-    from mail.publipostage import construire_cartes
+    from mail.publipostage import MANQUANT, construire_cartes, variables_de
 
     sujet = str(data.get("sujet") or data.get("objet") or "").strip()
     gabarit = str(data.get("gabarit") or data.get("corps")
@@ -935,6 +935,11 @@ async def preparer_envois(data: dict, user) -> dict:
 
     r = construire_cartes(sujet, gabarit, destinataires, page=data.get("page") or 1)
     cartes = r.pop("cartes")
+    # Les VARIABLES disponibles et les trous, dits au modèle : sans cela il
+    # devinait les noms de colonnes et rappelait le skill à chaque échec.
+    r["variables"] = variables_de(destinataires)
+    r["cartes_avec_manque"] = sum(1 for c in cartes if MANQUANT in (c.get("reponse") or "")
+                                  or MANQUANT in (c.get("objet") or ""))
     if not cartes:
         return {**r, "message_final": "Aucune carte : aucun destinataire de cette "
                                       "page ne porte d'adresse.",
@@ -947,11 +952,21 @@ async def preparer_envois(data: dict, user) -> dict:
                           + (f" (page {r['page']} sur {r['pages']})" if r["pages"] > 1 else "")
                           + ". Rien ne part sans votre validation.")
     r["a_faire"] = ("Les cartes sont DÉJÀ affichées (éditables, cochables) : ne les "
-                    "recopie pas. "
+                    "recopie pas, et NE RAPPELLE PAS ce skill dans ce tour — un rappel "
+                    "REMPLACE les cartes, il ne les améliore pas. "
+                    + (f"{r['cartes_avec_manque']} carte(s) portent « {MANQUANT} » : le tableau "
+                       "n'a pas cette valeur pour cette personne (une société sans prénom, "
+                       "par exemple). C'est NORMAL et c'est voulu — la personne corrige "
+                       "la carte à l'écran. N'essaie pas d'autres noms de variables. "
+                       if r["cartes_avec_manque"] else "")
+                    + (f"Variables reconnues pour ces destinataires : "
+                       f"{', '.join('{' + v + '}' for v in r['variables'])}. "
+                       if r.get("variables") else "")
                     + ("ENCHAÎNE avec la page suivante jusqu'à couvrir tous les "
                        "destinataires. " if r["pages"] > 1 else "")
                     + "Rien ne part d'ici : chaque envoi repassera par "
-                      "`envoyer_email` et sa validation.")
+                      "`envoyer_email` et sa validation. Dis en une phrase combien de "
+                      "cartes sont prêtes, puis laisse la main.")
     return r
 
 

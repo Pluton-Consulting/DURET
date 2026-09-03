@@ -24,11 +24,23 @@ from __future__ import annotations
 
 import re
 
-PAR_PAGE = 40
+# TOUTES LES CARTES D'UN COUP (03/09). À 40 par page, « un mail à 95 clients »
+# demandait trois appels, et chaque appel ajoutait son bloc à l'écran ; le
+# modèle a fini par en faire neuf. Le bloc garanti n'est plus coupé (il est mis
+# de côté avant la coupe, cf. agent1), et c'est l'ÉCRAN qui pagine (une, deux
+# ou trois cartes à la fois, flèches) : la pagination du skill ne servait plus
+# qu'à multiplier les blocs. La borne reste, très haute, pour qu'un tableau de
+# dix mille lignes ne fabrique pas un message de dix mégaoctets.
+PAR_PAGE = 1000
 # Une variable absente ne se devine pas : la règle des fiches vaut pour les
 # mails — « [À COMPLÉTER] » se voit et se corrige, une valeur plausible part.
 MANQUANT = "[À COMPLÉTER]"
-_VARIABLE = re.compile(r"\{([a-zA-Z_àâäéèêëîïôöùûüç][\w àâäéèêëîïôöùûüç-]{0,40})\}")
+# N'IMPORTE QUEL EN-TÊTE ENTRE ACCOLADES (03/09). Le modèle a écrit `{Nom ?}` —
+# l'en-tête exact du tableau — et l'expression d'avant refusait le « ? » : la
+# variable restait en clair dans 95 mails, l'envoi les refusait tous, et le
+# modèle a réessayé neuf fois avec d'autres graphies. Ce qui est entre
+# accolades est une variable, point ; `_plat` fait le rapprochement.
+_VARIABLE = re.compile(r"\{([^{}\n]{1,40})\}")
 
 
 _ADRESSE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
@@ -74,6 +86,22 @@ def _adresse_dans(d: dict) -> str:
             if trouve:
                 return trouve.group(0)
     return ""
+
+
+def variables_de(destinataires) -> list[str]:
+    """Les noms de variables qu'un gabarit peut utiliser pour CES destinataires :
+    les en-têtes du tableau, tels qu'on les écrit entre accolades (prenom,
+    nom, ville…). Dits au modèle avec le résultat, pour qu'il n'ait pas à
+    deviner — c'est en devinant qu'il a rappelé le skill neuf fois."""
+    vus: list[str] = []
+    for d in destinataires or []:
+        if not isinstance(d, dict):
+            continue
+        for k in d.keys():
+            cle = _plat(k)
+            if cle and cle not in vus and not cle.startswith("colonne"):
+                vus.append(cle)
+    return vus[:30]
 
 
 def _normaliser(destinataires) -> list[dict]:

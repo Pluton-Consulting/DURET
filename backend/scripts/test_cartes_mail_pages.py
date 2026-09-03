@@ -42,7 +42,8 @@ m = re.search(r"export function cartesParPage\(largeur: number\): number \{(.*?)
 verifier("`cartesParPage` existe et ne dépend que de la largeur du conteneur", m is not None)
 if m:
     js = ("function cartesParPage(largeur) {" + m.group(1) + "\n}\n"
-          "const r = [320, 619, 620, 800, 939, 940, 1400].map(cartesParPage);\n"
+          # Seuils du 03/09 (cartes plus larges) : 760 px pour deux, 1180 px pour trois.
+          "const r = [320, 759, 760, 1000, 1179, 1180, 1500].map(cartesParPage);\n"
           "process.stdout.write(JSON.stringify(r));")
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False, encoding="utf-8") as f:
         f.write(js)
@@ -70,7 +71,7 @@ verifier("un compteur dit où l'on est : « 4–6 sur 30 »",
 verifier("les flèches se désactivent aux deux bouts",
          "disabled={pageSure === 0}" in texte and "disabled={pageSure >= pages - 1}" in texte)
 verifier("la barre de pages n'apparaît pas pour une page unique",
-         "{pages > 1 && (" in texte)
+         "const Pages = pages > 1 ? (" in texte)
 verifier("un changement de largeur ne laisse pas la page au-delà de la fin",
          "const pageSure = Math.min(page, pages - 1)" in texte)
 # L'état est GLOBAL : cocher/corriger sur la page 1 doit tenir en page 2.
@@ -78,8 +79,12 @@ verifier("ce qui est coché ou corrigé survit au changement de page (index glob
          "const i = debut + k" in texte and "choisies[i]" in texte and "textes[i]" in texte)
 verifier("l'envoi groupé compte TOUTES les cartes cochées, pas seulement la page visible",
          ".filter(({ i }) => choisies[i] && textes[i].trim())" in texte)
-verifier("les cartes ont gagné en hauteur de lecture (plus larges, elles peuvent l'être)",
-         "min-height:150px" in texte)
+verifier("les cartes ont gagné en hauteur de lecture (03/09 : « un peu plus grandes »)",
+         "min-height:200px" in texte)
+verifier("l'objet se lit en entier (deux lignes), plus tronqué à une",
+         "-webkit-line-clamp:2" in texte)
+verifier("le nombre de cartes par page tient compte de leur nouvelle largeur",
+         "largeur >= 1180" in texte and "largeur >= 760" in texte)
 verifier("le composant reste identique des deux côtés (socle)", True)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")

@@ -122,7 +122,7 @@ verifier("une valeur qui contient une adresse mais n'en est pas la colonne n'est
          espace_pp["_adresse_dans"]({"note": "voir x@y.fr", "E-mail": "vrai@z.fr"}) == "vrai@z.fr")
 r = espace_pp["construire_cartes"]("Objet {prenom}", "Bonjour {prenom}", lignes, page=1)
 verifier("les cartes se construisent depuis les lignes BRUTES du tableau",
-         r["nombre"] == 95 and len(r["cartes"]) == espace_pp["PAR_PAGE"] and r["pages"] == 3)
+         r["nombre"] == 95 and len(r["cartes"]) == 95 and r["pages"] == 1)
 
 # ── 3. LA CHAÎNE : de l'invite aux actions ────────────────────────────────
 chat = (BACKEND / "routers" / "chat.py").read_text(encoding="utf-8")

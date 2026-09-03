@@ -114,5 +114,39 @@ verifier("il dit la suite : l'appareil restera connecté",
 verifier("le lien se copie, et un presse-papiers refusé est DIT",
          "clipboard.writeText" in ecran and "copiez-le à la main" in ecran)
 
+
+# ── 4. PLUSIEURS UTILISATIONS : PC + téléphone (03/09, migration 035) ────
+# « Quand je crée un lien, je dois pouvoir choisir le nombre d'utilisations. »
+# Chaque appareil franchit la porte une fois (session d'appareil) : un salarié
+# qu'on équipe d'un poste et d'un téléphone avait besoin de deux liens.
+auth_py = (BACKEND / "routers" / "auth.py").read_text(encoding="utf-8")
+migration = BACKEND / "database" / "migrations" / "035_lien_multi_usages.sql"
+verifier("la migration 035 existe et est idempotente",
+         migration.exists() and migration.read_text(encoding="utf-8").count("ADD COLUMN IF NOT EXISTS") == 2)
+verifier("un lien existant vaut UNE utilisation (défauts des colonnes)",
+         migration.exists() and "utilisations_max INTEGER NOT NULL DEFAULT 1" in migration.read_text(encoding="utf-8"))
+verifier("la route accepte le nombre d'utilisations", "class LienConnexionRequest" in users_py
+         and "utilisations: int = 1" in users_py)
+verifier("il est BORNÉ des deux côtés (1 au moins, 5 au plus)",
+         "LIEN_ACCES_UTILISATIONS_MAX = 5" in users_py
+         and "max(1, min(int(" in users_py)
+verifier("la vérification COMPTE au lieu de cocher, en une seule requête (deux appareils en même temps)",
+         "utilisations = utilisations + 1" in auth_py
+         and "used = (utilisations + 1 >= utilisations_max)" in auth_py)
+verifier("un lien plein est refusé comme avant", "faites >= maxi" in auth_py)
+verifier("sans la migration, tout redevient à usage unique — et la réponse le DIT",
+         "schema_incomplet" in auth_py and "schema_incomplet" in users_py
+         and '"migration_absente": "035_lien_multi_usages"' in users_py)
+verifier("le lien du MAIL reste à usage unique (rien ne change pour lui)",
+         "INSERT INTO verification_tokens (email, token, expires_at) VALUES ($1, $2, $3)" in auth_py)
+verifier("l'audit note le nombre d'utilisations accordé", '"utilisations": utilisations' in users_py)
+verifier("l'écran fait CHOISIR avant de créer : 1, 2, 3 ou 5 appareils",
+         "[1, 2, 3, 5].map((n) =>" in ecran and "Créer le lien" in ecran
+         and "setLienPour({ id: user.id" in ecran)
+verifier("le bandeau dit combien de fois le lien vaut",
+         "Il fonctionne <b>{lienAcces.utilisations} fois</b>" in ecran)
+verifier("le bandeau prévient si le serveur ne sait pas encore compter",
+         "migration 035 à appliquer" in ecran)
+
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

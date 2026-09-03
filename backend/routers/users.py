@@ -39,6 +39,16 @@ AGENTS = ("agent1", "agent2", "agent3")
 # colonne `used` de `verification_tokens`), périmètre limité aux comptes que
 # l'on gère déjà, et trace dans l'audit_log.
 LIEN_ACCES_EXPIRE_HEURES = 24
+# Combien de fois un lien d'accès peut servir, au plus. Cinq : de quoi équiper
+# un poste, un téléphone et une tablette avec de la marge — au-delà, ce n'est
+# plus un lien remis à quelqu'un, c'est une porte ouverte.
+LIEN_ACCES_UTILISATIONS_MAX = 5
+
+
+class LienConnexionRequest(BaseModel):
+    """`utilisations` : combien d'appareils pourront franchir la porte avec ce
+    lien (03/09, demande de Noa : « PC + téléphone »). 1 par défaut."""
+    utilisations: int = 1
 
 
 class CreateUserRequest(BaseModel):
@@ -253,6 +263,7 @@ async def set_agent_permission(
 @router.post("/{user_id}/lien-connexion")
 async def creer_lien_connexion(
     user_id: UUID,
+    body: LienConnexionRequest | None = None,
     current_user: User = Depends(get_current_user),
 ):
     """Fabrique un lien de connexion à remettre EN MAIN PROPRE.
@@ -290,18 +301,40 @@ async def creer_lien_connexion(
             detail="Ce compte est désactivé : réactivez-le avant de créer un lien.",
         )
 
+    # Borné des deux côtés : zéro ou un négatif serait un lien mort, plus que le
+    # plafond serait une porte ouverte. On ramène, on ne refuse pas — l'écran
+    # ne propose que des valeurs permises, une valeur hors bornes vient d'un
+    # appel à la main.
+    utilisations = max(1, min(int((body.utilisations if body else 1) or 1),
+                              LIEN_ACCES_UTILISATIONS_MAX))
     jeton = secrets.token_urlsafe(32)
     expire_le = datetime.now(timezone.utc) + timedelta(hours=LIEN_ACCES_EXPIRE_HEURES)
+    migration_absente = False
     async with get_db() as conn:
-        await conn.execute(
-            "INSERT INTO verification_tokens (email, token, expires_at) VALUES ($1, $2, $3)",
-            cible["email"], jeton, expire_le,
-        )
+        try:
+            await conn.execute(
+                """INSERT INTO verification_tokens (email, token, expires_at, utilisations_max)
+                   VALUES ($1, $2, $3, $4)""",
+                cible["email"], jeton, expire_le, utilisations,
+            )
+        except Exception as e:  # noqa: BLE001
+            from database.connection import schema_incomplet
+            if not schema_incomplet(e):
+                raise
+            # Migration 035 absente : le lien existe, mais il ne vaudra qu'UNE
+            # fois — et la réponse le DIT, plutôt que de promettre deux
+            # appareils à quelqu'un qui n'en aura qu'un.
+            migration_absente = True
+            utilisations = 1
+            await conn.execute(
+                "INSERT INTO verification_tokens (email, token, expires_at) VALUES ($1, $2, $3)",
+                cible["email"], jeton, expire_le,
+            )
 
     await log_action(
         action="lien_acces_cree",
         user_id=str(current_user.id),
-        metadata={"target_user_id": str(user_id)},
+        metadata={"target_user_id": str(user_id), "utilisations": utilisations},
     )
 
     # `quote` sur les deux valeurs : un « + » dans une adresse se décode en
@@ -315,6 +348,8 @@ async def creer_lien_connexion(
         "nom": cible["name"],
         "valable_heures": LIEN_ACCES_EXPIRE_HEURES,
         "expire_le": expire_le.isoformat(),
+        "utilisations": utilisations,
+        "migration_absente": "035_lien_multi_usages" if migration_absente else None,
     }
 
 

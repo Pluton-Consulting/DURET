@@ -116,16 +116,39 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
 
     if not row:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien invalide")
-    if row["used"]:
+    # UN LIEN PEUT SERVIR PLUSIEURS FOIS (03/09, migration 035) : PC puis
+    # téléphone, chacun ouvrant sa propre session d'appareil. Le compteur fait
+    # foi quand il existe ; `used` reste le verrou du lien envoyé par mail et
+    # celui d'une base sans la migration — dans ce cas tout lien vaut une fois.
+    d = dict(row)
+    maxi = int(d.get("utilisations_max") or 1)
+    faites = int(d.get("utilisations") or 0)
+    if row["used"] or faites >= maxi:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien déjà utilisé")
     if row["expires_at"] < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien expiré")
 
     async with get_db() as conn:
-        await conn.execute(
-            "UPDATE verification_tokens SET used = true WHERE token = $1",
-            body.token,
-        )
+        try:
+            # Une utilisation de plus ; le lien se ferme quand le compte est
+            # plein. Écrit en UNE requête pour que deux appareils qui cliquent
+            # au même instant ne consomment pas la même utilisation.
+            await conn.execute(
+                """UPDATE verification_tokens
+                      SET utilisations = utilisations + 1,
+                          used = (utilisations + 1 >= utilisations_max)
+                    WHERE token = $1""",
+                body.token,
+            )
+        except Exception as e:  # noqa: BLE001
+            from database.connection import schema_incomplet
+            if not schema_incomplet(e):
+                raise
+            # Migration 035 absente : comportement d'avant, à usage unique.
+            await conn.execute(
+                "UPDATE verification_tokens SET used = true WHERE token = $1",
+                body.token,
+            )
         user = await conn.fetchrow(
             "SELECT * FROM users WHERE email = $1 AND actif = true",
             body.email,

@@ -70,20 +70,28 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   // n'arrive pas (boîte en panne, indésirables, salarié sans messagerie), ou
   // quand on installe le poste de quelqu'un à côté de lui.
   const [lienAcces, setLienAcces] = useState<
-    { url: string; email: string; nom: string | null; valable_heures: number } | null>(null)
+    { url: string; email: string; nom: string | null; valable_heures: number
+      utilisations?: number; migration_absente?: string | null } | null>(null)
   const [lienEnCours, setLienEnCours] = useState<string | null>(null)
   const [lienErreur, setLienErreur] = useState("")
   const [copie, setCopie] = useState(false)
+  // LE NOMBRE D'UTILISATIONS SE CHOISIT AVANT DE CRÉER (03/09, Noa : « PC +
+  // téléphone »). Le clic sur « Lien d'accès » ouvre d'abord ce choix ; le
+  // lien n'est fabriqué qu'au second clic, avec le nombre voulu.
+  const [lienPour, setLienPour] = useState<{ id: string; nom: string | null; email: string } | null>(null)
+  const [utilisations, setUtilisations] = useState(1)
 
-  async function creerLienAcces(userId: string) {
+  async function creerLienAcces(userId: string, combien: number) {
     setLienEnCours(userId); setLienErreur(""); setCopie(false)
     try {
       const res = await fetch(`${apiUrl}/api/users/${userId}/lien-connexion`, {
-        method: "POST", headers: { Authorization: `Bearer ${backendToken}` },
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ utilisations: combien }),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setLienErreur(d.detail ?? "Le lien n'a pas pu être créé."); setLienAcces(null); return }
-      setLienAcces(d)
+      setLienAcces(d); setLienPour(null)
     } catch {
       setLienErreur("Le serveur n'a pas répondu. Réessayez.")
     } finally { setLienEnCours(null) }
@@ -180,6 +188,53 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
         </p>
       )}
 
+      {lienPour && !lienAcces && (
+        <div className="sym-fade" style={{
+          background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)",
+          padding: 18, marginBottom: 20, border: "1px solid var(--marque-primary-light)",
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "var(--marque-text-primary)", marginBottom: 4 }}>
+            Lien d'accès pour {lienPour.nom || lienPour.email}
+          </div>
+          <p style={{ fontSize: 13, color: "var(--marque-text-body)", margin: "0 0 12px", maxWidth: 620 }}>
+            Sur combien d'appareils cette personne doit-elle pouvoir l'ouvrir ? Chaque appareil
+            consomme une utilisation, puis reste connecté de lui-même.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {[1, 2, 3, 5].map((n) => (
+              <button key={n} type="button" onClick={() => setUtilisations(n)} className="sym-tap"
+                aria-pressed={utilisations === n}
+                style={{
+                  border: utilisations === n ? "1px solid var(--marque-primary)" : "1px solid var(--marque-border)",
+                  background: utilisations === n ? "var(--marque-primary)" : "var(--marque-surface)",
+                  color: utilisations === n ? "var(--marque-text-on-dark)" : "var(--marque-text-body)",
+                  borderRadius: "var(--marque-radius-pill)", padding: "7px 14px", fontSize: 13, cursor: "pointer",
+                  fontWeight: 600,
+                }}>
+                {n === 1 ? "1 appareil" : `${n} appareils`}
+              </button>
+            ))}
+            <button type="button" onClick={() => creerLienAcces(lienPour.id, utilisations)}
+              disabled={lienEnCours === lienPour.id} className="sym-tap" style={{
+                background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none",
+                borderRadius: "var(--marque-radius-pill)", padding: "9px 20px", fontSize: 13, fontWeight: 600,
+                cursor: lienEnCours ? "wait" : "pointer", marginLeft: 6,
+              }}>
+              {lienEnCours ? "…" : "Créer le lien"}
+            </button>
+            <button type="button" onClick={() => { setLienPour(null); setLienErreur("") }} className="sym-tap" style={{
+              background: "none", border: "1px solid var(--marque-border)", color: "var(--marque-text-body)",
+              borderRadius: "var(--marque-radius-pill)", padding: "9px 18px", fontSize: 13, cursor: "pointer",
+            }}>
+              Annuler
+            </button>
+          </div>
+          {lienErreur && (
+            <p role="status" style={{ color: "var(--marque-error-text)", fontSize: 12, margin: "10px 0 0" }}>{lienErreur}</p>
+          )}
+        </div>
+      )}
+
       {lienAcces && (
         <div className="sym-fade" style={{
           background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)",
@@ -190,9 +245,18 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
           </div>
           <p style={{ fontSize: 13, color: "var(--marque-text-body)", margin: "0 0 12px", maxWidth: 620 }}>
             Remettez-le <b>à cette personne uniquement</b> : il ouvre la session à sa place.
-            Il ne fonctionne <b>qu'une fois</b> et expire dans {lienAcces.valable_heures} h.
-            Une fois utilisé, son appareil restera connecté — elle n'aura plus rien à faire.
+            {(lienAcces.utilisations ?? 1) > 1
+              ? <> Il fonctionne <b>{lienAcces.utilisations} fois</b> — un appareil par utilisation —</>
+              : <> Il ne fonctionne <b>qu'une fois</b></>}
+            {" "}et expire dans {lienAcces.valable_heures} h.
+            Une fois utilisé, chaque appareil restera connecté — elle n'aura plus rien à faire.
           </p>
+          {lienAcces.migration_absente && (
+            <p role="status" style={{ color: "var(--marque-error-text)", fontSize: 12, margin: "0 0 10px" }}>
+              Ce serveur ne sait pas encore compter les utilisations (migration 035 à appliquer) :
+              ce lien ne vaudra qu'une fois.
+            </p>
+          )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
               readOnly
@@ -331,7 +395,9 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                         désactivation — la direction n'atteint pas un
                         super_admin, et le serveur le revérifie de toute façon. */}
                     {user.actif && (currentRole === "super_admin" || METIER_ROLES.includes(user.role)) && (
-                      <button onClick={() => creerLienAcces(user.id)} disabled={lienEnCours === user.id}
+                      <button onClick={() => { setLienAcces(null); setLienErreur(""); setUtilisations(1)
+                                               setLienPour({ id: user.id, nom: user.name, email: user.email }) }}
+                        disabled={lienEnCours === user.id}
                         className="sym-tap" title="Créer un lien de connexion à lui transmettre"
                         style={{
                           background: "none", border: "1px solid var(--marque-border)",

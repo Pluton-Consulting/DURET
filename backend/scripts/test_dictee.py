@@ -10,13 +10,16 @@ hors navigateur ne peut la faire parler. Ce fichier vérifie donc le CONTRAT —
 les choix qui, s'ils sautaient, feraient une fonctionnalité qui a l'air de
 marcher et ne marche pas. Le juge final reste un micro et un vrai Chrome.
 
-LES QUATRE CHOSES QUI DOIVENT TENIR :
-  1. le bouton n'existe PAS là où le navigateur ne sait pas écouter — un bouton
+LES CINQ CHOSES QUI DOIVENT TENIR :
+  1. ON APPUIE, ÇA ÉCOUTE ; ON RÉAPPUIE, ÇA S'ARRÊTE — et rien d'autre n'arrête
+     l'écoute. Chrome, lui, la coupe tout seul après quelques secondes de
+     silence : sans relance, le micro s'éteint au milieu d'une réflexion ;
+  2. le bouton n'existe PAS là où le navigateur ne sait pas écouter — un bouton
      présent qui ne fait rien fait croire l'application cassée ;
-  2. la voix S'AJOUTE à ce qui était tapé, elle ne l'écrase pas ;
-  3. l'écoute s'arrête à l'envoi et au démontage — sinon le micro reste allumé
+  3. la voix S'AJOUTE à ce qui était tapé, elle ne l'écrase pas ;
+  4. l'écoute s'arrête à l'envoi et au démontage — sinon le micro reste allumé
      et la phrase suivante s'écrit dans un champ déjà vidé ;
-  4. une erreur est dite EN FRANÇAIS : « not-allowed » à l'écran n'apprend rien.
+  5. une erreur est dite EN FRANÇAIS : « not-allowed » à l'écran n'apprend rien.
 """
 import pathlib
 import sys
@@ -58,8 +61,26 @@ verifier("un micro refusé est expliqué, avec le geste à faire",
 verifier("un micro absent est dit", "audio-capture" in texte)
 verifier("un silence ou un arrêt volontaire ne fait PAS d'erreur à l'écran",
          '"aborted": ""' in texte and '"no-speech": ""' in texte)
+
+# ── 1bis. LA BASCULE : un appui écoute, un second arrête, RIEN D'AUTRE ────
+# Le piège de toute dictée navigateur : Chrome termine la reconnaissance tout
+# seul après quelques secondes de silence, `continuous` ou pas. Sans relance,
+# le micro s'éteint au milieu d'une réflexion — on reprend la parole devant un
+# bouton déjà éteint, et la moitié de la phrase se perd.
+verifier("l'écoute se RELANCE quand le navigateur la coupe tout seul",
+         "reco.onend" in texte and "if (!voulu)" in texte
+         and texte.count("reco.start()") >= 2)
+verifier("le texte déjà dicté survit à la relance (elle est invisible)",
+         texte.count('acquis = ""') == 2)   # la déclaration, et la remise à zéro au démarrage
+verifier("LE SECOND APPUI ARRÊTE POUR DE BON : le drapeau tombe AVANT stop()",
+         texte.find("voulu = false\n      try { reco.stop() }") > 0)
+verifier("un micro refusé ou absent ne relance PAS en boucle",
+         '"not-allowed" || code === "service-not-allowed" || code === "audio-capture"' in texte
+         and "voulu = false" in texte)
+verifier("un moteur qui ne tient pas ouvert finit par s'arrêter, et le dit",
+         "relances > 5" in texte and "n'arrive pas à rester ouverte" in texte)
 verifier("aucun code technique ne peut atteindre l'écran",
-         "RAISONS[evenement?.error]" in texte and "La dictée s'est interrompue" in texte)
+         "RAISONS[code]" in texte and "La dictée s'est interrompue" in texte)
 
 # ── 3. LE BOUTON ─────────────────────────────────────────────────────────
 verifier("le bouton existe dans la barre de saisie",

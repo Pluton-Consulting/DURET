@@ -18,6 +18,12 @@
  * clique, on parle, il ne se passe rien, et on croit que l'application est
  * cassée.
  *
+ * ON APPUIE, ÇA ÉCOUTE ; ON RÉAPPUIE, ÇA S'ARRÊTE. Rien d'autre n'arrête
+ * l'écoute — et ce n'est pas gratuit : Chrome termine la reconnaissance tout
+ * seul après quelques secondes de silence, `continuous` ou pas. On la relance
+ * donc en silence (`onend`), sans perdre le texte déjà dicté. Sans cela, le
+ * micro s'éteignait au milieu d'une réflexion.
+ *
  * LE TEXTE PROVISOIRE COMPTE. La reconnaissance rend d'abord une hypothèse
  * (`interimResults`), puis la corrige. Sans elle, on parle dix secondes devant
  * un champ vide et l'on croit que rien n'est entendu. On affiche donc le
@@ -36,9 +42,9 @@ export function dicteeDisponible(): boolean {
 }
 
 export interface Dictee {
-  /** Commence à écouter. */
+  /** Commence à écouter, et NE S'ARRÊTE PLUS avant `arreter()`. */
   demarrer: () => void
-  /** Arrête — ce que fait le second clic, et l'envoi du message. */
+  /** Arrête pour de bon — ce que fait le second appui, et l'envoi du message. */
   arreter: () => void
 }
 
@@ -59,7 +65,7 @@ const RAISONS: Record<string, string> = {
   "audio-capture": "Aucun micro n'a été trouvé sur cet appareil.",
   "network": "La reconnaissance vocale n'a pas pu joindre son service. Vérifiez la connexion.",
   "aborted": "",   // c'est nous qui avons arrêté : rien à dire
-  "no-speech": "",  // silence : on s'arrête, sans reproche
+  "no-speech": "",  // un silence n'est pas une faute : on relance, sans rien dire
 }
 
 /**
@@ -83,7 +89,11 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
   reco.interimResults = true
 
   let acquis = ""      // ce que le moteur a définitivement reconnu
-  let vivant = false
+  // L'UTILISATEUR A APPUYÉ, ET N'A PAS ENCORE RÉAPPUYÉ. C'est CE drapeau qui
+  // fait foi, pas l'état du moteur : voir `onend` ci-dessous.
+  let voulu = false
+  let relances = 0
+  let derniereRelance = 0
 
   reco.onresult = (evenement: any) => {
     let provisoire = ""
@@ -96,31 +106,70 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
   }
 
   reco.onerror = (evenement: any) => {
-    const raison = RAISONS[evenement?.error] ?? "La dictée s'est interrompue. Réessayez."
+    const code = evenement?.error
+    // TROIS REFUS SUR LESQUELS IL EST INUTILE D'INSISTER : pas d'autorisation,
+    // pas de micro. Sans cette ligne, la relance automatique de `onend`
+    // rouvrirait l'écoute aussitôt, en boucle, et la personne verrait le même
+    // message revenir sans fin.
+    if (code === "not-allowed" || code === "service-not-allowed" || code === "audio-capture") {
+      voulu = false
+    }
+    const raison = RAISONS[code] ?? "La dictée s'est interrompue. Réessayez."
     if (raison) options.surErreur(raison)
   }
 
   reco.onend = () => {
-    vivant = false
-    options.surFin()
+    // ON APPUIE, ÇA ÉCOUTE ; ON RÉAPPUIE, ÇA S'ARRÊTE — et RIEN D'AUTRE ne
+    // doit arrêter l'écoute.
+    //
+    // Chrome termine la reconnaissance TOUT SEUL après quelques secondes de
+    // silence, `continuous` ou pas. Sans la relance ci-dessous, le micro
+    // s'éteignait au milieu d'une réflexion : on reprenait la parole devant un
+    // bouton déjà éteint, et la moitié de la phrase se perdait. `acquis` n'est
+    // PAS remis à zéro ici — la relance est invisible, le texte continue.
+    if (!voulu) {
+      options.surFin()
+      return
+    }
+    // Garde-fou : si le moteur se ferme aussitôt rouvert, plusieurs fois de
+    // suite, c'est qu'il ne peut pas écouter. On s'arrête et on le dit, plutôt
+    // que de tourner en rond en silence.
+    const maintenant = Date.now()
+    relances = maintenant - derniereRelance < 1000 ? relances + 1 : 0
+    derniereRelance = maintenant
+    if (relances > 5) {
+      voulu = false
+      options.surErreur("La dictée n'arrive pas à rester ouverte. Vérifiez le micro, puis réessayez.")
+      options.surFin()
+      return
+    }
+    try {
+      reco.start()
+    } catch {
+      voulu = false
+      options.surFin()
+    }
   }
 
   return {
     demarrer() {
-      if (vivant) return
+      if (voulu) return
       acquis = ""
+      relances = 0
+      voulu = true
       try {
         reco.start()
-        vivant = true
       } catch {
         // `start()` sur une instance déjà démarrée lève : ce n'est pas une
         // panne, l'écoute est en cours et c'est ce qu'on voulait.
-        vivant = true
       }
     },
     arreter() {
+      // Le drapeau AVANT l'arrêt : `stop()` déclenche `onend`, qui relancerait
+      // l'écoute si le drapeau était encore levé — le second appui n'arrêterait
+      // alors rien du tout.
+      voulu = false
       try { reco.stop() } catch { /* déjà arrêtée */ }
-      vivant = false
     },
   }
 }

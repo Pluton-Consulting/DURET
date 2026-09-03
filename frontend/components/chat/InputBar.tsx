@@ -1,5 +1,5 @@
 "use client"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   PromptInput,
   PromptInputTextarea,
@@ -9,7 +9,11 @@ import {
   usePromptInputAttachments,
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input"
-import { PaperclipIcon, SquareIcon, XIcon, ZapIcon } from "lucide-react"
+import { MicIcon, PaperclipIcon, SquareIcon, XIcon, ZapIcon } from "lucide-react"
+// La dictée du NAVIGATEUR : rien à installer, aucune clé, le son ne passe pas
+// par notre backend. Le bouton n'existe pas là où le navigateur ne sait pas
+// écouter (cf. lib/dictee.ts).
+import { creerDictee, dicteeDisponible, type Dictee } from "@/lib/dictee"
 // La liste des process fréquents est une donnée PAR CLIENT (lib/raccourcis.ts,
 // déclarée dans la dérive) : le menu, lui, est du socle.
 import { RACCOURCIS } from "@/lib/raccourcis"
@@ -147,6 +151,46 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
   const [erreur, setErreur] = useState("")
   const [raccourcisOuverts, setRaccourcisOuverts] = useState(false)
 
+  // ── LA DICTÉE (03/09) ─────────────────────────────────────────────────
+  // `avantDictee` garde ce qui était déjà tapé : la voix s'AJOUTE à la fin, on
+  // ne remplace jamais ce que la personne avait écrit. Sans ce repère, chaque
+  // correction du moteur (il se reprend en cours de phrase) réécrirait tout le
+  // champ, en emportant le texte tapé avant.
+  const [ecoute, setEcoute] = useState(false)
+  const [micDisponible, setMicDisponible] = useState(false)
+  const dicteeRef = useRef<Dictee | null>(null)
+  const avantDictee = useRef("")
+
+  // Après le rendu, jamais pendant : `window` n'existe pas côté serveur, et
+  // lire la disponibilité au premier rendu ferait diverger le HTML du serveur
+  // de celui du navigateur (hydratation).
+  useEffect(() => { setMicDisponible(dicteeDisponible()) }, [])
+
+  // Une dictée oubliée continuerait d'écouter après un changement de page :
+  // le micro resterait allumé, et l'onglet le montrerait — pas nous.
+  useEffect(() => () => { dicteeRef.current?.arreter() }, [])
+
+  const basculerDictee = () => {
+    if (ecoute) {
+      dicteeRef.current?.arreter()
+      return
+    }
+    setErreur("")
+    avantDictee.current = texte ? texte.replace(/\s+$/, "") + " " : ""
+    const dictee = creerDictee({
+      surTexte: (dit) => setTexte(avantDictee.current + dit),
+      surFin: () => setEcoute(false),
+      surErreur: (message) => setErreur(message),
+    })
+    if (!dictee) {
+      setErreur("La dictée n'est pas disponible dans ce navigateur.")
+      return
+    }
+    dicteeRef.current = dictee
+    dictee.demarrer()
+    setEcoute(true)
+  }
+
   const surEnvoi = (message: PromptInputMessage) => {
     if (disabled) return
     const contenu = texte.trim()
@@ -173,6 +217,9 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
     }
 
     if (!contenu && !piece) return
+    // La dictée s'arrête à l'envoi : sans cela, la phrase suivante s'écrirait
+    // dans un champ qu'on vient de vider, à la suite d'un message déjà parti.
+    dicteeRef.current?.arreter()
     // Un fichier envoyé sans question : on formule l'intention par défaut.
     onSend(contenu || `Analyse ce fichier : ${piece?.name}`, piece)
     setTexte("")
@@ -267,13 +314,38 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
             <ZapIcon className="size-4" />
           </PromptInputButton>
 
+          {/* LE MICRO N'APPARAÎT QUE SI LE NAVIGATEUR SAIT ÉCOUTER.
+              Un bouton présent qui ne fait rien est pire que pas de bouton :
+              on clique, on parle, rien ne s'écrit, et l'on croit l'application
+              cassée (Firefox ne connaît pas SpeechRecognition). */}
+          {micDisponible && (
+            <PromptInputButton
+              type="button"
+              data-testid="dictee"
+              onClick={basculerDictee}
+              disabled={disabled}
+              title={ecoute ? "Arrêter la dictée" : "Dicter le message"}
+              aria-label={ecoute ? "Arrêter la dictée" : "Dicter le message"}
+              aria-pressed={ecoute}
+              className="shrink-0"
+              style={ecoute ? {
+                border: "1px solid var(--marque-error-text)",
+                color: "var(--marque-error-text)",
+              } : undefined}
+            >
+              <MicIcon className="size-4" />
+            </PromptInputButton>
+          )}
+
           <PromptInputTextarea
             data-testid="saisie-message"
             className="min-h-9 py-2"
             value={texte}
             onChange={(e) => setTexte(e.target.value)}
             disabled={disabled}
-            placeholder={modeFile
+            placeholder={ecoute
+              ? "Je vous écoute…"
+              : modeFile
               ? "Écrivez pour mettre une autre tâche dans la file d'attente"
               : "Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"}
           />

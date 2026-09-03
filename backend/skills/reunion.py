@@ -323,6 +323,31 @@ def construire_bloc(cr: dict, titre: str, sous_titre: str) -> dict:
     return bloc
 
 
+def _suites(deja_en_fichier: bool, avec_actions: bool) -> dict:
+    """Ce qu'on fait D'HABITUDE après un compte rendu — en boutons, pas en prose.
+
+    Demande de Noa (03/09) : « à la fin, après avoir affiché le compte rendu, il
+    doit proposer un envoi par mail. » Un compte rendu qui reste dans le chat ne
+    sert à personne : sa vie normale est de partir aux participants dans l'heure.
+
+    POURQUOI DES BOUTONS ET PAS UNE PHRASE. Une phrase du modèle est une
+    intention qu'il faut reformuler soi-même ; un bouton EST la demande. Et
+    c'est mécanique, donc toujours là — un modèle qui oublie de proposer
+    n'empêche pas la proposition d'exister. L'envoi lui-même ne bouge pas d'un
+    pouce : il repassera par `envoyer_email` et sa validation humaine.
+
+    L'ordre compte : l'envoi d'abord, c'est le geste attendu.
+    """
+    suites = ["Envoie ce compte rendu par mail"]
+    if not deja_en_fichier:
+        suites.append("Fais-moi le document Word")
+    if avec_actions:
+        suites.append("Crée les relances pour les actions")
+    # L'écran n'en affiche que quatre : on s'arrête avant, plutôt que de laisser
+    # une proposition tomber en silence.
+    return {"type": "quick_replies", "options": suites[:3]}
+
+
 def _entete(data: dict) -> tuple[str, str]:
     """Le titre du compte rendu et sa ligne de contexte."""
     titre = _texte(data.get("titre"))[:120]
@@ -492,6 +517,7 @@ async def compte_rendu_reunion(data: dict, user) -> dict:
     fichier = await _en_document(cr, titre, date, user) if veut_fichier else None
     if fichier:
         blocs.append(fichier)
+    blocs.append(_suites(bool(fichier), bool(cr["actions"])))
 
     reste = len(transcription) - caracteres_lus
     message = f"Compte rendu de « {titre} » : {sous_titre}."
@@ -515,11 +541,13 @@ async def compte_rendu_reunion(data: dict, user) -> dict:
         "a_faire": (
             "Le compte rendu est DÉJÀ affiché par un bloc mécanique : ne le recopie "
             "pas, n'écris aucun bloc pour lui. Dis une ou deux phrases sur ce qui "
-            "ressort de la réunion (la décision principale, ou ce qui reste ouvert). "
-            "Puis, SI c'est utile, propose la suite en UNE ligne — sans la faire "
-            "sans accord : produire le Word (rappelle ce skill avec `fichier: true`), "
-            "l'envoyer aux participants (`envoyer_email`), ou poser une relance sur "
-            "une action datée (`creer_tache_agent`). "
+            "ressort de la réunion (la décision principale, ou ce qui reste ouvert), "
+            "puis PROPOSE L'ENVOI PAR MAIL en une ligne — c'est la suite normale "
+            "d'un compte rendu, il n'a d'utilité qu'une fois chez les participants. "
+            "Ne l'envoie pas de toi-même : demande à qui, puis passe par "
+            "`envoyer_email`, qui fera valider le message. Les boutons de suite "
+            "sont DÉJÀ à l'écran (envoi, document Word, relances) : ne les réécris "
+            "pas et n'en invente pas d'autres. "
             "Une action dont le responsable ou l'échéance est vide n'est PAS une "
             "erreur : c'est ce que la réunion n'a pas tranché — signale-le plutôt "
             "que de le combler."),

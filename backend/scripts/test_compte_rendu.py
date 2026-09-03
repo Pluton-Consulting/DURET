@@ -248,11 +248,18 @@ SYNTHESE = json.dumps({
     "en_suspens": ["La date de livraison"],
 }, ensure_ascii=False)
 
+def _bloc(sortie, genre):
+    """Le bloc d'un type donné — le résultat en porte plusieurs (compte rendu,
+    document produit, suites proposées)."""
+    blocs = sortie.get("bloc_ui")
+    blocs = blocs if isinstance(blocs, list) else [blocs]
+    return next((b for b in blocs if isinstance(b, dict) and b.get("type") == genre), None)
+
+
 sortie = _lancer({"transcription": TRANSCRIPTION}, ['{"points": ["ok"]}', SYNTHESE])
-bloc_sortie = sortie.get("bloc_ui")
+bloc_sortie = _bloc(sortie, "compte_rendu")
 verifier("le compte rendu s'affiche par un bloc GARANTI (le modèle ne le recopie pas)",
-         sortie.get("bloc_garanti") is True
-         and isinstance(bloc_sortie, dict) and bloc_sortie.get("type") == "compte_rendu")
+         sortie.get("bloc_garanti") is True and bloc_sortie is not None)
 verifier("LES NOMS SONT REVENUS : masqués à l'aller, réhydratés au retour",
          "Jean" in bloc_sortie.get("resume", "") and "[PER_1]" not in json.dumps(bloc_sortie),
          bloc_sortie.get("resume", ""))
@@ -267,9 +274,30 @@ verifier("le chiffre dit en réunion est recopié tel quel",
          "12 400 €" in bloc_sortie.get("resume", ""))
 verifier("la consigne au modèle lui interdit de recopier le compte rendu",
          "ne le recopie" in sortie.get("a_faire", ""))
-verifier("la consigne propose la suite sans la faire (Word, mail, relance)",
-         all(m in sortie.get("a_faire", "")
-             for m in ("fichier: true", "envoyer_email", "creer_tache_agent")))
+verifier("la consigne ORDONNE de proposer l'envoi par mail",
+         "PROPOSE L'ENVOI PAR MAIL" in sortie.get("a_faire", ""))
+verifier("mais interdit de l'envoyer de soi-même : accord humain d'abord",
+         "Ne l'envoie pas de toi-même" in sortie.get("a_faire", "")
+         and "envoyer_email" in sortie.get("a_faire", ""))
+
+# ── L'ENVOI EST PROPOSÉ EN BOUTON, pas seulement en prose ────────────────
+# Un compte rendu qui reste dans le chat ne sert à personne : sa vie normale
+# est de partir aux participants. Le bouton est mécanique — un modèle qui
+# oublie de proposer n'empêche pas la proposition d'exister.
+blocs_tout = sortie["bloc_ui"] if isinstance(sortie["bloc_ui"], list) else [sortie["bloc_ui"]]
+suites = [b for b in blocs_tout if b.get("type") == "quick_replies"]
+verifier("une rangée de suites est proposée sous le compte rendu", len(suites) == 1)
+verifier("L'ENVOI PAR MAIL EST LA PREMIÈRE SUITE PROPOSÉE",
+         suites and suites[0]["options"][0] == "Envoie ce compte rendu par mail",
+         str(suites[0]["options"]) if suites else "")
+verifier("le Word est proposé tant qu'il n'a pas été produit",
+         reunion._suites(False, True)["options"][1] == "Fais-moi le document Word")
+verifier("il ne l'est plus une fois le document produit",
+         all("Word" not in o for o in reunion._suites(True, True)["options"]))
+verifier("les relances ne sont proposées que s'il y a des actions",
+         all("relance" not in o for o in reunion._suites(False, False)["options"]))
+verifier("l'envoi reste proposé même sans action et sans document",
+         reunion._suites(True, False)["options"] == ["Envoie ce compte rendu par mail"])
 verifier("le résultat ne porte PAS le compte rendu en double",
          "points_cles" not in sortie and "decisions" not in sortie)
 verifier("une phrase d'écran dit ce qui a été produit",
@@ -281,8 +309,8 @@ sortie_fichier = _lancer({"transcription": TRANSCRIPTION, "fichier": True},
                          ['{"points": ["ok"]}', SYNTHESE])
 blocs = sortie_fichier.get("bloc_ui")
 verifier("`fichier: true` produit le Word et rend SON bloc en plus",
-         isinstance(blocs, list) and len(blocs) == 2
-         and blocs[1].get("type") == "fichier" and blocs[1].get("format") == "docx")
+         isinstance(blocs, list)
+         and (_bloc(sortie_fichier, "fichier") or {}).get("format") == "docx")
 verifier("le document est écrit par le code, pas dicté au modèle",
          ATELIER["ouvert"] == 1
          and any(e.get("type") == "tableau" for e in ATELIER["elements"]))
@@ -316,7 +344,7 @@ ORPHELIN = json.dumps({"resume": "Le point de [PER_9] reste ouvert.",
 sortie_orpheline = _lancer({"transcription": TRANSCRIPTION},
                            ['{"points": ["ok"]}', ORPHELIN])
 verifier("un jeton resté orphelin devient un trou visible, pas une balise technique",
-         "[à compléter]" in sortie_orpheline["bloc_ui"]["resume"]
+         "[à compléter]" in _bloc(sortie_orpheline, "compte_rendu")["resume"]
          and "PER_9" not in json.dumps(sortie_orpheline))
 
 # Le modèle qui ne rend rien d'exploitable

@@ -1313,7 +1313,7 @@ ${texteAffiche}`)
             <button type="button" onClick={oublierContexte} aria-label="Retirer ce contexte">×</button>
           </div>
         )}
-        <InputBar onSend={sendMessage} disabled={false}
+        <InputBar onSend={sendMessage} disabled={false} token={token}
                   modeFile={loading || principalOccupe}
                   enCours={loading} onStop={stopper} />
       </div>

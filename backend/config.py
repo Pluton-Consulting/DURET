@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # users », releve sur gemini-2.5-flash), un nom fige casserait un jour.
     google_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     model_google_vision: str = "gemini-flash-latest"
+    # LA VOIX (03/09) : le micro du chat enregistre, ce modèle transcrit. Même
+    # clé Google que la vision et les images — rien de plus à configurer.
+    model_google_audio: str = "gemini-flash-latest"
     # Second candidat Google, plus leger : au test, le premier a repondu 503
     # « forte demande » pendant que celui-ci lisait le plan en une seconde.
     model_google_vision_secours: str = "gemini-3.1-flash-lite"

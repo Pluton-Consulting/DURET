@@ -10,10 +10,13 @@ import {
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input"
 import { MicIcon, PaperclipIcon, SquareIcon, XIcon, ZapIcon } from "lucide-react"
-// La dictée du NAVIGATEUR : rien à installer, aucune clé, le son ne passe pas
-// par notre backend. Le bouton n'existe pas là où le navigateur ne sait pas
-// écouter (cf. lib/dictee.ts).
+// La dictée : le navigateur ENREGISTRE, l'application TRANSCRIT
+// (lib/dictee.ts → POST /api/chat/transcrire). Une première version s'en
+// remettait à la reconnaissance vocale du navigateur, absente sur la moitié
+// des postes — Noa : « le transcripteur doit être intégré à l'app ».
 import { creerDictee, raisonIndisponible, type Dictee } from "@/lib/dictee"
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 // La liste des process fréquents est une donnée PAR CLIENT (lib/raccourcis.ts,
 // déclarée dans la dérive) : le menu, lui, est du socle.
 import { RACCOURCIS } from "@/lib/raccourcis"
@@ -36,6 +39,8 @@ interface InputBarProps {
   // d'attendre, ou de fermer l'onglet.
   enCours?: boolean
   onStop?: () => void
+  // Le jeton de session, pour envoyer l'enregistrement du micro au serveur.
+  token?: string
 }
 
 /** Trois barres indentées : la file d'attente, dessinée plutôt que dite. */
@@ -142,7 +147,7 @@ function BoutonJoindre({ desactive }: { desactive?: boolean }) {
   )
 }
 
-export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }: InputBarProps) {
+export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, token }: InputBarProps) {
   // LE TEXTE RESTE À NOUS. `PromptInput` vide son formulaire dès la soumission,
   // AVANT même que l'envoi ait abouti : une question perdue en cas d'échec est
   // une question à retaper. En le gardant ici, on ne l'efface qu'une fois
@@ -157,6 +162,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
   // correction du moteur (il se reprend en cours de phrase) réécrirait tout le
   // champ, en emportant le texte tapé avant.
   const [ecoute, setEcoute] = useState(false)
+  const [transcrit, setTranscrit] = useState(false)   // un envoi au serveur est en cours
   const dicteeRef = useRef<Dictee | null>(null)
   const avantDictee = useRef("")
 
@@ -221,19 +227,28 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
       setErreur(empeche)
       return
     }
+    if (!token) {
+      setErreur("Session absente : rechargez la page, puis réessayez la dictée.")
+      return
+    }
     avantDictee.current = texte ? texte.replace(/\s+$/, "") + " " : ""
     const dictee = creerDictee({
+      apiUrl: API_URL,
+      token,
+      // Le texte rendu couvre TOUTE la dictée depuis le début : il remplace
+      // ce qui avait été transcrit, jamais ce qui était tapé avant.
       surTexte: (dit) => setTexte(avantDictee.current + dit),
-      surFin: () => setEcoute(false),
+      surFin: () => { setEcoute(false); setTranscrit(false) },
       surErreur: (message) => setErreur(message),
+      surTravail: (enCoursDeTranscription) => setTranscrit(enCoursDeTranscription),
     })
     if (!dictee) {
       setErreur("La dictée n'a pas pu démarrer. Réessayez.")
       return
     }
     dicteeRef.current = dictee
-    dictee.demarrer()
     setEcoute(true)
+    void dictee.demarrer()
   }
 
   const surEnvoi = (message: PromptInputMessage) => {
@@ -404,7 +419,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop }
             onChange={(e) => setTexte(e.target.value)}
             disabled={disabled}
             placeholder={ecoute
-              ? "Je vous écoute…"
+              ? (transcrit ? "Je vous écoute… (je transcris)" : "Je vous écoute…")
               : modeFile
               ? "Écrivez pour mettre une autre tâche dans la file d'attente"
               : "Posez votre question... (Entrée pour envoyer, Maj+Entrée pour saut de ligne)"}

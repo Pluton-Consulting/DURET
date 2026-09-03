@@ -415,6 +415,36 @@ _WS_TICKET_TTL_S = 30
 _TOURS_DETACHES: set[asyncio.Task] = set()
 
 
+class TranscriptionRequest(BaseModel):
+    """L'enregistrement du micro, en base64, et son type (audio/webm, audio/mp4…)."""
+    audio_b64: str
+    mime: Optional[str] = "audio/webm"
+
+
+@router.post("/transcrire")
+async def transcrire_voix(body: TranscriptionRequest, current_user: User = Depends(get_current_user)):
+    """La voix du micro, en texte — TRANSCRITE PAR L'APPLICATION (03/09).
+
+    Le navigateur enregistre (MediaRecorder, universel) et envoie ; le serveur
+    transcrit avec le modèle Google déjà payé pour la vision. Une première
+    version s'en remettait à la reconnaissance vocale du navigateur, absente
+    sur la moitié des postes — Noa : « il faut que le transcripteur soit
+    intégré à l'app ». Le texte rendu est celui de la personne : il atterrit
+    dans la barre de saisie, c'est elle qui l'envoie.
+    """
+    from voix.transcription import TranscriptionIndisponible, transcrire
+    try:
+        octets = base64.b64decode(body.audio_b64 or "")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="L'enregistrement n'a pas pu être lu.")
+    try:
+        texte = await transcrire(octets, body.mime or "audio/webm")
+    except TranscriptionIndisponible as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    return {"texte": texte}
+
+
 @router.post("/ws-ticket")
 async def create_ws_ticket(current_user: User = Depends(get_current_user)):
     """Émet un ticket éphémère à usage unique pour ouvrir le WebSocket chat."""

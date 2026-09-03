@@ -1,8 +1,12 @@
+import secrets
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
 from uuid import UUID
 from auth import appareil
+from config import settings
 from auth.dependencies import get_current_user
 from database.models import User
 from database.connection import get_db
@@ -20,6 +24,22 @@ SUPER_ADMIN_CREATABLE_ROLES = {"super_admin", "direction"} | DIRECTION_CREATABLE
 
 AGENTS = ("agent1", "agent2", "agent3")
 
+# LE LIEN D'ACCÈS DÉLIVRÉ À LA MAIN (03/09, demande de Noa : « avec mon compte
+# admin, pouvoir leur faire accéder à l'interface même s'ils ne reçoivent pas le
+# mail magique »).
+#
+# 24 h, et non les 15 minutes du lien envoyé par mail. Les deux ne voyagent pas
+# de la même façon : le lien du mail arrive en trois secondes et se clique dans
+# la foulée ; celui-ci passe par un humain — un message, un SMS, un poste qu'on
+# installe à côté de quelqu'un — et une fenêtre de quinze minutes le rendrait
+# inutilisable le jour où il sert vraiment (une boîte en panne, un salarié
+# injoignable jusqu'au soir).
+#
+# Ce qui borne le risque n'est pas la durée mais le RESTE : usage unique (la
+# colonne `used` de `verification_tokens`), périmètre limité aux comptes que
+# l'on gère déjà, et trace dans l'audit_log.
+LIEN_ACCES_EXPIRE_HEURES = 24
+
 
 class CreateUserRequest(BaseModel):
     email: str
@@ -36,6 +56,23 @@ class ScheduleUpdateRequest(BaseModel):
     schedule_start_hour: Optional[int] = None  # 0-23, None = garder l'existant
     schedule_end_hour: Optional[int] = None    # 1-24, None = garder l'existant
     bypass_schedule: Optional[bool] = None     # None = garder l'existant
+
+
+def peut_ouvrir_pour(role_gestionnaire: str, role_cible: str) -> bool:
+    """Qui peut fabriquer un lien d'accès pour qui.
+
+    Même hiérarchie que la désactivation, et pour la même raison : ouvrir une
+    session à la place de quelqu'un est un pouvoir au moins aussi fort que lui
+    couper l'accès. La direction n'atteint donc que les rôles métier — sans
+    quoi elle se délivrerait un accès super_admin en deux clics.
+
+    Fonction pure, à dessein : c'est elle que le banc exécute.
+    """
+    if role_gestionnaire == "super_admin":
+        return True
+    if role_gestionnaire == "direction":
+        return role_cible in DIRECTION_CREATABLE_ROLES
+    return False
 
 
 def _effective_permissions(role: str, explicit: dict[str, bool]) -> dict[str, bool]:
@@ -211,6 +248,74 @@ async def set_agent_permission(
         },
     )
     return {"user_id": str(user_id), "agent": agent, "has_access": body.has_access}
+
+
+@router.post("/{user_id}/lien-connexion")
+async def creer_lien_connexion(
+    user_id: UUID,
+    current_user: User = Depends(get_current_user),
+):
+    """Fabrique un lien de connexion à remettre EN MAIN PROPRE.
+
+    POURQUOI (03/09). Le lien magique suppose que le mail arrive : boîte mal
+    configurée, message en indésirable, salarié sans accès à sa messagerie, ou
+    tout simplement un poste qu'on installe pour quelqu'un. Dans ces cas-là
+    l'administration n'avait AUCUN moyen d'ouvrir l'accès — il fallait réparer
+    la messagerie d'abord.
+
+    Le lien rendu est exactement celui du mail : même table, même page
+    `/verify`, même consommation à usage unique, et il pose la session
+    d'appareil comme n'importe quelle connexion. Rien n'est contourné — on
+    change seulement le TRANSPORT.
+
+    ⚠️ Ce lien ouvre la session À LA PLACE de la personne : il se transmet
+    directement à elle, et l'écran le dit.
+    """
+    if not has_permission(current_user.role, "manage_users"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+
+    async with get_db() as conn:
+        cible = await conn.fetchrow(
+            "SELECT id, email, name, role, actif FROM users WHERE id = $1", user_id
+        )
+    if not cible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+    if not peut_ouvrir_pour(current_user.role, cible["role"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
+    if not cible["actif"]:
+        # Le lien marcherait jusqu'à /verify puis serait refusé là-bas, sans
+        # rien expliquer. Autant le dire ici, avec le geste à faire.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ce compte est désactivé : réactivez-le avant de créer un lien.",
+        )
+
+    jeton = secrets.token_urlsafe(32)
+    expire_le = datetime.now(timezone.utc) + timedelta(hours=LIEN_ACCES_EXPIRE_HEURES)
+    async with get_db() as conn:
+        await conn.execute(
+            "INSERT INTO verification_tokens (email, token, expires_at) VALUES ($1, $2, $3)",
+            cible["email"], jeton, expire_le,
+        )
+
+    await log_action(
+        action="lien_acces_cree",
+        user_id=str(current_user.id),
+        metadata={"target_user_id": str(user_id)},
+    )
+
+    # `quote` sur les deux valeurs : un « + » dans une adresse se décode en
+    # espace côté navigateur, et le lien tomberait en « Lien invalide » pour la
+    # seule personne dont l'adresse en porte un.
+    url = (f"{settings.app_url}/verify"
+           f"?token={quote(jeton, safe='')}&email={quote(cible['email'], safe='')}")
+    return {
+        "url": url,
+        "email": cible["email"],
+        "nom": cible["name"],
+        "valable_heures": LIEN_ACCES_EXPIRE_HEURES,
+        "expire_le": expire_le.isoformat(),
+    }
 
 
 @router.put("/{user_id}/deactivate")

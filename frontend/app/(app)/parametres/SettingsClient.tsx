@@ -66,6 +66,40 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   const [formError, setFormError] = useState("")
   const [showForm, setShowForm] = useState(false)
   const [permLoading, setPermLoading] = useState<string | null>(null)
+  // LE LIEN D'ACCÈS DÉLIVRÉ À LA MAIN (03/09) : quand le mail de connexion
+  // n'arrive pas (boîte en panne, indésirables, salarié sans messagerie), ou
+  // quand on installe le poste de quelqu'un à côté de lui.
+  const [lienAcces, setLienAcces] = useState<
+    { url: string; email: string; nom: string | null; valable_heures: number } | null>(null)
+  const [lienEnCours, setLienEnCours] = useState<string | null>(null)
+  const [lienErreur, setLienErreur] = useState("")
+  const [copie, setCopie] = useState(false)
+
+  async function creerLienAcces(userId: string) {
+    setLienEnCours(userId); setLienErreur(""); setCopie(false)
+    try {
+      const res = await fetch(`${apiUrl}/api/users/${userId}/lien-connexion`, {
+        method: "POST", headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setLienErreur(d.detail ?? "Le lien n'a pas pu être créé."); setLienAcces(null); return }
+      setLienAcces(d)
+    } catch {
+      setLienErreur("Le serveur n'a pas répondu. Réessayez.")
+    } finally { setLienEnCours(null) }
+  }
+
+  async function copierLien() {
+    if (!lienAcces) return
+    try {
+      await navigator.clipboard.writeText(lienAcces.url)
+      setCopie(true)
+    } catch {
+      // Presse-papiers refusé (contexte non sécurisé, permission) : le champ
+      // reste sélectionnable, on le dit plutôt que de faire semblant.
+      setLienErreur("Copie impossible ici : sélectionnez le lien et copiez-le à la main.")
+    }
+  }
 
   const creatableRoles = CREATABLE[currentRole] ?? []
   const visibleAgents: Agent[] = ["agent1", "agent2", "agent3"].filter(
@@ -139,6 +173,56 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
           + Ajouter un utilisateur
         </button>
       </div>
+
+      {lienErreur && !lienAcces && (
+        <p role="status" className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "0 0 16px" }}>
+          {lienErreur}
+        </p>
+      )}
+
+      {lienAcces && (
+        <div className="sym-fade" style={{
+          background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)",
+          padding: 18, marginBottom: 20, border: "1px solid var(--marque-primary-light)",
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "var(--marque-text-primary)", marginBottom: 4 }}>
+            Lien d'accès pour {lienAcces.nom || lienAcces.email}
+          </div>
+          <p style={{ fontSize: 13, color: "var(--marque-text-body)", margin: "0 0 12px", maxWidth: 620 }}>
+            Remettez-le <b>à cette personne uniquement</b> : il ouvre la session à sa place.
+            Il ne fonctionne <b>qu'une fois</b> et expire dans {lienAcces.valable_heures} h.
+            Une fois utilisé, son appareil restera connecté — elle n'aura plus rien à faire.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              readOnly
+              value={lienAcces.url}
+              onFocus={(e) => e.currentTarget.select()}
+              style={{
+                flex: "1 1 320px", padding: "9px 12px", border: "1.5px solid var(--marque-border)",
+                borderRadius: 10, fontSize: 12, fontFamily: "ui-monospace, monospace",
+                color: "var(--marque-text-primary)", background: "var(--marque-surface)",
+              }}
+            />
+            <button type="button" onClick={copierLien} className="sym-tap" style={{
+              background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none",
+              borderRadius: "var(--marque-radius-pill)", padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}>
+              {copie ? "Copié" : "Copier"}
+            </button>
+            <button type="button" onClick={() => { setLienAcces(null); setLienErreur(""); setCopie(false) }}
+              className="sym-tap" style={{
+                background: "none", border: "1px solid var(--marque-border)", color: "var(--marque-text-body)",
+                borderRadius: "var(--marque-radius-pill)", padding: "9px 18px", fontSize: 13, cursor: "pointer",
+              }}>
+              Fermer
+            </button>
+          </div>
+          {lienErreur && (
+            <p role="status" style={{ color: "var(--marque-error-text)", fontSize: 12, margin: "10px 0 0" }}>{lienErreur}</p>
+          )}
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={addUser} className="sym-fade" style={{
@@ -241,7 +325,23 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                       {user.actif ? "● Actif" : "○ Inactif"}
                     </span>
                   </td>
-                  <td style={{ padding: "14px 16px", textAlign: "right" }}>
+                  <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {/* Le lien d'accès : le seul recours quand le mail de
+                        connexion n'arrive pas. Même hiérarchie que la
+                        désactivation — la direction n'atteint pas un
+                        super_admin, et le serveur le revérifie de toute façon. */}
+                    {user.actif && (currentRole === "super_admin" || METIER_ROLES.includes(user.role)) && (
+                      <button onClick={() => creerLienAcces(user.id)} disabled={lienEnCours === user.id}
+                        className="sym-tap" title="Créer un lien de connexion à lui transmettre"
+                        style={{
+                          background: "none", border: "1px solid var(--marque-border)",
+                          borderRadius: "var(--marque-radius-pill)", padding: "5px 14px", fontSize: 12,
+                          cursor: lienEnCours === user.id ? "wait" : "pointer",
+                          color: "var(--marque-text-body)", fontWeight: 500, marginRight: 8,
+                        }}>
+                        {lienEnCours === user.id ? "…" : "Lien d'accès"}
+                      </button>
+                    )}
                     {(currentRole === "super_admin" || currentRole === "direction" || METIER_ROLES.includes(user.role)) && (
                       <button onClick={() => toggleActive(user.id, user.actif, user.role)} className="sym-tap" style={{
                         background: "none", border: "1px solid var(--marque-border)",

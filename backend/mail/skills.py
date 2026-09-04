@@ -1035,6 +1035,195 @@ async def _personnaliser_cartes(cartes: list[dict], user, mailbox, consigne: str
 
 SKILLS_NATIFS["preparer_envois"] = preparer_envois
 
+# ── L'AGENDA (04/09) ──────────────────────────────────────────────────────
+# Trois gestes seulement : lire une période, chercher un créneau, poser un
+# rendez-vous. Le CALCUL des créneaux vit dans `mail/agenda.py`, pas ici et
+# surtout pas dans le modèle : à qui l'on donne quinze rendez-vous et qu'on
+# laisse en déduire les trous, il en oublie un.
+
+def _periode(data: dict) -> tuple:
+    """La fenêtre demandée : `depuis`/`jusqu_a` en mots (« demain », « 7j ») ou
+    en dates. Sans rien : d'aujourd'hui à sept jours."""
+    from datetime import datetime, timedelta, timezone
+    from mail.lecture import depuis_quand
+    maintenant = datetime.now(timezone.utc)
+    debut = depuis_quand(data.get("depuis")) if data.get("depuis") else None
+    # Une période d'AGENDA regarde DEVANT : `depuis_quand` rend une date passée
+    # (« 7j » = il y a sept jours), ce qui est juste pour des mails et faux ici.
+    # On ne garde donc une date passée que si elle est explicitement demandée
+    # comme telle (un mot de passé), sinon on part de maintenant.
+    if debut and debut < maintenant - timedelta(days=1) and not data.get("passe"):
+        debut = maintenant
+    debut = debut or maintenant
+    jours = data.get("jours")
+    try:
+        jours = int(jours) if jours is not None else None
+    except (TypeError, ValueError):
+        jours = None
+    fin = depuis_quand(data.get("jusqu_a")) if data.get("jusqu_a") else None
+    if fin and fin < debut:
+        fin = None
+    if not fin:
+        from mail.agenda import MAX_JOURS
+        fin = debut + timedelta(days=max(1, min(jours or 7, MAX_JOURS)))
+    return debut, fin
+
+
+def _quand(iso: str) -> str:
+    """« jeudi 8 sept. 09:00 » — une date d'agenda se lit, elle ne se décode pas."""
+    from mail.agenda import _analyser
+    d = _analyser(iso)
+    if not d:
+        return iso or ""
+    local = d.astimezone()
+    jours = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+    mois = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août",
+            "sept.", "oct.", "nov.", "déc.")
+    return (f"{jours[local.weekday()]} {local.day} {mois[local.month - 1]} "
+            f"{local.strftime('%H:%M')}")
+
+
+async def mon_agenda(data: dict, user) -> dict:
+    """Les rendez-vous d'une boîte sur une période."""
+    from mail.agenda import AgendaIndisponible, lire
+    boite = await verifier_acces(user, data.get("mailbox") or await boite_par_defaut(user))
+    debut, fin = _periode(data)
+    try:
+        evenements = await lire(boite, debut, fin)
+    except AgendaIndisponible as e:
+        raise MailSkillError(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Agenda de %s illisible : %s", boite, e)
+        raise MailSkillError(f"L'agenda de {boite} n'a pas pu être lu. Réessayez.")
+
+    lignes = [[_quand(e["debut"]), e["titre"], e.get("lieu") or "—",
+               str(len(e.get("participants") or [])) if e.get("participants") else "—"]
+              for e in evenements]
+    periode = f"du {debut.astimezone().strftime('%d/%m')} au {fin.astimezone().strftime('%d/%m')}"
+    return {
+        "boite": boite, "periode": periode, "nombre": len(evenements),
+        "evenements": evenements,
+        "bloc_ui": {"type": "table", "titre": f"Agenda {periode}",
+                    "columns": ["Quand", "Rendez-vous", "Lieu", "Invités"], "rows": lignes},
+        "bloc_garanti": True,
+        "message_final": (f"{len(evenements)} rendez-vous {periode} sur {boite}."
+                          if evenements else f"Aucun rendez-vous {periode} sur {boite}."),
+        "a_faire": ("Le tableau est DÉJÀ affiché : ne le recopie pas. Dis en une phrase ce "
+                    "que la période contient (la journée la plus chargée, un trou notable). "
+                    "Pour proposer une date, appelle `creneaux_agenda` — ne déduis JAMAIS "
+                    "les disponibilités toi-même à partir de cette liste."),
+    }
+
+
+SKILLS_NATIFS["mon_agenda"] = mon_agenda
+
+
+async def creneaux_agenda(data: dict, user) -> dict:
+    """Les créneaux libres d'au moins N minutes, dans les heures ouvrées."""
+    from mail.agenda import (AgendaIndisponible, creneaux_libres, heures_ouvrees,
+                             jours_ouvres, occupations)
+    boite = await verifier_acces(user, data.get("mailbox") or await boite_par_defaut(user))
+    debut, fin = _periode(data)
+    try:
+        duree = int(data.get("duree") or 60)
+    except (TypeError, ValueError):
+        duree = 60
+    duree = max(15, min(duree, 8 * 60))
+    try:
+        prises = await occupations(boite, debut, fin)
+    except AgendaIndisponible as e:
+        raise MailSkillError(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Agenda de %s illisible : %s", boite, e)
+        raise MailSkillError(f"L'agenda de {boite} n'a pas pu être lu. Réessayez.")
+
+    libres = creneaux_libres(prises, debut, fin, duree)
+    h_debut, h_fin, p_debut, p_fin = heures_ouvrees()
+    lignes = [[_quand(d.isoformat()), f"{(f - d).seconds // 60} min disponibles"]
+              for d, f in libres]
+    return {
+        "boite": boite, "duree_demandee": duree, "nombre": len(libres),
+        "creneaux": [{"debut": d.isoformat(), "fin": f.isoformat()} for d, f in libres],
+        "heures_ouvrees": f"{h_debut}h–{p_debut}h et {p_fin}h–{h_fin}h",
+        "jours_ouvres": sorted(jours_ouvres()),
+        "bloc_ui": {"type": "table", "titre": f"Créneaux libres — {duree} min",
+                    "columns": ["Début", "Disponible"], "rows": lignes},
+        "bloc_garanti": True,
+        "message_final": (f"{len(libres)} créneau(x) d'au moins {duree} min sur {boite}."
+                          if libres else
+                          f"Aucun créneau de {duree} min sur cette période."),
+        "a_faire": ("Les créneaux sont DÉJÀ affichés et CALCULÉS : ne les recopie pas, n'en "
+                    "invente aucun, n'en déduis pas d'autres. Propose-en deux ou trois en "
+                    "une phrase. Pour poser le rendez-vous, `creer_rendez_vous` — il "
+                    "demandera l'accord avant d'écrire dans l'agenda."),
+    }
+
+
+SKILLS_NATIFS["creneaux_agenda"] = creneaux_agenda
+
+
+async def creer_rendez_vous(data: dict, user) -> dict:
+    """Pose un rendez-vous dans l'agenda. EFFET EXTERNE : il invite de vraies gens."""
+    from datetime import timedelta
+    from mail.agenda import AgendaIndisponible, _analyser, creer
+    from mail.publipostage import MANQUANT
+    boite = await verifier_acces(user, data.get("mailbox") or await boite_par_defaut(user),
+                                 envoi=True)
+    titre = str(data.get("titre") or data.get("objet") or "").strip()
+    if not titre:
+        raise MailSkillError("Donne le `titre` du rendez-vous.")
+    debut = _analyser(str(data.get("debut") or ""))
+    if not debut:
+        raise MailSkillError(
+            "Donne `debut` au format ISO (2026-09-08T09:00:00). N'invente pas une heure : "
+            "propose d'abord des créneaux avec `creneaux_agenda`.")
+    fin = _analyser(str(data.get("fin") or ""))
+    if not fin:
+        try:
+            duree = int(data.get("duree") or 60)
+        except (TypeError, ValueError):
+            duree = 60
+        fin = debut + timedelta(minutes=max(15, min(duree, 8 * 60)))
+
+    participants = data.get("participants") or data.get("invites") or []
+    if isinstance(participants, str):
+        participants = [p.strip() for p in participants.replace(";", ",").split(",") if p.strip()]
+    participants = [p for p in participants if "@" in p]
+    # UNE ADRESSE INVENTÉE N'INVITE PERSONNE, elle invite QUELQU'UN D'AUTRE.
+    # Même règle que l'envoi de mail : le modèle ne compose pas une adresse.
+    for a in participants:
+        if MANQUANT in a or "[" in a:
+            raise MailSkillError(f"L'adresse « {a} » n'est pas une vraie adresse. "
+                                 "Demande-la, ou retire cet invité.")
+
+    try:
+        evenement = await creer(boite, titre, debut, fin, participants,
+                                str(data.get("lieu") or ""), str(data.get("note") or ""))
+    except AgendaIndisponible as e:
+        raise MailSkillError(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Rendez-vous non créé sur %s : %s", boite, e)
+        raise MailSkillError("Le rendez-vous n'a pas pu être créé. Réessayez.")
+
+    quand = _quand(evenement.get("debut") or debut.isoformat())
+    rows = [["Quand", quand], ["Rendez-vous", evenement.get("titre") or titre]]
+    if evenement.get("lieu"):
+        rows.append(["Lieu", evenement["lieu"]])
+    if participants:
+        rows.append(["Invités", ", ".join(participants)])
+    rows.append(["Agenda", boite])
+    return {
+        "cree": True, "boite": boite, "evenement": evenement,
+        "bloc_ui": {"type": "keyvalue", "titre": "Rendez-vous créé", "rows": rows},
+        "bloc_garanti": True,
+        "message_final": f"Rendez-vous « {titre} » créé le {quand} sur {boite}.",
+        "a_faire": ("Le rendez-vous est posé et la fiche est DÉJÀ affichée : ne la recopie "
+                    "pas. Confirme en une phrase. Les invités ont reçu l'invitation."),
+    }
+
+
+SKILLS_NATIFS["creer_rendez_vous"] = creer_rendez_vous
+
 
 
 async def connaissances_acquises(data: dict, user) -> dict:
@@ -1238,6 +1427,13 @@ EFFETS_NATIFS = {
     # Lister les boîtes accessibles : lecture de la configuration et de l'annuaire.
     "boites_mail": "lecture",
     "preparer_envois": "lecture",
+    # L'AGENDA (04/09). Lire une période et calculer des créneaux ne touchent à
+    # rien. CRÉER un rendez-vous, si : il s'inscrit dans l'agenda d'une boîte et
+    # ENVOIE une invitation à de vraies personnes — c'est un effet externe au
+    # même titre qu'un mail, il attend donc l'accord humain.
+    "mon_agenda": "lecture",
+    "creneaux_agenda": "lecture",
+    "creer_rendez_vous": "externe",
     # Inventaire de ce qui a été appris : lecture pure, filtrée par rôle.
     "connaissances_acquises": "lecture",
     # Compte et filtre sur les donnees importees : lecture, filtree par role.

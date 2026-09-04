@@ -397,6 +397,28 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "(« salutation au nom seul », « insiste sur la piscine »). RIEN ne part : chaque "
         "envoi passe par `envoyer_email` et sa validation",
         ["sujet", "destinataires"], ["gabarit", "personnaliser", "consigne", "mailbox", "page"]),
+    "mon_agenda": (
+        "LES RENDEZ-VOUS d'une boite sur une periode : « mon planning de la semaine », "
+        "« qu'est-ce que j'ai jeudi », « suis-je pris demain apres-midi ». `depuis` et "
+        "`jusqu_a` en mots (« demain », « lundi ») ou en dates, `jours` (defaut 7). Le "
+        "tableau s'affiche AUTOMATIQUEMENT. Pour proposer une date, ce n'est PAS ce "
+        "skill : c'est `creneaux_agenda` — ne deduis jamais des disponibilites depuis "
+        "cette liste, tu en oublierais",
+        [], ["mailbox", "depuis", "jusqu_a", "jours"]),
+    "creneaux_agenda": (
+        "LES CRENEAUX LIBRES, calcules par le serveur : « quand suis-je dispo pour une "
+        "visite d'une heure ? », « propose trois creneaux la semaine prochaine ». "
+        "`duree` en minutes (defaut 60). Les heures ouvrees et la pause de midi sont "
+        "deja retirees, les recurrences et les journees entieres comptent comme "
+        "occupees. N'INVENTE JAMAIS un creneau et n'en calcule aucun toi-meme",
+        [], ["mailbox", "duree", "depuis", "jusqu_a", "jours"]),
+    "creer_rendez_vous": (
+        "POSE un rendez-vous dans l'agenda et INVITE les participants (effet externe : "
+        "accord humain avant, comme un envoi de mail). `titre` et `debut` (ISO, "
+        "2026-09-08T09:00:00) obligatoires ; `fin` ou `duree` en minutes (defaut 60), "
+        "`participants` (adresses REELLES, jamais composees), `lieu`, `note`. Propose "
+        "d'abord des `creneaux_agenda` : n'invente pas une heure",
+        ["titre", "debut"], ["mailbox", "fin", "duree", "participants", "lieu", "note"]),
     "lire_piece_jointe": (
         "RÉCUPÈRE UNE pièce jointe d'un mail, la rend téléchargeable avec son aperçu (carte "
         "ajoutée automatiquement sous ta réponse) et la LIT : PDF et Word en texte, Excel en "

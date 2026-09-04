@@ -408,6 +408,15 @@ class Settings(BaseSettings):
     gmail_access_level: str = "all"             # visibilité des mails ingérés
 
 
+    # L'AGENDA (04/09). Les bornes qui rendent une recherche de créneau utile :
+    # personne ne cale une visite à 6 h du matin ni un dimanche. Réglables sans
+    # toucher au code ; `agenda_jours` : 0 = lundi.
+    agenda_heure_debut: int = 8
+    agenda_heure_fin: int = 18
+    agenda_pause_debut: int = 12
+    agenda_pause_fin: int = 13
+    agenda_jours: str = "0,1,2,3,4"
+
     mail_provider: str = "auto"        # auto | outlook | gmail
 
     # Apprentissage du style rédactionnel (mail/style.py)

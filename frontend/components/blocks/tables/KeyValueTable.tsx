@@ -10,7 +10,8 @@ export function KeyValueTable({
   ],
 }: { rows?: [string, string][] }) {
   return (
-    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden", maxWidth: "min(var(--bloc-largeur), 100%)" }}>
+    <div style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: "min(var(--bloc-largeur), 100%)",
+                 maxHeight: "min(70vh, 560px)" }}>
       {rows.map(([k, v], i) => (
         <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "11px 16px", borderTop: i ? "1px solid var(--marque-border)" : "none" }}>
           <span style={{ fontSize: 12.5, color: "var(--marque-text-muted)" }}>{k}</span>

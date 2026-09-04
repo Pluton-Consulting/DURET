@@ -107,6 +107,59 @@ def _porte() -> asyncio.Semaphore:
 
 class NouvelleTache(BaseModel):
     query: str
+    # LA PIÈCE JOINTE VOYAGE EN FILE (04/09, Noa : « tout ce qu'on fait en chat
+    # classique doit se faire en file d'attente, c'est pareil »). Le fichier est
+    # RANGÉ SUR LE DISQUE à la mise en file (le volume des documents, qui
+    # survit au redéploiement), jamais en base : dix mégaoctets de base64 dans
+    # une colonne, c'est une ligne qu'on relit à chaque sondage de l'écran.
+    attachment_name: Optional[str] = None
+    attachment_mime: Optional[str] = None
+    attachment_b64: Optional[str] = None
+
+
+def _dossier_pieces() -> "pathlib.Path":
+    import os, pathlib
+    d = pathlib.Path(os.environ.get("DOCUMENTS_DIR", "/tmp/symbiose-documents")) / "file"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _ranger_piece(tache_id: str, body: "NouvelleTache") -> Optional[dict]:
+    """Dépose la pièce jointe d'une tâche sur le disque. Rend sa fiche, ou None."""
+    import base64, json
+    if not body.attachment_b64:
+        return None
+    try:
+        octets = base64.b64decode(body.attachment_b64)
+    except Exception:
+        return None
+    dossier = _dossier_pieces()
+    (dossier / f"{tache_id}.bin").write_bytes(octets)
+    fiche = {"nom": body.attachment_name or "document", "mime": body.attachment_mime or ""}
+    (dossier / f"{tache_id}.json").write_text(json.dumps(fiche, ensure_ascii=False), encoding="utf-8")
+    return fiche
+
+
+def _reprendre_piece(tache_id: str) -> Optional[dict]:
+    """La pièce d'une tâche, relue du disque : {nom, mime, b64} — ou None."""
+    import base64, json
+    dossier = _dossier_pieces()
+    try:
+        fiche = json.loads((dossier / f"{tache_id}.json").read_text(encoding="utf-8"))
+        octets = (dossier / f"{tache_id}.bin").read_bytes()
+    except OSError:
+        return None
+    return {**fiche, "b64": base64.b64encode(octets).decode("ascii")}
+
+
+def _oublier_piece(tache_id: str) -> None:
+    """Le fichier a servi : il ne dort pas sur le disque."""
+    dossier = _dossier_pieces()
+    for ext in (".bin", ".json"):
+        try:
+            (dossier / f"{tache_id}{ext}").unlink()
+        except OSError:
+            pass
 
 
 async def requalifier_interrompues() -> int:
@@ -167,6 +220,7 @@ async def _executer(tache_id: str, user_id: str, query: str) -> None:
         raise
     finally:
         _VIVANTES.pop(tache_id, None)
+        _oublier_piece(tache_id)
 
 
 async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
@@ -186,12 +240,27 @@ async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
         reponse_finale: Optional[str] = None
         validation_id: Optional[str] = None
 
+        # LA PIÈCE JOINTE PREND LE MÊME CHEMIN QU'AU CHAT : texte extrait (Excel,
+        # Word, PDF, CSV) + lignes complètes pour `@tableau` ; une image ou un
+        # plan part à la vision. `_piece_jointe` est celle du routeur du chat —
+        # une seule lecture des fichiers, pas deux.
+        piece = _reprendre_piece(tache_id)
+        texte_joint, tableau_joint = None, None
+        if piece:
+            from routers.chat import _piece_jointe
+            texte_joint, tableau_joint = await _piece_jointe(piece["nom"], piece["b64"], piece["mime"])
+            _VIVANTES[tache_id]["progress"] = f"je lis la pièce jointe : {piece['nom']}"
+
         async def _derouler():
             nonlocal reponse_finale, validation_id
             async for ev in runtime.stream_turn(
                     query=query, user_id=str(utilisateur.id),
                     user_role=utilisateur.role,
-                    has_attachment=False, thread_id=fil):
+                    has_attachment=bool(piece), thread_id=fil,
+                    attachment_b64=(piece or {}).get("b64"),
+                    attachment_mime=(piece or {}).get("mime"),
+                    attachment_name=(piece or {}).get("nom"),
+                    attachment_text=texte_joint, attachment_rows=tableau_joint):
                 t = ev.get("type")
                 if t == "node":
                     vivante = _VIVANTES.get(tache_id)
@@ -396,6 +465,10 @@ async def lancer_tache(body: NouvelleTache, current_user: User = Depends(get_cur
         await conn.execute(
             "UPDATE taches_differees SET thread_id = $1 WHERE id = $2::uuid",
             f"file:{tache_id}", tache_id)
+    # Sur le disque, hors transaction : un fichier ne se range pas dans Postgres.
+    piece = _ranger_piece(tache_id, body)
+    if piece:
+        logger.info("Tâche différée %s : pièce jointe « %s » rangée", tache_id, piece["nom"])
 
     await log_action(action="tache_differee_lancee", user_id=str(current_user.id),
                      metadata={"tache_id": tache_id})

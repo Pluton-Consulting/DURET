@@ -840,16 +840,21 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // `afficherDemande` : faux quand le message est DEJA dans le fil — cas du
   // basculement en file apres un refus « fil occupe », ou la demande a ete
   // affichee avant qu'on sache qu'elle ne pourrait pas partir par le chat.
-  const lancerEnFile = async (text: string, afficherDemande = true) => {
+  // LA PIÈCE JOINTE VOYAGE EN FILE (04/09, Noa : « tout ce qu'on fait en chat
+  // classique doit se faire en file d'attente, c'est pareil »). Elle part avec
+  // la demande ; le serveur la range sur le disque et la relit à l'exécution.
+  const lancerEnFile = async (text: string, afficherDemande = true, piece?: PieceJointe) => {
     if (afficherDemande) {
       const idQuestion = newId()
       idDerniereQuestionRef.current = idQuestion
-      setMessages((prev) => [...prev, { id: idQuestion, role: "user", content: sansContexte(text) }])
+      setMessages((prev) => [...prev, { id: idQuestion, role: "user",
+        content: piece ? `📎 ${piece.name}\n${sansContexte(text)}` : sansContexte(text) }])
     }
     try {
       const res = await apiRequest<{ tache_id: string }>(
         "/api/file/taches",
-        { method: "POST", token, body: JSON.stringify({ query: text }) })
+        { method: "POST", token, body: JSON.stringify({ query: text,
+          ...(piece ? { attachment_name: piece.name, attachment_mime: piece.mime, attachment_b64: piece.b64 } : {}) }) })
       tacheActiveRef.current = res.tache_id
       setTacheActive(res.tache_id)
       setLoading(true)
@@ -911,16 +916,9 @@ ${texteAffiche}`)
     // le checkpointer — c'est un interdit structurel, pas une prudence.
     if (loading || principalOccupeRef.current) {
       basculerActifVersCarte()
-      // Les pieces jointes ne voyagent pas encore en file : le dire tout de
-      // suite vaut mieux qu'un fichier silencieusement ignore.
-      if (piece) {
-        setMessages((prev) => [...prev,
-          { id: newId(), role: "user", content: `📎 ${piece.name}\n${texteAffiche}` },
-          { id: newId(), role: "assistant",
-            content: "Les pièces jointes ne peuvent pas rejoindre la file d'attente : attendez la fin de la tâche en cours, puis renvoyez le fichier." }])
-        return
-      }
-      lancerEnFile(text)
+      // Avec sa pièce jointe, comme au chat : rien n'est refusé, rien n'est
+      // ignoré en silence (04/09).
+      lancerEnFile(text, true, piece)
       return
     }
 
@@ -1079,7 +1077,7 @@ ${texteAffiche}`)
         if (err?.status === 409) {
           // Fil occupe : la demande part en file plutot que d'echouer.
           libérer()
-          lancerEnFile(text, false)
+          lancerEnFile(text, false, piece)
           if (!monteRef.current) majTourDetache({ fini: true })
           return
         }
@@ -1143,7 +1141,7 @@ ${texteAffiche}`)
             clearStall()
             closeWs()
             libérer()
-            lancerEnFile(text, false)
+            lancerEnFile(text, false, piece)
             if (!monteRef.current) majTourDetache({ fini: true })
           } else if (t === "error") {
             fallbackPost()

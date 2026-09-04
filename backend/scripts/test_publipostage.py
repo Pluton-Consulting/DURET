@@ -72,7 +72,8 @@ verifier("les cartes partent en bloc reponses_mail GARANTI à l'écran",
 protocole = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
 verifier("le catalogue : sans limite, gabarit à variables, validation par envoi",
          '"preparer_envois": (' in protocole and "sans limite" in protocole
-         and "sa validation" in protocole.split('"preparer_envois": (')[1][:700])
+         # 04/09 : l'entrée s'est allongée (`@tableau`, `personnaliser`) — la fenêtre suit.
+         and "sa validation" in protocole.split('"preparer_envois": (')[1][:1400])
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("le prompt nomme `preparer_envois` pour un mail à plusieurs destinataires",
          "`preparer_envois`" in agent1 and "sans limite" in agent1)
@@ -116,6 +117,28 @@ verifier("elle explique « [À COMPLÉTER] » au lieu de laisser le modèle rée
          "N'essaie pas d'autres noms de variables" in skills_src
          and "cartes_avec_manque" in skills_src)
 verifier("elle nomme les variables reconnues", "Variables reconnues pour ces destinataires" in skills_src)
+
+
+# ── 04/09 : LA PERSONNALISATION PAR L'HISTORIQUE, un travail de skill ─────
+# Export de 18:48 : « adapte les 95 mails, lis l'historique de chaque client »
+# → un plan, un Excel, des recherches Drive, jamais les mails. 95 lectures de
+# boîte en chaîne ne sont pas une boucle de modèle : le skill les fait.
+verifier("l'historique d'un destinataire se résume en quelques lignes lisibles",
+         publi.historique_en_texte([{"objet": "Devis terrasse", "apercu": "Bonjour, suite à notre visite…",
+                                     "date": "2026-04-14", "dossier": "envoyes"}])
+         == "- 2026-04-14 (envoyé) « Devis terrasse » : Bonjour, suite à notre visite…")
+verifier("au plus six messages, jamais l'archive entière",
+         publi.historique_en_texte([{"objet": f"m{i}"} for i in range(20)]).count("\n") == 5)
+verifier("la consigne du rédacteur interdit d'inventer (chantier, montant, date)",
+         "N'INVENTE RIEN" in publi.CONSIGNE_PERSONNALISATION and "[À COMPLÉTER]" in publi.CONSIGNE_PERSONNALISATION)
+verifier("le skill sait personnaliser (lecture de la boîte, reçus ET envoyés, trois de front)",
+         "async def _personnaliser_cartes" in skills_src and 'for dossier in ("recus", "envoyes")' in skills_src
+         and "asyncio.Semaphore(3)" in skills_src)
+verifier("le catalogue nomme `personnaliser` comme LE geste d'une adaptation par client",
+         "`personnaliser: true` ADAPTE" in (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
+         and "pas une lecture de mails par client" in (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8"))
+verifier("le catalogue ne dit plus « pages de 40 : enchaîne »",
+         "pages de 40" not in (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8"))
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

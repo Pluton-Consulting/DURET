@@ -4,6 +4,7 @@ Pipeline : RAG pgvector → anonymisation NER → [browser?] → LLM → réhydr
 Zéro PII vers l'API LLM : la requête ET les documents sont masqués avant l'appel,
 puis les vraies valeurs sont réinjectées dans la réponse (entity_map).
 """
+import time
 import logging
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -101,6 +102,16 @@ Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emp
 # quantité — enchaîner cinquante pages de mails ou de documents est un travail
 # qui avance, pas une boucle).
 MAX_ACTIONS_PAR_TOUR = 120
+# LE TEMPS IMPARTI D'UN TOUR (04/09). Relevé de Noa : « il a tourné en boucle
+# sans jamais s'arrêter sur "j'analyse votre demande" » — 13 minutes, 27 appels
+# de modèle, pour rendre un Excel que personne n'avait demandé. Le plafond de
+# 120 actions (01/09, « jamais bloqué en quantité ») borne la QUANTITÉ, pas le
+# TEMPS : une boucle qui change d'idée à chaque action tient sous le plafond
+# pendant un quart d'heure. Passé ce délai, la boucle sort et la rédaction
+# est forcée : le modèle répond avec ce qu'il a, et dit ce qu'il n'a pas fait.
+# Les gestes longs mais UTILES (une pagination qui avance) restent possibles :
+# huit minutes, c'est vingt pages de mails.
+TOUR_DUREE_MAX_S = 8 * 60
 # Un même skill rappelé sans fin avec des paramètres qui changent un peu à
 # chaque fois — le 31/08 : DIX-SEPT `interroger_donnees` en neuf minutes pour
 # « dégager 10 missions types » de 1 398 titres de devis, ce que ce skill ne
@@ -277,6 +288,22 @@ async def rag_node(state: AgentState) -> dict:
     """
     texte_joint = state.get("attachment_text")
     if not texte_joint:
+        # LE TABLEAU JOINT NE S'OUBLIE PAS (04/09). Export de 18:48 : « adapte
+        # les 95 mails » — le tableau de 95 clients avait été joint deux tours
+        # plus tôt, le modèle n'en avait plus trace et a appelé `liste_clients`
+        # (478 clients de la base, un Excel) à la place. Le tableau vit dans
+        # l'état (`dernier_tableau`) : on le RAPPELLE à chaque tour, en une
+        # ligne, avec le moyen de s'en servir.
+        tableau = state.get("dernier_tableau")
+        if isinstance(tableau, dict) and tableau.get("lignes"):
+            colonnes = ", ".join(str(c) for c in (tableau.get("colonnes") or [])[:12])
+            return {"raw_chunks": [
+                f"[TABLEAU JOINT À CETTE CONVERSATION : « {tableau.get('nom') or 'fichier'} », "
+                f"{len(tableau['lignes'])} lignes, colonnes : {colonnes}]\n"
+                "C'est LA liste de référence de cette conversation (« les clients », « les "
+                "destinataires », « le fichier »). Pour agir sur TOUTES ses lignes, passe "
+                "`\"@tableau\"` en paramètre d'action (ex. `\"destinataires\": \"@tableau\"`) : "
+                "ne cherche pas cette liste ailleurs, ne la recopie pas."]}
         return {"raw_chunks": []}
     nom = state.get("attachment_name") or "document"
     return {"raw_chunks": [f"[FICHIER JOINT PAR L'UTILISATEUR : {nom}]\n{texte_joint}"]}
@@ -1065,6 +1092,13 @@ async def tools_node(state: AgentState, config=None) -> dict:
 
     if action is None:
         return _sortir()
+
+    debut = state.get("tour_debut")
+    if debut and iteration > 3 and (time.time() - float(debut)) > TOUR_DUREE_MAX_S:
+        return _sortir(f"le temps imparti à ce tour ({TOUR_DUREE_MAX_S // 60} minutes) est "
+                       "écoulé sans que la demande ait abouti : il faut répondre avec ce qui "
+                       "a été obtenu, dire ce qui n'a PAS été fait, et proposer de continuer "
+                       "dans un nouveau message.")
 
     if iteration > MAX_ACTIONS_PAR_TOUR:
         # Formulé comme une RAISON, pas comme un texte à afficher : c'est le

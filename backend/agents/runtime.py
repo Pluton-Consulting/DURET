@@ -18,6 +18,7 @@ Contrat TurnResult (dict) :
   validation_id : Optional[str]   (si pending_validation)
   validation    : Optional[dict]  (reason/payload/draft, si pending_validation)
 """
+import time
 import asyncio
 import json
 import logging
@@ -288,6 +289,9 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "cost_eur": 0.0,
         "messages": [],
     }
+    # L'HEURE DE DÉPART DU TOUR (04/09) : c'est elle que la boucle d'actions
+    # compare au temps imparti. Remise à chaque tour, comme les résultats.
+    etat["tour_debut"] = time.time()
     # LE TABLEAU JOINT N'EST POSÉ QUE S'IL Y EN A UN. Une clé absente de
     # l'entrée garde sa valeur du checkpoint : c'est ce qui fait survivre le
     # dernier tableau au tour suivant (« maintenant envoie-le à tous »).
@@ -533,7 +537,8 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
 async def stream_turn(*, query: str, user_id: str, user_role: str,
                       has_attachment: bool, thread_id: str,
                       attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
-                      attachment_name: Optional[str] = None, attachment_text: Optional[str] = None) -> AsyncIterator[dict]:
+                      attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
+                      attachment_rows: Optional[dict] = None) -> AsyncIterator[dict]:
     """Streame l'exécution nœud-par-nœud (pour push WebSocket temps réel).
 
     Lève `FilOccupe` si un tour tourne déjà sur ce fil, ou s'il attend une
@@ -565,8 +570,12 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
         # subgraphs=True : remonte AUSSI les sous-étapes internes des agents (recherche mémoire,
         # anonymisation, rédaction, vision…) et pas seulement les gros nœuds (agent1/agent2).
         _flux = graph.astream(
+            # `attachment_rows` AUSSI par le flux (04/09) : la voie WebSocket est la
+            # voie normale du chat, et elle ignorait le tableau joint — `@tableau`
+            # ne marchait que par le repli POST, sans que rien ne le dise.
             _initial_state(query, user_id, user_role, has_attachment, thread_id,
-                           attachment_b64, attachment_mime, attachment_name, attachment_text),
+                           attachment_b64, attachment_mime, attachment_name, attachment_text,
+                           attachment_rows=attachment_rows),
             config,
             stream_mode="updates",
             subgraphs=True,

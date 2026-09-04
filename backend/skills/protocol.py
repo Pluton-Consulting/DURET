@@ -386,11 +386,17 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "PREPARE un meme mail pour PLUSIEURS destinataires (10, 100, sans limite) : UNE "
         "carte editable par destinataire, fabriquee MECANIQUEMENT depuis un `gabarit` a "
         "variables ({nom}, {email}, ou toute cle du destinataire) — ou un corps SUR "
-        "MESURE par destinataire (cle `reponse`). `destinataires` : liste d'adresses ou "
-        "d'objets {email, nom, ...} tires des gestes de donnees. Cartes par pages de 40 "
-        "(`page`) : enchaine jusqu'a couvrir tout le monde. RIEN ne part : chaque envoi "
-        "passe par `envoyer_email` et sa validation",
-        ["sujet", "destinataires"], ["gabarit", "page"]),
+        "MESURE par destinataire (cle `reponse`). `destinataires` : `\"@tableau\"` (TOUTES "
+        "les lignes du fichier joint a la conversation — le serveur les met, ne les "
+        "recopie jamais), ou une liste d'adresses ou d'objets {email, nom, ...}. TOUTES "
+        "les cartes viennent en UN appel : ne rappelle pas ce skill dans le tour. "
+        "`personnaliser: true` ADAPTE chaque mail a l'HISTORIQUE des echanges avec le "
+        "destinataire (lus par le skill dans la boite, jamais inventes) — c'est LE geste "
+        "pour « personnalise selon nos echanges », « adapte a chaque client » : un seul "
+        "appel, pas une lecture de mails par client. `consigne` : ce qu'on veut en plus "
+        "(« salutation au nom seul », « insiste sur la piscine »). RIEN ne part : chaque "
+        "envoi passe par `envoyer_email` et sa validation",
+        ["sujet", "destinataires"], ["gabarit", "personnaliser", "consigne", "mailbox", "page"]),
     "lire_piece_jointe": (
         "RÉCUPÈRE UNE pièce jointe d'un mail, la rend téléchargeable avec son aperçu (carte "
         "ajoutée automatiquement sous ta réponse) et la LIT : PDF et Word en texte, Excel en "

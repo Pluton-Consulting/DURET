@@ -935,6 +935,18 @@ async def preparer_envois(data: dict, user) -> dict:
 
     r = construire_cartes(sujet, gabarit, destinataires, page=data.get("page") or 1)
     cartes = r.pop("cartes")
+
+    # LA PERSONNALISATION PAR L'HISTORIQUE (04/09). Export de 18:48 : « adapte
+    # les 95 mails : lis l'historique de chaque client et personnalise » — le
+    # modèle a produit un plan, puis un Excel, puis des recherches Drive, et
+    # jamais les mails : 95 lectures de boîte en chaîne, c'est un TRAVAIL DE
+    # SKILL, pas une boucle de modèle. Ici : pour chaque carte, les derniers
+    # échanges avec l'adresse (reçus et envoyés), puis un rédacteur qui adapte
+    # le gabarit à ce qu'ils révèlent — sans rien inventer. Trois de front.
+    if str(data.get("personnaliser") or "").strip().lower() in ("1", "true", "oui", "vrai", "historique"):
+        cartes = await _personnaliser_cartes(cartes, user, data.get("mailbox"),
+                                             str(data.get("consigne") or "").strip())
+        r["personnalisees"] = sum(1 for c in cartes if c.get("personnalisee"))
     # Les VARIABLES disponibles et les trous, dits au modèle : sans cela il
     # devinait les noms de colonnes et rappelait le skill à chaque échec.
     r["variables"] = variables_de(destinataires)
@@ -954,6 +966,9 @@ async def preparer_envois(data: dict, user) -> dict:
     r["a_faire"] = ("Les cartes sont DÉJÀ affichées (éditables, cochables) : ne les "
                     "recopie pas, et NE RAPPELLE PAS ce skill dans ce tour — un rappel "
                     "REMPLACE les cartes, il ne les améliore pas. "
+                    + (f"{r['personnalisees']} carte(s) ont été adaptées à l'historique des "
+                       "échanges (les autres n'avaient aucun échange : gabarit tel quel). "
+                       if r.get("personnalisees") is not None else "")
                     + (f"{r['cartes_avec_manque']} carte(s) portent « {MANQUANT} » : le tableau "
                        "n'a pas cette valeur pour cette personne (une société sans prénom, "
                        "par exemple). C'est NORMAL et c'est voulu — la personne corrige "
@@ -968,6 +983,54 @@ async def preparer_envois(data: dict, user) -> dict:
                       "`envoyer_email` et sa validation. Dis en une phrase combien de "
                       "cartes sont prêtes, puis laisse la main.")
     return r
+
+
+async def _personnaliser_cartes(cartes: list[dict], user, mailbox, consigne: str) -> list[dict]:
+    """Chaque carte relue à la lumière des échanges passés avec son destinataire."""
+    import asyncio
+    from mail.lecture import lire_boite
+    from mail.publipostage import CONSIGNE_PERSONNALISATION, historique_en_texte
+    try:
+        boite = await verifier_acces(user, mailbox or await boite_par_defaut(user))
+    except Exception as e:  # noqa: BLE001 - sans boîte lisible, les cartes restent celles du gabarit
+        logger.info("Personnalisation sans boîte : %s", e)
+        return cartes
+    verrou = asyncio.Semaphore(3)
+
+    async def _une(carte: dict) -> dict:
+        adresse = str(carte.get("de") or "").strip()
+        if not adresse or not carte.get("reponse"):
+            return carte
+        async with verrou:
+            messages: list[dict] = []
+            for dossier in ("recus", "envoyes"):
+                try:
+                    lu = await lire_boite(boite, dossier, limite=4, recherche=adresse)
+                    for m in (lu or {}).get("messages") or []:
+                        if isinstance(m, dict):
+                            messages.append({**m, "dossier": dossier})
+                except Exception as e:  # noqa: BLE001 - une boîte muette ne bloque pas la carte
+                    logger.info("Historique introuvable pour %s (%s) : %s", adresse, dossier, e)
+            historique = historique_en_texte(messages)
+            if not historique:
+                return {**carte, "synthese": "Aucun échange trouvé : gabarit tel quel.",
+                        "personnalisee": False}
+            qui = " ".join(str(carte.get(k) or "") for k in ("prenom", "nom")).strip() or adresse
+            masque, carte_pii = await _protege(
+                CONSIGNE_PERSONNALISATION.format(
+                    consigne=(f"CONSIGNE DE L'UTILISATEUR : {consigne}\n" if consigne else ""),
+                    qui=qui, historique=historique, gabarit=carte["reponse"]))
+            try:
+                corps = _rehydrater(await _appeler(masque, "standard"), carte_pii).strip()
+            except Exception as e:  # noqa: BLE001 - le rédacteur muet laisse le gabarit
+                logger.info("Rédaction personnalisée impossible pour %s : %s", adresse, e)
+                return carte
+            if not corps or len(corps) < 40:
+                return carte
+            return {**carte, "reponse": corps, "personnalisee": True,
+                    "synthese": "Échanges relus : " + historique.split("\n")[0][:160]}
+
+    return list(await asyncio.gather(*[_une(c) for c in cartes]))
 
 
 SKILLS_NATIFS["preparer_envois"] = preparer_envois

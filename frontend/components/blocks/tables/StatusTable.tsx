@@ -16,7 +16,12 @@ export function StatusTable({
   ] as Row[],
 }: { columns?: string[]; rows?: Row[] }) {
   return (
-    <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: "min(var(--bloc-largeur), 100%)" }}>
+    <div className="sym-fluide" style={{ background: "var(--marque-surface)", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-card-sm)", boxShadow: "var(--marque-shadow-card)", overflow: "auto", maxWidth: "min(var(--bloc-largeur), 100%)",
+                 // GRAND, MAIS QUI DÉFILE (04/09, Noa : « les grands tableaux c'est top,
+                 // mais ils sont vraiment trop grands ») : au-delà d'une hauteur
+                 // d'écran raisonnable, le tableau défile à l'intérieur de sa carte
+                 // au lieu d'étirer tout le fil. L'en-tête reste visible.
+                 maxHeight: "min(70vh, 560px)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>{columns.map((c, i) => (
           <th key={i} style={{ textAlign: "left", padding: "10px 14px", background: "var(--marque-primary-subtle)", color: "var(--marque-text-muted)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 700 }}>{c}</th>

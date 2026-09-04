@@ -104,6 +104,39 @@ def variables_de(destinataires) -> list[str]:
     return vus[:30]
 
 
+def historique_en_texte(messages, maxi: int = 6) -> str:
+    """Les échanges passés avec un destinataire, en quelques lignes lisibles
+    par un modèle : date, sens, objet, extrait. Ce que le publipostage
+    PERSONNALISÉ donne au rédacteur — jamais le corps entier, jamais plus de
+    six messages : c'est un rappel, pas une archive."""
+    lignes = []
+    for m in (messages or [])[:maxi]:
+        if not isinstance(m, dict):
+            continue
+        objet = str(m.get("objet") or "(sans objet)").strip()[:120]
+        extrait = re.sub(r"\s+", " ", str(m.get("apercu") or "")).strip()[:240]
+        date = str(m.get("date") or m.get("recu_le") or m.get("envoye_le") or "")[:10]
+        sens = "envoyé" if m.get("envoye") or m.get("dossier") == "envoyes" else "reçu"
+        lignes.append(f"- {date} ({sens}) « {objet} »" + (f" : {extrait}" if extrait else ""))
+    return "\n".join(lignes)
+
+
+CONSIGNE_PERSONNALISATION = """Tu rédiges UN mail pour UN destinataire, à partir d'un gabarit et de l'historique des échanges avec lui.
+
+RÈGLES :
+- Le gabarit dit le FOND et le ton : garde son message, ses offres, sa signature. Adapte la formulation à ce que l'historique révèle (un chantier passé, une demande en cours, une relation ancienne) — une ou deux phrases personnelles, pas plus.
+- N'INVENTE RIEN : aucun chantier, aucun montant, aucune date qui ne soit dans l'historique ou le gabarit. Sans historique utile, rends le gabarit tel quel, adapté au nom.
+- Les variables entre accolades sont DÉJÀ remplacées dans le gabarit ci-dessous. Une mention « [À COMPLÉTER] » reste telle quelle.
+- Rends UNIQUEMENT le corps du mail, prêt à partir, sans objet, sans commentaire.
+{consigne}
+DESTINATAIRE : {qui}
+HISTORIQUE :
+{historique}
+
+GABARIT (déjà rempli) :
+{gabarit}"""
+
+
 def _normaliser(destinataires) -> list[dict]:
     """Accepte une liste de dicts (y compris des lignes brutes d'un tableau
     joint, via `@tableau`), d'adresses nues, ou un mélange."""

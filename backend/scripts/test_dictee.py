@@ -58,12 +58,20 @@ verifier("le base64 se fabrique par tranches (un gros enregistrement déborderai
          "i += 0x8000" in texte)
 
 # ── 2. ÇA S'ÉCRIT AU FUR ET À MESURE ─────────────────────────────────────
-verifier("un envoi à cadence régulière pendant l'écoute",
-         "CADENCE_MS" in texte and "setInterval(() => { void transcrire(false) }, CADENCE_MS)" in texte)
-verifier("chaque envoi porte TOUT depuis le début (un mot coupé à la frontière ne se perd pas)",
-         "new Blob(morceaux" in texte and "enr.start(1000)" in texte)
+# 04/09 (Noa) : « le voir s'écrire en direct ». Deux secondes, et SEULEMENT le
+# nouveau son : le serveur tient le tampon et ne transcrit que la fin.
+verifier("un envoi toutes les DEUX secondes pendant l'écoute",
+         "CADENCE_MS = 2000" in texte and "setInterval(() => { void transcrire(false) }, CADENCE_MS)" in texte)
+verifier("chaque envoi ne porte que le NOUVEAU son, avec l'identifiant de la dictée",
+         "morceaux.slice(depuis, couvert)" in texte and "chunk_b64, session, definitif" in texte
+         and "enr.start(1000)" in texte)
+verifier("le curseur d'envoi avance DÈS l'envoi : le même son ne part jamais deux fois",
+         "const depuis = dernierEnvoye\n    dernierEnvoye = couvert" in texte)
 verifier("rien de neuf depuis le dernier envoi = pas d'appel (on ne paie pas pour rien)",
          "morceaux.length === dernierEnvoye" in texte)
+verifier("le texte s'écrit LETTRE À LETTRE à l'écran, la correction en arrière d'un coup",
+         "ecrireProgressivement(avantDictee.current + dit)" in barre
+         and "voulu.slice(0, actuel.length + 3)" in barre and "if (!voulu.startsWith(actuel)) return voulu" in barre)
 # 03/09 (Noa) : « quand on clique pour arrêter il y a du délai le temps qu'il
 # finisse d'écrire ». Le bouton se relâche À L'INSTANT du clic ; la dernière
 # transcription arrive en arrière-plan, et « je transcris » le dit.
@@ -102,7 +110,8 @@ verifier("la barre reçoit le jeton de session depuis le chat",
 verifier("sans jeton, on le dit au lieu d'échouer en silence",
          "Session absente : rechargez la page" in barre)
 verifier("la voix s'AJOUTE à ce qui était déjà écrit (repère avant dictée)",
-         "avantDictee.current = texte" in barre and "setTexte(avantDictee.current + dit)" in barre)
+         "avantDictee.current = texte" in barre
+         and "ecrireProgressivement(avantDictee.current + dit)" in barre)
 verifier("le champ dit qu'on écoute, et quand on transcrit",
          '"Je vous écoute…"' in barre and "(je transcris)" in barre)
 verifier("l'envoi coupe l'écoute (sinon la phrase suivante part dans le vide)",

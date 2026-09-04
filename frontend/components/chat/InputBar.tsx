@@ -165,6 +165,26 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
   const [transcrit, setTranscrit] = useState(false)   // un envoi au serveur est en cours
   const dicteeRef = useRef<Dictee | null>(null)
   const avantDictee = useRef("")
+  // LE TEXTE S'ÉCRIT LETTRE À LETTRE (04/09, « le voir s'écrire en direct »).
+  // Le serveur rend le texte par tranches de deux secondes ; le poser d'un
+  // bloc fait sauter le champ. On révèle la partie NEUVE au rythme d'une
+  // frappe rapide, et la tranche suivante enchaîne. Ce qui est déjà écrit
+  // ne bouge pas ; si le serveur corrige un mot en arrière, on remplace.
+  const cibleDictee = useRef("")
+  const plumeRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const ecrireProgressivement = (cible: string) => {
+    cibleDictee.current = cible
+    if (plumeRef.current) return           // la plume court déjà vers la cible
+    plumeRef.current = setInterval(() => {
+      setTexte((actuel) => {
+        const voulu = cibleDictee.current
+        if (actuel === voulu) { clearInterval(plumeRef.current!); plumeRef.current = null; return actuel }
+        if (!voulu.startsWith(actuel)) return voulu     // correction en arrière : d'un coup
+        return voulu.slice(0, actuel.length + 3)         // trois caractères par pas
+      })
+    }, 18)
+  }
+  useEffect(() => () => { if (plumeRef.current) clearInterval(plumeRef.current) }, [])
 
   // Une dictée oubliée continuerait d'écouter après un changement de page :
   // le micro resterait allumé, et l'onglet le montrerait — pas nous.
@@ -237,7 +257,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
       token,
       // Le texte rendu couvre TOUTE la dictée depuis le début : il remplace
       // ce qui avait été transcrit, jamais ce qui était tapé avant.
-      surTexte: (dit) => setTexte(avantDictee.current + dit),
+      surTexte: (dit) => ecrireProgressivement(avantDictee.current + dit),
       // La fin de l'ÉCOUTE relâche le bouton tout de suite ; la dernière
       // transcription, elle, se signale à part (« je transcris… ») jusqu'à
       // son arrivée — relevé de Noa : le bouton semblait ne pas répondre.

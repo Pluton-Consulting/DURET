@@ -304,6 +304,44 @@ async def prechauffer() -> None:
         logger.warning("Whisper local non préchargé (%s) : il se chargera à la première dictée", e)
 
 
+# ── LE FLUX : le navigateur n'envoie que le NOUVEAU son ─────────────────
+# « Le voir s'écrire en direct » (04/09, Noa). Envoyer tout l'enregistrement
+# toutes les six secondes ne permettait ni d'aller plus vite (le poids double
+# à chaque envoi) ni d'écrire au fil de la parole. Désormais le navigateur
+# envoie toutes les deux secondes les morceaux qu'il vient d'enregistrer, le
+# serveur les AJOUTE au tampon de la dictée et ne transcrit que la fin (le
+# cache incrémental fait le reste). Le premier morceau porte l'en-tête webm :
+# le tampon entier reste décodable. Un tampon par (personne, dictée), oublié
+# à la fin ou au bout de dix minutes.
+_TAMPONS: dict[str, dict] = {}
+
+
+def _tampon(cle: str) -> dict:
+    maintenant = time.monotonic()
+    for k in [k for k, v in _TAMPONS.items() if maintenant - v["quand"] > CACHE_TTL_S]:
+        _TAMPONS.pop(k, None)
+    return _TAMPONS.setdefault(cle, {"octets": bytearray(), "quand": maintenant})
+
+
+async def transcrire_flux(cle: str, morceau: bytes, mime: str = "audio/webm",
+                          definitif: bool = False) -> str:
+    """Ajoute un morceau au tampon de cette dictée et rend le texte ENTIER.
+
+    `definitif` : le dernier morceau — le tampon et le cache sont oubliés après.
+    """
+    t = _tampon(cle)
+    if morceau:
+        t["octets"].extend(morceau)
+    t["quand"] = time.monotonic()
+    octets = bytes(t["octets"])
+    try:
+        return await transcrire(octets, mime, cle_cache=cle)
+    finally:
+        if definitif:
+            _TAMPONS.pop(cle, None)
+            _CACHE.pop(cle, None)
+
+
 # ── L'ENTRÉE ─────────────────────────────────────────────────────────────
 def moteur_choisi() -> str:
     """« local » si Whisper est là (et non écarté par réglage), sinon « google »."""

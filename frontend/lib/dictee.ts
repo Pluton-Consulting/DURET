@@ -48,8 +48,11 @@ export interface OptionsDictee {
   surTravail?: (enCours: boolean) => void
 }
 
-// Cadence des envois pendant l'écoute, et borne d'une dictée.
-const CADENCE_MS = 6000
+// Cadence des envois pendant l'écoute, et borne d'une dictée. Deux secondes
+// (04/09, « le voir s'écrire en direct ») : le navigateur n'envoie que le
+// NOUVEAU son, le serveur ne transcrit que la fin — la cadence peut être
+// courte sans que le poids ni le travail ne grossissent.
+const CADENCE_MS = 2000
 const DUREE_MAX_MS = 10 * 60 * 1000
 
 /**
@@ -121,23 +124,31 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
   let numero = 0
   let applique = 0
   let enVol = 0                // envois en cours : « je transcris » tant qu'il en reste un
+  // L'identifiant de CETTE dictée : le serveur tient un tampon par dictée et
+  // y ajoute chaque envoi. Deux onglets ne se mélangent pas.
+  const session = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
   const transcrire = async (definitif: boolean) => {
     // Rien de neuf depuis le dernier envoi : inutile de payer un appel.
-    if (morceaux.length === 0 || (!definitif && morceaux.length === dernierEnvoye)) return
-    if (envoiEnCours && !definitif) return
+    if (morceaux.length === 0) return
+    if (!definitif && (morceaux.length === dernierEnvoye || envoiEnCours)) return
     envoiEnCours = true
     enVol += 1
     options.surTravail?.(true)
     const couvert = morceaux.length
+    const depuis = dernierEnvoye
+    dernierEnvoye = couvert
     const mien = ++numero
     try {
-      const blob = new Blob(morceaux, { type: mime || "audio/webm" })
-      const audio_b64 = await enBase64(blob)
+      // SEULEMENT LE NOUVEAU SON depuis le dernier envoi : le serveur l'ajoute
+      // au tampon de la dictée. Le premier morceau porte l'en-tête du
+      // conteneur, le tampon entier reste décodable.
+      const blob = new Blob(morceaux.slice(depuis, couvert), { type: mime || "audio/webm" })
+      const chunk_b64 = await enBase64(blob)
       const res = await fetch(`${options.apiUrl}/api/chat/transcrire`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${options.token}` },
-        body: JSON.stringify({ audio_b64, mime: mime || "audio/webm" }),
+        body: JSON.stringify({ chunk_b64, session, definitif, mime: mime || "audio/webm" }),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -147,7 +158,6 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
       }
       if (mien < applique) return          // une réponse plus récente est déjà à l'écran
       applique = mien
-      dernierEnvoye = couvert
       options.surTexte(String(d.texte || "").trim(), definitif)
     } catch {
       options.surErreur("Le serveur n'a pas répondu pendant la transcription. Réessayez.")

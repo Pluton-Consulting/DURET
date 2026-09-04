@@ -181,7 +181,7 @@ dictee = (FRONTEND / "lib" / "dictee.ts").read_text(encoding="utf-8")
 verifier("le navigateur ENREGISTRE (MediaRecorder) et n'essaie plus de transcrire lui-même",
          "new (window as any).MediaRecorder" in dictee and "webkitSpeechRecognition" not in dictee)
 verifier("il envoie l'enregistrement à l'application",
-         "/api/chat/transcrire" in dictee and "audio_b64" in dictee)
+         "/api/chat/transcrire" in dictee and "chunk_b64" in dictee)
 verifier("le texte s'écrit AU FUR ET À MESURE : tout depuis le début, à cadence régulière",
          "CADENCE_MS" in dictee and "new Blob(morceaux" in dictee)
 verifier("l'ancien message faux a disparu", "Chrome, Edge ou Safari le savent" not in dictee)
@@ -272,6 +272,31 @@ verifier("le modèle est PRÉCHARGÉ au démarrage du backend (la première dict
          "async def prechauffer" in src
          and "asyncio.create_task(prechauffer())" in (BACKEND / "main.py").read_text(encoding="utf-8"))
 verifier("l'image télécharge `base` au build", "WhisperModel('base'" in dockerfile)
+
+
+# ── 7. LE FLUX : « le voir s'écrire en direct » (04/09) ───────────────────
+# Le navigateur n'envoie que le NOUVEAU son ; le serveur l'ajoute au tampon de
+# la dictée et ne transcrit que la fin. Exécuté contre le Whisper doublé.
+sys.modules["config"].settings.transcription_moteur = "local"
+module._LOCAL_INDISPONIBLE = None
+module._CACHE.clear(); module._TAMPONS.clear(); APPELS.clear()
+f1 = asyncio.run(module.transcrire_flux("noa:d1", b"a" * 200))          # 2 s
+f2 = asyncio.run(module.transcrire_flux("noa:d1", b"a" * 200))          # +2 s → 4 s au tampon
+verifier("chaque morceau s'AJOUTE au tampon de la dictée (le texte s'allonge)",
+         f1 == "mot0 mot1" and f2 == "mot0 mot1 mot2", f"{f1!r} / {f2!r}")
+verifier("seule la fin est transcrite (2 s neuves + 1 s de recouvrement)",
+         APPELS[-1]["n"] == 3 * 16000, str(APPELS[-1]))
+f3 = asyncio.run(module.transcrire_flux("noa:d1", b"a" * 100, definitif=True))
+verifier("le dernier morceau rend le texte entier et FERME la dictée (tampon et cache oubliés)",
+         f3.count("mot") == 5 and "noa:d1" not in module._TAMPONS and "noa:d1" not in module._CACHE)
+verifier("deux dictées (deux onglets) ne se mélangent pas",
+         asyncio.run(module.transcrire_flux("noa:d2", b"b" * 100)) == "mot0")
+chat = (BACKEND / "routers" / "chat.py").read_text(encoding="utf-8")
+verifier("la route accepte le morceau et la session, et ferme sur `definitif`",
+         "chunk_b64: Optional[str] = None" in chat and "transcrire_flux(cle, octets" in chat
+         and "definitif=body.definitif" in chat)
+verifier("la clé du tampon porte la personne ET la dictée",
+         'f"{current_user.id}:{body.session[:40]}"' in chat)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

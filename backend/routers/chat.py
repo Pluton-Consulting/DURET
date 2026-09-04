@@ -416,8 +416,17 @@ _TOURS_DETACHES: set[asyncio.Task] = set()
 
 
 class TranscriptionRequest(BaseModel):
-    """L'enregistrement du micro, en base64, et son type (audio/webm, audio/mp4…)."""
-    audio_b64: str
+    """L'enregistrement du micro, en base64, et son type (audio/webm, audio/mp4…).
+
+    Deux formes : `audio_b64` = l'enregistrement ENTIER (un appel, une réponse) ;
+    ou `chunk_b64` + `session` = le NOUVEAU son seulement, que le serveur ajoute
+    au tampon de la dictée (04/09, « le voir s'écrire en direct ») — `definitif`
+    sur le dernier morceau.
+    """
+    audio_b64: Optional[str] = None
+    chunk_b64: Optional[str] = None
+    session: Optional[str] = None
+    definitif: bool = False
     mime: Optional[str] = "audio/webm"
 
 
@@ -432,17 +441,24 @@ async def transcrire_voix(body: TranscriptionRequest, current_user: User = Depen
     intégré à l'app ». Le texte rendu est celui de la personne : il atterrit
     dans la barre de saisie, c'est elle qui l'envoie.
     """
-    from voix.transcription import TranscriptionIndisponible, transcrire
+    from voix.transcription import TranscriptionIndisponible, transcrire, transcrire_flux
     try:
-        octets = base64.b64decode(body.audio_b64 or "")
+        octets = base64.b64decode(body.chunk_b64 if body.chunk_b64 is not None else (body.audio_b64 or ""))
     except Exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="L'enregistrement n'a pas pu être lu.")
     try:
-        # L'identifiant de la personne sert de clé au cache incrémental du
-        # moteur local : un enregistrement qui grandit n'est transcrit que
-        # pour sa partie neuve.
-        texte = await transcrire(octets, body.mime or "audio/webm", cle_cache=str(current_user.id))
+        if body.chunk_b64 is not None and body.session:
+            # Le FLUX : un morceau de plus, le texte entier en retour. La clé
+            # porte la personne ET la dictée : deux onglets ne se mélangent pas.
+            cle = f"{current_user.id}:{body.session[:40]}"
+            texte = await transcrire_flux(cle, octets, body.mime or "audio/webm",
+                                          definitif=body.definitif)
+        else:
+            # L'identifiant de la personne sert de clé au cache incrémental du
+            # moteur local : un enregistrement qui grandit n'est transcrit que
+            # pour sa partie neuve.
+            texte = await transcrire(octets, body.mime or "audio/webm", cle_cache=str(current_user.id))
     except TranscriptionIndisponible as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     return {"texte": texte}

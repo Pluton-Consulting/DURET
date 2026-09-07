@@ -128,9 +128,12 @@ LIGNES = [
 
 trouve, exact = detail_du_fil(LIGNES, "fil-A", T0 - datetime.timedelta(seconds=2),
                               T0 + datetime.timedelta(seconds=30))
-verifier("par le FIL : on prend les lignes du fil, et seulement elles",
-         len(trouve) == 2 and exact is True
-         and all(l["metadata"]["trigger_id"] == "fil-A" for l in trouve))
+verifier("par le FIL : aucune ligne d'un AUTRE fil n'entre",
+         exact is True
+         and all((l.get("metadata") or {}).get("trigger_id") in ("fil-A", None, "")
+                 for l in trouve)
+         and not any((l.get("metadata") or {}).get("trigger_id") == "fil-B"
+                     for l in trouve))
 
 trouve, exact = detail_du_fil(LIGNES, "fil-inconnu", T0 - datetime.timedelta(seconds=2),
                               T0 + datetime.timedelta(seconds=3))
@@ -171,6 +174,120 @@ verifier("SUPER_ADMIN SEUL : `view_audit_log` ne suffit pas (la direction l'a au
          and "HTTP_403_FORBIDDEN" in bloc)
 verifier("le choix est EXPLIQUÉ dans le code, pas seulement appliqué",
          "élargir à la direction est une décision" in bloc)
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3bis. LES QUATRE DÉFAUTS RELEVÉS SUR L'ÉCRAN LIVRÉ (07/09, Noa)
+# ══════════════════════════════════════════════════════════════════════════
+print("\n── 3bis. Ce que l'écran livré montrait de faux")
+
+# (1) Le MÊME journal de 80 lignes sous chaque échange : le rapprochement se
+#     faisait par le FIL SEUL, or un fil vit des jours et porte des dizaines de
+#     tours. Le fil réduit, la fenêtre TRANCHE.
+LONG = [
+    {"action": "skill_executed", "created_at": T0 - datetime.timedelta(days=4),
+     "metadata": {"trigger_id": "fil-A"}},
+    {"action": "chat_request", "created_at": T0,
+     "metadata": {"trigger_id": "fil-A"}, "agent_id": "agent1"},
+    {"action": "skill_executed", "created_at": T0 + datetime.timedelta(days=1),
+     "metadata": {"trigger_id": "fil-A"}},
+]
+trouve, exact = detail_du_fil(LONG, "fil-A", T0 - datetime.timedelta(seconds=2),
+                              T0 + datetime.timedelta(seconds=30))
+verifier("un fil de plusieurs jours ne colle plus TOUT son journal sous chaque tour",
+         len(trouve) == 1 and trouve[0]["action"] == "chat_request" and exact is True)
+
+# (2) Une ligne du tour sans fil marqué (journalisée ailleurs) reste visible.
+MIXTE = LONG + [{"action": "filet_mecanique",
+                 "created_at": T0 + datetime.timedelta(seconds=3), "metadata": {}}]
+trouve, _ = detail_du_fil(MIXTE, "fil-A", T0 - datetime.timedelta(seconds=2),
+                          T0 + datetime.timedelta(seconds=30))
+verifier("une ligne du tour sans fil marqué n'est pas jetée",
+         len(trouve) == 2 and [x["action"] for x in trouve]
+         == ["chat_request", "filet_mecanique"])
+
+# (3) Une ligne d'un AUTRE fil, dans la même seconde, reste écartée.
+AUTRE = LONG + [{"action": "chat_request",
+                 "created_at": T0 + datetime.timedelta(seconds=1),
+                 "metadata": {"trigger_id": "fil-B"}}]
+trouve, _ = detail_du_fil(AUTRE, "fil-A", T0 - datetime.timedelta(seconds=2),
+                          T0 + datetime.timedelta(seconds=30))
+verifier("un tour d'un AUTRE fil, à la même seconde, reste écarté",
+         all((x.get("metadata") or {}).get("trigger_id") != "fil-B" for x in trouve))
+
+# (4) « modèle — · 0 jeton » : la ligne `chat_request` d'avant le marquage des
+#     fils se retrouve par la FENÊTRE, sinon le résumé restait vide partout.
+verifier("le résumé retombe sur la fenêtre quand `chat_request` n'a pas de fil",
+         'principal = next(' in dash_src
+         and "if principal is None:" in dash_src
+         and 'x["action"] == "chat_request"' in dash_src.split("if principal is None:")[1][:400])
+
+# (5) « expert agent2 » sur des tours d'agent1 : l'expert d'un TOUR se lit sur
+#     sa ligne d'audit, pas sur le fil (qui monte vers agent2 et n'en redescend
+#     jamais, par construction).
+verifier("l'expert affiché est celui du TOUR, pas celui du fil",
+         '(principal or {}).get("agent_id") or d.get("agent_type")' in dash_src)
+
+# (6) « Aucune réponse enregistrée » sur des tours qui avaient répondu : la
+#     réponse est bornée par la question SUIVANTE du fil.
+verifier("la réponse d'un tour est bornée par la question suivante",
+         "s.created_at AS quand_suivante" in dash_src
+         and "a.created_at <= s.created_at" in dash_src)
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3ter. LES INCOHÉRENCES DE L'ASSISTANT, LUES DANS CES MÊMES ÉCHANGES
+# ══════════════════════════════════════════════════════════════════════════
+print("\n── 3ter. Ce que l'assistant disait de faux")
+
+proto = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
+agent1_src_bis = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
+verifier("le catalogue DIT que l'en-tête et le pied de page existent "
+         "(14:27 : « les blocs ne permettent pas d'insérer un en-tête » — faux)",
+         "`entete` et `pied` " in proto and "sur CHAQUE page" in proto
+         and "sont pas des blocs, ce sont des parametres d'ici" in proto)
+
+# La vision rendait des dictionnaires Python à l'écran.
+agent2_src = (BACKEND / "agents" / "agent2.py").read_text(encoding="utf-8")
+debut = agent2_src.index("def _valeur_texte")
+fin = agent2_src.index("def _blocs_extraction")
+espace = {}
+exec(compile(agent2_src[debut:fin], "agent2.py", "exec"), espace)
+valeur_texte = espace["_valeur_texte"]
+
+rendu = valeur_texte({"type": "piscine_coque", "modele": "MOLÈNE",
+                      "dimensions_exterieures_m": {"longueur": 4.8, "largeur": 2.5},
+                      "bonde_fond": True, "vide": None})
+verifier("un élément d'extraction ne sort PLUS en dictionnaire Python",
+         "{" not in rendu and "'" not in rendu and "piscine coque" in rendu)
+verifier("il se lit : le nom d'abord, les détails ensuite",
+         rendu.startswith("piscine coque —") and "longueur : 4.8" in rendu)
+verifier("un booléen se dit en français, un champ vide disparaît",
+         "bonde fond : oui" in rendu and "vide" not in rendu)
+verifier("les nombres et les listes restent lisibles",
+         valeur_texte(4.50) == "4.5" and valeur_texte(["a", "b"]) == "a, b")
+
+# « Les liens ont expiré » au-dessus de deux fichiers valides.
+annonce_src = (BACKEND / "agents" / "annonce.py").read_text(encoding="utf-8")
+debut = annonce_src.index("_DEMENT_LA_DISPONIBILITE")
+fin = annonce_src.index("def reclame_un_prealable")
+espace = {}
+exec(compile(annonce_src[debut:fin], "annonce.py", "exec"), espace)
+dement = espace["dement_la_disponibilite"]
+
+verifier("« les liens de téléchargement ont expiré » est reconnu comme un démenti",
+         dement("Les liens de téléchargement de ces documents ont expiré "
+                "(ils datent d'un échange précédent)."))
+verifier("« n'est plus disponible » aussi", dement("Ce document n'est plus disponible."))
+verifier("une réponse normale n'est pas prise pour un démenti",
+         not dement("Voici le devis, il est téléchargeable ci-dessous.")
+         and not dement("Le délai de livraison a expiré côté fournisseur.") is False)
+verifier("le démenti passe au rendu de secours QUAND un livrable existe",
+         "produits and dement_la_disponibilite(texte)" in agent1_src_bis)
+
+# « Que préférez-vous ? » après trois recherches.
+verifier("proposer de faire une lecture de plus est traité même si des gestes "
+         "ont déjà tourné (le tour d'Ophélie, 15:45)",
+         "a_livre = bool(_blocs_livrables" in agent1_src_bis
+         and "and not a_livre)" in agent1_src_bis)
 
 # ══════════════════════════════════════════════════════════════════════════
 # 4. L'ÉCRAN

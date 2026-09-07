@@ -567,9 +567,46 @@ def _libelle(cle) -> str:
 
 
 def _valeur_texte(v) -> str:
+    """Une valeur d'extraction, écrite pour un humain — JAMAIS un dictionnaire.
+
+    RELEVÉ LE 07/09 : la liste « Éléments identifiés » affichait à l'écran
+    `{'type': 'piscine_coque', 'modele': 'MOLÈNE', 'dimensions_exterieures_m':
+    {'longueur': 4.8, 'largeur': 2.5}}`. `_blocs_extraction` promet pourtant, en
+    toutes lettres, de ne jamais rendre de JSON : elle tenait la promesse pour
+    les tableaux (dont les valeurs sont des nombres) et pas pour les listes
+    d'objets, que `str()` recopiait telles quelles. Un dictionnaire à l'écran,
+    c'est de la tuyauterie qui déborde — exactement ce que le commentaire de
+    `_blocs_extraction` dit vouloir éviter.
+    """
+    if isinstance(v, bool):
+        return "oui" if v else "non"
     if isinstance(v, (int, float)):
         return f"{v:g}"
-    return str(v).strip()
+    if isinstance(v, (list, tuple)):
+        return ", ".join(x for x in (_valeur_texte(e) for e in v) if x)
+    if not isinstance(v, dict):
+        return str(v).strip()
+
+    # Le champ qui NOMME la chose ouvre la phrase ; le reste suit en
+    # « clé : valeur », les clés rendues lisibles (dimensions_exterieures_m ->
+    # « dimensions exterieures m »).
+    tete = ""
+    for cle in ("nom", "type", "libelle", "designation", "poste", "modele"):
+        valeur = v.get(cle)
+        if isinstance(valeur, str) and valeur.strip():
+            tete = valeur.strip().replace("_", " ")
+            break
+    details = []
+    for cle, valeur in v.items():
+        if valeur in (None, "", [], {}):
+            continue
+        rendu = _valeur_texte(valeur)
+        if not rendu or rendu.replace("_", " ") == tete:
+            continue
+        details.append(f"{str(cle).replace('_', ' ')} : {rendu}")
+    if tete and details:
+        return f"{tete} — " + ", ".join(details)
+    return tete or ", ".join(details)
 
 
 def _blocs_extraction(extracted) -> str:
@@ -588,6 +625,7 @@ def _blocs_extraction(extracted) -> str:
     if not isinstance(extracted, dict):
         return ""
     morceaux = []
+
 
     for cle in _CLES_SURFACES:
         surfaces = extracted.get(cle)

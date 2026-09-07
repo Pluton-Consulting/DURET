@@ -320,7 +320,7 @@ PLAFOND_RESULTAT_GENEREUX = 12000
 # insisterait sur un modèle qui ne veut pas, et la note de sortie explique alors
 # honnêtement pourquoi rien n'a été fait.
 from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_suite,
-                            options_proposees, reclame_un_prealable,
+                            options_proposees, reclame_un_prealable, dement_la_disponibilite,
                             pretend_avoir_livre, demande_une_production,
                             propose_au_lieu_d_agir, renvoie_au_deja_fait,
                             demande_sur_le_passe, demande_un_visuel,
@@ -2333,9 +2333,20 @@ def _redaction_dement_le_livrable(texte: str, resultats) -> bool:
     de s'empoisonner.
     """
     import json as _j
+    produits = _blocs_livrables(resultats)
+
+    # UN FICHIER PRODUIT CE TOUR-CI N'A PAS « EXPIRÉ ». Relevé le 07/09 à
+    # 15:34 : « Les liens de téléchargement de ces documents ont expiré (ils
+    # datent d'un échange précédent) », écrit au-dessus de deux documents
+    # valides et téléchargeables. Le modèle raconte l'état du monde de mémoire ;
+    # le dépôt, lui, sait. Les deux ne peuvent pas être vrais — et ici, contre
+    # les trois conditions ci-dessous, MONTRER le livrable n'excuse rien : la
+    # contradiction est dans la phrase elle-même.
+    if produits and dement_la_disponibilite(texte):
+        return True
+
     if not reclame_un_prealable(texte):
         return False
-    produits = _blocs_livrables(resultats)
     if not produits:
         return False
     montres = set()
@@ -3127,10 +3138,22 @@ def route_apres_llm(state: AgentState) -> str:
     # forceur, qui cherche le geste dans un contexte neuf. Après une action,
     # une question de suite est légitime : le prédicat ne s'applique qu'à un
     # tour sans acte.
+    # UNE LECTURE PROPOSÉE EST UNE LECTURE NON FAITE (07/09). Le filet exigeait
+    # qu'AUCUN geste n'ait tourné : une réponse qui cherche, ne trouve pas, puis
+    # propose « je peux relancer une recherche ciblée … si vous le souhaitez »
+    # y échappait donc — c'est le tour d'Ophélie du 07/09 à 15:45, qui finit sur
+    # « Que préférez-vous ? » après trois recherches. La règle du 31/08 ne dit
+    # pas « essaie une fois », elle dit ESSAIE : une lecture ne se demande pas,
+    # elle se fait, et seul un effet EXTERNE attend un accord.
+    #
+    # La condition reste étroite : il faut que la réponse propose de faire, que
+    # rien ne soit en attente d'accord, et qu'AUCUN LIVRABLE ne soit sorti du
+    # tour — sinon on renverrait au forceur un tour qui a abouti.
+    a_livre = bool(_blocs_livrables(state.get("tool_results") or []))
     sans_agir = (
         propose_au_lieu_d_agir(visible)
-        and not any(r.get("ok") for r in (state.get("tool_results") or []))
-        and not state.get("pending_action"))
+        and not state.get("pending_action")
+        and not a_livre)
     if sans_agir and not fantome:
         logger.info("Proposition sans acte : la réponse offre de faire au lieu de faire — forçage")
         _tracer_filet(state, "forcage", "proposition_sans_acte",

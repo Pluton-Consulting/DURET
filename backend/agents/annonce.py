@@ -244,6 +244,33 @@ _PREALABLE = re.compile(
     re.IGNORECASE)
 
 
+# CE QUI DÉMENT UN LIVRABLE POSÉ À L'ÉCRAN.
+#
+# Relevé le 07/09 à 15:34 : « Les liens de téléchargement de ces documents ont
+# expiré (ils datent d'un échange précédent) » — écrit JUSTE AU-DESSUS des deux
+# blocs de fichiers que le filet venait de restituer, tous deux valides et
+# téléchargeables. Le modèle raconte l'état du monde de mémoire ; les blocs, eux,
+# viennent du dépôt. Quand les deux se contredisent, c'est le dépôt qui a raison.
+_DEMENT_LA_DISPONIBILITE = (
+    "ont expiré", "a expiré", "ont expire", "a expire",
+    "lien expiré", "liens expirés", "lien expire", "liens expires",
+    "n'est plus disponible", "ne sont plus disponibles",
+    "n'est plus téléchargeable", "ne sont plus téléchargeables",
+    "n'est plus valide", "ne sont plus valides",
+    "n'est plus accessible", "ne sont plus accessibles",
+)
+
+
+def dement_la_disponibilite(texte: str) -> bool:
+    """La rédaction dit qu'un livrable n'est plus disponible.
+
+    À n'utiliser QUE lorsqu'un livrable est effectivement à l'écran : sans
+    livrable, « le lien a expiré » peut être une information juste.
+    """
+    bas = (texte or "").lower()
+    return any(m in bas for m in _DEMENT_LA_DISPONIBILITE)
+
+
 def reclame_un_prealable(texte: str) -> bool:
     """Le texte réclame-t-il à l'utilisateur un PRÉALABLE au travail ?
 

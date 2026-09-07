@@ -131,14 +131,30 @@ async def get_activity(
 # ⚠️ LES DEUX LIGNES PORTENT LA MÊME HEURE. `_persist_messages` les écrit dans
 # une seule transaction, et `NOW()` y vaut l'heure de la transaction : trier par
 # `created_at` seul ne les départage pas. D'où le `>=` et l'exclusion par `id`.
+# ⚠️ LA RÉPONSE EST BORNÉE PAR LA QUESTION SUIVANTE. Sans cette borne, le
+# premier tour d'un fil raflait la première réponse et tous les suivants
+# ressortaient « aucune réponse enregistrée » — ce qu'on a lu à l'écran sur
+# quatre tours qui avaient pourtant répondu. Une réponse appartient au tour
+# qu'elle suit, jamais à celui d'après.
 _SQL_ECHANGES = """
 SELECT m.id, m.content AS question, m.created_at AS quand,
        t.langgraph_thread_id AS fil, t.agent_type,
        u.id AS utilisateur_id, u.email, u.name, u.role AS utilisateur_role,
-       r.content AS reponse, r.created_at AS quand_reponse
+       r.content AS reponse, r.created_at AS quand_reponse,
+       s.created_at AS quand_suivante
 FROM messages m
 JOIN threads t ON t.id = m.thread_id
 JOIN users u ON u.id = t.user_id
+LEFT JOIN LATERAL (
+    SELECT q.created_at
+    FROM messages q
+    WHERE q.thread_id = m.thread_id
+      AND q.role = 'user'
+      AND (q.created_at > m.created_at
+           OR (q.created_at = m.created_at AND q.id > m.id))
+    ORDER BY q.created_at ASC, q.id ASC
+    LIMIT 1
+) s ON true
 LEFT JOIN LATERAL (
     SELECT a.content, a.created_at
     FROM messages a
@@ -146,6 +162,7 @@ LEFT JOIN LATERAL (
       AND a.role = 'assistant'
       AND a.created_at >= m.created_at
       AND a.id <> m.id
+      AND (s.created_at IS NULL OR a.created_at <= s.created_at)
     ORDER BY a.created_at ASC
     LIMIT 1
 ) r ON true
@@ -160,18 +177,32 @@ LIMIT $4 OFFSET $5
 
 
 def _detail_du_fil(lignes, fil, debut, fin):
-    """Les lignes techniques qui appartiennent à cet échange.
+    """Les lignes techniques qui appartiennent à CE tour.
 
-    Le fil d'abord — c'est exact. Sinon la fenêtre de temps, pour tout ce qui a
-    été journalisé avant que le fil n'y soit posé : approximatif, et on le dit
-    plutôt que de rendre une liste vide qui laisserait croire qu'il ne s'est
-    rien passé.
+    ⚠️ LE FIL NE SUFFIT PAS, ET C'EST LE DÉFAUT QU'ON A VU À L'ÉCRAN. Un fil vit
+    des jours et porte des dizaines de tours : filtrer sur lui seul collait les
+    quatre-vingts lignes du fil `a9f88326`, du 3 au 7 septembre, sous CHACUN de
+    ses tours. Le fil réduit à la bonne conversation, la FENÊTRE DE TEMPS
+    désigne le tour — il faut les deux, et dans cet ordre.
+
+    Rend `(lignes, exact)`. `exact` dit si le fil a servi : sur tout ce qui a
+    été journalisé avant que les fils ne soient marqués, seule l'heure décide,
+    et l'écran l'annonce plutôt que de faire passer un rapprochement approximatif
+    pour une certitude.
     """
-    par_fil = [x for x in lignes if (x.get("metadata") or {}).get("trigger_id") == fil]
+    dans_la_fenetre = [x for x in lignes if debut <= x["created_at"] <= fin]
+    if not fil:
+        return dans_la_fenetre, False
+    par_fil = [x for x in dans_la_fenetre
+               if (x.get("metadata") or {}).get("trigger_id") == fil]
+    # Certaines lignes du tour ne portent pas de fil (un skill journalisé
+    # ailleurs, une trace antérieure) : on les garde, la fenêtre les a déjà
+    # bornées. Ce qui est écarté, c'est ce qui appartient à un AUTRE fil.
+    autres = [x for x in dans_la_fenetre
+              if not (x.get("metadata") or {}).get("trigger_id")]
     if par_fil:
-        return par_fil, True
-    return [x for x in lignes
-            if debut <= x["created_at"] <= fin], False
+        return sorted(par_fil + autres, key=lambda x: x["created_at"]), True
+    return dans_la_fenetre, False
 
 
 @router.get("/echanges")
@@ -254,12 +285,27 @@ async def get_echanges(
             techs, d.get("fil"),
             quand - datetime.timedelta(seconds=2),
             fin + datetime.timedelta(seconds=30))
+        # LE RÉSUMÉ SE LIT SUR LA LIGNE `chat_request` DU TOUR. Elle ne porte le
+        # fil que depuis le 07/09 : sur tout l'historique, la chercher dans les
+        # seules lignes du fil ne rendait rien, et l'écran affichait
+        # « modèle — · 0 jeton · 0.0000 € » partout. On la cherche donc dans la
+        # FENÊTRE, qui, elle, existe depuis toujours.
         principal = next((x for x in detail if x["action"] == "chat_request"), None)
+        if principal is None:
+            principal = next(
+                (x for x in techs
+                 if x["action"] == "chat_request"
+                 and quand - datetime.timedelta(seconds=2) <= x["created_at"]
+                 <= fin + datetime.timedelta(seconds=30)), None)
         echanges.append({
             "id": str(d["id"]),
             "quand": quand,
             "fil": d.get("fil"),
-            "expert": d.get("agent_type"),
+            # L'EXPERT DU TOUR, PAS CELUI DU FIL. `threads.agent_type` monte
+            # vers agent2 au premier tour de conception et n'en redescend
+            # jamais (c'est voulu, pour l'historique du fil) : l'afficher ici
+            # étiquetait « expert conception » des tours de devis et de mails.
+            "expert": (principal or {}).get("agent_id") or d.get("agent_type"),
             "utilisateur": {"id": str(d["utilisateur_id"]), "email": d.get("email"),
                             "nom": d.get("name"), "role": d.get("utilisateur_role")},
             "question": d.get("question") or "",

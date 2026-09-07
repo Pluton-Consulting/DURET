@@ -81,7 +81,11 @@ _spec = importlib.util.spec_from_file_location("annonce", racine / "agents" / "a
 _annonce = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_annonce)
 
 espace = {"logger": _Journal(), "AgentState": dict,
-          "reclame_un_prealable": _annonce.reclame_un_prealable}
+          "reclame_un_prealable": _annonce.reclame_un_prealable,
+          # 07/09 : « les liens de téléchargement ont expiré » écrit au-dessus
+          # de deux fichiers valides — le démenti de disponibilité passe par le
+          # même filet, il lui faut donc son prédicat dans cet espace.
+          "dement_la_disponibilite": _annonce.dement_la_disponibilite}
 extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
           "_blocs_livrables", "_blocs_de", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",

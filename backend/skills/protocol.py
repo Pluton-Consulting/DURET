@@ -277,10 +277,19 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         # soit plusieurs dizaines de pages, en UN appel. Le modele suivait donc
         # la consigne, versait section par section, et se faisait couper par le
         # budget d'actions : deux regles qui se contredisaient.
+        # L'EN-TETE ET LE PIED SE DISENT ICI, pas seulement dans la liste des
+        # optionnels. Relevé le 07/09 : « les blocs de mise en page disponibles
+        # ne permettent pas d'inserer un en-tete ou un pied de page » — faux
+        # depuis toujours, mais le modele raisonne sur le VOCABULAIRE DES
+        # BLOCS, ou aucun ne s'appelle « en-tete ». Un parametre liste sans un
+        # mot dans la description n'existe pas pour lui.
         "OUVRE un document a remplir en PLUSIEURS fois. OBLIGATOIRE des que le "
         "contenu depasse ce qui tient dans UNE reponse (environ 30 blocs de "
         "texte redige) : au-dela, verse par `ajouter_document` successifs, "
-        "autant qu il faut, puis `terminer_document`. Ne produit aucun fichier",
+        "autant qu il faut, puis `terminer_document`. `entete` et `pied` "
+        "s'ecrivent sur CHAQUE page (coordonnees, mentions legales) : ce ne "
+        "sont pas des blocs, ce sont des parametres d'ici. Ne produit aucun "
+        "fichier",
 
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter"]),
     "ajouter_document": (

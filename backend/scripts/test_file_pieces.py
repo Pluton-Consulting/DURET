@@ -41,25 +41,26 @@ chat_tsx = (FRONTEND / "components" / "chat" / "ChatWindow.tsx").read_text(encod
 # ── 1. LA PIÈCE JOINTE EN FILE ────────────────────────────────────────────
 verifier("la route de mise en file accepte une pièce jointe",
          "attachment_b64: Optional[str] = None" in file_py and "attachment_name" in file_py)
-verifier("le fichier est rangé sur le DISQUE (volume des documents), pas en base",
-         "_ranger_piece(tache_id, body)" in file_py and '/ "file"' in file_py
+verifier("les fichiers sont rangés sur le DISQUE (volume des documents), pas en base",
+         "_ranger_pieces(tache_id, body)" in file_py and '/ "file"' in file_py
          and "attachment_b64" not in file_py.split("INSERT INTO taches_differees")[1][:300])
-verifier("il est relu à l'exécution et lu par le MÊME lecteur que le chat",
-         "_reprendre_piece(tache_id)" in file_py and "from routers.chat import _piece_jointe" in file_py)
-verifier("le tour de la file reçoit la pièce ET le tableau complet (@tableau)",
-         "has_attachment=bool(piece)" in file_py and "attachment_rows=tableau_joint" in file_py)
-verifier("le fichier ne dort pas sur le disque une fois la tâche finie",
+verifier("ils sont relus à l'exécution et lus par le MÊME lecteur que le chat",
+         "_reprendre_pieces(tache_id)" in file_py and "from routers.chat import _pieces_jointes" in file_py)
+verifier("le tour de la file reçoit les pièces ET le tableau complet (@tableau)",
+         "has_attachment=bool(pieces)" in file_py and "attachment_rows=tableau_joint" in file_py
+         and "attachments=visuels or None" in file_py)
+verifier("les fichiers ne dorment pas sur le disque une fois la tâche finie",
          "_oublier_piece(tache_id)" in file_py)
-verifier("l'écran n'oppose plus de refus : la pièce part avec la demande",
+verifier("l'écran n'oppose plus de refus : les pièces partent avec la demande",
          "ne peuvent pas rejoindre la file d'attente" not in chat_tsx
-         and "lancerEnFile(text, true, piece)" in chat_tsx
-         and "attachment_b64: piece.b64" in chat_tsx)
-verifier("les replis POST → file gardent la pièce du message d'origine",
-         chat_tsx.count("lancerEnFile(text, false, piece)") == 2)
+         and "lancerEnFile(text, true, pieces)" in chat_tsx
+         and "attachment_b64: pieces[0].b64" in chat_tsx)
+verifier("les replis POST → file gardent les pièces du message d'origine",
+         chat_tsx.count("lancerEnFile(text, false, pieces)") == 2)
 
 # ── 2. LA VOIE WEBSOCKET TRANSMET LE TABLEAU ──────────────────────────────
 verifier("`stream_turn` accepte et transmet `attachment_rows`",
-         "attachment_rows: Optional[dict] = None) -> AsyncIterator[dict]:" in runtime
+         "attachment_rows: Optional[dict] = None," in runtime
          and runtime.count("attachment_rows=attachment_rows") >= 2)
 
 # ── 3. LE TEMPS IMPARTI D'UN TOUR ─────────────────────────────────────────

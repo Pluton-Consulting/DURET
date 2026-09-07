@@ -28,7 +28,7 @@ export interface PieceJointe {
 }
 
 interface InputBarProps {
-  onSend: (text: string, piece?: PieceJointe) => void
+  onSend: (text: string, pieces?: PieceJointe[]) => void
   disabled?: boolean
   // Une tache tourne deja : ecrire reste possible, l'envoi MET EN FILE au lieu
   // d'interrompre. Le champ et le bouton le disent, sinon l'utilisateur croit
@@ -57,6 +57,12 @@ function IconeFile() {
 // Limite alignée sur MAX_BODY_MB côté backend : mieux vaut refuser tout de suite
 // avec un message clair que de laisser partir un envoi qui sera rejeté.
 const TAILLE_MAX_MO = 10
+// COMBIEN DE FICHIERS DANS UN MÊME MESSAGE (07/09). Dix, la même borne que le
+// serveur : on ne laisse pas l'écran accepter ce que le backend écartera. Le
+// geste réel, c'est les photos d'une visite ou les pièces d'un dossier —
+// jusqu'ici il fallait envoyer un message par fichier, et l'assistant n'avait
+// alors jamais le lot sous les yeux.
+const MAX_FICHIERS = 10
 
 /** LA PIÈCE JOINTE, ET LE BOUTON QUI L'AJOUTE.
  *
@@ -75,6 +81,11 @@ function PieceJointeJointe({ desactive }: { desactive?: boolean }) {
   if (!fichiers.files.length) return null
   return (
     <PromptInputHeader>
+      {fichiers.files.length > 1 && (
+        <span style={{ fontSize: 12, opacity: 0.7, alignSelf: "center", marginRight: 4 }}>
+          {fichiers.files.length} fichiers
+        </span>
+      )}
       {fichiers.files.map((f) => (
         <span key={f.id} data-testid="piece-jointe" style={{
           display: "inline-flex", alignItems: "center", gap: 8,
@@ -277,34 +288,44 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
   const surEnvoi = (message: PromptInputMessage) => {
     if (disabled) return
     const contenu = texte.trim()
-    const f = message.files?.[0]
+    const fichiersJoints = message.files ?? []
 
-    let piece: PieceJointe | undefined
-    if (f) {
+    const pieces: PieceJointe[] = []
+    for (const f of fichiersJoints) {
       // Le fichier n'est exploitable qu'une fois converti en « data: ». Si la
       // conversion a échoué, l'URL reste un « blob: » — en découper la fin
       // enverrait au backend un identifiant local en guise de contenu, et
       // produirait un fichier corrompu sans le moindre message d'erreur.
       const virgule = f.url?.indexOf(",") ?? -1
       if (!f.url?.startsWith("data:") || virgule < 0) {
-        setErreur("Le fichier n'a pas pu être lu. Réessayez de le joindre.")
+        // ON NOMME LE FICHIER FAUTIF. Avec un seul, « le fichier » suffisait ;
+        // avec cinq, il faut dire lequel reprendre — et on ne part pas avec un
+        // lot amputé sans le dire.
+        setErreur(`« ${f.filename || "un fichier"} » n'a pas pu être lu. `
+                  + "Retirez-le et rejoignez-le, puis renvoyez.")
         return
       }
-      piece = {
+      pieces.push({
         name: f.filename || "fichier",
         // Certains navigateurs ne renseignent pas le type pour les formats rares :
         // le backend se rabat alors sur l'extension du nom.
         mime: f.mediaType || "application/octet-stream",
         b64: f.url.slice(virgule + 1),
-      }
+      })
     }
 
-    if (!contenu && !piece) return
+    if (!contenu && !pieces.length) return
     // La dictée s'arrête à l'envoi : sans cela, la phrase suivante s'écrirait
     // dans un champ qu'on vient de vider, à la suite d'un message déjà parti.
     dicteeRef.current?.arreter()
-    // Un fichier envoyé sans question : on formule l'intention par défaut.
-    onSend(contenu || `Analyse ce fichier : ${piece?.name}`, piece)
+    // Des fichiers envoyés sans question : on formule l'intention par défaut.
+    // Au pluriel, on NOMME les fichiers — c'est ce que la personne relira dans
+    // son fil, et ce qui permet de dire ensuite « la troisième ».
+    const parDefaut = pieces.length === 1
+      ? `Analyse ce fichier : ${pieces[0].name}`
+      : `Analyse ces ${pieces.length} fichiers, un par un : `
+        + pieces.map((p) => p.name).join(", ")
+    onSend(contenu || parDefaut, pieces.length ? pieces : undefined)
     setTexte("")
     setErreur("")
   }
@@ -362,10 +383,11 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
       <PromptInput
         className="sym-in sym-barre-saisie"
         onSubmit={surEnvoi}
-        // Une question porte UN document. Sans ces deux bornes, un dépôt
-        // multiple est accepté en silence puis tronqué à l'envoi.
-        multiple={false}
-        maxFiles={1}
+        // Une question porte JUSQU'À DIX documents (07/09). La borne reste,
+        // et elle est la même que celle du serveur : sans elle, un dépôt de
+        // trente fichiers serait accepté à l'écran puis tronqué à l'arrivée.
+        multiple
+        maxFiles={MAX_FICHIERS}
         maxFileSize={TAILLE_MAX_MO * 1024 * 1024}
         // Sans ce rappel, un fichier trop lourd est écarté sans un mot :
         // l'utilisateur voit son geste ne rien produire.
@@ -373,7 +395,7 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
           setErreur(e.code === "max_file_size"
             ? `Fichier trop volumineux (maximum ${TAILLE_MAX_MO} Mo).`
             : e.code === "max_files"
-            ? "Un seul fichier à la fois."
+            ? `${MAX_FICHIERS} fichiers au maximum par message.`
             : e.message)
         }
         // Le dépôt fonctionne sur toute la zone de conversation, pas seulement

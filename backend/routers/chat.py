@@ -5,7 +5,7 @@ import time
 import secrets
 import uuid
 import datetime
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 from auth.dependencies import get_current_user
@@ -21,6 +21,20 @@ logger = logging.getLogger("duret.chat")
 router = APIRouter()
 
 
+class PieceJointeEntrante(BaseModel):
+    """Un fichier joint à un message. Trois champs, rien de plus."""
+    nom: Optional[str] = None
+    mime: Optional[str] = None
+    b64: Optional[str] = None
+
+
+# Combien de fichiers un même message peut porter. Dix : c'est le geste réel
+# (les photos d'une visite, les pièces d'un dossier), et chacun coûte un appel
+# de vision — au-delà, un tour dépasserait son temps imparti sans que personne
+# l'ait demandé. Le surplus est ÉCARTÉ et DIT, jamais avalé en silence.
+MAX_PIECES_JOINTES = 10
+
+
 class ChatRequest(BaseModel):
     query: str
     thread_id: Optional[str] = None
@@ -29,6 +43,11 @@ class ChatRequest(BaseModel):
     attachment_b64: Optional[str] = None      # fichier encodé base64
     attachment_mime: Optional[str] = None      # 'image/jpeg', 'application/pdf', ...
     attachment_name: Optional[str] = None      # nom d'origine — sert à choisir le lecteur
+    # PLUSIEURS FICHIERS DANS UN MÊME MESSAGE (07/09). Les trois champs
+    # ci-dessus restent acceptés — la file d'attente, les tâches planifiées et
+    # tout client plus ancien n'en envoient qu'un — et se replient sur cette
+    # liste : un seul chemin ensuite, donc un seul comportement à vérifier.
+    attachments: Optional[List[PieceJointeEntrante]] = None
 
 
 # Le tableau reproduit dans l'invite : TOUT ce qui tient dans ce budget, et
@@ -122,7 +141,89 @@ async def _piece_jointe(nom: Optional[str], b64: Optional[str],
                        f"faute de place ; `@tableau` porte bien les {len(lignes)}.)")
         return entete + "\n\n" + "\n\n".join(morceaux), tableau
 
-    return structure["text"]
+    # LE COUPLE, PAS LA CHAÎNE SEULE. Ce retour rendait `structure["text"]` tout
+    # nu depuis le 03/09 (`83075d5`, quand la fonction s'est mise à rendre aussi
+    # les lignes du tableau) : `texte, lignes = await _piece_jointe(…)` sur un
+    # Word, un PDF avec couche texte ou un .txt levait alors
+    # « too many values to unpack », et la personne lisait « Une erreur est
+    # survenue » en joignant un simple document. Le chemin tabulaire, lui,
+    # rendait bien un couple — d'où un Excel qui passait et un Word qui non.
+    return structure["text"], None
+
+
+def _normaliser_pieces(attachments, nom=None, mime=None, b64=None) -> tuple:
+    """Les fichiers d'un message, dans l'ordre, quelle que soit la forme reçue.
+
+    Rend `(pieces, surplus)` : la liste retenue, et le nombre de fichiers
+    écartés par le plafond. Le surplus est RENDU plutôt que jeté, parce que la
+    personne doit apprendre que son onzième fichier n'a pas été lu — un fichier
+    qui disparaît sans un mot est le pire des deux comportements.
+    """
+    pieces: list = []
+    for p in (attachments or []):
+        d = p if isinstance(p, dict) else p.model_dump()
+        if d.get("b64"):
+            pieces.append({"nom": d.get("nom") or "document",
+                           "mime": d.get("mime") or "", "b64": d["b64"]})
+    if not pieces and b64:
+        pieces.append({"nom": nom or "document", "mime": mime or "", "b64": b64})
+    return pieces[:MAX_PIECES_JOINTES], max(0, len(pieces) - MAX_PIECES_JOINTES)
+
+
+async def _pieces_jointes(pieces: list, surplus: int = 0) -> tuple:
+    """Lit TOUS les fichiers d'un message. Rend `(texte, tableau, visuels)`.
+
+    * `texte`   : le contenu des fichiers lisibles en texte (Excel, Word, CSV,
+                  PDF avec couche texte), chacun sous son nom ;
+    * `tableau` : les lignes complètes du PREMIER tableau, pour `@tableau` ;
+    * `visuels` : les fichiers qui partent à la vision (images, plans, scans).
+
+    Les fichiers sont lus EN PARALLÈLE : un classeur de 5 000 lignes et trois
+    photos, c'est trois décodages et une analyse tabulaire — en série, on
+    ajoutait leurs durées les unes aux autres avant même que le tour commence.
+    """
+    if not pieces:
+        return None, None, []
+
+    lus = await asyncio.gather(*[
+        _piece_jointe(p["nom"], p["b64"], p["mime"]) for p in pieces
+    ])
+
+    textes: list = []
+    tableaux: list = []
+    visuels: list = []
+    for piece, (texte, lignes) in zip(pieces, lus):
+        if texte:
+            # LE NOM DU FICHIER EN TÊTE dès qu'il y en a plusieurs : sans lui,
+            # deux tableaux collés bout à bout deviennent un seul document sans
+            # frontière, et le modèle attribue au premier ce qui vient du second.
+            textes.append(f"=== Fichier joint : {piece['nom']} ===\n{texte}"
+                          if len(pieces) > 1 else texte)
+            if lignes:
+                tableaux.append(lignes)
+        else:
+            visuels.append(piece)
+
+    avis: list = []
+    if surplus:
+        avis.append(f"{surplus} fichier(s) au-delà des {MAX_PIECES_JOINTES} autorisés "
+                    "n'ont PAS été lus. Dis-le, et propose de les envoyer dans un "
+                    "second message.")
+    if len(tableaux) > 1:
+        # UN SEUL `@tableau`, et on dit lequel. Le jeton est résolu par le
+        # serveur avant l'empreinte : il ne peut désigner qu'un tableau. Le
+        # taire ferait passer les lignes du premier pour celles du dernier.
+        avis.append(f"{len(tableaux)} tableaux sont joints ; `@tableau` porte les lignes "
+                    f"du premier (« {tableaux[0]['nom']} »). Pour agir sur un autre, "
+                    "dis-le explicitement.")
+    if avis and textes:
+        textes.insert(0, "ATTENTION : " + " ".join(avis))
+    elif avis:
+        textes.append("ATTENTION : " + " ".join(avis))
+
+    return ("\n\n".join(textes) if textes else None,
+            tableaux[0] if tableaux else None,
+            visuels)
 
 
 async def _check_schedule(current_user: User) -> None:
@@ -301,20 +402,26 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
     success = True
     error_msg: Optional[str] = None
 
-    texte_joint, tableau_joint = await _piece_jointe(body.attachment_name, body.attachment_b64, body.attachment_mime)
+    pieces, surplus = _normaliser_pieces(body.attachments, body.attachment_name,
+                                        body.attachment_mime, body.attachment_b64)
+    texte_joint, tableau_joint, visuels = await _pieces_jointes(pieces, surplus)
+    # Les champs au singulier désignent LE PREMIER fichier visuel : c'est ce que
+    # relisent les chemins qui ne comptent pas encore (tâches, reprises).
+    tete = visuels[0] if visuels else {}
 
     try:
         result = await runtime.run_turn(
             query=body.query,
             user_id=str(current_user.id),
             user_role=current_user.role,
-            has_attachment=body.has_attachment or bool(body.attachment_b64),
+            has_attachment=body.has_attachment or bool(pieces),
             thread_id=thread_id,
-            attachment_b64=body.attachment_b64,
-            attachment_mime=body.attachment_mime,
-            attachment_name=body.attachment_name,
+            attachment_b64=tete.get("b64"),
+            attachment_mime=tete.get("mime"),
+            attachment_name=tete.get("nom"),
             attachment_text=texte_joint,
             attachment_rows=tableau_joint,
+            attachments=visuels or None,
         )
     except HTTPException:
         raise
@@ -536,9 +643,12 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         await _dire(websocket, {"type": "error", "detail": e.detail})
         return
 
-    texte_joint, tableau_joint = await _piece_jointe(
-        data.get("attachment_name"), data.get("attachment_b64"), data.get("attachment_mime")
+    pieces, surplus = _normaliser_pieces(
+        data.get("attachments"), data.get("attachment_name"),
+        data.get("attachment_mime"), data.get("attachment_b64"),
     )
+    texte_joint, tableau_joint, visuels = await _pieces_jointes(pieces, surplus)
+    tete = visuels[0] if visuels else {}
 
     final_response = ""
     # L'échange a-t-il déjà été écrit pendant la boucle ? Un tour qui se termine
@@ -550,13 +660,14 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
             query=data.get("query", ""),
             user_id=str(user.id),
             user_role=user.role,
-            has_attachment=data.get("has_attachment", False) or bool(data.get("attachment_b64")),
+            has_attachment=data.get("has_attachment", False) or bool(pieces),
             thread_id=thread_id,
-            attachment_b64=data.get("attachment_b64"),
-            attachment_mime=data.get("attachment_mime"),
-            attachment_name=data.get("attachment_name"),
+            attachment_b64=tete.get("b64"),
+            attachment_mime=tete.get("mime"),
+            attachment_name=tete.get("nom"),
             attachment_text=texte_joint,
             attachment_rows=tableau_joint,
+            attachments=visuels or None,
         ):
             # L'expert effectif se lit sur TOUS les nœuds, pas seulement sur
             # `classify` : la boucle d'outils et `execute_action` réattribuent

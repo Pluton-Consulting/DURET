@@ -200,7 +200,8 @@ async def get_graph():
 def _initial_state(query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
                    attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                    attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
-                   trigger_kind: str = "chat", attachment_rows: Optional[dict] = None) -> dict:
+                   trigger_kind: str = "chat", attachment_rows: Optional[dict] = None,
+                   attachments: Optional[list] = None) -> dict:
     _mime = attachment_mime or ""
     etat = {
         "query": query,
@@ -217,6 +218,11 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # laisser filer ferait passer une vieille photo pour « celle qu'on
         # vient d'envoyer ». Elle est reposée par la vision si une image arrive.
         "attachment_visuel_cle": None,
+        # LES FICHIERS DE CE TOUR. Comme la référence de photo ci-dessus, ils
+        # ne survivent pas au tour : laisser filer le lot précédent ferait
+        # analyser des photos qu'on ne montre plus.
+        "attachments": attachments or None,
+        "attachment_visuel_cles": None,
         # Les pages du PDF du tour précédent non plus : la vision les
         # relirait, et l'assistant décrirait un dossier qu'on ne lui a pas
         # montré. Même famille de piège que la référence de photo ci-dessus.
@@ -347,6 +353,7 @@ async def _persist_validation(thread_id: str, user_id: str, state: dict, intr: O
 async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: bool, thread_id: str,
                    attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                    attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
+                   attachments: Optional[list] = None,
                    attachment_rows: Optional[dict] = None,
                    trigger_kind: str = "chat") -> dict:
     """Exécute un tour de conversation. Peut suspendre (pending_validation).
@@ -380,7 +387,8 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
         result = await graph.ainvoke(
             _initial_state(query, user_id, user_role, has_attachment, thread_id,
                            attachment_b64, attachment_mime, attachment_name, attachment_text,
-                           trigger_kind, attachment_rows=attachment_rows), config
+                           trigger_kind, attachment_rows=attachment_rows,
+                           attachments=attachments), config
         )
 
         snapshot = await graph.aget_state(config)
@@ -538,7 +546,8 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                       has_attachment: bool, thread_id: str,
                       attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                       attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
-                      attachment_rows: Optional[dict] = None) -> AsyncIterator[dict]:
+                      attachment_rows: Optional[dict] = None,
+                      attachments: Optional[list] = None) -> AsyncIterator[dict]:
     """Streame l'exécution nœud-par-nœud (pour push WebSocket temps réel).
 
     Lève `FilOccupe` si un tour tourne déjà sur ce fil, ou s'il attend une
@@ -575,7 +584,7 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
             # ne marchait que par le repli POST, sans que rien ne le dise.
             _initial_state(query, user_id, user_role, has_attachment, thread_id,
                            attachment_b64, attachment_mime, attachment_name, attachment_text,
-                           attachment_rows=attachment_rows),
+                           attachment_rows=attachment_rows, attachments=attachments),
             config,
             stream_mode="updates",
             subgraphs=True,

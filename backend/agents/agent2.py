@@ -12,6 +12,7 @@ Sécurité / RGPD :
   indicative, marquée comme telle, à valider par un humain avant tout usage. Aucune
   porte d'accord devant la LECTURE (voir prechiffrage_node).
 """
+import asyncio
 import base64
 import io
 import json
@@ -143,22 +144,67 @@ MAX_PAGES_PDF = 5
 
 # ── Nœuds ────────────────────────────────────────────────────────────
 
-async def preprocess_attachment_node(state: AgentState) -> dict:
-    """Prétraitement : PDF → images (jusqu'à MAX_PAGES_PDF pages), et
-    suppression EXIF/GPS des photos (Pillow)."""
-    b64 = state.get("attachment_b64")
-    mime = (state.get("attachment_mime") or "").lower()
-    if not b64:
-        return {}
+# ── Les fichiers d'un message ────────────────────────────────────────
 
+# Combien de fichiers un même message peut porter. Dix, parce que c'est le
+# geste réel (les photos d'une visite, les pièces d'un dossier) et parce que
+# chacun coûte un appel de vision : au-delà, un tour dépasserait son temps
+# imparti sans que personne l'ait demandé. Le plafond est appliqué au plus tôt,
+# côté routeur, et il est DIT.
+MAX_PIECES = 10
+
+
+def pieces_du_tour(state: AgentState) -> list:
+    """Les fichiers de CE tour, toujours sous forme de liste.
+
+    Un envoi d'un seul fichier n'a pas de forme à part : c'est une liste d'un
+    élément. Les champs `attachment_*` au singulier (file d'attente, tâches
+    planifiées, clients plus anciens) se replient ici sur la même liste — un
+    seul chemin ensuite, donc un seul comportement à vérifier.
+    """
+    pieces = state.get("attachments")
+    if pieces:
+        return list(pieces)[:MAX_PIECES]
+    if state.get("attachment_b64"):
+        return [{"nom": state.get("attachment_name") or "document",
+                 "mime": state.get("attachment_mime") or "",
+                 "b64": state.get("attachment_b64")}]
+    return []
+
+
+def _nettoyer_image(donnees: bytes) -> bytes:
+    """Ré-encode une image : plus d'EXIF/GPS, et une largeur bornée."""
+    from PIL import Image
+    img = Image.open(io.BytesIO(donnees)).convert("RGB")
+    if img.width > _MAX_IMG_WIDTH:
+        ratio = _MAX_IMG_WIDTH / img.width
+        img = img.resize((_MAX_IMG_WIDTH, int(img.height * ratio)))
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=80)  # nouvel encodage = sans métadonnées EXIF
+    return out.getvalue()
+
+
+def _preparer_piece(piece: dict) -> dict:
+    """Un fichier joint -> ses pages nettoyées et sa référence de dépôt.
+
+    Fonction PURE au sens qui compte ici : elle ne touche ni à l'état ni au
+    réseau, elle ne lève pas, et elle rend toujours une fiche — avec `pages`
+    si le fichier est exploitable, avec `erreur` sinon. C'est ce qui permet de
+    la lancer dans un thread, pour cinq fichiers à la fois.
+    """
+    import base64 as _b64
+    nom = piece.get("nom") or "document"
+    mime = (piece.get("mime") or "").lower()
     try:
-        raw = base64.b64decode(b64)
+        raw = _b64.b64decode(piece.get("b64") or "")
     except Exception:
-        return {"error": "attachment_base64_invalide"}
+        return {"nom": nom, "erreur": "base64 invalide"}
+    if not raw:
+        return {"nom": nom, "erreur": "fichier vide"}
 
-    # PDF → rendre ses pages en images (PyMuPDF, import optionnel).
+    # PDF -> rendre ses pages en images (PyMuPDF, import optionnel).
     pages_brutes, pages_totales = [], 0
-    if "pdf" in mime:
+    if "pdf" in mime or nom.lower().endswith(".pdf"):
         try:
             import fitz  # PyMuPDF
             doc = fitz.open(stream=raw, filetype="pdf")
@@ -167,57 +213,135 @@ async def preprocess_attachment_node(state: AgentState) -> dict:
                 pix = doc.load_page(numero).get_pixmap(dpi=150)
                 pages_brutes.append(pix.tobytes("png"))
             if not pages_brutes:
-                return {"error": "pdf_sans_page"}
+                return {"nom": nom, "erreur": "PDF sans page"}
             raw = pages_brutes[0]
-            mime = "image/png"
         except ImportError:
-            return {"error": "pdf_non_supporte_installer_pymupdf",
-                    "llm_response": "Analyse PDF indisponible (dépendance PyMuPDF absente)."}
-        except Exception as e:
-            return {"error": f"pdf_illisible_{type(e).__name__}"}
-
-    # Image → ré-encodage Pillow (retire EXIF/GPS) + downscale.
-    def _nettoyer(donnees: bytes) -> bytes:
-        from PIL import Image
-        img = Image.open(io.BytesIO(donnees)).convert("RGB")
-        if img.width > _MAX_IMG_WIDTH:
-            ratio = _MAX_IMG_WIDTH / img.width
-            img = img.resize((_MAX_IMG_WIDTH, int(img.height * ratio)))
-        out = io.BytesIO()
-        img.save(out, format="JPEG", quality=80)  # nouvel encodage = sans métadonnées EXIF
-        return out.getvalue()
+            return {"nom": nom, "erreur": "PDF non supporté (PyMuPDF absent)"}
+        except Exception as e:  # noqa: BLE001
+            return {"nom": nom, "erreur": f"PDF illisible ({type(e).__name__})"}
 
     try:
-        octets = _nettoyer(raw)
-        # Les pages SUIVANTES du PDF, nettoyées et redimensionnées comme la
-        # première. Une page illisible n'interrompt pas l'analyse des autres :
-        # mieux vaut quatre pages sur cinq qu'un échec entier.
-        pages = [octets]
-        for suivante in pages_brutes[1:]:
-            try:
-                pages.append(_nettoyer(suivante))
-            except Exception as e:  # noqa: BLE001
-                logger.info("Page de PDF illisible, ignorée : %s", e)
-        return {
-            "attachment_b64": base64.b64encode(octets).decode(),
-            "attachment_mime": "image/jpeg",
-            # Toutes les pages retenues, la première comprise : c'est ce que la
-            # vision recevra. Une seule page ⇒ liste d'un élément, aucun cas
-            # particulier plus loin.
-            "attachment_pages": [base64.b64encode(p).decode() for p in pages],
-            "pages_totales": pages_totales or None,
-            "pages_ignorees": (max(0, pages_totales - len(pages))
-                               if pages_totales else 0) or None,
-        }
-    except Exception as e:
-        return {"error": f"image_illisible_{type(e).__name__}"}
+        octets = _nettoyer_image(raw)
+    except Exception as e:  # noqa: BLE001
+        return {"nom": nom, "erreur": f"image illisible ({type(e).__name__})"}
+
+    # Les pages SUIVANTES du PDF, nettoyées comme la première. Une page
+    # illisible n'interrompt pas l'analyse des autres : mieux vaut quatre pages
+    # sur cinq qu'un échec entier.
+    pages = [octets]
+    for suivante in pages_brutes[1:]:
+        try:
+            pages.append(_nettoyer_image(suivante))
+        except Exception as e:  # noqa: BLE001
+            logger.info("Page de PDF illisible, ignorée : %s", e)
+
+    # LA PHOTO EST RANGÉE AU DÉPÔT, et c'est ce qui rend la retouche possible.
+    # Sans cela l'image ne vit que le temps du tour, en base64 dans l'état : au
+    # tour suivant, « change la terrasse sur cette photo » n'aurait plus de
+    # source, et le modèle repartirait d'une génération neuve — donc d'une
+    # AUTRE maison. L'import est optionnel : là où l'offre visuelle n'existe
+    # pas, il ne se passe simplement rien.
+    cle_visuel = None
+    try:
+        from visuels.depot import deposer_octets
+        cle_visuel = deposer_octets(octets, "image/jpeg")
+    except ImportError:
+        pass
+    except Exception as e:  # noqa: BLE001 — un dépôt raté ne casse pas l'analyse
+        logger.info("Dépôt de la photo jointe impossible : %s", e)
+
+    return {
+        "nom": nom,
+        "mime": "image/jpeg",
+        "pages": [_b64.b64encode(p).decode() for p in pages],
+        "cle": cle_visuel,
+        "pages_totales": pages_totales or None,
+        "pages_ignorees": (max(0, pages_totales - len(pages)) if pages_totales else 0) or None,
+    }
+
+
+async def preprocess_attachment_node(state: AgentState) -> dict:
+    """Prétraite CHAQUE fichier joint : PDF -> images (jusqu'à MAX_PAGES_PDF
+    pages), suppression EXIF/GPS des photos (Pillow), dépôt au magasin d'images.
+
+    UN MESSAGE PORTE PLUSIEURS FICHIERS (07/09). Ce nœud ne lisait que
+    `attachment_b64`, au singulier : joindre cinq photos obligeait à envoyer
+    cinq messages, et l'assistant n'avait alors jamais le lot sous les yeux —
+    relevé en production le 07/09, « fais le photomontage sur toutes les
+    photos » n'a porté que sur une seule. Chaque fichier garde ici son identité
+    (son nom, ses pages, sa référence de dépôt) : la vision les analyse ensuite
+    un par un, et les nomme.
+
+    UN FICHIER ILLISIBLE N'ARRÊTE PAS LES AUTRES : il ressort avec sa raison,
+    et cette raison est dite dans la réponse. Quatre analyses sur cinq valent
+    mieux qu'un échec entier — et un fichier tombé en silence est pire que les
+    deux.
+
+    Le travail est CPU-bound (Pillow, PyMuPDF) : chaque fichier part dans un
+    thread. Sur cinq photos, la boucle événementielle restait bloquée le temps
+    de les décoder toutes.
+    """
+    pieces = pieces_du_tour(state)
+    if not pieces:
+        return {}
+
+    preparees = await asyncio.gather(*[asyncio.to_thread(_preparer_piece, p) for p in pieces])
+    retenues = [p for p in preparees if p.get("pages")]
+    ecartees = [p for p in preparees if not p.get("pages")]
+
+    if not retenues:
+        detail = " ; ".join(f"{p['nom']} ({p.get('erreur', 'illisible')})" for p in ecartees)
+        return {"error": "pieces_illisibles",
+                "llm_response": f"Aucun des fichiers joints n'a pu être lu : {detail}."}
+
+    premiere = retenues[0]
+    return {
+        # La liste porte les fichiers RETENUS puis les écartés : la vision lit
+        # les premiers et signale les seconds. Une seule liste, pas deux champs
+        # à tenir synchronisés.
+        "attachments": retenues + ecartees,
+        # LES CHAMPS AU SINGULIER DÉSIGNENT LE PREMIER FICHIER. Tout ce qui ne
+        # sait pas encore compter (extraction, pré-chiffrage d'un seul plan,
+        # file d'attente, tâches planifiées) continue de fonctionner tel quel.
+        "attachment_b64": premiere["pages"][0],
+        "attachment_mime": "image/jpeg",
+        "attachment_name": premiere["nom"],
+        "attachment_visuel_cle": premiere.get("cle"),
+        "attachment_visuel_cles": [p["cle"] for p in retenues if p.get("cle")],
+        "attachment_pages": premiere["pages"],
+        "pages_totales": premiere.get("pages_totales"),
+        "pages_ignorees": premiere.get("pages_ignorees"),
+    }
 
 
 async def vision_node(state: AgentState, config=None) -> dict:
-    """Analyse visuelle multimodale. Dégradation propre si aucun modèle vision configuré."""
-    b64 = state.get("attachment_b64")
-    if not b64:
-        return {"vision_analysis": None}
+    """Analyse visuelle multimodale — UN APPEL PAR FICHIER, en parallèle.
+
+    POURQUOI UN APPEL PAR FICHIER, et non un seul qui les porterait tous. Cinq
+    photos d'un jardin ne sont pas les cinq pages d'un plan. Réunies dans une
+    seule requête, le modèle en fait une moyenne — « une terrasse, de la
+    pelouse, un mur » — et l'on perd précisément ce qu'on venait chercher : ce
+    que porte CETTE photo-là. Les pages d'un MÊME document, elles, restent
+    ensemble : c'est un seul sujet, et une coupe s'explique par son plan.
+
+    Les fichiers partent en parallèle : cinq analyses en série dépassent le
+    temps imparti au tour. La porte du fournisseur (`porte_llm`) borne déjà le
+    nombre d'appels simultanés — ce n'est donc pas une rafale.
+
+    Dégradation propre si aucun modèle vision n'est configuré.
+    """
+    pieces = [p for p in (state.get("attachments") or []) if p.get("pages")]
+    if not pieces:
+        # Chemin hérité : un seul fichier, posé dans les champs au singulier
+        # (file d'attente, tâche planifiée, client plus ancien).
+        b64 = state.get("attachment_b64")
+        if not b64:
+            return {"vision_analysis": None}
+        pieces = [{"nom": state.get("attachment_name") or "document",
+                   "mime": state.get("attachment_mime") or "image/jpeg",
+                   "pages": state.get("attachment_pages") or [b64],
+                   "pages_totales": state.get("pages_totales"),
+                   "pages_ignorees": state.get("pages_ignorees")}]
 
     from llm.router import get_vision_candidates
     candidats = get_vision_candidates()
@@ -229,59 +353,117 @@ async def vision_node(state: AgentState, config=None) -> dict:
             "error": "vision_unavailable",
         }
 
-    mime = state.get("attachment_mime") or "image/jpeg"
     demande = state.get("query") or "Décris ce document pour préparer un chiffrage de travaux de sols."
+    nombre = len(pieces)
 
-    # TOUTES LES PAGES RETENUES, pas seulement la première. Un dossier de plans
-    # tient rarement sur une feuille, et l'assistant répondait sur la seule
-    # page 1 comme s'il avait tout vu. On dit au modèle combien il en reçoit et
-    # combien ont été laissées de côté : sans cela, il conclurait de la
-    # dernière page qu'il a fait le tour du dossier.
-    pages = state.get("attachment_pages") or [b64]
-    total = state.get("pages_totales") or 0
-    ignorees = state.get("pages_ignorees") or 0
-    entete = f"{VISION_PROMPT}\n\nDemande de l'utilisateur : {demande}"
-    if len(pages) > 1:
-        entete += (f"\n\nCe document comporte {total or len(pages)} page(s) ; "
-                   f"les {len(pages)} premières te sont montrées, dans l'ordre. "
-                   "Analyse-les ENSEMBLE : un plan de masse, ses coupes et ses "
-                   "façades décrivent le même projet. Dis à quelle page se "
-                   "trouve chaque élément que tu relèves.")
-    if ignorees:
-        entete += (f"\n\nATTENTION : {ignorees} page(s) n'ont PAS été analysées. "
-                   "Signale-le dans ta réponse, et ne conclus rien sur ce que tu "
-                   "n'as pas vu.")
-    message = HumanMessage(content=[{"type": "text", "text": entete}] + [
-        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{page}"}}
-        for page in pages
-    ])
-    # LES CANDIDATS SE SUCCÈDENT, comme dans la cascade texte. Un seul essai
-    # laissait l'agent aveugle dès que le premier modèle répondait 404 — relevé
-    # au banc de recette (« L'analyse visuelle a échoué (NotFoundError) »).
-    derniere = None
-    for llm, label in candidats:
-        try:
-            # Hors cascade : la porte se pose ici aussi, sinon la vision
-            # échapperait au plafond du fournisseur.
-            from llm.concurrence import porte_llm
-            async with porte_llm():
-                response = await llm.ainvoke([message], config=config)
-            usage = getattr(response, "usage_metadata", None) or {}
-            return {
-                "vision_analysis": response.content,
-                "llm_response": response.content,
-                "model_used": label,
-                "tokens_in": usage.get("input_tokens", 0),
-                "tokens_out": usage.get("output_tokens", 0),
-            }
-        except Exception as e:  # noqa: BLE001 — on passe au suivant
-            derniere = e
-            logger.warning("Appel vision échoué (%s) : %s — candidat suivant", label, e)
+    async def _analyser(rang: int, piece: dict) -> dict:
+        """Un fichier, sa cascade de candidats, son analyse — ou sa raison d'échec."""
+        nom = piece.get("nom") or "document"
+        entete = f"{VISION_PROMPT}\n\nDemande de l'utilisateur : {demande}"
+        if nombre > 1:
+            # LE MODÈLE DOIT SAVOIR SUR QUOI IL TRAVAILLE. Sans cette phrase,
+            # il répond « la photo » à propos de la troisième d'un lot de cinq,
+            # et rien dans sa réponse ne permet de les rapprocher ensuite.
+            entete += (f"\n\nCeci est le fichier {rang + 1} sur {nombre} joints au même "
+                       f"message : « {nom} ». Analyse CELUI-CI seulement — les autres te "
+                       "sont soumis séparément, et leurs analyses seront réunies. Ne "
+                       "conclus rien sur ce que tu n'as pas sous les yeux.")
+
+        pages = piece.get("pages") or []
+        total = piece.get("pages_totales") or 0
+        ignorees = piece.get("pages_ignorees") or 0
+        if len(pages) > 1:
+            entete += (f"\n\nCe document comporte {total or len(pages)} page(s) ; "
+                       f"les {len(pages)} premières te sont montrées, dans l'ordre. "
+                       "Analyse-les ENSEMBLE : un plan de masse, ses coupes et ses "
+                       "façades décrivent le même projet. Dis à quelle page se "
+                       "trouve chaque élément que tu relèves.")
+        if ignorees:
+            entete += (f"\n\nATTENTION : {ignorees} page(s) n'ont PAS été analysées. "
+                       "Signale-le dans ta réponse, et ne conclus rien sur ce que tu "
+                       "n'as pas vu.")
+
+        mime = piece.get("mime") or "image/jpeg"
+        message = HumanMessage(content=[{"type": "text", "text": entete}] + [
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{page}"}}
+            for page in pages
+        ])
+
+        # LES CANDIDATS SE SUCCÈDENT, comme dans la cascade texte. Un seul essai
+        # laissait l'agent aveugle dès que le premier modèle répondait 404 —
+        # relevé au banc de recette (« L'analyse visuelle a échoué »).
+        derniere = None
+        for llm, label in candidats:
+            try:
+                # Hors cascade : la porte se pose ici aussi, sinon la vision
+                # échapperait au plafond du fournisseur.
+                from llm.concurrence import porte_llm
+                async with porte_llm():
+                    response = await llm.ainvoke([message], config=config)
+                contenu = response.content
+                texte = contenu if isinstance(contenu, str) else str(contenu or "")
+                # UNE RÉPONSE VIDE EST UN ÉCHEC, PAS UNE ANALYSE.
+                #
+                # Relevé en production le 07/09 : après 2 min 23 s d'attente,
+                # `openrouter:google/gemini-2.5-pro` a rendu un contenu vide sur
+                # une photo de jardin. Le contenu vide était pris pour un
+                # succès, la cascade s'arrêtait là, et la personne lisait
+                # « Aucune analyse disponible pour ce document » — alors qu'un
+                # autre candidat aurait répondu. La cascade TEXTE avait reçu ce
+                # correctif le 19/08 (`b553da9`) ; la cascade vision, jamais.
+                if not texte.strip():
+                    derniere = ValueError("réponse vide")
+                    logger.warning("Vision : réponse VIDE de %s sur %s — candidat suivant",
+                                   label, nom)
+                    continue
+                usage = getattr(response, "usage_metadata", None) or {}
+                return {"nom": nom, "analyse": texte, "model_used": label,
+                        "tokens_in": usage.get("input_tokens", 0),
+                        "tokens_out": usage.get("output_tokens", 0)}
+            except Exception as e:  # noqa: BLE001 — on passe au suivant
+                derniere = e
+                logger.warning("Appel vision échoué (%s) sur %s : %s — candidat suivant",
+                               label, nom, e)
+        return {"nom": nom, "erreur": type(derniere).__name__ if derniere else "inconnu"}
+
+    lus = await asyncio.gather(*[_analyser(i, p) for i, p in enumerate(pieces)])
+    reussis = [r for r in lus if r.get("analyse")]
+
+    # Les fichiers que le prétraitement n'a pas su ouvrir : ils ne sont pas
+    # partis à la vision, mais la personne les a bien joints — elle doit savoir
+    # ce qu'ils sont devenus.
+    illisibles = [p for p in (state.get("attachments") or []) if not p.get("pages")]
+
+    if not reussis:
+        detail = ", ".join(f"{r['nom']} ({r.get('erreur')})" for r in lus)
+        return {
+            "vision_analysis": None,
+            "llm_response": (f"L'analyse visuelle a échoué ({detail}). "
+                             "Réessayez ou joignez une image plus nette."),
+            "error": "vision_failed",
+        }
+
+    if nombre == 1 and not illisibles:
+        analyse = reussis[0]["analyse"]
+    else:
+        # CHAQUE ANALYSE SOUS LE NOM DE SON FICHIER. C'est ce qui permet, au
+        # tour suivant, de dire « la troisième photo » ou « celle du portail »
+        # et d'être compris.
+        morceaux = [f"## {r['nom']}\n\n{r['analyse']}" for r in reussis]
+        rates = [f"{r['nom']} ({r.get('erreur')})" for r in lus if not r.get("analyse")]
+        rates += [f"{p.get('nom')} ({p.get('erreur', 'illisible')})" for p in illisibles]
+        if rates:
+            morceaux.append("## Fichiers non analysés\n\n"
+                            + "\n".join(f"- {r}" for r in rates)
+                            + "\n\nCe qui suit ne dit rien de ces fichiers-là.")
+        analyse = "\n\n".join(morceaux)
+
     return {
-        "vision_analysis": None,
-        "llm_response": (f"L'analyse visuelle a échoué ({type(derniere).__name__}). "
-                         "Réessayez ou joignez une image plus nette."),
-        "error": "vision_failed",
+        "vision_analysis": analyse,
+        "llm_response": analyse,
+        "model_used": reussis[0]["model_used"],
+        "tokens_in": sum(int(r.get("tokens_in") or 0) for r in reussis),
+        "tokens_out": sum(int(r.get("tokens_out") or 0) for r in reussis),
     }
 
 
@@ -516,6 +698,51 @@ async def prechiffrage_node(state: AgentState) -> dict:
     summary += ("\n\n_Pré-chiffrage indicatif : estimations préparées par l'IA, à "
                 "vérifier et valider par un humain avant tout usage commercial. "
                 "Rien n'a été envoyé ni engagé._")
+
+    # LA RÉFÉRENCE DE LA PHOTO EST ÉCRITE DANS LA RÉPONSE, à dessein.
+    #
+    # Une image jointe part toujours ici (le routeur envoie tout ce qui n'a pas
+    # de texte extractible à l'agent vision), et cet agent-ci n'appelle aucun
+    # skill : il lit, il ne fait pas. La retouche, elle, vit dans le catalogue
+    # de l'agent conversationnel — au tour SUIVANT. Écrire la référence dans la
+    # réponse la fait entrer dans l'historique du fil, d'où l'autre agent la
+    # relira pour appeler `modifier_visuel`. C'est le seul chemin qui ne
+    # demande ni table, ni état partagé entre deux graphes.
+    # TOUTES LES PHOTOS DU LOT, pas seulement la première (07/09) : un message
+    # peut en porter dix, et celle qu'on voudra retoucher n'est pas forcément
+    # celle du dessus.
+    photos = [(p.get("nom") or "document", p["cle"])
+              for p in (state.get("attachments") or []) if p.get("cle")]
+    if not photos and state.get("attachment_visuel_cle"):
+        photos = [(state.get("attachment_name") or "document",
+                   state.get("attachment_visuel_cle"))]
+    cle = photos[0][1] if photos else None
+    if photos:
+        # EN BLOC, PAS SEULEMENT EN TEXTE (03/09). Une référence écrite entre
+        # accents graves n'est lue ni par `cles_images_du_fil` (qui cherche
+        # `"cle": "…"`) ni par `fichiers_du_fil` (qui cherche des blocs) : au
+        # tour suivant, « montre moi la photo » était pris pour une invention
+        # et effacé. Le bloc `visuel` fait entrer la photo dans l'historique
+        # sous la forme que tous les filets savent lire — et, au passage, la
+        # personne VOIT ce que l'assistant a regardé.
+        bloc = {"type": "visuel",
+                "titre": ("Photo de départ" if len(photos) == 1
+                          else f"Les {len(photos)} fichiers reçus"),
+                "images": [{"cle": c, "legende": n} for n, c in photos]}
+        summary += "\n\n```ui\n" + json.dumps(bloc, ensure_ascii=False) + "\n```"
+        if len(photos) == 1:
+            summary += (f"\n\n_Photo enregistrée sous la référence `{cle}`. Je peux en "
+                        "produire une variante : dites-moi ce que vous voulez changer "
+                        "(« remplace la pelouse par une terrasse en bois », « ajoute une "
+                        "pergola à droite »), et je garderai le reste à l'identique._")
+        else:
+            # LES RÉFÉRENCES SONT NOMMÉES UNE À UNE. C'est ce qui permet à
+            # l'assistant, au tour suivant, de retoucher « la troisième » ou
+            # « toutes » : sans la liste sous les yeux, il n'en connaît qu'une.
+            liste = " ; ".join(f"{n} → `{c}`" for n, c in photos)
+            summary += (f"\n\n_Les {len(photos)} fichiers sont enregistrés : {liste}. Je "
+                        "peux produire une variante de l'un d'eux ou de chacun : dites ce "
+                        "que vous voulez changer, et je garderai le reste à l'identique._")
 
     # CE QUE LA VISION A LU DOIT RESTER DANS LA MÉMOIRE DU FIL.
     #

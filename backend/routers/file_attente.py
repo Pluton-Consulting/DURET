@@ -115,6 +115,10 @@ class NouvelleTache(BaseModel):
     attachment_name: Optional[str] = None
     attachment_mime: Optional[str] = None
     attachment_b64: Optional[str] = None
+    # PLUSIEURS FICHIERS (07/09), comme au chat. Les trois champs ci-dessus
+    # restent acceptés : une tâche mise en file par un écran plus ancien ne
+    # doit pas se casser au déploiement.
+    attachments: Optional[list] = None
 
 
 def _dossier_pieces() -> "pathlib.Path":
@@ -124,40 +128,73 @@ def _dossier_pieces() -> "pathlib.Path":
     return d
 
 
-def _ranger_piece(tache_id: str, body: "NouvelleTache") -> Optional[dict]:
-    """Dépose la pièce jointe d'une tâche sur le disque. Rend sa fiche, ou None."""
+def _ranger_pieces(tache_id: str, body: "NouvelleTache") -> list:
+    """Dépose les fichiers d'une tâche sur le disque. Rend leurs fiches.
+
+    Un fichier par `.bin` numéroté, UN SEUL `.json` qui porte la liste : c'est
+    ce qui permet de savoir, à la reprise, combien de fichiers on attend — un
+    `.bin` manquant est alors une anomalie visible, pas une absence silencieuse.
+    """
     import base64, json
-    if not body.attachment_b64:
-        return None
-    try:
-        octets = base64.b64decode(body.attachment_b64)
-    except Exception:
-        return None
+    from routers.chat import _normaliser_pieces
+    pieces, _ = _normaliser_pieces(body.attachments, body.attachment_name,
+                                   body.attachment_mime, body.attachment_b64)
+    if not pieces:
+        return []
     dossier = _dossier_pieces()
-    (dossier / f"{tache_id}.bin").write_bytes(octets)
-    fiche = {"nom": body.attachment_name or "document", "mime": body.attachment_mime or ""}
-    (dossier / f"{tache_id}.json").write_text(json.dumps(fiche, ensure_ascii=False), encoding="utf-8")
-    return fiche
+    fiches = []
+    for rang, piece in enumerate(pieces):
+        try:
+            octets = base64.b64decode(piece["b64"])
+        except Exception:
+            continue
+        (dossier / f"{tache_id}-{rang}.bin").write_bytes(octets)
+        fiches.append({"nom": piece["nom"], "mime": piece["mime"], "rang": rang})
+    if not fiches:
+        return []
+    (dossier / f"{tache_id}.json").write_text(
+        json.dumps(fiches, ensure_ascii=False), encoding="utf-8")
+    return fiches
 
 
-def _reprendre_piece(tache_id: str) -> Optional[dict]:
-    """La pièce d'une tâche, relue du disque : {nom, mime, b64} — ou None."""
+def _reprendre_pieces(tache_id: str) -> list:
+    """Les fichiers d'une tâche, relus du disque : [{nom, mime, b64}, …].
+
+    Sait relire l'ANCIENNE forme (un `.bin` unique, une fiche seule dans le
+    `.json`) : une tâche mise en file avant le déploiement doit s'exécuter
+    normalement après, sans que personne ait à la relancer.
+    """
     import base64, json
     dossier = _dossier_pieces()
     try:
         fiche = json.loads((dossier / f"{tache_id}.json").read_text(encoding="utf-8"))
-        octets = (dossier / f"{tache_id}.bin").read_bytes()
-    except OSError:
-        return None
-    return {**fiche, "b64": base64.b64encode(octets).decode("ascii")}
+    except (OSError, ValueError):
+        return []
+    if isinstance(fiche, dict):        # ancienne forme : un seul fichier
+        try:
+            octets = (dossier / f"{tache_id}.bin").read_bytes()
+        except OSError:
+            return []
+        return [{**fiche, "b64": base64.b64encode(octets).decode("ascii")}]
+    pieces = []
+    for f in fiche:
+        try:
+            octets = (dossier / f"{tache_id}-{f.get('rang', 0)}.bin").read_bytes()
+        except OSError:
+            logger.warning("Tâche %s : fichier « %s » introuvable sur le disque",
+                           tache_id, f.get("nom"))
+            continue
+        pieces.append({"nom": f.get("nom") or "document", "mime": f.get("mime") or "",
+                       "b64": base64.b64encode(octets).decode("ascii")})
+    return pieces
 
 
 def _oublier_piece(tache_id: str) -> None:
-    """Le fichier a servi : il ne dort pas sur le disque."""
+    """Les fichiers ont servi : ils ne dorment pas sur le disque."""
     dossier = _dossier_pieces()
-    for ext in (".bin", ".json"):
+    for chemin in dossier.glob(f"{tache_id}*"):
         try:
-            (dossier / f"{tache_id}{ext}").unlink()
+            chemin.unlink()
         except OSError:
             pass
 
@@ -244,23 +281,27 @@ async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
         # Word, PDF, CSV) + lignes complètes pour `@tableau` ; une image ou un
         # plan part à la vision. `_piece_jointe` est celle du routeur du chat —
         # une seule lecture des fichiers, pas deux.
-        piece = _reprendre_piece(tache_id)
-        texte_joint, tableau_joint = None, None
-        if piece:
-            from routers.chat import _piece_jointe
-            texte_joint, tableau_joint = await _piece_jointe(piece["nom"], piece["b64"], piece["mime"])
-            _VIVANTES[tache_id]["progress"] = f"je lis la pièce jointe : {piece['nom']}"
+        pieces = _reprendre_pieces(tache_id)
+        texte_joint, tableau_joint, visuels = None, None, []
+        if pieces:
+            from routers.chat import _pieces_jointes
+            texte_joint, tableau_joint, visuels = await _pieces_jointes(pieces)
+            _VIVANTES[tache_id]["progress"] = (
+                f"je lis la pièce jointe : {pieces[0]['nom']}" if len(pieces) == 1
+                else f"je lis les {len(pieces)} pièces jointes")
+        tete = visuels[0] if visuels else {}
 
         async def _derouler():
             nonlocal reponse_finale, validation_id
             async for ev in runtime.stream_turn(
                     query=query, user_id=str(utilisateur.id),
                     user_role=utilisateur.role,
-                    has_attachment=bool(piece), thread_id=fil,
-                    attachment_b64=(piece or {}).get("b64"),
-                    attachment_mime=(piece or {}).get("mime"),
-                    attachment_name=(piece or {}).get("nom"),
-                    attachment_text=texte_joint, attachment_rows=tableau_joint):
+                    has_attachment=bool(pieces), thread_id=fil,
+                    attachment_b64=tete.get("b64"),
+                    attachment_mime=tete.get("mime"),
+                    attachment_name=tete.get("nom"),
+                    attachment_text=texte_joint, attachment_rows=tableau_joint,
+                    attachments=visuels or None):
                 t = ev.get("type")
                 if t == "node":
                     vivante = _VIVANTES.get(tache_id)
@@ -466,9 +507,10 @@ async def lancer_tache(body: NouvelleTache, current_user: User = Depends(get_cur
             "UPDATE taches_differees SET thread_id = $1 WHERE id = $2::uuid",
             f"file:{tache_id}", tache_id)
     # Sur le disque, hors transaction : un fichier ne se range pas dans Postgres.
-    piece = _ranger_piece(tache_id, body)
-    if piece:
-        logger.info("Tâche différée %s : pièce jointe « %s » rangée", tache_id, piece["nom"])
+    fiches = _ranger_pieces(tache_id, body)
+    if fiches:
+        logger.info("Tâche différée %s : %d pièce(s) jointe(s) rangée(s) — %s",
+                    tache_id, len(fiches), ", ".join(f["nom"] for f in fiches))
 
     await log_action(action="tache_differee_lancee", user_id=str(current_user.id),
                      metadata={"tache_id": tache_id})

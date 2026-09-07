@@ -134,8 +134,12 @@ for mot in ("intègr", "integr", "insèr", "implant", "incrust", "pose ", "place
 # ── 5. LA VISION MONTRE LA PHOTO EN BLOC (offre visuelle : Symbiose) ─────
 agent2 = (BACKEND / "agents" / "agent2.py").read_text(encoding="utf-8")
 if "attachment_visuel_cle" in agent2 and "Photo enregistrée sous la référence" in agent2:
-    verifier("la vision émet un bloc `visuel` pour la photo reçue (lisible par tous les filets)",
-             '\\"type\\": \\"visuel\\", \\"titre\\": \\"Photo de départ\\"' in agent2)
+    # Le bloc est désormais construit en Python (`json.dumps`) plutôt qu'écrit
+    # à la main : il porte plusieurs photos depuis le 07/09, et une chaîne
+    # échappée à la main n'aurait pas tenu la légende de chacune.
+    verifier("la vision émet un bloc `visuel` pour la ou les photos reçues (lisible par tous les filets)",
+             '"type": "visuel"' in agent2 and '"titre": ("Photo de départ"' in agent2
+             and 'json.dumps(bloc, ensure_ascii=False)' in agent2)
     verifier("le bloc précède la note en texte (le texte seul était invisible des filets)",
              agent2.find('Photo de départ') < agent2.find("Photo enregistrée sous la référence"))
 else:

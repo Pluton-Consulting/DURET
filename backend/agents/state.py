@@ -28,6 +28,15 @@ class AgentState(TypedDict):
     # c'est elle qui permet de RETOUCHER l'image plus tard (même maison,
     # quelques détails changés) au lieu d'en générer une autre.
     attachment_visuel_cle: Optional[str]
+    # UN MESSAGE PORTE PLUSIEURS FICHIERS (07/09). `attachments` est la liste
+    # du tour : à l'entrée `{nom, mime, b64}`, après le prétraitement
+    # `{nom, mime, pages[], cle, pages_totales, pages_ignorees}` — ou
+    # `{nom, erreur}` pour un fichier illisible, qui n'arrête pas les autres.
+    # Les champs au singulier ci-dessus désignent LE PREMIER de la liste : tout
+    # ce qui ne compte pas encore (file d'attente, tâches, anciens clients)
+    # continue de fonctionner sans savoir que la liste existe.
+    attachments: Optional[List[dict]]
+    attachment_visuel_cles: Optional[List[str]]
     # LES PAGES D'UN PDF, toutes celles qui partent à la vision. Une seule page
     # était rendue jusqu'ici, et l'assistant répondait sur elle comme s'il avait
     # lu le dossier entier.

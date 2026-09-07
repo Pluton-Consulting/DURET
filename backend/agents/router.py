@@ -34,7 +34,14 @@ async def classify_node(state: AgentState) -> dict:
     # scans). Un Excel, un Word ou un CSV a déjà été converti en texte en amont :
     # l'envoyer à un modèle de vision n'aurait aucun sens. Il part donc chez agent1,
     # son contenu étant injecté dans le contexte comme un document de la mémoire.
-    if has_attachment and not state.get("attachment_text"):
+    # UN LOT MIXTE NE PERD PLUS SES PHOTOS (07/09). La règle testait « il y a
+    # une pièce jointe ET elle n'a pas de texte » : joindre un Excel ET trois
+    # photos dans le même message remplissait `attachment_text`, le tour partait
+    # chez agent1, et les trois photos n'étaient regardées par personne. On
+    # décide maintenant sur la liste : dès qu'un fichier est visuel (image, PDF
+    # sans couche texte), la vision travaille — le texte des autres reste dans
+    # l'état, et `passer_la_main` rend la main à l'assistant pour la suite.
+    if state.get("attachments") or (has_attachment and not state.get("attachment_text")):
         target = "agent2"
         tier = LLMTier.COMPLEX
     else:

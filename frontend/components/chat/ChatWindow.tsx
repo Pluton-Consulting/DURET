@@ -837,24 +837,48 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   activiteRef.current = activite
 
   // ── Mettre une demande en file (le fil principal est occupe) ─────────
+  /** L'en-tête « 📎 » de la bulle utilisateur : les noms des fichiers joints.
+   *
+   * Au pluriel, on les NOMME tous. C'est ce que la personne relira dans son
+   * fil pour dire « la troisième photo », et c'est la seule trace du lot une
+   * fois le message parti.
+   */
+  const enTetePieces = (pieces?: PieceJointe[]) =>
+    !pieces?.length ? "" : `📎 ${pieces.map((p) => p.name).join(", ")}\n`
+
+  /** Le corps HTTP des pièces jointes.
+   *
+   * `attachments` porte le lot ; les trois champs au singulier désignent le
+   * PREMIER fichier et restent là pour les chemins qui ne comptent pas encore
+   * (un backend pas encore redéployé, une reprise de tâche). Ils ne coûtent
+   * rien et évitent qu'une version décalée perde la pièce en silence.
+   */
+  const corpsPieces = (pieces?: PieceJointe[]) =>
+    !pieces?.length ? undefined : {
+      attachments: pieces.map((p) => ({ nom: p.name, mime: p.mime, b64: p.b64 })),
+      attachment_name: pieces[0].name,
+      attachment_mime: pieces[0].mime,
+      attachment_b64: pieces[0].b64,
+    }
+
   // `afficherDemande` : faux quand le message est DEJA dans le fil — cas du
   // basculement en file apres un refus « fil occupe », ou la demande a ete
   // affichee avant qu'on sache qu'elle ne pourrait pas partir par le chat.
   // LA PIÈCE JOINTE VOYAGE EN FILE (04/09, Noa : « tout ce qu'on fait en chat
   // classique doit se faire en file d'attente, c'est pareil »). Elle part avec
   // la demande ; le serveur la range sur le disque et la relit à l'exécution.
-  const lancerEnFile = async (text: string, afficherDemande = true, piece?: PieceJointe) => {
+  const lancerEnFile = async (text: string, afficherDemande = true, pieces?: PieceJointe[]) => {
     if (afficherDemande) {
       const idQuestion = newId()
       idDerniereQuestionRef.current = idQuestion
       setMessages((prev) => [...prev, { id: idQuestion, role: "user",
-        content: piece ? `📎 ${piece.name}\n${sansContexte(text)}` : sansContexte(text) }])
+        content: enTetePieces(pieces) + sansContexte(text) }])
     }
     try {
       const res = await apiRequest<{ tache_id: string }>(
         "/api/file/taches",
         { method: "POST", token, body: JSON.stringify({ query: text,
-          ...(piece ? { attachment_name: piece.name, attachment_mime: piece.mime, attachment_b64: piece.b64 } : {}) }) })
+          ...(corpsPieces(pieces) || {}) }) })
       tacheActiveRef.current = res.tache_id
       setTacheActive(res.tache_id)
       setLoading(true)
@@ -892,7 +916,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
                   + "par la connexion temps réel). Il se terminera de lui-même.")
   }
 
-  const sendMessage = (texteAffiche: string, piece?: PieceJointe) => {
+  const sendMessage = (texteAffiche: string, pieces?: PieceJointe[]) => {
     // Ce qui part porte le contexte pré-inscrit ; ce qui s'affiche reste ce
     // que la personne a écrit. Le contexte ne sert qu'une fois.
     const text = contexte
@@ -916,20 +940,18 @@ ${texteAffiche}`)
     // le checkpointer — c'est un interdit structurel, pas une prudence.
     if (loading || principalOccupeRef.current) {
       basculerActifVersCarte()
-      // Avec sa pièce jointe, comme au chat : rien n'est refusé, rien n'est
+      // Avec ses pièces jointes, comme au chat : rien n'est refusé, rien n'est
       // ignoré en silence (04/09).
-      lancerEnFile(text, true, piece)
+      lancerEnFile(text, true, pieces)
       return
     }
 
-    const attachment = piece
-      ? { attachment_name: piece.name, attachment_mime: piece.mime, attachment_b64: piece.b64 }
-      : undefined
+    const attachment = corpsPieces(pieces)
     const idQuestion = newId()
     idDerniereQuestionRef.current = idQuestion
     setMessages((prev) => [
       ...prev,
-      { id: idQuestion, role: "user", content: piece ? `📎 ${piece.name}\n${texteAffiche}` : texteAffiche },
+      { id: idQuestion, role: "user", content: enTetePieces(pieces) + texteAffiche },
     ])
     setLoading(true)
     setThinkingNode(null)
@@ -1077,7 +1099,7 @@ ${texteAffiche}`)
         if (err?.status === 409) {
           // Fil occupe : la demande part en file plutot que d'echouer.
           libérer()
-          lancerEnFile(text, false, piece)
+          lancerEnFile(text, false, pieces)
           if (!monteRef.current) majTourDetache({ fini: true })
           return
         }
@@ -1141,7 +1163,7 @@ ${texteAffiche}`)
             clearStall()
             closeWs()
             libérer()
-            lancerEnFile(text, false, piece)
+            lancerEnFile(text, false, pieces)
             if (!monteRef.current) majTourDetache({ fini: true })
           } else if (t === "error") {
             fallbackPost()

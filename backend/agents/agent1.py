@@ -2618,10 +2618,19 @@ def cles_images_du_fil(state: AgentState) -> list[str]:
     # cette photo » n'a aucune image de départ au moment même où l'utilisateur
     # la montre, et la retouche repartirait d'une génération neuve, donc d'un
     # autre jardin. La plus récente est en dernier : c'est bien elle.
-    cle_jointe = state.get("attachment_visuel_cle")
-    if cle_jointe and cle_jointe not in vues:
-        vues.append(cle_jointe)
-    return vues[-6:]
+    # TOUTES LES PHOTOS DU TOUR, pas seulement la première : un message en
+    # porte jusqu'à dix depuis le 07/09, et « fais-le sur toutes les photos »
+    # n'a de sens que si elles sont toutes ici. L'ordre est celui de l'envoi.
+    jointes = state.get("attachment_visuel_cles") or []
+    if not jointes and state.get("attachment_visuel_cle"):
+        jointes = [state["attachment_visuel_cle"]]
+    for cle_jointe in jointes:
+        if cle_jointe and cle_jointe not in vues:
+            vues.append(cle_jointe)
+    # Douze, et non six : six suffisait quand un tour n'apportait qu'une image ;
+    # un lot de dix photos effaçait alors du fil tout ce qui précédait, y compris
+    # le visuel qu'on venait de valider.
+    return vues[-12:]
 
 
 def _apercu_avant_accord(skill: str, args: dict, texte: str) -> str:

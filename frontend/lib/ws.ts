@@ -78,6 +78,10 @@ export async function openChatSocket(
  * No-op silencieux si le socket n'est pas (encore) ouvert.
  */
 export interface AttachmentPayload {
+  // Le lot complet (07/09). Les trois champs au singulier désignent le premier
+  // fichier : un backend pas encore redéployé les lit encore, et la pièce ne
+  // se perd pas en silence pendant la fenêtre de déploiement.
+  attachments?: { nom: string; mime: string; b64: string }[]
   attachment_name: string
   attachment_mime: string
   attachment_b64: string

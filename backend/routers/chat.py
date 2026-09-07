@@ -462,6 +462,13 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         cost_eur=cost_eur,
+        # LE FIL ET LES GESTES (07/09). Sans le fil, rien ne rattachait cette
+        # ligne technique à l'échange qu'elle décrit ; sans les gestes, le
+        # journal disait qu'un tour avait duré 4 minutes sans dire à quoi.
+        trigger_type="chat",
+        trigger_id=thread_id,
+        metadata={"gestes": result.get("gestes") or [],
+                  "pieces": len(pieces)},
     )
 
     return {
@@ -635,6 +642,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     modele = None
     mesure: dict = {}
     agent_used = "agent1"
+    gestes: list = []
     # Réservation + contrôle d'appartenance AVANT le tour : le thread_id vient
     # de l'URL du WebSocket, et stream_turn charge le checkpoint (historique).
     try:
@@ -685,6 +693,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                 tokens = int(mesure.get("tokens_in", 0)) + int(mesure.get("tokens_out", 0))
                 cout = float(mesure.get("cost_eur", 0.0) or 0.0)
                 modele = mesure.get("modele")
+                gestes = event.get("gestes") or []
                 # ON ÉCRIT AVANT D'ANNONCER, ET C'EST TOUT LE CORRECTIF.
                 #
                 # La persistance vivait APRÈS la boucle. Or `final` est le
@@ -752,6 +761,8 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
             action="chat_request", user_id=str(user.id), agent_id=agent_used,
             success=False, error_message=str(e)[:500],
             duration_ms=int((time.monotonic() - start) * 1000),
+            trigger_type="chat", trigger_id=thread_id,
+            metadata={"pieces": len(pieces)},
         )
         await _dire(websocket, {"type": "error", "detail": str(e)})
         return
@@ -777,6 +788,10 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         tokens_in=int(mesure.get("tokens_in", 0) or 0),
         tokens_out=int(mesure.get("tokens_out", 0) or 0),
         cost_eur=cout,
+        # LE FIL ET LES GESTES (07/09) : c'est ce qui rattache cette ligne
+        # technique à l'échange qu'elle décrit, dans l'écran d'administration.
+        trigger_type="chat", trigger_id=thread_id,
+        metadata={"gestes": gestes, "pieces": len(pieces)},
     )
 
 

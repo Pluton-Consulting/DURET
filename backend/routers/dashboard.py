@@ -1,4 +1,7 @@
 import json
+import datetime
+import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from auth.dependencies import get_current_user
@@ -108,6 +111,187 @@ async def get_activity(
                 d["metadata"] = None
         out.append(d)
     return out
+
+
+# ── LES ÉCHANGES, PERSONNE PAR PERSONNE ──────────────────────────────────
+# Demande de Noa (07/09) : « depuis l'espace admin, dans les logs, voir de façon
+# simple les questions/réponses posées par chacun des utilisateurs, avec les
+# logs de chacun en détail déroulant ».
+#
+# Tout existait déjà, mais éparpillé : les questions et les réponses dans
+# `messages`, le technique dans `audit_log`, et rien qui relie les deux. On ne
+# crée donc ni table ni migration — on RAPPROCHE, et le rapprochement se fait
+# par le fil (`metadata.trigger_id`, posé depuis le 07/09) avec un repli par
+# fenêtre de temps pour tout ce qui a été journalisé avant.
+
+# Un échange n'est pas un objet en base : c'est une question suivie de sa
+# réponse. On part donc des messages de l'utilisateur — un par tour — et on va
+# chercher la réponse qui suit DANS LE MÊME FIL.
+#
+# ⚠️ LES DEUX LIGNES PORTENT LA MÊME HEURE. `_persist_messages` les écrit dans
+# une seule transaction, et `NOW()` y vaut l'heure de la transaction : trier par
+# `created_at` seul ne les départage pas. D'où le `>=` et l'exclusion par `id`.
+_SQL_ECHANGES = """
+SELECT m.id, m.content AS question, m.created_at AS quand,
+       t.langgraph_thread_id AS fil, t.agent_type,
+       u.id AS utilisateur_id, u.email, u.name, u.role AS utilisateur_role,
+       r.content AS reponse, r.created_at AS quand_reponse
+FROM messages m
+JOIN threads t ON t.id = m.thread_id
+JOIN users u ON u.id = t.user_id
+LEFT JOIN LATERAL (
+    SELECT a.content, a.created_at
+    FROM messages a
+    WHERE a.thread_id = m.thread_id
+      AND a.role = 'assistant'
+      AND a.created_at >= m.created_at
+      AND a.id <> m.id
+    ORDER BY a.created_at ASC
+    LIMIT 1
+) r ON true
+WHERE m.role = 'user'
+  AND m.created_at > NOW() - ($1::int * INTERVAL '1 day')
+  AND ($2::uuid IS NULL OR u.id = $2::uuid)
+  AND ($3::text IS NULL OR m.content ILIKE '%' || $3::text || '%'
+                        OR COALESCE(r.content, '') ILIKE '%' || $3::text || '%')
+ORDER BY m.created_at DESC
+LIMIT $4 OFFSET $5
+"""
+
+
+def _detail_du_fil(lignes, fil, debut, fin):
+    """Les lignes techniques qui appartiennent à cet échange.
+
+    Le fil d'abord — c'est exact. Sinon la fenêtre de temps, pour tout ce qui a
+    été journalisé avant que le fil n'y soit posé : approximatif, et on le dit
+    plutôt que de rendre une liste vide qui laisserait croire qu'il ne s'est
+    rien passé.
+    """
+    par_fil = [x for x in lignes if (x.get("metadata") or {}).get("trigger_id") == fil]
+    if par_fil:
+        return par_fil, True
+    return [x for x in lignes
+            if debut <= x["created_at"] <= fin], False
+
+
+@router.get("/echanges")
+async def get_echanges(
+    current_user: User = Depends(get_current_user),
+    jours: int = 7,
+    limite: int = 40,
+    page: int = 1,
+    utilisateur: Optional[str] = None,
+    q: Optional[str] = None,
+):
+    """Les questions posées et les réponses rendues, avec leur détail technique.
+
+    SUPER_ADMIN SEUL, et c'est un choix. `view_audit_log` est aussi accordée à
+    la direction, mais le journal qu'elle ouvre ne montre que des compteurs :
+    ici on rend le CONTENU des conversations de tout le monde. C'est un cran
+    au-dessus, du même ordre que lire la boîte mail d'un collègue — et la règle
+    du 01/09 dit qu'une chose pareille ne s'ouvre pas par héritage de
+    permission. La console développeur, où vit cet écran, est déjà
+    super_admin ; élargir à la direction est une décision à prendre, pas un
+    effet de bord.
+    """
+    _exiger(current_user.role, "view_audit_log")
+    if (current_user.role or "").strip().lower() != "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Réservé au super-administrateur.")
+    jours = max(1, min(int(jours or 7), 365))
+    limite = max(1, min(int(limite or 40), 200))
+    page = max(1, int(page or 1))
+    cible = None
+    if utilisateur:
+        try:
+            cible = uuid.UUID(str(utilisateur))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Identifiant d'utilisateur invalide.")
+    recherche = (q or "").strip() or None
+
+    async with get_db() as conn:
+        lignes = await conn.fetch(_SQL_ECHANGES, jours, cible, recherche,
+                                  limite, (page - 1) * limite)
+        # Le technique de la période, en UNE requête : rapprocher en Python
+        # coûte moins qu'une requête par échange.
+        techniques = await conn.fetch(
+            "SELECT id, user_id, action, agent_id, model_used, tokens_in, tokens_out, "
+            "cost_eur, duration_ms, success, error_message, metadata, created_at "
+            "FROM audit_log "
+            "WHERE created_at > NOW() - ($1::int * INTERVAL '1 day') "
+            "  AND ($2::uuid IS NULL OR user_id = $2::uuid) "
+            "ORDER BY created_at ASC",
+            jours, cible)
+        gens = await conn.fetch(
+            "SELECT DISTINCT u.id, u.email, u.name, u.role "
+            "FROM users u JOIN threads t ON t.user_id = u.id "
+            "JOIN messages m ON m.thread_id = t.id "
+            "WHERE m.created_at > NOW() - ($1::int * INTERVAL '1 day') "
+            "ORDER BY u.name NULLS LAST, u.email",
+            jours)
+
+    techs = []
+    for row in techniques:
+        d = dict(row)
+        m = d.get("metadata")
+        if isinstance(m, str):
+            try:
+                d["metadata"] = json.loads(m)
+            except Exception:
+                d["metadata"] = {}
+        d["metadata"] = d.get("metadata") or {}
+        techs.append(d)
+
+    echanges = []
+    for row in lignes:
+        d = dict(row)
+        quand = d["quand"]
+        fin = d.get("quand_reponse") or quand
+        # Une marge : la ligne d'audit est écrite APRÈS la réponse, et la
+        # réponse elle-même est persistée avant le journal.
+        detail, exact = _detail_du_fil(
+            techs, d.get("fil"),
+            quand - datetime.timedelta(seconds=2),
+            fin + datetime.timedelta(seconds=30))
+        principal = next((x for x in detail if x["action"] == "chat_request"), None)
+        echanges.append({
+            "id": str(d["id"]),
+            "quand": quand,
+            "fil": d.get("fil"),
+            "expert": d.get("agent_type"),
+            "utilisateur": {"id": str(d["utilisateur_id"]), "email": d.get("email"),
+                            "nom": d.get("name"), "role": d.get("utilisateur_role")},
+            "question": d.get("question") or "",
+            "reponse": d.get("reponse") or "",
+            "sans_reponse": not d.get("reponse"),
+            # Le résumé, celui qu'on lit sans dérouler.
+            "modele": (principal or {}).get("model_used"),
+            "duree_ms": (principal or {}).get("duration_ms"),
+            "cout_eur": float((principal or {}).get("cost_eur") or 0),
+            "jetons": int((principal or {}).get("tokens_in") or 0)
+                      + int((principal or {}).get("tokens_out") or 0),
+            "succes": bool((principal or {}).get("success", True)),
+            "erreur": (principal or {}).get("error_message"),
+            "gestes": ((principal or {}).get("metadata") or {}).get("gestes") or [],
+            "pieces": ((principal or {}).get("metadata") or {}).get("pieces") or 0,
+            # Le détail déroulant : toutes les lignes d'audit du tour.
+            "detail": [{"quand": x["created_at"], "action": x["action"],
+                        "succes": x["success"], "erreur": x["error_message"],
+                        "modele": x["model_used"], "duree_ms": x["duration_ms"],
+                        "metadata": x["metadata"]} for x in detail],
+            # L'honnêteté du rapprochement : par le fil (exact) ou par l'heure.
+            "detail_exact": exact,
+        })
+
+    return {
+        "echanges": echanges,
+        "page": page,
+        "limite": limite,
+        "jours": jours,
+        "utilisateurs": [{"id": str(g["id"]), "email": g["email"],
+                          "nom": g["name"], "role": g["role"]} for g in gens],
+    }
 
 
 @router.get("/token-usage")

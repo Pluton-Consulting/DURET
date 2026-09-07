@@ -316,6 +316,29 @@ def _extract_interrupt(result: Any):
     return None
 
 
+def gestes_du_tour(state: dict) -> list:
+    """Les gestes tentés pendant le tour : leur NOM et leur issue, rien d'autre.
+
+    Sert au journal d'audit, donc à l'écran d'administration. Ni les arguments
+    ni les résultats n'y entrent : `log_action` promet de ne jamais journaliser
+    le contenu des messages, et un argument de skill en porte souvent (une
+    adresse, un nom de client, une requête de recherche). Un nom de geste et un
+    succès/échec suffisent à lire un tour — c'est exactement ce qu'on va
+    chercher dans les traces quand quelque chose s'est mal passé.
+    """
+    vus, gestes = set(), []
+    for r in (state.get("tool_results") or []):
+        nom = r.get("skill")
+        if not nom:
+            continue
+        cle = (nom, bool(r.get("ok")))
+        if cle in vus:
+            continue
+        vus.add(cle)
+        gestes.append({"skill": str(nom), "ok": bool(r.get("ok"))})
+    return gestes[:40]
+
+
 def _response_from_state(state: dict) -> str:
     return (
         state.get("final_response")
@@ -419,6 +442,7 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
             "model_used": model_used,
             "validation_id": validation_id,
             "validation": intr,
+            "gestes": gestes_du_tour(state),
         }
 
     return {
@@ -432,6 +456,7 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
         "model_used": model_used,
         "validation_id": None,
         "validation": None,
+        "gestes": gestes_du_tour(state),
     }
 
 
@@ -523,6 +548,7 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
         "cost_eur": state.get("cost_eur", 0.0) or 0.0,
         "model_used": state.get("model_used"),
         "validation_status": "approved" if approved else "rejected",
+        "gestes": gestes_du_tour(state),
     }
 
     # LE GRAPHE S'EST-IL DE NOUVEAU ARRÊTÉ ? Aujourd'hui non : après la porte,
@@ -635,7 +661,11 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
         # étaient donc fausses là où presque tout le trafic passe.
         yield {"type": "final", "thread_id": thread_id,
                "response": _response_from_state(state),
-               "mesure": bilan()}
+               "mesure": bilan(),
+               # LES GESTES AUSSI (07/09). Le chemin WebSocket est le chemin
+               # NOMINAL : sans eux ici, le journal d'audit aurait dit ce
+               # qu'un tour a coûté sans jamais dire ce qu'il a fait.
+               "gestes": gestes_du_tour(state)}
 
 
 def _safe(update: Any) -> dict:

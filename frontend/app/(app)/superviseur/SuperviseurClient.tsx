@@ -1,5 +1,6 @@
 "use client"
 import { useEffect, useRef, useState, useCallback } from "react"
+import Echanges from "@/components/dashboard/Echanges"
 
 interface Props { apiUrl: string; token: string }
 
@@ -226,6 +227,12 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
           </div>
         </div>
       </div>
+
+      {/* LES ÉCHANGES, PLEINE LARGEUR (07/09). Le flux d'audit au-dessus dit ce
+          que la machine a FAIT ; celui-ci dit ce qui a été DIT, par qui, et
+          déroule le détail technique du tour. Pleine largeur parce qu'on y lit
+          des phrases, pas des compteurs. */}
+      <Echanges apiUrl={apiUrl} token={token} C={C} />
     </div>
   )
 }

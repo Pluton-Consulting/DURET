@@ -18,7 +18,11 @@ for p in ["Je recherche les informations sur ASL Clément Thomas.",
           "Je vais lire les mails de la semaine pour vous les afficher.",
           "Je vais modifier le visuel pour changer les montants gris de la maison en rouge vif.",
           "Je consulte les mails de la semaine.",
-          "Je vérifie dans la base et je reviens vers vous."]:
+          "Je vérifie dans la base et je reviens vers vous.",
+          # 07/09 (Duret, « ouvre-moi un appel d'offres au hasard ») : la
+          # phrase de clôture du tour, sortie telle quelle à l'écran.
+          "Je prends un dossier au hasard dans « ETUDES EN COURS ».",
+          "Je pioche dans les dossiers d'études en cours."]:
     verifier(f"« {p[:60]} »", annonce.est_une_annonce(p))
 print("\n2. Pas des promesses")
 for p in ["Voici la liste des clients :", "Souhaitez-vous que je rédige une réponse ?",

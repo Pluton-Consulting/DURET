@@ -92,7 +92,12 @@ _PRODUCTION = (rf"je {_PRON}(?:cree|redige|genere|produis|finalise|termine"
                # un tour perdu, on les ajoute au fur et à mesure.
                r"|recherche|cherche|relance|retente|reessaie|modifie|retouche"
                r"|change|applique|regarde|verifie|analyse|interroge|lis"
-               r"|examine|refais|rappelle|mets a jour|consulte a nouveau)\b"
+               r"|examine|refais|rappelle|mets a jour|consulte a nouveau"
+               # 07/09 (Duret, « ouvre-moi un appel d'offres au hasard ») : « Je
+               # prends un dossier au hasard dans « ETUDES EN COURS ». » a
+               # terminé le tour tel quel — sept listages, aucun fichier ouvert,
+               # et la phrase de clôture était une promesse que rien ne voyait.
+               r"|prends|pioche|explore|descends|parcours|choisis|selectionne)\b"
                # Élision, avec ou sans pronom intercalé : « j'y ajoute ».
                r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais"
                r"|inscris|insere)")

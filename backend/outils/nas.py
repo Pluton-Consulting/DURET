@@ -488,7 +488,13 @@ async def ouvrir(nom_ou_chemin: str) -> dict:
         if not fichiers:
             return {"recherche": motif, "message":
                     "Aucun fichier de ce nom sur le serveur. Vérifie l'orthographe, "
-                    "ou donne le dossier où chercher."}
+                    "ou donne le dossier où chercher.",
+                    # 07/09 : le forceur a tenté d'ouvrir « DCE - 12 LOGEMENTS -
+                    # VAYRES.pdf », un nom que le modèle avait inventé. Un nom
+                    # de fichier se prend dans un listage, jamais de mémoire.
+                    "a_faire": ("Ce nom ne vient d'aucun listage : ne devine jamais un "
+                                "nom de fichier. Liste le dossier (`nas_lister`) et "
+                                "reprends le `chemin` EXACT d'une entrée `dossier: false`.")}
         # Plusieurs correspondances : on lit la première ET on annonce les
         # autres. Rendre une liste sans contenu obligerait à un aller-retour de
         # plus pour choisir, ce que cette fonction existe précisément pour éviter.

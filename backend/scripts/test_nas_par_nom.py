@@ -98,6 +98,17 @@ if callable(getattr(mod, "lister", None)):
         verifier("un nom introuvable est REFUSÉ avec la liste de ce qui existe",
                  "Drive" in str(e) and "EXACT" in str(e), str(e))
 
+# 07/09, second export (20:56) : sept listages, jamais un fichier ouvert, puis
+# une liste de fichiers INVENTÉE et un nom de fichier inventé passé à
+# `nas_ouvrir`. La note du listage dit le geste qui lit ; le refus d'un nom
+# inconnu dit de ne jamais deviner.
+acces = (BACKEND / "nas" / "acces.py").read_text(encoding="utf-8")
+verifier("la note d'un listage dit qu'un FICHIER se lit avec nas_ouvrir, et comment choisir « au hasard »",
+         "se LIT avec `nas_ouvrir`" in acces and "ne reliste pas les autres" in acces)
+outils = (BACKEND / "outils" / "nas.py").read_text(encoding="utf-8")
+verifier("un nom de fichier inconnu dit au modèle de ne jamais deviner un nom",
+         "Ce nom ne vient d'aucun listage" in outils)
+
 skill = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
 verifier("le skill `nas_lister` passe par la résolution (outils.nas.lister)",
          "from outils.nas import lister" in skill

@@ -3088,9 +3088,17 @@ def route_apres_llm(state: AgentState) -> str:
         #
         # Un texte vide n'est pas une réponse : on redemande la rédaction, au
         # même titre qu'une promesse.
+        # QUATRIÈME SIGNAL, INDÉPENDANT DU VOCABULAIRE (07/09, Duret) : la
+        # dernière passe porte encore un BLOC D'ACTION. La boucle est fermée,
+        # il ne s'exécutera pas ; ce qui l'accompagne (« Je prends un dossier
+        # au hasard… ») est une intention, pas une réponse — et le verbe n'était
+        # dans aucune liste. Un bloc d'action qui ne peut plus tourner vaut une
+        # annonce, quel que soit le mot qui le précède.
         if not state.get("redaction_forcee") and (est_une_annonce(texte)
                                                   or promesse_sans_suite(texte)
                                                   or not _texte_visible(texte)
+                                                  or bool(BLOC_ACTION_RE.search(texte)
+                                                          or BLOC_NATIF_RE.search(texte))
                                                   or _reponses_mail_manquantes(state, texte)):
             logger.info("Dernière passe sans réponse utilisable : rédaction redemandée")
             # « rediger », PAS « llm ». La table des arêtes de ce routeur ne

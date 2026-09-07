@@ -96,7 +96,9 @@ verifier("le routeur reprend la rédaction (rediger) quand les cartes manquent",
 verifier("la consigne de reprise NOMME le manque (bloc reponses_mail, une carte par message)",
          "PROPOSITION DE RÉPONSE" in agent1 and "ref, de, objet, synthese, reponse" in agent1)
 verifier("la dernière passe vérifie aussi le manque",
-         re.search(r"or not _texte_visible\(texte\)\s*\n\s*or _reponses_mail_manquantes\(state, texte\)\):",
+         # 07/09 : un quatrième signal (bloc d'action inexécutable) s'est glissé
+         # entre les deux — l'ancre suit la condition, pas l'ordre des lignes.
+         re.search(r"or not _texte_visible\(texte\)[\s\S]{0,400}?or _reponses_mail_manquantes\(state, texte\)\):",
                    agent1))
 
 # ── 3. check_mails : la page suivante existe, et s'ordonne ───────────────

@@ -396,6 +396,31 @@ verifier("le prédicat : montrer ≠ modifier",
          and not _annonce.demande_de_montrer("montre-la avec une pergola en plus, remplace la haie")
          and not _annonce.demande_de_montrer(""))
 
+# 22quater. LA DERNIÈRE PASSE QUI PORTE ENCORE UN BLOC D'ACTION (07/09, Duret,
+#           export 20:56 : « ouvre-moi un appel d'offres au hasard »). La boucle
+#           d'outils s'est fermée (rejeu à l'identique), et la dernière passe du
+#           modèle était « Je prends un dossier au hasard dans « ETUDES EN
+#           COURS ». » suivi d'un bloc ```action qui ne tournerait plus. Aucune
+#           liste de verbes ne connaissait « je prends » : la phrase est sortie
+#           telle quelle, promesse sans résultat. Un bloc d'action qui ne peut
+#           plus s'exécuter vaut une annonce, quel que soit le mot devant.
+verifier("dernière passe + bloc d'action inexécutable → la rédaction est redemandée",
+         route({"llm_response": "Je prends un dossier au hasard dans « ETUDES EN COURS ».\n\n"
+                                "```action\n{\"skill\":\"nas_lister\",\"args\":{\"chemin\":\"/x\"}}\n```",
+                "query": "ouvre moi un appel d'offre au hasard", "tools_finished": True,
+                "tool_results": [res("nas_lister", {"entrees": []})], "forcages": 1,
+                "messages": []}) == "rediger")
+verifier("dernière passe avec une vraie réponse → rien à redemander",
+         route({"llm_response": "Le dossier « ETUDES EN COURS » contient 12 affaires. La "
+                                "première est « AFF 060-26 Construction Maison Individuelle ».",
+                "query": "ouvre moi un appel d'offre au hasard", "tools_finished": True,
+                "tool_results": [res("nas_lister", {"entrees": []})], "forcages": 1,
+                "messages": []}) == "rehydrate")
+verifier("la rédaction n'est redemandée qu'UNE fois (redaction_forcee)",
+         route({"llm_response": "Je prends un dossier au hasard.\n\n```action\n{\"skill\":\"x\"}\n```",
+                "query": "q", "tools_finished": True, "redaction_forcee": True,
+                "tool_results": [], "forcages": 1, "messages": []}) == "rehydrate")
+
 # 23. La remontrance honnête : un VRAI fichier du fil sous la prétention.
 verifier("« voici le fichier » avec le vrai bloc du fil ne force RIEN",
          route({"llm_response": "Voici le fichier demandé.\n\n" + bloc_ui(FOURN),

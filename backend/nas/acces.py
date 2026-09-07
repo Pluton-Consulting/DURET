@@ -281,6 +281,15 @@ async def _lister_ouvert(client, base, sid, chemin: str) -> dict:
         "note": (f"{len(entrees)} entrée(s) sur {total}. Pour ouvrir l'une d'elles, "
                  "réutilise EXACTEMENT son champ `chemin` : ne le reconstruis pas à "
                  "partir du nom, tu perdrais le dossier parent."
+                 # 07/09 : « ouvre-moi un appel d'offres au hasard » → sept
+                 # listages de dossiers, jamais un fichier ouvert, puis une
+                 # liste de fichiers INVENTÉE pour un dossier jamais listé. La
+                 # note dit désormais le geste qui LIT, et comment choisir.
+                 " Un FICHIER (`dossier: false`) se LIT avec `nas_ouvrir` et ce "
+                 "`chemin` ; un dossier se descend avec `nas_lister`. Pour « un "
+                 "au hasard » : choisis-en UN, descends-le jusqu'à un fichier et "
+                 "ouvre-le — ne reliste pas les autres, et n'invente jamais le "
+                 "contenu d'un dossier que tu n'as pas listé."
                  + (" Liste tronquée : affine avec un sous-dossier."
                     if total > len(entrees) else "")),
     }

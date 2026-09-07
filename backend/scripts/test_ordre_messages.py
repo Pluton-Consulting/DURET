@@ -27,7 +27,9 @@ verifier("l'historique départage l'égalité de date par le rôle (user avant a
          re.search(r"ORDER BY m\.created_at ASC,\s*\n?\s*CASE WHEN m\.role = 'user' "
                    r"THEN 0 ELSE 1 END ASC", chat))
 verifier("le tour écrit bien la question PUIS la réponse (executemany, dans cet ordre)",
-         re.search(r'\[\(uuid\.UUID\(thread_pk\), "user", user_content or ""\),\s*\n'
-                   r'\s*\(uuid\.UUID\(thread_pk\), "assistant", assistant_content or ""\)\]', chat))
+         # Depuis le 07/09, chaque ligne porte aussi ses métadonnées (les
+         # pièces jointes de la question) : quatrième valeur, même ordre.
+         re.search(r'\[\(uuid\.UUID\(thread_pk\), "user", user_content or "", meta_user\),\s*\n'
+                   r'\s*\(uuid\.UUID\(thread_pk\), "assistant", assistant_content or "", "\{\}"\)\]', chat))
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s)' if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

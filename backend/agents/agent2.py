@@ -948,6 +948,7 @@ async def prechiffrage_node(state: AgentState) -> dict:
         photos = [(state.get("attachment_name") or "document",
                    state.get("attachment_visuel_cle"))]
     cle = photos[0][1] if photos else None
+    bloc_visuel = ""
     if photos:
         # EN BLOC, PAS SEULEMENT EN TEXTE (03/09). Une référence écrite entre
         # accents graves n'est lue ni par `cles_images_du_fil` (qui cherche
@@ -960,10 +961,14 @@ async def prechiffrage_node(state: AgentState) -> dict:
                 "titre": ("Photo de départ" if len(photos) == 1
                           else f"Les {len(photos)} fichiers reçus"),
                 "images": [{"cle": c, "legende": n} for n, c in photos]}
-        summary += "\n\n```ui\n" + json.dumps(bloc, ensure_ascii=False) + "\n```"
-        # EN RÉGIME RÉPONSE, LE BLOC SUFFIT : c'est lui que les filets lisent
-        # (`cles_images_du_fil`, `fichiers_du_fil`). La phrase « je peux
-        # produire une variante » est du blabla quand on a posé une question.
+        # DANS L'HISTORIQUE, PLUS À L'ÉCRAN (07/09 soir). La bulle de la
+        # personne montre désormais elle-même la vignette de ce qu'elle a
+        # joint : remontrer les mêmes photos juste en dessous, c'est la
+        # doublure que Noa appelle « du blabla ». Le bloc garde tout son rôle
+        # dans la mémoire du fil, où les filets le lisent.
+        bloc_visuel = "\n\n```ui\n" + json.dumps(bloc, ensure_ascii=False) + "\n```"
+        # EN RÉGIME RÉPONSE, RIEN DE PLUS : la phrase « je peux produire une
+        # variante » est du blabla quand on a posé une question.
         if mode_reponse:
             pass
         elif len(photos) == 1:
@@ -1022,8 +1027,11 @@ async def prechiffrage_node(state: AgentState) -> dict:
     # `messages` continue de ne porter que `resume_masque`.
     from agents.suggestions import poser as _poser_suites
     from agents.suggestions import suggestions_du_tour
+    # Les suites se choisissent sur ce que le tour a PRODUIT, bloc compris,
+    # même si ce bloc ne s'affiche plus.
     summary_ecran = _poser_suites(
-        summary, suggestions_du_tour(summary, [], expert="agent2"))
+        summary, suggestions_du_tour(summary + bloc_visuel, [], expert="agent2"))
+    summary += bloc_visuel
 
     # LE RELEVÉ CACHÉ ENTRE DANS L'HISTORIQUE, PAS À L'ÉCRAN. Si le modèle a
     # fait son brouillon avant de répondre, c'est là que l'assistant le relira

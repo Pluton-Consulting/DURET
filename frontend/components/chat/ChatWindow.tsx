@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
 import MessageList from "./MessageList"
 import InputBar, { PieceJointe } from "./InputBar"
+import type { PieceAffichee } from "./PiecesJointes"
 import ReasoningPath from "./ReasoningPath"
 import { ReflexionEnCours } from "./ReflexionEnCours"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
@@ -17,6 +18,10 @@ interface Message {
   id: string
   role: "user" | "assistant"
   content: string
+  // Les fichiers joints à la question, en vignette dans sa bulle (07/09) : le
+  // contenu quand on vient de l'envoyer, la clé de dépôt lue dans
+  // `messages.metadata` quand le fil est rechargé.
+  pieces?: PieceAffichee[]
   // Renseignes quand l'echange passe EN ARRIERE-PLAN : la bulle se dessine
   // alors en creux (contour pointille), et la reponse viendra remplacer le
   // placeholder A SA PLACE — pas tout en bas, apres les echanges qui l'ont
@@ -67,6 +72,25 @@ const POLL_ACTIF_MS = 1500
 // Clé préfixée par l'utilisateur : sur un poste partagé, sans ça, l'utilisateur B
 // hérite du thread_id de A (rien ne purge le localStorage à la déconnexion) et se
 // voit refuser chaque message depuis que l'appartenance du fil est contrôlée.
+/** Les fichiers joints d'un message rechargé, lus dans `messages.metadata`.
+ *
+ *  Le pool asyncpg n'a pas de codec JSONB : la colonne arrive tantôt en objet,
+ *  tantôt en CHAÎNE (règle du 22/08 : « row["data"] est une chaîne JSON »).
+ *  On accepte les deux, et n'importe quoi d'autre vaut « pas de pièce ». */
+function piecesDesMetadonnees(meta: unknown): PieceAffichee[] | undefined {
+  try {
+    const m = typeof meta === "string" ? JSON.parse(meta) : meta
+    const liste = (m as { pieces?: unknown })?.pieces
+    if (!Array.isArray(liste) || !liste.length) return undefined
+    return liste
+      .filter((p) => p && typeof p === "object" && typeof (p as { nom?: unknown }).nom === "string")
+      .map((p) => ({ nom: (p as PieceAffichee).nom, mime: (p as PieceAffichee).mime || "",
+                     cle: (p as PieceAffichee).cle || undefined }))
+  } catch {
+    return undefined
+  }
+}
+
 /** Le texte affiché ne montre pas le contexte pré-inscrit qui précède la demande. */
 function sansContexte(s: string): string {
   if (!s.startsWith("[Contexte rappelé")) return s
@@ -681,6 +705,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
             id: String(m.id),
             role: m.role === "assistant" ? "assistant" : "user",
             content: m.content ?? "",
+            pieces: piecesDesMetadonnees(m.metadata),
           }))
         )
       )
@@ -837,14 +862,14 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   activiteRef.current = activite
 
   // ── Mettre une demande en file (le fil principal est occupe) ─────────
-  /** L'en-tête « 📎 » de la bulle utilisateur : les noms des fichiers joints.
-   *
-   * Au pluriel, on les NOMME tous. C'est ce que la personne relira dans son
-   * fil pour dire « la troisième photo », et c'est la seule trace du lot une
-   * fois le message parti.
+  /** Les fichiers joints tels que la bulle les MONTRE (07/09) : en vignette,
+   * avec leur nom, à la place de l'ancien en-tête « 📎 nom, nom ». Le contenu
+   * est là, on s'en sert ; une fois le fil rechargé, c'est la clé de dépôt
+   * (`piecesDesMetadonnees`) qui prend le relais.
    */
-  const enTetePieces = (pieces?: PieceJointe[]) =>
-    !pieces?.length ? "" : `📎 ${pieces.map((p) => p.name).join(", ")}\n`
+  const piecesAffichees = (pieces?: PieceJointe[]): PieceAffichee[] | undefined =>
+    !pieces?.length ? undefined
+      : pieces.map((p) => ({ nom: p.name, mime: p.mime, b64: p.b64 }))
 
   /** Le corps HTTP des pièces jointes.
    *
@@ -872,7 +897,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       const idQuestion = newId()
       idDerniereQuestionRef.current = idQuestion
       setMessages((prev) => [...prev, { id: idQuestion, role: "user",
-        content: enTetePieces(pieces) + sansContexte(text) }])
+        content: sansContexte(text), pieces: piecesAffichees(pieces) }])
     }
     try {
       const res = await apiRequest<{ tache_id: string }>(
@@ -951,7 +976,7 @@ ${texteAffiche}`)
     idDerniereQuestionRef.current = idQuestion
     setMessages((prev) => [
       ...prev,
-      { id: idQuestion, role: "user", content: enTetePieces(pieces) + texteAffiche },
+      { id: idQuestion, role: "user", content: texteAffiche, pieces: piecesAffichees(pieces) },
     ])
     setLoading(true)
     setThinkingNode(null)

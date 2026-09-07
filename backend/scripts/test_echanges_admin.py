@@ -89,7 +89,10 @@ verifier("la liste est bornée — un tour de 120 actions ne remplit pas le jour
 verifier("les trois issues d'un tour portent les gestes (POST, reprise, flux)",
          runtime_src.count("gestes_du_tour(state)") >= 4)
 verifier("l'événement `final` les porte aussi — le WebSocket est le chemin nominal",
-         '"gestes": gestes_du_tour(state)}' in runtime_src)
+         # Depuis le 07/09 soir, l'événement porte aussi les pièces jointes : l'ancre
+         # suit le champ, pas l'accolade fermante.
+         '"gestes": gestes_du_tour(state),' in runtime_src
+         and runtime_src.count('"pieces": pieces_du_tour_persistables(state)}') >= 1)
 
 # ══════════════════════════════════════════════════════════════════════════
 # 2. LE FIL RELIE LA LIGNE TECHNIQUE À L'ÉCHANGE

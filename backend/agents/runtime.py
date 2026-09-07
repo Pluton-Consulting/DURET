@@ -345,6 +345,25 @@ def gestes_du_tour(state: dict) -> list:
     return gestes[:40]
 
 
+def pieces_du_tour_persistables(state: dict) -> list:
+    """Les fichiers visuels du tour, tels que l'historique peut les GARDER.
+
+    Nom, type, et la clé sous laquelle la photo nettoyée dort au dépôt — jamais
+    les octets. C'est ce qui permet à l'écran, en rouvrant une conversation,
+    de remontrer une vignette de ce que la personne avait joint : jusqu'ici la
+    table `messages` ne gardait que le texte de la question, et les fichiers
+    disparaissaient du fil au premier rechargement (07/09). Un fichier écarté
+    par le prétraitement garde son nom, sans clé : l'écran montre alors une
+    pastille au lieu d'une image.
+    """
+    pieces = []
+    for p in (state.get("attachments") or []):
+        if isinstance(p, dict) and p.get("nom"):
+            pieces.append({"nom": str(p["nom"]), "mime": str(p.get("mime") or ""),
+                           "cle": p.get("cle") or None})
+    return pieces
+
+
 def _response_from_state(state: dict) -> str:
     return (
         state.get("final_response")
@@ -449,6 +468,7 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
             "validation_id": validation_id,
             "validation": intr,
             "gestes": gestes_du_tour(state),
+            "pieces": pieces_du_tour_persistables(state),
         }
 
     return {
@@ -460,6 +480,7 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
         "tokens_out": tokens_out,
         "cost_eur": cost_eur,
         "model_used": model_used,
+        "pieces": pieces_du_tour_persistables(state),
         "validation_id": None,
         "validation": None,
         "gestes": gestes_du_tour(state),
@@ -659,7 +680,10 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                "validation_id": validation_id,
                "reason": intr.get("reason") or state.get("validation_reason"),
                "skill": charge.get("skill") if isinstance(charge, dict) else None,
-               "args": charge.get("args") if isinstance(charge, dict) else None}
+               "args": charge.get("args") if isinstance(charge, dict) else None,
+               # Les fichiers joints aussi : c'est sur cet événement que le
+               # routeur écrit l'échange quand le tour attend un accord.
+               "pieces": pieces_du_tour_persistables(state)}
     else:
         # L'ÉVÉNEMENT FINAL PORTE LA MESURE. Sans elle, le chemin WebSocket —
         # qui est le chemin NOMINAL, le POST n'étant qu'un repli — journalisait
@@ -671,7 +695,8 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                # LES GESTES AUSSI (07/09). Le chemin WebSocket est le chemin
                # NOMINAL : sans eux ici, le journal d'audit aurait dit ce
                # qu'un tour a coûté sans jamais dire ce qu'il a fait.
-               "gestes": gestes_du_tour(state)}
+               "gestes": gestes_du_tour(state),
+               "pieces": pieces_du_tour_persistables(state)}
 
 
 def _safe(update: Any) -> dict:

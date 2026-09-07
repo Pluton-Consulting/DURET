@@ -554,8 +554,10 @@ verifier("un fichier illisible est NOMMÉ, et le lot ne part pas amputé",
          "n'a pas pu être lu" in inputbar and "f.filename" in inputbar)
 verifier("sans question, l'intention par défaut dit COMBIEN et LESQUELS",
          "Analyse ces ${pieces.length} fichiers, un par un" in inputbar)
-verifier("la bulle de la personne nomme les fichiers joints",
-         "pieces.map((p) => p.name).join(\", \")" in chatwin)
+verifier("la bulle de la personne montre les fichiers joints (vignette + nom, 07/09)",
+         "pieces: piecesAffichees(pieces)" in chatwin
+         and "<PiecesJointes pieces={msg.pieces}" in (
+             FRONTEND / "components" / "chat" / "MessageList.tsx").read_text(encoding="utf-8"))
 verifier("le corps HTTP porte la liste ET les champs au singulier (déploiement décalé)",
          "attachments: pieces.map((p) => ({ nom: p.name, mime: p.mime, b64: p.b64 }))" in chatwin
          and "attachment_b64: pieces[0].b64" in chatwin)

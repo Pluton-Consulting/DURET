@@ -90,8 +90,21 @@ function PieceJointeJointe({ desactive }: { desactive?: boolean }) {
         <span key={f.id} data-testid="piece-jointe" style={{
           display: "inline-flex", alignItems: "center", gap: 8,
           background: "var(--marque-primary-subtle)", border: "1px solid var(--marque-primary-light)",
-          borderRadius: "var(--marque-radius-pill)", padding: "5px 6px 5px 13px", maxWidth: "100%",
+          borderRadius: "var(--marque-radius-pill)", maxWidth: "100%",
+          // Avec une vignette, la pastille commence par l'image ; sans, par
+          // son texte, avec le retrait d'avant.
+          padding: f.mediaType?.startsWith("image/") && f.url?.startsWith("data:")
+            ? "4px 6px 4px 4px" : "5px 6px 5px 13px",
         }}>
+          {/* LA VIGNETTE AVANT LE NOM (07/09) : on voit ce qu'on va envoyer,
+              pas seulement comment ça s'appelle. `url` est déjà un « data: »
+              (la bibliothèque convertit le fichier à la sélection) : pas de
+              lecture de plus. Un PDF ou un Excel garde la pastille nue. */}
+          {f.mediaType?.startsWith("image/") && f.url?.startsWith("data:") && (
+            <img src={f.url} alt="" data-testid="piece-jointe-vignette" style={{
+              width: 30, height: 30, objectFit: "cover", borderRadius: 999, flex: "0 0 auto",
+            }} />
+          )}
           <span style={{
             fontSize: 13, fontWeight: 600, color: "var(--marque-primary)",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",

@@ -29,7 +29,8 @@ CE QUE CE BANC PROUVE, le module livré EXÉCUTÉ contre un modèle doublé :
     l'historique du fil ;
   · `prechiffrage_node` en régime réponse ne montre ni mention de
     pré-chiffrage, ni extraction, ni comparables, ni proposition de variante ;
-    le bloc des photos reçues reste (c'est lui que lisent les filets) ;
+    le bloc des photos reçues quitte l'écran (la bulle de la personne les
+    montre) mais reste dans l'historique, où les filets le lisent ;
   · le régime relevé est INCHANGÉ (un appel par fichier, le préprompt du
     chiffrage, la mention) ;
   · le graphe saute l'extraction et les comparables en régime réponse.
@@ -297,9 +298,11 @@ verifier("PAS d'extraction, PAS de comparables",
 verifier("PAS le brouillon", "RELEVE SECRET" not in ecran)
 verifier("PAS de « je peux produire une variante »",
          "produire une variante" not in ecran and "enregistrés" not in ecran)
-verifier("le bloc des photos reçues reste (les filets le lisent)",
-         '"type": "visuel"' in ecran and ("a" * 24) in ecran and ("b" * 24) in ecran
-         and "Les 2 fichiers reçus" in ecran)
+# LE BLOC DES PHOTOS N'EST PLUS À L'ÉCRAN (07/09 soir) : la bulle de la personne
+# montre déjà ce qu'elle a joint. Il reste dans l'historique, où les filets
+# (`cles_images_du_fil`, `fichiers_du_fil`) le lisent — contrôlé plus bas.
+verifier("le bloc des photos reçues n'est PLUS remontré à l'écran",
+         '"type": "visuel"' not in ecran and "Les 2 fichiers reçus" not in ecran)
 verifier("les suites proposées restent", "[suites]" in ecran)
 archive = r.get("messages") or []
 verifier("l'historique du fil porte la question ET la réponse",
@@ -307,6 +310,9 @@ verifier("l'historique du fil porte la question ET la réponse",
          and "ajoute une piscine" in archive[1].content)
 verifier("…ET le brouillon, marqué comme non montré",
          "RELEVE SECRET" in archive[1].content and "non montré à l'écran" in archive[1].content)
+verifier("…ET le bloc des photos, avec leurs clés (c'est là que les filets le lisent)",
+         '"type": "visuel"' in archive[1].content and ("a" * 24) in archive[1].content
+         and ("b" * 24) in archive[1].content)
 verifier("mais pas les suites (libellés d'écran)", "[suites]" not in archive[1].content)
 verifier("aucune validation demandée", r.get("requires_validation") is False)
 

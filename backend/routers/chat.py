@@ -1,4 +1,5 @@
 import asyncio
+import json
 import base64
 import logging
 import time
@@ -366,21 +367,47 @@ async def _actualiser_expert(current_user: User, thread_pk: str, agent_used: str
         logger.warning("Attribution d'expert non enregistrée : %s", e)
 
 
+def _pieces_persistables(pieces: list, pieces_du_tour) -> list:
+    """Ce que l'historique garde des fichiers joints : nom, type, clé de dépôt.
+
+    Les fichiers TEXTE (Excel, Word, CSV) ne passent jamais par le dépôt : ils
+    n'ont pas de clé, seulement un nom, et l'écran les remontre en pastille.
+    Les fichiers VISUELS reçoivent la clé sous laquelle le tour a rangé la
+    photo nettoyée (`pieces` du résultat du runtime), rapprochée par le nom.
+    Jamais les octets : `messages.metadata` n'est pas un dépôt.
+    """
+    cles = {}
+    for p in (pieces_du_tour or []):
+        if isinstance(p, dict) and p.get("nom") and p.get("cle"):
+            cles.setdefault(p["nom"], p["cle"])
+    return [{"nom": p.get("nom") or "document", "mime": p.get("mime") or "",
+             "cle": cles.get(p.get("nom"))}
+            for p in (pieces or [])]
+
+
 async def _persist_messages(current_user: User, thread_pk: str,
-                            user_content: str, assistant_content: str) -> None:
+                            user_content: str, assistant_content: str,
+                            pieces: Optional[list] = None) -> None:
     """Enregistre l'échange dans `messages` (historique rechargeable côté frontend).
 
     `messages.thread_id` est une FK vers `threads.id` (UUID), pas vers
     `langgraph_thread_id` : on passe donc la clé primaire renvoyée par
     `_claim_thread`. RLS forcée sur la table -> connexion RLS obligatoire.
     Best-effort : une écriture d'historique ne doit jamais faire échouer la réponse.
+
+    `pieces` (07/09) : les fichiers joints à la question, en métadonnées de SA
+    ligne (nom, type, clé de dépôt) — c'est ce qui permet de remontrer leur
+    vignette quand on rouvre la conversation. Le JSON est sérialisé ICI : le
+    pool n'a pas de codec JSONB, asyncpg attend une chaîne.
     """
+    meta_user = json.dumps({"pieces": pieces}, ensure_ascii=False) if pieces else "{}"
     try:
         async with get_rls_db(str(current_user.id), current_user.role) as conn:
             await conn.executemany(
-                "INSERT INTO messages (thread_id, role, content) VALUES ($1, $2, $3)",
-                [(uuid.UUID(thread_pk), "user", user_content or ""),
-                 (uuid.UUID(thread_pk), "assistant", assistant_content or "")],
+                "INSERT INTO messages (thread_id, role, content, metadata) "
+                "VALUES ($1, $2, $3, $4::jsonb)",
+                [(uuid.UUID(thread_pk), "user", user_content or "", meta_user),
+                 (uuid.UUID(thread_pk), "assistant", assistant_content or "", "{}")],
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("Persistance des messages échouée : %s", e)
@@ -448,7 +475,8 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
     agent_used = result.get("agent_used", "agent1")
     duration_ms = int((time.monotonic() - start) * 1000)
 
-    await _persist_messages(current_user, thread_pk, body.query, result.get("response") or "")
+    await _persist_messages(current_user, thread_pk, body.query, result.get("response") or "",
+                            _pieces_persistables(pieces, result.get("pieces")))
     await _actualiser_expert(current_user, thread_pk, agent_used)
     await _increment_usage(current_user, tokens=tokens_in + tokens_out, cost=cost_eur)
     await log_action(
@@ -663,6 +691,9 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     # sur une demande de validation n'émet PAS de `final` : il faut alors écrire
     # après coup, comme avant, sinon la question posée disparaîtrait du fil.
     persistance_faite = False
+    # Les fichiers du tour avec leur clé de dépôt : portés par `final` ou par
+    # `pending_validation`, selon la façon dont le tour se termine.
+    pieces_tour: list = []
     try:
         async for event in runtime.stream_turn(
             query=data.get("query", ""),
@@ -685,6 +716,8 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
             cible = (event.get("data") or {}).get("target_agent")
             if cible:
                 agent_used = cible
+            if event.get("pieces"):
+                pieces_tour = event["pieces"]
             if event.get("type") == "final":
                 final_response = event.get("response") or ""
                 # CE QUE LE TOUR A COÛTÉ. Cette variable valait 0 depuis
@@ -715,7 +748,8 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                 # Le coût est une écriture avant l'affichage, quelques
                 # millisecondes sur un tour qui en a pris des milliers.
                 await _persist_messages(user, thread_pk,
-                                        data.get("query", ""), final_response)
+                                        data.get("query", ""), final_response,
+                                        _pieces_persistables(pieces, pieces_tour))
                 persistance_faite = True
             # `_dire` et non `send_json` : une socket partie (navigation,
             # rafraîchissement) ne doit plus faire dérailler le tour — il va
@@ -772,7 +806,8 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     # validation, principalement. Écrire deux fois le même échange serait pire
     # que ne pas l'écrire — le fil afficherait la question en double.
     if not persistance_faite:
-        await _persist_messages(user, thread_pk, data.get("query", ""), final_response)
+        await _persist_messages(user, thread_pk, data.get("query", ""), final_response,
+                                _pieces_persistables(pieces, pieces_tour))
     await _actualiser_expert(user, thread_pk, agent_used)
     await _increment_usage(user, tokens=tokens, cost=cout)
     # LE JOURNAL DISAIT « RÉUSSI » ET « MODÈLE — » À TOUS LES COUPS. Il porte

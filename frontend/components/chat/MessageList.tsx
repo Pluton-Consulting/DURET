@@ -10,6 +10,7 @@ import {
 import { Message, MessageContent } from "@/components/ai-elements/message"
 import { MessageRenderer } from "./MessageRenderer"
 import { SourcesReponse } from "./SourcesReponse"
+import { PiecesJointes, type PieceAffichee } from "./PiecesJointes"
 
 /** LE FIL S'OUVRE EN BAS, ET Y REVIENT À CHAQUE MESSAGE.
  *
@@ -44,6 +45,10 @@ interface Message_ {
   id: string
   role: "user" | "assistant"
   content: string
+  // Les fichiers joints à la question, montrés en vignette dans sa bulle :
+  // le contenu quand on vient de l'envoyer, la clé de dépôt quand le fil est
+  // rechargé (voir PiecesJointes.tsx).
+  pieces?: PieceAffichee[]
   // La tache qui a produit ce message, quand elle tourne EN ARRIERE-PLAN.
   // Ces bulles-la se dessinent en creux : contour pointille, fond blanc,
   // opacite reduite — elles marquent la place d'un echange dont le detail
@@ -179,6 +184,10 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
                   lineHeight: 1.55,
                 }}
               >
+                {/* LES PIÈCES D'ABORD, LE TEXTE ENSUITE : c'est l'ordre dans
+                    lequel la personne les a données, et la vignette dit
+                    d'un coup d'œil ce que l'assistant a eu sous les yeux. */}
+                <PiecesJointes pieces={msg.pieces} apiUrl={apiUrl} backendToken={backendToken} />
                 {msg.content}
               </MessageContent>
             </Message>

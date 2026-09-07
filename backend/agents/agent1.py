@@ -324,7 +324,7 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
                             pretend_avoir_livre, demande_une_production,
                             propose_au_lieu_d_agir, renvoie_au_deja_fait,
                             demande_sur_le_passe, demande_un_visuel,
-                            suite_qui_retouche,
+                            suite_qui_retouche, demande_de_montrer,
                             deuxieme_salve_de_questions)
 
 
@@ -2833,7 +2833,14 @@ def _consigne_images(state: AgentState) -> str:
             "ajouter ou retirer un élément en gardant tout le reste identique), appelle "
             "`modifier_visuel` avec `image` = cette référence recopiée telle quelle et "
             "`changements` en anglais simple. Sans autre précision, « cette image » "
-            "désigne la dernière.")
+            "désigne la dernière. "
+            # 07/09 : « enlève les oliviers » → le modèle a réaffiché la photo
+            # telle quelle. Une image remontrée n'est une réponse que si on a
+            # demandé de la VOIR ; devant un verbe de changement, c'est un geste.
+            "TOUTE demande qui CHANGE une de ces images (enlever, ajouter, remplacer, "
+            "agrandir, recolorer…) EST un appel à `modifier_visuel` : remontrer la photo "
+            "sans la modifier n'est jamais une réponse. On ne remontre une image "
+            "inchangée que si l'on a demandé de l'afficher.")
 
 
 async def forcer_action_node(state: AgentState, config=None) -> dict:
@@ -3119,19 +3126,29 @@ def route_apres_llm(state: AgentState) -> str:
     #   · la réponse PRÉTEND livrer — sauf si elle remontre honnêtement un
     #     fichier réel du fil (« remontre-moi la liste » reste légitime).
     visible = _texte_visible(texte)
+    demande = state.get("query") or ""
+    # REMONTRER N'EST LÉGITIME QUE SI ON A DEMANDÉ DE VOIR (07/09 soir).
+    # « Enlève les deux oliviers », puis « enlève toutes les plantes » → le
+    # modèle a réaffiché la photo de départ, inchangée, avec sa vraie clé, et
+    # l'exemption du 03/09 (« une photo du fil remontrée n'est pas un
+    # fantôme ») la laissait passer. Elle ne vaut plus que pour une demande
+    # qui réclame de MONTRER ; devant une demande de MODIFIER, la même image
+    # sans un skill derrière est précisément la livraison fantôme.
+    remontre_a_bon_droit = (demande_de_montrer(demande)
+                            and _montre_un_fichier_du_fil(visible, state))
     fantome = (
         not _blocs_livrables(state.get("tool_results") or [])
         and not state.get("pending_action")
         # Un VISUEL demandé sans image produite est un fantôme au même titre
         # qu'un fichier (01/09 : la retouche « décrite » au passé, sans skill
         # ni carte de validation — le modèle imitait le tour précédent).
-        and (((demande_une_production(state.get("query") or "")) and "?" not in visible)
+        and (((demande_une_production(demande)) and "?" not in visible)
              # Un visuel demandé et REMONTRÉ depuis le fil (« montre moi la
              # photo » → le bloc avec la vraie clé) n'est pas un fantôme :
              # 03/09, le forceur relançait, puis répondait « la photo est
              # affichée ci-dessus » au-dessus de rien.
-             or (demande_un_visuel(state.get("query") or "") and "?" not in visible
-                 and not _montre_un_fichier_du_fil(visible, state))
+             or (demande_un_visuel(demande) and "?" not in visible
+                 and not remontre_a_bon_droit)
              # LA SUITE QUI RETOUCHE (07/09). « Fais-la un peu plus haute »,
              # « remplace la piscine coque par une maçonnée de 65 cm » : aucun
              # mot d'image, mais le fil en porte une, et rien n'a été produit.
@@ -3139,9 +3156,9 @@ def route_apres_llm(state: AgentState) -> str:
              # la main. La condition est étroite : il faut une image DANS LE
              # FIL, une demande de modification sans autre objet nommé, et
              # aucune question posée en retour.
-             or (suite_qui_retouche(state.get("query") or "")
+             or (suite_qui_retouche(demande)
                  and cles_images_du_fil(state) and "?" not in visible
-                 and not _montre_un_fichier_du_fil(visible, state))
+                 and not remontre_a_bon_droit)
              or (pretend_avoir_livre(visible)
                  and not _montre_un_fichier_du_fil(visible, state))))
     if fantome:

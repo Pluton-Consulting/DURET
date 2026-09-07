@@ -341,7 +341,7 @@ _DEMANDE_VISUEL = re.compile(
     r"|produire|lance|lancer|montre|montrer|modifie|modifier|retouche"
     r"|retoucher|ajoute|ajouter|supprime|supprimer|enleve|enlever|change"
     r"|changer)\b"
-    r"[^.!?\n]{0,120}?\b(?:simulation|rendus?|visuels?|images?|retouches?"
+    r"[^.!?\n]{0,120}?\b(?:simulation|rendus?|visuels?|images?|photos?|retouches?"
     r"|avant[ /-]?apres)\b",
     re.IGNORECASE)
 
@@ -641,6 +641,40 @@ def suite_qui_retouche(texte: str) -> bool:
     if _AUTRE_LIVRABLE.search(nu):
         return False
     return bool(_MODIFIE_SANS_DIRE_QUOI.search(nu))
+
+
+# ── MONTRER N'EST PAS MODIFIER ───────────────────────────────────────────────
+#
+# Relevé le 07/09 à 16:51, deux tours de suite : « enlève les deux oliviers
+# qu'on voit sur la face avant de la maison », puis « enlève toutes les plantes
+# qu'on voit en premier plan » → le modèle a RÉAFFICHÉ la photo de départ,
+# telle quelle, avec sa vraie clé — et aucun skill n'a tourné. Le filet du
+# fantôme visuel le laissait passer : « une photo du fil, remontrée, est
+# légitime » (03/09, « montre moi la photo »). Légitime quand on a demandé de la
+# MONTRER ; quand on a demandé de la MODIFIER, la remontrer inchangée est
+# exactement la livraison fantôme. Ce prédicat dit ce que la demande réclame :
+# voir. Tout le reste, avec un verbe de changement, réclame une retouche.
+_DEMANDE_DE_MONTRER = re.compile(
+    r"\b(?:montre|montrer|remontre|remontrer|affiche|afficher|reaffiche"
+    r"|reafficher|fais[- ]moi voir|fais voir|voir|revoir|visualise|visualiser)\b",
+    re.IGNORECASE)
+
+
+def demande_de_montrer(texte: str) -> bool:
+    """La demande réclame-t-elle seulement de VOIR une image (pas de la changer) ?
+
+    « Montre-moi la photo », « affiche cette image », « fais voir le rendu » :
+    oui. « Enlève les oliviers », « fais-la plus haute » : non — même si le
+    modèle répond en remontrant l'image, ce n'est pas ce qu'on lui a demandé.
+    Une demande qui MONTRE et MODIFIE à la fois (« montre-la avec une
+    pergola ») est une modification : le verbe de changement l'emporte.
+    """
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    nu = _sans_accent(texte.strip())
+    if not _DEMANDE_DE_MONTRER.search(nu):
+        return False
+    return not _MODIFIE_SANS_DIRE_QUOI.search(nu)
 
 
 # ── Le point sur les mails qui réclame AUSSI des réponses ───────────────────

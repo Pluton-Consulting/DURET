@@ -93,6 +93,9 @@ extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
           "_blocs_livrables", "_blocs_de", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
           "_meme_livrable", "_livrables_a_l_ecran", "_redaction_dement_le_livrable",
+          # 07/09 soir : la branche « suite qui retouche » du routage lit les
+          # images du fil ; sans elles dans l'espace, le tour exact de prod lève.
+          "cles_images_du_fil", "_CLE_IMAGE_RE", "_re_images",
           # La trace d'audit des filets : hors boucle asyncio (le cas du banc),
           # elle ne fait RIEN — c'est précisément son contrat (jamais casser).
           "_tracer_filet"}, espace)
@@ -323,6 +326,7 @@ espace2.update({
     "demande_sur_le_passe": _annonce.demande_sur_le_passe,
     "_reponses_mail_manquantes": lambda state, texte: False,
     "demande_un_visuel": _annonce.demande_un_visuel,
+    "demande_de_montrer": _annonce.demande_de_montrer,
     # 02/09 : le filet « une seule salve de questions » traverse aussi
     # `route_apres_llm` — sans lui dans l'espace doublé, la fonction lève.
     "deuxieme_salve_de_questions": _annonce.deuxieme_salve_de_questions,
@@ -352,6 +356,45 @@ verifier("un VISUEL demandé sans production part au FORCEUR",
                          "tout le reste à l'identique.",
                 "tool_results": [], "forcages": 0,
                 "messages": fil_fournisseurs}) == "forcer")
+
+# 22ter. LA PHOTO REMONTRÉE À LA PLACE DE LA RETOUCHE (07/09 soir, export
+#        Langfuse 16:51:07 et 16:51:47). Une photo jointe, « affiche cette
+#        image » (légitime : la photo revient avec sa clé), puis « enlève les
+#        deux oliviers qu'on voit sur la face avant de la maison » → le modèle
+#        RÉAFFICHE la même photo, inchangée, avec sa vraie clé, sans aucun
+#        skill. L'exemption « une photo du fil remontrée n'est pas un fantôme »
+#        la laissait passer : elle ne vaut plus que si on a demandé de VOIR.
+PHOTO_PROD = {"type": "visuel", "titre": "Photo de départ",
+              "images": [{"cle": "bf08dcefbd22f64bc286e066",
+                          "legende": "maison-moderne-bassin-d-arcachon-22dc366d.jpg"}]}
+fil_photo = [_Msg("affiche cette image"), _Msg(bloc_ui(PHOTO_PROD))]
+verifier("« affiche cette image » + la photo du fil remontrée : légitime, rien à forcer",
+         route({"llm_response": bloc_ui(PHOTO_PROD), "query": "affiche cette image",
+                "tool_results": [], "forcages": 0, "messages": fil_photo}) == "rehydrate")
+verifier("« enlève les deux oliviers… » + la MÊME photo inchangée, sans skill → FORCEUR",
+         route({"llm_response": bloc_ui(PHOTO_PROD),
+                "query": "enlève les deux oliviers qu'on voit sur la face avant de la maison",
+                "tool_results": [], "forcages": 0, "messages": fil_photo}) == "forcer")
+verifier("« enlève toutes les plantes qu'on voit en premier plan » → FORCEUR aussi",
+         route({"llm_response": bloc_ui(PHOTO_PROD),
+                "query": "enlève toutes les plantes qu'on voit en premier plan",
+                "tool_results": [], "forcages": 0, "messages": fil_photo}) == "forcer")
+verifier("« fais une photo avec une pergola » + la vieille photo remontrée → FORCEUR",
+         route({"llm_response": bloc_ui(PHOTO_PROD),
+                "query": "fais une photo de ce jardin avec une pergola",
+                "tool_results": [], "forcages": 0, "messages": fil_photo}) == "forcer")
+verifier("la retouche VRAIMENT faite (un résultat de skill) ne force rien",
+         route({"llm_response": bloc_ui(PHOTO_PROD),
+                "query": "enlève les deux oliviers qu'on voit sur la face avant de la maison",
+                "tool_results": [res("modifier_visuel", {"ok": True, "bloc_ui": PHOTO_PROD})],
+                "forcages": 0, "messages": fil_photo}) in ("rehydrate", "rediger"))
+verifier("le prédicat : montrer ≠ modifier",
+         _annonce.demande_de_montrer("affiche cette image")
+         and _annonce.demande_de_montrer("montre-moi la photo")
+         and _annonce.demande_de_montrer("fais voir le rendu")
+         and not _annonce.demande_de_montrer("enlève les deux oliviers")
+         and not _annonce.demande_de_montrer("montre-la avec une pergola en plus, remplace la haie")
+         and not _annonce.demande_de_montrer(""))
 
 # 23. La remontrance honnête : un VRAI fichier du fil sous la prétention.
 verifier("« voici le fichier » avec le vrai bloc du fil ne force RIEN",

@@ -235,6 +235,12 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "vision_mode": None,
         "vision_reponse": None,
         "vision_releve": None,
+        # LA QUESTION MASQUÉE DU TOUR D'AVANT NE DOIT PAS FILER (07/09). Le
+        # graphe de la vision n'a pas de nœud d'anonymisation : il relit
+        # `anonymized_query` tel quel pour archiver le tour, et l'export du
+        # 07/09 montre « affiche cette image » archivé sous la question
+        # « ajoute une piscine sur le devant » — celle du tour précédent.
+        "anonymized_query": None,
         "trigger_kind": trigger_kind,
         "thread_id": thread_id,
         "session_id": thread_id,

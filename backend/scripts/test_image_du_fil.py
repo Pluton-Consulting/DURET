@@ -119,8 +119,12 @@ verifier("la même réponse avec une clé inventée reste un fantôme",
 verifier("_livrables_a_l_ecran exempte l'image connue de l'effacement",
          'if type_ == "visuel" and _image_connue(ref, state):' in source)
 verifier("le forceur n'est plus déclenché par un visuel remontré depuis le fil",
-         'or (demande_un_visuel(state.get("query") or "") and "?" not in visible\n'
-         '                 and not _montre_un_fichier_du_fil(visible, state))' in source)
+         # 07/09 soir : « enlève les oliviers » → la photo remontrée INCHANGÉE
+         # passait par cette exemption. Elle ne vaut plus que si la demande
+         # réclame de VOIR (`demande_de_montrer`) — pas de modifier.
+         'or (demande_un_visuel(demande) and "?" not in visible\n'
+         '                 and not remontre_a_bon_droit)' in source
+         and "remontre_a_bon_droit = (demande_de_montrer(demande)" in source)
 
 # ── 4. « INTÈGRE UNE PISCINE » EST UNE RETOUCHE ──────────────────────────
 routeur = (BACKEND / "agents" / "router.py").read_text(encoding="utf-8")

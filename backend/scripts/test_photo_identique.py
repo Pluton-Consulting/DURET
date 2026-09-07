@@ -89,8 +89,11 @@ verifier("le refus passe par SkillError : le modèle se corrige au tour suivant"
 verifier("le fantôme couvre les VISUELS : une simulation demandée sans image produite force",
          # 03/09 : le visuel REMONTRÉ depuis le fil (vraie clé) n'est plus un
          # fantôme ; la demande sans image produite l'est toujours.
-         "or (demande_un_visuel(state.get(\"query\") or \"\") and \"?\" not in visible" in agent1
-         and "and not _montre_un_fichier_du_fil(visible, state))" in agent1)
+         # 07/09 soir : la remontrance n'exempte plus que si on a demandé de VOIR
+         # (`remontre_a_bon_droit` = demande_de_montrer + photo du fil).
+         "or (demande_un_visuel(demande) and \"?\" not in visible" in agent1
+         and "and not remontre_a_bon_droit)" in agent1
+         and "remontre_a_bon_droit = (demande_de_montrer(demande)" in agent1)
 
 if (BACKEND / "skills" / "visuels.py").exists():
     visuels = (BACKEND / "skills" / "visuels.py").read_text(encoding="utf-8")
@@ -158,7 +161,7 @@ verifier("le prédicat NE DÉCIDE JAMAIS SEUL : une image du fil est exigée",
 verifier("un essai depuis un TEXTE est refusé, et le refus nomme `modifier_visuel`",
          "modifier_visuel" in _a1.split("suite_qui_retouche(demande))")[1][:600])
 verifier("un tour qui ne produit RIEN sur une telle suite part au forceur",
-         'or (suite_qui_retouche(state.get("query") or "")' in _a1)
+         'or (suite_qui_retouche(demande)' in _a1)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

@@ -349,6 +349,11 @@ verifier("l'état déclare les trois champs du régime",
 runtime_src = (BACKEND / "agents" / "runtime.py").read_text(encoding="utf-8")
 verifier("le régime est remis à zéro à chaque tour (il ne file pas d'un tour à l'autre)",
          '"vision_mode": None' in runtime_src)
+# Export du 07/09 : « affiche cette image » archivé sous « ajoute une piscine
+# sur le devant » — la question masquée du tour d'AVANT, jamais remise à zéro,
+# relue telle quelle par la vision (qui n'a pas de nœud d'anonymisation).
+verifier("la question masquée du tour d'avant ne file pas dans l'archive de la vision",
+         '"anonymized_query": None' in runtime_src)
 verifier("la consigne de réponse existe et dit l'essentiel",
          "à elle seule" in agent2.REPONSE_PROMPT and "[RELEVE]" in agent2.REPONSE_PROMPT
          and "sans introduction" in agent2.REPONSE_PROMPT

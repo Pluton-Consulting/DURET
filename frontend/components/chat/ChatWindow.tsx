@@ -1,14 +1,14 @@
 "use client"
 import { useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
+import { CLE_CONTEXTE, EVENEMENT_CONTEXTE, type ContextePrealable } from "@/components/tableau/TableauDeBord"
+import { EXPERTS } from "@/lib/permissions"
 import MessageList from "./MessageList"
 import InputBar, { PieceJointe } from "./InputBar"
 import type { PieceAffichee } from "./PiecesJointes"
 import ReasoningPath from "./ReasoningPath"
 import { ReflexionEnCours } from "./ReflexionEnCours"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
-import { CLE_CONTEXTE, EVENEMENT_CONTEXTE, type ContextePrealable } from "@/components/tableau/TableauDeBord"
-import { EXPERTS } from "@/lib/permissions"
 import { apiRequest } from "@/lib/api"
 import { jetonFrais } from "@/lib/session"
 import { openChatSocket, sendQuery, sendStop, ChatEvent } from "@/lib/ws"
@@ -49,29 +49,6 @@ interface ChatWindowProps {
   token?: string        // passé côté serveur (fiable) ; sinon repli sur useSession
 }
 
-function newId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-// Au-delà de ce délai sans le moindre événement WS, on bascule sur le POST.
-// Élevé volontairement : évite de lancer un traitement POST en DOUBLE quand le WS
-// est simplement lent (machine chargée) plutôt que réellement bloqué.
-const WS_STALL_MS = 14000
-
-// Cadence de sondage de la file d'attente et des accords. Quatre secondes :
-// assez vif pour que la progression d'une carte semble vivante, assez lent pour
-// que dix onglets ouverts ne pèsent rien.
-const POLL_MS = 4000
-// Quand une tache differee tient la banniere, son texte doit se renouveler
-// aussi souvent que celui d'une tache du chat — sinon l'ecran parait fige.
-const POLL_ACTIF_MS = 1500
-
-// Mémorise le thread courant (localStorage) pour restaurer la conversation quand on
-// quitte l'onglet puis qu'on y revient (le composant se démonte/remonte → état perdu).
-// Clé préfixée par l'utilisateur : sur un poste partagé, sans ça, l'utilisateur B
-// hérite du thread_id de A (rien ne purge le localStorage à la déconnexion) et se
-// voit refuser chaque message depuis que l'appartenance du fil est contrôlée.
 /** Les fichiers joints d'un message rechargé, lus dans `messages.metadata`.
  *
  *  Le pool asyncpg n'a pas de codec JSONB : la colonne arrive tantôt en objet,
@@ -98,6 +75,29 @@ function sansContexte(s: string): string {
   return fin >= 0 ? s.slice(fin + 3) : s
 }
 
+function newId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+// Au-delà de ce délai sans le moindre événement WS, on bascule sur le POST.
+// Élevé volontairement : évite de lancer un traitement POST en DOUBLE quand le WS
+// est simplement lent (machine chargée) plutôt que réellement bloqué.
+const WS_STALL_MS = 14000
+
+// Cadence de sondage de la file d'attente et des accords. Quatre secondes :
+// assez vif pour que la progression d'une carte semble vivante, assez lent pour
+// que dix onglets ouverts ne pèsent rien.
+const POLL_MS = 4000
+// Quand une tache differee tient la banniere, son texte doit se renouveler
+// aussi souvent que celui d'une tache du chat — sinon l'ecran parait fige.
+const POLL_ACTIF_MS = 1500
+
+// Mémorise le thread courant (localStorage) pour restaurer la conversation quand on
+// quitte l'onglet puis qu'on y revient (le composant se démonte/remonte → état perdu).
+// Clé préfixée par l'utilisateur : sur un poste partagé, sans ça, l'utilisateur B
+// hérite du thread_id de A (rien ne purge le localStorage à la déconnexion) et se
+// voit refuser chaque message depuis que l'appartenance du fil est contrôlée.
 const STORAGE_PREFIX = "duret_thread_id"
 const storageKey = (userKey?: string | null) =>
   userKey ? `${STORAGE_PREFIX}:${userKey}` : STORAGE_PREFIX
@@ -1273,7 +1273,7 @@ ${texteAffiche}`)
   ]
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
+    <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
       {/* LE FIL A SON PROPRE FOND, plus profond que celui des cartes : c'est ce
           creux qui fait remonter la barre de saisie et les documents posés
           dessus. Sans lui, trois surfaces se superposaient à quatre pour cent

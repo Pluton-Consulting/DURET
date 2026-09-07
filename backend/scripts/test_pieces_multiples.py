@@ -420,8 +420,10 @@ verifier("tous les candidats muets → un ÉCHEC déclaré, pas une analyse vide
 # ── un fichier réussit, un autre non : on ne tait pas le second ───────────
 melange = _ModeleDouble(["ça marche", RuntimeError("504")])
 sys.modules["llm.router"].get_vision_candidates = lambda: [(melange, "m:test")]
+# « analyse » : le régime RELEVÉ, un appel par fichier — c'est lui qu'on
+# éprouve ici. Une question précise partirait en UN appel (test_vision_reponse).
 res = asyncio.run(agent2.vision_node({
-    "query": "q",
+    "query": "analyse ces deux photos",
     "attachments": [{"nom": "ok.jpeg", "pages": ["A"]}, {"nom": "ko.jpeg", "pages": ["B"]}]}))
 verifier("un fichier qui échoue est NOMMÉ dans la réponse, pas passé sous silence",
          "Fichiers non analysés" in res["vision_analysis"] and "ko.jpeg" in res["vision_analysis"])

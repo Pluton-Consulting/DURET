@@ -208,7 +208,9 @@ if garde:
 # L'ORDRE DES ARÊTES : la condition « le RAG est vide » n'a de sens qu'après le RAG.
 src_tout = SOURCE.read_text(encoding="utf-8")
 i_rag = src_tout.find('graph.add_edge("extraction", "similar_projects")')
-i_cond = src_tout.find('graph.add_conditional_edges(')
+# La garde du navigateur, PAS la première arête conditionnelle du fichier :
+# depuis le 07/09, la sortie de la vision en est une aussi (relevé ou réponse).
+i_cond = src_tout.find("should_use_browser,\n")
 controle("la mémoire de la maison est interrogée AVANT le web",
          i_rag != -1 and i_cond != -1 and i_rag < i_cond,
          "le navigateur passait avant le RAG, la garde était donc toujours vraie")

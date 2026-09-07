@@ -123,6 +123,110 @@ VISION_PROMPT = (
     "espace, jamais par un deux-points."
 )
 
+# ── Deux régimes : le RELEVÉ, ou la RÉPONSE ──────────────────────────
+#
+# LA VISION RÉPOND À LA DEMANDE, PAS À L'IMAGE (07/09, relevé de Noa).
+#
+# « dis-moi la différence entre ces deux images » recevait DEUX relevés de
+# chiffrage de cinquante lignes chacun (cartouche, inventaire zone par zone,
+# échelle, quantitatifs), une mention « pré-chiffrage indicatif » et une
+# proposition de variante — et jamais la différence. Trois causes, toutes dans
+# ce module : le préprompt du chiffrage était la SEULE consigne, quelle que
+# soit la demande ; chaque fichier partait dans SON appel avec l'ordre
+# d'ignorer les autres, ce qui rend une comparaison impossible par
+# construction ; et `prechiffrage_node` habillait tout en pré-chiffrage.
+#
+# Règle de Noa : « ce n'est pas parce qu'une image est présente dans un
+# message qu'il doit donner cette analyse ; il doit juste donner la réponse à
+# notre demande, de façon synthétique, sans blabla. Si, pour une bonne
+# qualité, l'IA a besoin de faire cette analyse, elle la fait, mais on n'a pas
+# besoin de la voir. »
+#
+# Donc deux régimes, décidés sur la DEMANDE, jamais sur la présence d'une image :
+#   · RELEVÉ — la demande réclame l'analyse elle-même (« analyse », « chiffre »,
+#     « devis », « décris »…) ou ne dit rien (un fichier joint sans texte) :
+#     le préprompt du chiffrage, un appel par fichier, l'extraction, les
+#     comparables. Inchangé.
+#   · RÉPONSE — la demande pose une question ou donne une consigne précise :
+#     UN appel qui porte TOUTES les images (une question qui les met en
+#     rapport exige de les voir ensemble), et la consigne est de répondre à la
+#     demande, à elle seule. Le modèle PEUT faire son relevé d'abord, entre
+#     [RELEVE] et [/RELEVE] : ce brouillon est retiré de l'écran mais gardé
+#     dans l'historique du fil, où l'assistant le relira si la suite l'exige
+#     (« maintenant chiffre-moi l'ajout de la piscine »).
+REPONSE_PROMPT = (
+    "Tu es l'assistant études & chiffrage de Duret & Sols (travaux de sols et revêtements, BTP). "
+    "On te montre une ou plusieurs images (photos, plans, documents techniques) avec une "
+    "demande PRÉCISE. Réponds à cette demande, et à elle seule, de façon synthétique : va "
+    "droit à la réponse, sans introduction, sans inventaire, sans métré, sans plan de "
+    "chiffrage, sans proposer des travaux qu'on ne t'a pas demandés. Quelques "
+    "phrases ou une courte liste suffisent presque toujours.\n"
+    "Rigueur : n'invente rien ; ce que l'image ne montre pas se dit NON VISIBLE. "
+    "Une dimension se donne en fourchette, avec l'étalon qui la fonde (porte 0,83 ou "
+    "0,93 m, carreau, plinthe, marche) ; sur une photo, une longueur qui "
+    "fuit vers le fond n'est qu'un ordre de grandeur, dis-le. Plusieurs images : "
+    "nomme-les par leur numéro ou leur nom ; si la demande les met en rapport "
+    "(différence, comparaison, avant/après), regarde-les ENSEMBLE et réponds point "
+    "par point.\n"
+    "Si la demande réclame un geste que tu ne peux pas faire ici (écrire un mail, "
+    "produire un document, métrer et chiffrer), ne dis pas que tu ne peux pas : "
+    "décris en deux à cinq phrases ce que l'image apporte à cette suite, l'assistant "
+    "s'en chargera.\n"
+    "Si tu as besoin d'un relevé détaillé pour répondre juste, écris-le D'ABORD entre "
+    "les balises [RELEVE] et [/RELEVE] : il sera conservé mais pas montré. Puis, "
+    "après la balise fermante, ta réponse.\n"
+    "Réponds en français. Ne commence pas par une salutation, sauf si la demande te "
+    "salue elle-même. "
+    "Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; "
+    "pour une liste, commence chaque ligne par un tiret simple suivi d'une espace."
+)
+
+# Les mots qui réclament le RELEVÉ lui-même. Une liste courte, à dessein : ce
+# qui n'y figure pas est une question précise, et une question précise reçoit
+# sa réponse. « combien de fenêtres ? » n'est pas un relevé ; « combien ça
+# coûte ? » en est un (le chiffrage part de l'inventaire).
+_MOTS_RELEVE = (
+    "analys", "chiffr", "devis", "métré", "metré", "relev", "inventaire",
+    "budget", "prix", "tarif", "coût", "cout", "postes", "décri", "decri",
+    "qu'en penses", "que penses", "ton avis",
+)
+
+
+def demande_un_releve(demande) -> bool:
+    """Le relevé complet, ou la réponse à la demande ?
+
+    Vide (un fichier joint sans un mot — l'écran titre alors « Analyse ce
+    fichier : … » lui-même) ou portant un mot du relevé : le relevé. Tout le
+    reste est une question ou une consigne, et reçoit sa réponse.
+    """
+    texte = (demande or "").strip().lower()
+    if not texte:
+        return True
+    return any(m in texte for m in _MOTS_RELEVE)
+
+
+_RELEVE_RE = re.compile(r"\[RELEV[ÉE]\](.*?)\[/RELEV[ÉE]\]", re.S | re.I)
+_BALISE_RELEVE_RE = re.compile(r"\[/?RELEV[ÉE]\]", re.I)
+
+
+def _separer_releve(texte) -> tuple:
+    """(relevé caché, réponse montrée).
+
+    Sans balise, tout est réponse. Une balise ouverte jamais fermée ne cache
+    rien : mieux vaut montrer un brouillon que perdre la réponse qu'il
+    contient. Si le modèle a tout mis dans le relevé, c'est lui la réponse.
+    """
+    texte = texte or ""
+    m = _RELEVE_RE.search(texte)
+    if not m:
+        return "", _BALISE_RELEVE_RE.sub("", texte).strip()
+    releve = m.group(1).strip()
+    reponse = (texte[:m.start()] + texte[m.end():]).strip()
+    if not reponse:
+        return "", releve
+    return releve, reponse
+
+
 # Taille max d'image envoyée au modèle vision (coût / limites API).
 _MAX_IMG_WIDTH = 1568
 
@@ -356,6 +460,16 @@ async def vision_node(state: AgentState, config=None) -> dict:
     demande = state.get("query") or "Décris ce document pour préparer un chiffrage de travaux de sols."
     nombre = len(pieces)
 
+    # Les fichiers que le prétraitement n'a pas su ouvrir : ils ne sont pas
+    # partis à la vision, mais la personne les a bien joints — elle doit savoir
+    # ce qu'ils sont devenus.
+    illisibles = [p for p in (state.get("attachments") or []) if not p.get("pages")]
+
+    # LA DEMANDE DÉCIDE DU RÉGIME (voir REPONSE_PROMPT). Une question précise
+    # reçoit sa réponse, dans un seul appel qui voit toutes les images.
+    if not demande_un_releve(state.get("query")):
+        return await _repondre(pieces, illisibles, demande, candidats, config)
+
     async def _analyser(rang: int, piece: dict) -> dict:
         """Un fichier, sa cascade de candidats, son analyse — ou sa raison d'échec."""
         nom = piece.get("nom") or "document"
@@ -368,71 +482,14 @@ async def vision_node(state: AgentState, config=None) -> dict:
                        f"message : « {nom} ». Analyse CELUI-CI seulement — les autres te "
                        "sont soumis séparément, et leurs analyses seront réunies. Ne "
                        "conclus rien sur ce que tu n'as pas sous les yeux.")
-
-        pages = piece.get("pages") or []
-        total = piece.get("pages_totales") or 0
-        ignorees = piece.get("pages_ignorees") or 0
-        if len(pages) > 1:
-            entete += (f"\n\nCe document comporte {total or len(pages)} page(s) ; "
-                       f"les {len(pages)} premières te sont montrées, dans l'ordre. "
-                       "Analyse-les ENSEMBLE : un plan de masse, ses coupes et ses "
-                       "façades décrivent le même projet. Dis à quelle page se "
-                       "trouve chaque élément que tu relèves.")
-        if ignorees:
-            entete += (f"\n\nATTENTION : {ignorees} page(s) n'ont PAS été analysées. "
-                       "Signale-le dans ta réponse, et ne conclus rien sur ce que tu "
-                       "n'as pas vu.")
-
+        entete += _entete_pages(piece)
         mime = piece.get("mime") or "image/jpeg"
-        message = HumanMessage(content=[{"type": "text", "text": entete}] + [
-            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{page}"}}
-            for page in pages
-        ])
-
-        # LES CANDIDATS SE SUCCÈDENT, comme dans la cascade texte. Un seul essai
-        # laissait l'agent aveugle dès que le premier modèle répondait 404 —
-        # relevé au banc de recette (« L'analyse visuelle a échoué »).
-        derniere = None
-        for llm, label in candidats:
-            try:
-                # Hors cascade : la porte se pose ici aussi, sinon la vision
-                # échapperait au plafond du fournisseur.
-                from llm.concurrence import porte_llm
-                async with porte_llm():
-                    response = await llm.ainvoke([message], config=config)
-                contenu = response.content
-                texte = contenu if isinstance(contenu, str) else str(contenu or "")
-                # UNE RÉPONSE VIDE EST UN ÉCHEC, PAS UNE ANALYSE.
-                #
-                # Relevé en production le 07/09 : après 2 min 23 s d'attente,
-                # `openrouter:google/gemini-2.5-pro` a rendu un contenu vide sur
-                # une photo de jardin. Le contenu vide était pris pour un
-                # succès, la cascade s'arrêtait là, et la personne lisait
-                # « Aucune analyse disponible pour ce document » — alors qu'un
-                # autre candidat aurait répondu. La cascade TEXTE avait reçu ce
-                # correctif le 19/08 (`b553da9`) ; la cascade vision, jamais.
-                if not texte.strip():
-                    derniere = ValueError("réponse vide")
-                    logger.warning("Vision : réponse VIDE de %s sur %s — candidat suivant",
-                                   label, nom)
-                    continue
-                usage = getattr(response, "usage_metadata", None) or {}
-                return {"nom": nom, "analyse": texte, "model_used": label,
-                        "tokens_in": usage.get("input_tokens", 0),
-                        "tokens_out": usage.get("output_tokens", 0)}
-            except Exception as e:  # noqa: BLE001 — on passe au suivant
-                derniere = e
-                logger.warning("Appel vision échoué (%s) sur %s : %s — candidat suivant",
-                               label, nom, e)
-        return {"nom": nom, "erreur": type(derniere).__name__ if derniere else "inconnu"}
+        return await _appel_vision(candidats, entete,
+                                   [(mime, page) for page in (piece.get("pages") or [])],
+                                   nom, config)
 
     lus = await asyncio.gather(*[_analyser(i, p) for i, p in enumerate(pieces)])
     reussis = [r for r in lus if r.get("analyse")]
-
-    # Les fichiers que le prétraitement n'a pas su ouvrir : ils ne sont pas
-    # partis à la vision, mais la personne les a bien joints — elle doit savoir
-    # ce qu'ils sont devenus.
-    illisibles = [p for p in (state.get("attachments") or []) if not p.get("pages")]
 
     if not reussis:
         detail = ", ".join(f"{r['nom']} ({r.get('erreur')})" for r in lus)
@@ -460,10 +517,137 @@ async def vision_node(state: AgentState, config=None) -> dict:
 
     return {
         "vision_analysis": analyse,
+        "vision_mode": "releve",
+        "vision_reponse": None,
+        "vision_releve": None,
         "llm_response": analyse,
         "model_used": reussis[0]["model_used"],
         "tokens_in": sum(int(r.get("tokens_in") or 0) for r in reussis),
         "tokens_out": sum(int(r.get("tokens_out") or 0) for r in reussis),
+    }
+
+
+def _entete_pages(piece: dict) -> str:
+    """Ce que le modèle doit savoir des pages d'un document : combien il en voit, combien lui manquent."""
+    pages = piece.get("pages") or []
+    total = piece.get("pages_totales") or 0
+    ignorees = piece.get("pages_ignorees") or 0
+    entete = ""
+    if len(pages) > 1:
+        entete += (f"\n\nCe document comporte {total or len(pages)} page(s) ; "
+                   f"les {len(pages)} premières te sont montrées, dans l'ordre. "
+                   "Analyse-les ENSEMBLE : un plan de masse, ses coupes et ses "
+                   "façades décrivent le même projet. Dis à quelle page se "
+                   "trouve chaque élément que tu relèves.")
+    if ignorees:
+        entete += (f"\n\nATTENTION : {ignorees} page(s) n'ont PAS été analysées. "
+                   "Signale-le dans ta réponse, et ne conclus rien sur ce que tu "
+                   "n'as pas vu.")
+    return entete
+
+
+async def _appel_vision(candidats, entete: str, images: list, nom: str, config=None) -> dict:
+    """UN appel de vision, sa cascade de candidats — le texte, ou la raison d'échec.
+
+    `images` : des couples (mime, base64), dans l'ordre où le modèle doit les voir.
+    Commun aux deux régimes : un fichier de relevé, ou le lot entier d'une réponse.
+    """
+    message = HumanMessage(content=[{"type": "text", "text": entete}] + [
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{page}"}}
+        for mime, page in images
+    ])
+
+    # LES CANDIDATS SE SUCCÈDENT, comme dans la cascade texte. Un seul essai
+    # laissait l'agent aveugle dès que le premier modèle répondait 404 —
+    # relevé au banc de recette (« L'analyse visuelle a échoué »).
+    derniere = None
+    for llm, label in candidats:
+        try:
+            # Hors cascade : la porte se pose ici aussi, sinon la vision
+            # échapperait au plafond du fournisseur.
+            from llm.concurrence import porte_llm
+            async with porte_llm():
+                response = await llm.ainvoke([message], config=config)
+            contenu = response.content
+            texte = contenu if isinstance(contenu, str) else str(contenu or "")
+            # UNE RÉPONSE VIDE EST UN ÉCHEC, PAS UNE ANALYSE.
+            #
+            # Relevé en production le 07/09 : après 2 min 23 s d'attente,
+            # `openrouter:google/gemini-2.5-pro` a rendu un contenu vide sur
+            # une photo de jardin. Le contenu vide était pris pour un
+            # succès, la cascade s'arrêtait là, et la personne lisait
+            # « Aucune analyse disponible pour ce document » — alors qu'un
+            # autre candidat aurait répondu. La cascade TEXTE avait reçu ce
+            # correctif le 19/08 (`b553da9`) ; la cascade vision, jamais.
+            if not texte.strip():
+                derniere = ValueError("réponse vide")
+                logger.warning("Vision : réponse VIDE de %s sur %s — candidat suivant",
+                               label, nom)
+                continue
+            usage = getattr(response, "usage_metadata", None) or {}
+            return {"nom": nom, "analyse": texte, "model_used": label,
+                    "tokens_in": usage.get("input_tokens", 0),
+                    "tokens_out": usage.get("output_tokens", 0)}
+        except Exception as e:  # noqa: BLE001 — on passe au suivant
+            derniere = e
+            logger.warning("Appel vision échoué (%s) sur %s : %s — candidat suivant",
+                           label, nom, e)
+    return {"nom": nom, "erreur": type(derniere).__name__ if derniere else "inconnu"}
+
+
+async def _repondre(pieces: list, illisibles: list, demande: str, candidats, config=None) -> dict:
+    """Le régime RÉPONSE : un seul appel, toutes les images, la demande pour seule consigne.
+
+    POURQUOI UN SEUL APPEL ICI, quand le relevé en fait un par fichier : une
+    question qui met les images en rapport (« la différence entre ces deux
+    images », « laquelle est la plus récente ») n'a de réponse que si le
+    modèle les voit ENSEMBLE. Le relevé, lui, veut chaque photo pour
+    elle-même — la moyenne d'un lot est ce qu'il fuit.
+    """
+    entete = f"{REPONSE_PROMPT}\n\nDemande de l'utilisateur : {demande}"
+    if len(pieces) > 1:
+        ordre = " ; ".join(
+            f"image {i + 1} = « {p.get('nom') or 'document'} »"
+            + (f" ({len(p.get('pages') or [])} pages)" if len(p.get("pages") or []) > 1 else "")
+            for i, p in enumerate(pieces))
+        entete += f"\n\nLes images te sont montrées dans cet ordre : {ordre}."
+    for p in pieces:
+        entete += _entete_pages(p)
+    if illisibles:
+        entete += ("\n\nFichiers joints mais illisibles, que tu ne vois pas : "
+                   + ", ".join(p.get("nom") or "document" for p in illisibles)
+                   + ". Ne conclus rien à leur sujet.")
+
+    images = [(p.get("mime") or "image/jpeg", page)
+              for p in pieces for page in (p.get("pages") or [])]
+    noms = ", ".join(p.get("nom") or "document" for p in pieces)
+    lu = await _appel_vision(candidats, entete, images, noms, config)
+    if not lu.get("analyse"):
+        return {
+            "vision_analysis": None,
+            "llm_response": (f"L'analyse visuelle a échoué ({noms} ({lu.get('erreur')})). "
+                             "Réessayez ou joignez une image plus nette."),
+            "error": "vision_failed",
+        }
+
+    releve, reponse = _separer_releve(lu["analyse"])
+    if illisibles:
+        reponse += ("\n\n_Fichier(s) non lu(s) : "
+                    + ", ".join(f"{p.get('nom')} ({p.get('erreur', 'illisible')})"
+                                for p in illisibles) + "._")
+    # CE QUE L'ASSISTANT RELIRA, si la main lui est passée ou au tour suivant :
+    # la réponse ET le relevé — l'écran, lui, ne reçoit que la réponse.
+    complet = reponse if not releve else (
+        f"{reponse}\n\n[Relevé technique fait pendant ce tour, non montré à l'écran]\n{releve}")
+    return {
+        "vision_analysis": complet,
+        "vision_mode": "reponse",
+        "vision_reponse": reponse,
+        "vision_releve": releve or None,
+        "llm_response": reponse,
+        "model_used": lu["model_used"],
+        "tokens_in": int(lu.get("tokens_in") or 0),
+        "tokens_out": int(lu.get("tokens_out") or 0),
     }
 
 
@@ -687,10 +871,18 @@ async def prechiffrage_node(state: AgentState) -> dict:
     analysis = state.get("vision_analysis")
     extracted = state.get("extracted_data")
 
+    # LE RÉGIME RÉPONSE (voir REPONSE_PROMPT) : la réponse à la demande, et
+    # rien d'autre à l'écran — ni extraction, ni comparables, ni mention de
+    # pré-chiffrage : on n'a pas chiffré. Le relevé que le modèle a pu faire
+    # en brouillon n'entre que dans l'historique du fil (plus bas).
+    mode_reponse = state.get("vision_mode") == "reponse"
+
     parts = []
-    if analysis:
+    if mode_reponse:
+        parts.append(state.get("vision_reponse") or analysis or "")
+    elif analysis:
         parts.append(analysis)
-    if extracted:
+    if extracted and not mode_reponse:
         apercu = _blocs_extraction(extracted)
         if apercu:
             parts.append(apercu)
@@ -708,13 +900,13 @@ async def prechiffrage_node(state: AgentState) -> dict:
     # aucun modèle ne repasse derrière ce nœud. Ce qui vient du web porte déjà sa
     # marque depuis `browser_node` ([SOURCE WEB]), elle est conservée.
     comparables = [c for c in (state.get("raw_chunks") or []) if str(c).strip()][:5]
-    if comparables:
+    if comparables and not mode_reponse:
         parts.append(
             "Chantiers et devis comparables trouvés dans la mémoire de "
             "l'entreprise (à recouper, ce ne sont pas des références de prix) :\n"
             + "\n\n".join(f"- {str(c).strip()[:600]}" for c in comparables))
 
-    summary = "\n\n".join(parts) if parts else (
+    summary = "\n\n".join(p for p in parts if p) if any(parts) else (
         state.get("llm_response") or "Aucune analyse disponible pour ce document."
     )
 
@@ -733,9 +925,10 @@ async def prechiffrage_node(state: AgentState) -> dict:
     # pas le moyen — et le texte le DIT. Le jour où une approbation aura un
     # effet (créer le devis dans l'outil métier), la porte se posera devant
     # CET effet, pas devant la lecture.
-    summary += ("\n\n_Pré-chiffrage indicatif : estimations préparées par l'IA, à "
-                "vérifier et valider par un humain avant tout usage commercial. "
-                "Rien n'a été envoyé ni engagé._")
+    if not mode_reponse:
+        summary += ("\n\n_Pré-chiffrage indicatif : estimations préparées par l'IA, à "
+                    "vérifier et valider par un humain avant tout usage commercial. "
+                    "Rien n'a été envoyé ni engagé._")
 
     # LA RÉFÉRENCE DE LA PHOTO EST ÉCRITE DANS LA RÉPONSE, à dessein.
     #
@@ -768,7 +961,12 @@ async def prechiffrage_node(state: AgentState) -> dict:
                           else f"Les {len(photos)} fichiers reçus"),
                 "images": [{"cle": c, "legende": n} for n, c in photos]}
         summary += "\n\n```ui\n" + json.dumps(bloc, ensure_ascii=False) + "\n```"
-        if len(photos) == 1:
+        # EN RÉGIME RÉPONSE, LE BLOC SUFFIT : c'est lui que les filets lisent
+        # (`cles_images_du_fil`, `fichiers_du_fil`). La phrase « je peux
+        # produire une variante » est du blabla quand on a posé une question.
+        if mode_reponse:
+            pass
+        elif len(photos) == 1:
             summary += (f"\n\n_Photo enregistrée sous la référence `{cle}`. Je peux en "
                         "produire une variante : dites-moi ce que vous voulez changer "
                         "(« remplace la pelouse par une terrasse en bois », « ajoute une "
@@ -826,6 +1024,14 @@ async def prechiffrage_node(state: AgentState) -> dict:
     from agents.suggestions import suggestions_du_tour
     summary_ecran = _poser_suites(
         summary, suggestions_du_tour(summary, [], expert="agent2"))
+
+    # LE RELEVÉ CACHÉ ENTRE DANS L'HISTORIQUE, PAS À L'ÉCRAN. Si le modèle a
+    # fait son brouillon avant de répondre, c'est là que l'assistant le relira
+    # au tour suivant (« maintenant chiffre-moi l'ajout de la piscine ») : ce
+    # qui a été vu ne se perd pas, il ne s'affiche pas.
+    if mode_reponse and state.get("vision_releve"):
+        summary += ("\n\n[Relevé technique fait pendant ce tour, non montré à l'écran]\n"
+                    + state["vision_releve"])
 
     try:
         masques, carte = await asyncio.to_thread(
@@ -896,6 +1102,20 @@ def should_use_browser(state: AgentState) -> str:
     return "browser" if no_internal else "prechiffrage"
 
 
+def apres_vision(state: AgentState) -> str:
+    """Une RÉPONSE va droit à l'écran ; un RELEVÉ passe par l'extraction et les comparables.
+
+    L'extraction structurée et la recherche de chantiers comparables servent
+    le chiffrage. Sur « quelle est la différence entre ces deux images ? »,
+    elles coûtent un appel de modèle et une requête pour habiller la réponse
+    d'un pré-chiffrage que personne n'a demandé.
+    """
+    mode_reponse = state.get("vision_mode") == "reponse"
+    if mode_reponse:
+        return "prechiffrage"
+    return "extraction"
+
+
 # ── Graph ─────────────────────────────────────────────────────────────
 
 def build_agent2_graph():
@@ -910,7 +1130,12 @@ def build_agent2_graph():
 
     graph.set_entry_point("preprocess")
     graph.add_edge("preprocess", "vision")
-    graph.add_edge("vision", "extraction")
+    # La demande décide : une réponse va droit à l'écran, un relevé s'extrait.
+    graph.add_conditional_edges(
+        "vision",
+        apres_vision,
+        {"extraction": "extraction", "prechiffrage": "prechiffrage"},
+    )
     # LA MEMOIRE DE LA MAISON D'ABORD, LE WEB ENSUITE — c'est tout l'objet du
     # correctif : la condition « le RAG interne est vide » ne peut etre vraie
     # que si le RAG a deja parle.

@@ -44,6 +44,14 @@ class AgentState(TypedDict):
     pages_totales: Optional[int]
     pages_ignorees: Optional[int]
     vision_analysis: Optional[str]  # description brute produite par le modèle vision (Agent 2)
+    # LA DEMANDE DÉCIDE DU RÉGIME DE LA VISION (07/09) : « releve » (l'analyse
+    # complète, un appel par fichier) ou « reponse » (la réponse à la question,
+    # un seul appel pour toutes les images). En régime réponse, `vision_reponse`
+    # est ce que l'écran montre et `vision_releve` le brouillon que le modèle a
+    # pu faire avant de répondre — gardé dans l'historique, jamais affiché.
+    vision_mode: Optional[str]
+    vision_reponse: Optional[str]
+    vision_releve: Optional[str]
     extracted_data: Optional[dict]  # extraction structurée (postes, surfaces, contraintes)
 
     # Routage

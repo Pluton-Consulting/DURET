@@ -592,6 +592,57 @@ def demande_de_garder_la_photo(texte: str) -> bool:
     return bool(_RETOUCHE_LA_PHOTO.search(_sans_accent(texte)))
 
 
+# ── LA SUITE QUI NE RÉPÈTE PAS SON OBJET ────────────────────────────────────
+#
+# « Fais-la un peu plus haute. » Quatre mots, aucun ne dit « image ». C'est
+# pourtant une retouche, et le fil le sait : l'élément précédent EST une image.
+# Relevé le 07/09 à 16:52 et 16:53 — deux tours de suite sans rien produire, le
+# second interrompu par Julien après une minute.
+#
+# Ce qui distingue une retouche d'une demande neuve, ce n'est pas le sujet (il
+# est absent), c'est la MODIFICATION : un comparatif (« plus haute », « moins
+# foncé »), un verbe de changement (« remplace », « agrandis », « enlève »), ou
+# une caractéristique posée sèchement (« en blanc », « de 65 cm »).
+_MODIFIE_SANS_DIRE_QUOI = re.compile(
+    r"\b(?:un peu |beaucoup |nettement |legerement )?"
+    r"(?:plus|moins) (?:haut|bas|grand|petit|large|etroit|long|court|clair|fonce"
+    r"|sombre|realiste|net|gros|epais|fin|profond|proche|loin)"
+    r"|\b(?:remplace|change|modifie|transforme|agrandis|reduis|rehausse|surelev"
+    r"|abaisse|monte|descend|elargis|retrecis|deplace|decale|enleve|supprime"
+    r"|retire|ajoute|rajoute|mets|met|pose|colore|repeins)\w*\b"
+    r"|\ben (?:blanc|noir|gris|beige|bois|pierre|travertin|couleur)\b",
+    re.IGNORECASE)
+
+# Ce qui n'est PAS une retouche d'image, même si la phrase modifie quelque
+# chose : dès que la demande NOMME un autre livrable, elle parle de lui.
+_AUTRE_LIVRABLE = re.compile(
+    r"\b(?:devis|facture|document|docx|pdf|excel|xlsx|tableau|fichier|mail|e-?mail"
+    r"|courrier|message|rapport|compte[- ]rendu|descriptif|planning|liste"
+    r"|ligne|colonne|paragraphe|chapitre|page|titre|texte)\w*\b",
+    re.IGNORECASE)
+
+
+def suite_qui_retouche(texte: str) -> bool:
+    """Une suite de conversation qui MODIFIE, sans dire quoi.
+
+    ⚠️ NE DÉCIDE DE RIEN SEUL. L'appelant DOIT vérifier qu'une image vit dans
+    le fil (`cles_images_du_fil`) : sans cette condition, « remplace la ligne 3 »
+    ou « mets-en moins » deviendraient des demandes de retouche photo. C'est la
+    même prudence que `demande_de_garder_la_photo`, pour la même raison.
+
+    Volontairement bornée à une phrase COURTE : au-delà, la demande dit son
+    objet, et les prédicats existants la reconnaissent.
+    """
+    if not isinstance(texte, str) or not texte.strip():
+        return False
+    nu = _sans_accent(texte.strip())
+    if len(nu) > 300:
+        return False
+    if _AUTRE_LIVRABLE.search(nu):
+        return False
+    return bool(_MODIFIE_SANS_DIRE_QUOI.search(nu))
+
+
 # ── Le point sur les mails qui réclame AUSSI des réponses ───────────────────
 # Relevé en prod le 01/09 : « fais le point sur tous mes mails … et propose
 # une réponse pour chacun de ceux qui en appellent une » → la synthèse est

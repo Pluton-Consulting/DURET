@@ -324,6 +324,7 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
                             pretend_avoir_livre, demande_une_production,
                             propose_au_lieu_d_agir, renvoie_au_deja_fait,
                             demande_sur_le_passe, demande_un_visuel,
+                            suite_qui_retouche,
                             deuxieme_salve_de_questions)
 
 
@@ -1339,7 +1340,11 @@ async def tools_node(state: AgentState, config=None) -> dict:
                 and not (args.get("image") or args.get("cle_image"))):
             from agents.annonce import demande_de_garder_la_photo
             cles = cles_images_du_fil(state)
-            if cles and demande_de_garder_la_photo(state.get("query") or ""):
+            demande = state.get("query") or ""
+            # « Fais-la un peu plus haute » ne dit pas « photo » : c'est une
+            # SUITE, et une suite ne répète pas son objet (07/09).
+            if cles and (demande_de_garder_la_photo(demande)
+                         or suite_qui_retouche(demande)):
                 raise SkillError(
                     "cette demande RETOUCHE une photo du fil (« à l'identique », "
                     "avant/après) : un essai depuis un brief texte réinventerait "
@@ -3126,6 +3131,16 @@ def route_apres_llm(state: AgentState) -> str:
              # 03/09, le forceur relançait, puis répondait « la photo est
              # affichée ci-dessus » au-dessus de rien.
              or (demande_un_visuel(state.get("query") or "") and "?" not in visible
+                 and not _montre_un_fichier_du_fil(visible, state))
+             # LA SUITE QUI RETOUCHE (07/09). « Fais-la un peu plus haute »,
+             # « remplace la piscine coque par une maçonnée de 65 cm » : aucun
+             # mot d'image, mais le fil en porte une, et rien n'a été produit.
+             # Deux tours de suite se sont éteints là, le second interrompu à
+             # la main. La condition est étroite : il faut une image DANS LE
+             # FIL, une demande de modification sans autre objet nommé, et
+             # aucune question posée en retour.
+             or (suite_qui_retouche(state.get("query") or "")
+                 and cles_images_du_fil(state) and "?" not in visible
                  and not _montre_un_fichier_du_fil(visible, state))
              or (pretend_avoir_livre(visible)
                  and not _montre_un_fichier_du_fil(visible, state))))

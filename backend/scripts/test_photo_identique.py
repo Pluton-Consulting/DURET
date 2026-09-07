@@ -107,5 +107,58 @@ if (BACKEND / "skills" / "visuels.py").exists():
     verifier("le 429 (quota) garde son traitement à part, hors réessais",
              "_diagnostic_429" in nano and "== 429" in nano)
 
+# ══════════════════════════════════════════════════════════════════════════
+# « FAIS-LA UN PEU PLUS HAUTE » — la suite qui ne répète pas son objet (07/09)
+# ══════════════════════════════════════════════════════════════════════════
+# Relevé par Noa sur deux tours consécutifs (16:52 et 16:53) : « remplace la
+# piscine en coque par une piscine maçonnée hors sol de 65 cm » puis « fais-la
+# un peu plus haute ». Le premier n'a rendu AUCUNE réponse finale, le second a
+# été interrompu à la main. Ni `demande_de_garder_la_photo` (qui veut les mots
+# de la fidélité) ni `demande_un_visuel` (qui veut les mots de l'image) ne
+# voient ces phrases : une suite de conversation ne répète pas son objet.
+print("\n── La suite qui retouche, sans dire quoi")
+
+import unicodedata as _ud
+_src_annonce = (BACKEND / "agents" / "annonce.py").read_text(encoding="utf-8")
+_d = _src_annonce.index("_MODIFIE_SANS_DIRE_QUOI")
+_f = _src_annonce.index("# ── Le point sur les mails")
+_esp = {"re": re,
+        "_sans_accent": lambda s: "".join(
+            c for c in _ud.normalize("NFD", s or "") if _ud.category(c) != "Mn").lower()}
+exec(compile(_src_annonce[_d:_f], "annonce.py", "exec"), _esp)
+suite_qui_retouche = _esp["suite_qui_retouche"]
+
+verifier("LES DEUX TOURS DU 07/09 sont reconnus comme des retouches",
+         suite_qui_retouche("fais la un plus haute")
+         and suite_qui_retouche("fais la un peu plus haute")
+         and suite_qui_retouche(
+             "Je voudrais reprendre sur le photo montage et faire une dernière "
+             "version, je souhaite que tu remplace la piscine en coque par une "
+             "piscine maçonnée hors sol de 65cm et de couleur blanche pour "
+             "l'extérieur, margelle en travertin,"))
+verifier("un comparatif, un verbe de changement ou une couleur suffisent",
+         suite_qui_retouche("mets la en blanc")
+         and suite_qui_retouche("agrandis la")
+         and suite_qui_retouche("un peu moins foncé"))
+verifier("une modification qui NOMME un autre livrable n'est pas une retouche",
+         not suite_qui_retouche("remplace la ligne 3 du devis")
+         and not suite_qui_retouche("change le titre du document")
+         and not suite_qui_retouche("ajoute une colonne avec mon mail"))
+verifier("une demande sans modification n'est pas une retouche",
+         not suite_qui_retouche("fais le point sur mes mails")
+         and not suite_qui_retouche("bonjour") and not suite_qui_retouche(""))
+verifier("une longue demande, qui dit son objet, est laissée aux autres prédicats",
+         not suite_qui_retouche("change " + "x" * 320))
+
+_a1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
+verifier("le prédicat NE DÉCIDE JAMAIS SEUL : une image du fil est exigée",
+         "cles and (demande_de_garder_la_photo(demande)" in _a1
+         and "or suite_qui_retouche(demande))" in _a1
+         and "and cles_images_du_fil(state)" in _a1)
+verifier("un essai depuis un TEXTE est refusé, et le refus nomme `modifier_visuel`",
+         "modifier_visuel" in _a1.split("suite_qui_retouche(demande))")[1][:600])
+verifier("un tour qui ne produit RIEN sur une telle suite part au forceur",
+         'or (suite_qui_retouche(state.get("query") or "")' in _a1)
+
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

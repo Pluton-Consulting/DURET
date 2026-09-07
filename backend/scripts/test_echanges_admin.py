@@ -319,6 +319,18 @@ verifier("choisir une personne ne vide pas le menu des personnes",
 verifier("les pages s'enchaînent",
          "précédents" in tsx and "suivants" in tsx)
 
+# 07/09, Noa : « fais en sorte que les logs soient plus détaillés, car là il y a
+# juste écrit skill executed ». Le nom du geste était pourtant journalisé depuis
+# toujours (`metadata.skill`) — l'écran ne le lisait pas.
+verifier("une ligne de journal NOMME le geste, pas « skill_executed »",
+         'if (l.action === "skill_executed" && m.skill) return m.skill' in tsx)
+verifier("un filet nomme son mécanisme, une réponse nomme son modèle",
+         'return `filet « ${m.filet} »`' in tsx
+         and '`réponse · ${l.modele}`' in tsx)
+verifier("l'effet du geste et la boîte concernée se lisent, sans aucun contenu",
+         "effet ${m.effet}" in tsx and "m.mailbox" in tsx
+         and "args" not in tsx.split("function detailsLigne")[1][:600])
+
 print()
 if echecs:
     print(f"✗ {len(echecs)} échec(s) : " + ", ".join(echecs))

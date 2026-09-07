@@ -62,6 +62,37 @@ function qui(p: Personne | Echange["utilisateur"]) {
   return p.nom || p.email || "compte supprimé"
 }
 
+/** Ce qu'une ligne du journal DIT, et pas seulement son type.
+ *
+ * Relevé par Noa le 07/09 : « il y a juste écrit skill executed ». Le nom du
+ * geste était pourtant déjà journalisé (`metadata.skill`, depuis toujours) —
+ * l'écran ne le lisait pas. Une ligne de journal qui ne nomme pas ce qu'elle
+ * décrit ne sert à personne.
+ */
+function libelleLigne(l: LigneDetail) {
+  const m = l.metadata || {}
+  if (l.action === "skill_executed" && m.skill) return m.skill
+  if (l.action === "filet_mecanique" && m.filet) return `filet « ${m.filet} »`
+  if (l.action === "chat_request") return l.modele ? `réponse · ${l.modele}` : "réponse"
+  return l.action
+}
+
+/** Les précisions utiles d'une ligne — jamais du contenu de message. */
+function detailsLigne(l: LigneDetail) {
+  const m = l.metadata || {}
+  const out: string[] = []
+  if (l.action === "skill_executed") {
+    if (m.effet) out.push(`effet ${m.effet}`)
+    if (m.mailbox) out.push(String(m.mailbox))
+    if (m.status && m.status !== "native") out.push(String(m.status))
+  }
+  if (l.action === "filet_mecanique" && m.cause) out.push(String(m.cause))
+  if (l.action === "chat_request" && Array.isArray(m.gestes) && m.gestes.length) {
+    out.push(`${m.gestes.length} geste${m.gestes.length > 1 ? "s" : ""}`)
+  }
+  return out
+}
+
 export default function Echanges({ apiUrl, token, C }: Props) {
   const [echanges, setEchanges] = useState<Echange[]>([])
   const [gens, setGens] = useState<Personne[]>([])
@@ -266,10 +297,15 @@ export default function Echanges({ apiUrl, token, C }: Props) {
                     {e.detail.map((l, i) => (
                       <div key={i} style={{ marginTop: 3 }}>
                         <span style={{ color: l.succes ? C.dim : C.red }}>
-                          {l.succes ? "·" : "▲"} {heure(l.quand)} {l.action}
+                          {l.succes ? "·" : "▲"} {heure(l.quand)} {libelleLigne(l)}
                         </span>
                         {l.duree_ms ? ` · ${duree(l.duree_ms)}` : ""}
                         {l.erreur ? <span style={{ color: C.red }}> · {l.erreur}</span> : ""}
+                        {detailsLigne(l).length > 0 && (
+                          <span style={{ color: C.dim }}>
+                            {" · "}{detailsLigne(l).join(" · ")}
+                          </span>
+                        )}
                       </div>
                     ))}
                     {!e.detail.length && <div style={{ marginTop: 3 }}>aucune ligne technique</div>}

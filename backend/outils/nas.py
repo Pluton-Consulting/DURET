@@ -144,6 +144,24 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
     return courant
 
 
+async def lister(chemin: str) -> dict:
+    """Le contenu d'un dossier désigné par son NOM ou son chemin.
+
+    RELEVÉ EN PRODUCTION (07/09, export Langfuse de Duret) : « liste-moi les
+    dossiers du drive » → `nas_lister("Drive")` → « ce dossier N'EXISTE PAS sur
+    le NAS », trois fois de suite — pendant que `nas_apercu("Drive")` répondait
+    18 dossiers. L'aperçu résolvait le nom (`_resoudre`), le listage exigeait le
+    chemin de montage exact. Même geste, même résolution : c'est la seule chose
+    qui change ici. Le confinement est inchangé (la résolution ne cherche que
+    sous les racines ouvertes, et `_lister_ouvert` revérifie).
+    """
+    from nas.acces import connexion, _lister_ouvert
+
+    async with connexion() as (client, base, sid):
+        vise = await _resoudre(client, base, sid, chemin)
+        return await _lister_ouvert(client, base, sid, vise)
+
+
 async def apercu(chemin: Optional[str] = None) -> dict:
     """Ce que contient un dossier, compté et classé — sans lister tout le détail.
 

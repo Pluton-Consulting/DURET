@@ -77,7 +77,10 @@ def _detail(quoi: str, e: Exception) -> str:
 
 async def nas_lister(data: dict, user) -> dict:
     """Contenu d'un dossier du NAS."""
-    from nas.acces import lister, verifier_role, NasRefuse, dossiers_autorises
+    # `outils.nas.lister` RÉSOUT le nom (« Drive » → /home/Drive) avant de
+    # lister ; `nas.acces.lister` exigeait le chemin exact (07/09).
+    from outils.nas import lister
+    from nas.acces import verifier_role, NasRefuse, dossiers_autorises
     try:
         verifier_role(user)
     except NasRefuse as e:

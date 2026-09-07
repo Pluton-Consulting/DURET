@@ -2386,6 +2386,12 @@ async def rehydrate_node(state: AgentState) -> dict:
     # LE FILET. Une promesse ou du vide à la fin d'un tour où un skill a
     # réussi : on montre la sortie du skill (voir _rendu_de_secours). C'est
     # aussi ce texte-là qui entrera dans l'historique — jamais la promesse.
+    # `besoin` DOIT exister sur tout tour ordinaire (07/09, export Langfuse de
+    # Duret : « cannot access local variable 'besoin' » dans `rehydrate`, sur
+    # CHAQUE tour dont le texte n'était ni une promesse ni un démenti — donc
+    # « Une erreur est survenue » quoi qu'on demande). Symbiose l'avait depuis
+    # le refactor du 30/08 ; le portage l'avait perdu.
+    besoin = None
     if not text or est_une_annonce(text) or promesse_sans_suite(text):
         besoin = "redaction_absente_ou_promesse"
     elif _redaction_dement_le_livrable(text, state.get("tool_results") or []):

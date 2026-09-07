@@ -18,8 +18,24 @@ class _R:
 faux.settings = _R()
 sys.modules["config"] = faux
 m = types.ModuleType("mail.collecte"); m.fournisseur = lambda: "outlook"
-paquet = types.ModuleType("mail"); paquet.collecte = m
+# Les domaines de la messagerie vivent désormais dans `mail.authorization`
+# (07/09) : un tenant en a plusieurs, et `lecture.py` les lui demande pour
+# reconnaitre un collegue. La doublure applique la meme regle sur les reglages
+# doubles ci-dessus.
+def _domaines():
+    brut = " ".join(str(getattr(_R, c, None) or "") for c in ("ms_domain", "gmail_domain"))
+    return frozenset(x.strip().strip("@").lower()
+                     for x in brut.replace(",", " ").replace(";", " ").split() if x.strip())
+def _est_du_domaine(a):
+    a = (a or "").strip().lower()
+    if not a or "@" not in a: return False
+    d = _domaines()
+    return True if not d else a.rsplit("@", 1)[-1] in d
+az = types.ModuleType("mail.authorization")
+az.domaines_messagerie = _domaines; az.est_du_domaine = _est_du_domaine
+paquet = types.ModuleType("mail"); paquet.collecte = m; paquet.authorization = az
 sys.modules["mail"] = paquet; sys.modules["mail.collecte"] = m
+sys.modules["mail.authorization"] = az
 
 import importlib.util, pathlib  # noqa: E402
 spec = importlib.util.spec_from_file_location("mail.lecture", pathlib.Path(BACKEND) / "mail" / "lecture.py")

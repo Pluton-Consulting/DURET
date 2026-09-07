@@ -664,17 +664,21 @@ async def _boite_a_lire(data: dict, user) -> str:
     # Rien de demandé. LE SUPER_ADMIN LIT LA BOÎTE D'UN DIRIGEANT (03/09) : son
     # adresse à lui n'est pas dans la messagerie de l'entreprise, et la règle
     # du 01/09 (« sa boîte, pour tout le monde ») le laissait sans rien à lire.
-    from mail.authorization import boite_par_defaut
-    if (getattr(user, "role", "") or "").strip().lower() == "super_admin":
+    # Depuis le 07/09, la direction hors domaine est dans le même cas : c'est
+    # `boite_par_defaut` qui tranche, une fois, pour les deux.
+    from mail.authorization import boite_par_defaut, domaines_messagerie, est_du_domaine
+    role = (getattr(user, "role", "") or "").strip().lower()
+    if role in ("super_admin", "direction"):
         defaut = await boite_par_defaut(user)
         if defaut:
             return defaut
 
-    # Sinon : la boîte de la personne connectée, si c'en est une.
+    # Sinon : la boîte de la personne connectée, si c'en est une. LES DOMAINES
+    # SONT PLUSIEURS (07/09) : un tenant a son domaine public, son
+    # `onmicrosoft.com` et ses alias, et la comparaison à un seul suffixe
+    # refusait des adresses parfaitement légitimes.
     propre = normaliser(getattr(user, "email", None))
-    domaine = normaliser(getattr(settings, "ms_domain", None)
-                         or getattr(settings, "gmail_domain", None))
-    if propre and (not domaine or propre.endswith("@" + domaine)):
+    if propre and est_du_domaine(propre):
         return propre
 
     # Son compte applicatif est hors du domaine de messagerie — cas courant
@@ -694,12 +698,18 @@ async def _boite_a_lire(data: dict, user) -> str:
                  if x and x != "*" and x != propre]
     if len(deleguees) == 1:
         return deleguees[0]
+    # LE REFUS DIT QUOI FAIRE. Il nommait le domaine attendu et s'arrêtait là :
+    # la personne ne pouvait pas savoir si le tort venait de son compte, du
+    # réglage, ou d'une délégation manquante.
+    domaines = ", ".join(sorted(domaines_messagerie())) or "aucun configuré"
+    visibles = await boites_visibles(user)
     raise MailSkillError(
-        "Aucune boîte à lire : votre compte "
-        f"({propre or 'sans adresse'}) n'appartient pas au domaine de messagerie"
-        + (f" {domaine}" if domaine else "")
-        + ", et aucune boîte d'entreprise n'est configurée. Précisez l'adresse "
-          "à consulter.")
+        f"Aucune boîte à lire : l'adresse de votre compte ({propre or 'sans adresse'}) "
+        f"n'est pas dans la messagerie de l'entreprise (domaines reconnus : {domaines}). "
+        + (f"Boîtes accessibles, à nommer explicitement : {', '.join(visibles[:10])}."
+           if visibles else
+           "Aucune boîte ne vous est déléguée : un administrateur peut en déléguer une "
+           "depuis Paramètres → Utilisateurs, ou ajouter votre domaine à MS_DOMAIN."))
 
 
 async def lire_mails(data: dict, user) -> dict:
@@ -926,7 +936,9 @@ async def preparer_envois(data: dict, user) -> dict:
                              "fichier (Excel, CSV) puis redemandez, ou donnez la liste.")
     if not destinataires:
         raise MailSkillError("Donne `destinataires` : `\"@tableau\"` (toutes les lignes du "
-                             "fichier joint), une liste d'adresses, ou d'objets {email, nom, …}.")
+                             "fichier joint), une liste d'adresses, ou d'objets {email, nom, …}. "
+                             "Avec un fichier joint, écris TOUJOURS `\"@tableau\"` : recopier "
+                             "les lignes à la main n'en produit jamais la totalité.")
     if not gabarit and not any(isinstance(d, dict)
                                and (d.get("reponse") or d.get("message"))
                                for d in destinataires):
@@ -959,7 +971,20 @@ async def preparer_envois(data: dict, user) -> dict:
     r["bloc_ui"] = {"type": "reponses_mail", "titre": f"Envois préparés — {sujet}",
                     "reponses": cartes}
     r["bloc_garanti"] = True
-    r["message_final"] = (f"{r['nombre']} destinataire(s), {len(cartes)} carte(s) "
+    # LA COMPLÉTION SE DIT. Le serveur a remis les lignes que le bloc d'action
+    # avait laissées derrière lui : la personne doit savoir pourquoi elle voit
+    # 95 cartes après en avoir vu 30, et le modèle doit cesser de croire que le
+    # tableau n'en contenait que 30.
+    complete = data.get("_tableau_complete") or {}
+    if complete.get("total"):
+        r["complete_du_tableau"] = complete
+        r["message_final"] = (
+            f"Le tableau joint porte {complete['total']} lignes ; l'action n'en "
+            f"recopiait que {complete['recopiees']}. Les {complete['total']} ont "
+            "été traitées. ")
+    else:
+        r["message_final"] = ""
+    r["message_final"] += (f"{r['nombre']} destinataire(s), {len(cartes)} carte(s) "
                           "préparée(s)"
                           + (f" (page {r['page']} sur {r['pages']})" if r["pages"] > 1 else "")
                           + ". Rien ne part sans votre validation.")

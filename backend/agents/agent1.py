@@ -221,6 +221,77 @@ def _est_jeton_message(valeur) -> bool:
     return isinstance(valeur, str) and valeur.strip().lower() in JETONS_MESSAGE
 
 
+# LES MOTS QUI DISENT « PAS TOUT ». Quand la demande borne elle-même le
+# travail, une liste plus courte que le tableau est ce qui a été demandé, et
+# la compléter serait désobéir.
+_RE_SOUS_ENSEMBLE = __import__("re").compile(
+    r"\b(\d+\s*(premi|client|destinatair|mail|ligne|contact|personne)"
+    r"|premi(er|ère|ere)s?\b|seulement|uniquement|quelques|certains|certaines"
+    r"|parmi|sauf|hormis|excepté|exemple|échantillon|echantillon|un extrait"
+    r"|pour tester|en test|essai)\b", __import__("re").I)
+
+
+def _cle_de_ligne(valeur) -> str:
+    """De quoi reconnaître une même personne d'un côté et de l'autre.
+
+    L'adresse d'abord — c'est ce qui identifie un destinataire. À défaut,
+    l'ensemble des valeurs de la ligne, mises à plat : un tableau sans colonne
+    d'adresse existe, et deux lignes s'y distinguent quand même.
+    """
+    if isinstance(valeur, str):
+        return valeur.strip().lower()
+    if not isinstance(valeur, dict):
+        return str(valeur).strip().lower()
+    for cle, v in valeur.items():
+        if "@" in str(v or "") and "mail" in str(cle).lower():
+            return str(v).strip().lower()
+    for v in valeur.values():
+        if "@" in str(v or ""):
+            return str(v).strip().lower()
+    return " ".join(str(v or "").strip().lower() for v in valeur.values())
+
+
+def _est_le_debut_du_tableau(liste, lignes) -> bool:
+    """La liste recopiée est-elle le DÉBUT du tableau, et rien d'autre ?
+
+    C'est la signature d'une troncature : le modèle a recopié dans l'ordre et
+    s'est arrêté. Une vraie sélection (« ceux de Bordeaux », « les impayés »)
+    n'est presque jamais un préfixe exact — et si elle l'est, la demande le dit
+    en toutes lettres, ce que `_RE_SOUS_ENSEMBLE` vérifie de son côté.
+    """
+    if not liste or len(liste) >= len(lignes):
+        return False
+    debut = [_cle_de_ligne(l) for l in lignes[:len(liste)]]
+    recopie = [_cle_de_ligne(x) for x in liste]
+    return all(d and d == r for d, r in zip(debut, recopie))
+
+
+def _completer_depuis_tableau(args: dict, lignes: list, demande: str) -> dict:
+    """LE TABLEAU EN ENTIER, MÊME QUAND LE MODÈLE L'A RECOPIÉ À MOITIÉ.
+
+    Relevé du 03/09 : classeur de 95 clients, 30 mails préparés. Le serveur
+    avait bien lu les 95 (l'invite le disait), mais le modèle a recopié les
+    destinataires à la main dans son bloc d'action et s'est arrêté à 30. Puis,
+    interrogé, il a expliqué que « 30 correspond exactement au nombre de
+    clients du tableau » — il ne pouvait pas savoir : il ne voyait que sa
+    propre liste.
+
+    Aucune liste n'est jamais RACCOURCIE ici, seulement complétée, et jamais
+    quand la demande borne elle-même le travail. La substitution a lieu AVANT
+    l'empreinte : ce qui est haché reste ce qui s'exécute.
+    """
+    if not lignes or _RE_SOUS_ENSEMBLE.search(demande or ""):
+        return args
+    complet = dict(args)
+    for cle, valeur in args.items():
+        if not isinstance(valeur, list) or not _est_le_debut_du_tableau(valeur, lignes):
+            continue
+        complet[cle] = list(lignes)
+        complet["_tableau_complete"] = {"recopiees": len(valeur), "total": len(lignes),
+                                        "champ": cle}
+    return complet
+
+
 def _est_jeton_tableau(valeur) -> bool:
     return isinstance(valeur, str) and valeur.strip().lower() in JETONS_TABLEAU
 
@@ -1147,6 +1218,10 @@ async def tools_node(state: AgentState, config=None) -> dict:
     if isinstance(tableau, dict) and tableau.get("lignes"):
         args = {k: (list(tableau["lignes"]) if _est_jeton_tableau(v) else v)
                 for k, v in args.items()}
+        # Et si le modèle a recopié le début du tableau au lieu d'écrire le
+        # jeton, on remet ce qui manque plutôt que de livrer un travail à
+        # moitié fait (07/09).
+        args = _completer_depuis_tableau(args, tableau["lignes"], state.get("query") or "")
 
     empreinte = hash_payload(action["skill"], args)
     # Une page de plus ne compte pas : enchaîner les pages est le comportement

@@ -34,6 +34,7 @@ from typing import Optional
 from fastapi import HTTPException, status
 
 from database.connection import get_db
+from config import settings
 
 logger = logging.getLogger("duret.mail.authz")
 
@@ -147,19 +148,47 @@ async def boites_par_id(user_id: Optional[str]) -> list[str]:
     return boites
 
 
-async def boite_par_defaut(user) -> Optional[str]:
-    """La boîte qu'on ouvre quand personne n'en nomme une.
+def domaines_messagerie() -> frozenset:
+    """Les domaines de la messagerie d'entreprise. Un tenant en a PLUSIEURS.
 
-    Pour tout le monde : la sienne. Pour le SUPER_ADMIN : celle d'un DIRIGEANT
-    (03/09, Noa) — le premier compte `direction` actif, par ancienneté, donc
-    toujours le même tant que les comptes ne bougent pas. Le super_admin est
-    le développeur : son adresse n'existe pas dans la messagerie de
-    l'entreprise, et « sa boîte » ne lisait rien. Sans dirigeant en base, on
-    retombe sur sa propre adresse, comme avant.
+    `MS_DOMAIN` / `GMAIL_DOMAIN` étaient lus comme UNE chaîne, comparée par
+    suffixe : le domaine public dans le `.env`, et toute adresse sur
+    l'`onmicrosoft.com` ou sur un alias historique devenait « hors domaine ».
+    On accepte donc une LISTE (virgule, point-virgule ou espace), et l'ancienne
+    valeur à un seul domaine continue de marcher telle quelle.
+
+    Un ensemble VIDE veut dire « aucun domaine configuré », et alors on
+    n'exclut personne : ce réglage sert à reconnaître les collègues, pas à
+    barrer la porte.
     """
-    propre = normaliser(getattr(user, "email", None))
-    if (getattr(user, "role", "") or "").strip().lower() != "super_admin":
-        return propre or None
+    brut = " ".join(str(getattr(settings, cle, None) or "")
+                    for cle in ("ms_domain", "gmail_domain"))
+    domaines = set()
+    for morceau in brut.replace(",", " ").replace(";", " ").split():
+        d = morceau.strip().strip("@").lower()
+        if d:
+            domaines.add(d)
+    return frozenset(domaines)
+
+
+def est_du_domaine(adresse) -> bool:
+    """L'adresse appartient-elle à la messagerie de l'entreprise ?
+
+    Sans domaine configuré, tout le monde en est : on ne refuse pas une lecture
+    au motif qu'un réglage facultatif est vide.
+    """
+    adresse = normaliser(adresse)
+    if not adresse or "@" not in adresse:
+        return False
+    domaines = domaines_messagerie()
+    if not domaines:
+        return True
+    return adresse.rsplit("@", 1)[-1] in domaines
+
+
+async def _boite_du_dirigeant() -> Optional[str]:
+    """Le premier compte `direction` actif, par ancienneté — donc toujours le
+    même tant que les comptes ne bougent pas."""
     try:
         async with get_db() as conn:
             ligne = await conn.fetchrow(
@@ -167,9 +196,34 @@ async def boite_par_defaut(user) -> Optional[str]:
                 "ORDER BY created_at ASC LIMIT 1")
     except Exception as e:  # noqa: BLE001 - une base muette ne doit pas bloquer la lecture
         logger.warning("Boîte du dirigeant illisible : %s", e)
-        ligne = None
-    dirigeant = normaliser(ligne["email"] if ligne else None)
-    return dirigeant or propre or None
+        return None
+    return normaliser(ligne["email"] if ligne else None) or None
+
+
+async def boite_par_defaut(user) -> Optional[str]:
+    """La boîte qu'on ouvre quand personne n'en nomme une.
+
+    Pour tout le monde : la sienne. Pour le SUPER_ADMIN : celle d'un DIRIGEANT
+    (03/09, Noa) — son adresse à lui n'existe pas dans la messagerie de
+    l'entreprise, c'est le développeur, et « sa boîte » ne lisait rien.
+
+    ET POUR LA DIRECTION HORS DOMAINE (07/09). Relevé le 03/09 à 15:24 :
+    « combien d'échanges avec <adresse> ? » → « votre compte n'appartient pas
+    au domaine de messagerie ». Un compte `direction` qui se connecte avec une
+    adresse hors messagerie était exactement dans le cas du super_admin, et
+    recevait un refus sec sur la seule question qu'il posait. La direction a
+    déjà le droit d'ouvrir toute boîte qu'elle NOMME
+    (`ROLES_ACCES_SUR_DEMANDE`) : lui donner par défaut celle d'un dirigeant
+    n'ouvre aucune porte de plus, et `verifier_acces` reste le seul contrôle.
+
+    Les autres rôles ne bougent pas : pour eux, une boîte que personne n'a
+    nommée ne s'ouvre toujours pas (règle du 01/09).
+    """
+    propre = normaliser(getattr(user, "email", None))
+    role = (getattr(user, "role", "") or "").strip().lower()
+    if role == "super_admin" or (role == "direction" and not est_du_domaine(propre)):
+        return (await _boite_du_dirigeant()) or propre or None
+    return propre or None
 
 
 async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> str:

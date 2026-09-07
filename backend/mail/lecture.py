@@ -194,7 +194,14 @@ def _choisir(candidats: list[dict], objet: Optional[str], de: Optional[str]) -> 
 
 
 def _domaine_entreprise() -> str:
-    return ((settings.ms_domain or "") or (getattr(settings, "gmail_domain", "") or "")).strip().lower()
+    """Le domaine principal, pour l'AFFICHAGE seulement.
+
+    La reconnaissance d'un collègue passe par `est_du_domaine` : un tenant a
+    plusieurs domaines acceptés, et n'en reconnaître qu'un faisait passer de
+    vrais collègues pour des externes dans tous les relevés de boîte.
+    """
+    from mail.authorization import domaines_messagerie
+    return next(iter(sorted(domaines_messagerie())), "")
 
 
 _RE_ADRESSE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
@@ -214,12 +221,15 @@ def _qualifier(adresse_brute: str) -> dict:
     `noreply@silae.fr` et `digest@mailinblack.com` comme « des personnes de
     l'entreprise ». Une adresse n'est pas un collègue.
     """
+    from mail.authorization import domaines_messagerie, est_du_domaine
     trouve = _RE_ADRESSE.search(adresse_brute or "")
     adresse = (trouve.group(0) if trouve else "").lower()
-    domaine = _domaine_entreprise()
     return {
         "adresse": adresse,
-        "interne": bool(adresse and domaine and adresse.endswith("@" + domaine)),
+        # TOUS les domaines du tenant, pas seulement le premier — et « interne »
+        # reste faux quand aucun domaine n'est configuré : ne rien savoir n'est
+        # pas la même chose que savoir que c'est un collègue.
+        "interne": bool(adresse and domaines_messagerie() and est_du_domaine(adresse)),
         "automatique": any(m in adresse for m in _MARQUEURS_AUTOMATIQUES),
     }
 

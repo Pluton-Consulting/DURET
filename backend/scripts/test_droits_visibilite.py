@@ -87,8 +87,12 @@ verifier("le super_admin lit PAR DÉFAUT la boîte d'un dirigeant (le premier co
          "async def boite_par_defaut" in src_az
          and "WHERE role = 'direction' AND actif = true" in src_az
          and "ORDER BY created_at ASC LIMIT 1" in src_az)
+# La recherche du dirigeant a été sortie dans `_boite_du_dirigeant` (07/09),
+# quand la direction hors domaine a rejoint le super_admin sur ce défaut. Le
+# repli, lui, n'a pas changé : sans dirigeant en base, sa propre adresse.
+# `test_lot_entier_et_boite.py` l'EXÉCUTE, là où ce contrôle-ci lit la forme.
 verifier("sans dirigeant en base, il retombe sur sa propre adresse (jamais sur rien)",
-         "return dirigeant or propre or None" in src_az)
+         "return (await _boite_du_dirigeant()) or propre or None" in src_az)
 src_sk = (BACKEND / "mail" / "skills.py").read_text(encoding="utf-8")
 verifier("tous les gestes mail sans boîte nommée passent par ce défaut",
          src_sk.count("await boite_par_defaut(user)") >= 5

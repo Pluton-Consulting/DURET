@@ -92,6 +92,10 @@ const POLL_MS = 4000
 // Quand une tache differee tient la banniere, son texte doit se renouveler
 // aussi souvent que celui d'une tache du chat — sinon l'ecran parait fige.
 const POLL_ACTIF_MS = 1500
+// La bulle qui tient le fil pendant qu'une action attend un accord, et ce
+// qu'elle dit une fois l'accord donné, le temps que le serveur exécute.
+const TEXTE_ATTENTE_ACCORD = "⏳ Une action attend votre accord : approuvez-la pour continuer."
+const TEXTE_RESULTAT_EN_COURS = "Résultat en cours…"
 
 // Mémorise le thread courant (localStorage) pour restaurer la conversation quand on
 // quitte l'onglet puis qu'on y revient (le composant se démonte/remonte → état perdu).
@@ -359,6 +363,23 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     })
   }
 
+  // LA BULLE D'ACCORD EST ATTACHÉE À SA VALIDATION (07/09). Posée par
+  // `pushAssistant`, elle n'appartenait à rien : après le clic sur
+  // « Approuver », rien ne pouvait la faire évoluer — elle battait encore
+  // quand la réponse arrivait en dessous, et entre les deux l'écran ne disait
+  // rien (relevé de Noa : « dès que le bouton est validé, il doit y avoir
+  // marqué résultat en cours »). Attachée à `accord:<id>`, elle passe à
+  // « Résultat en cours… » dès le clic et se remplit de la réponse.
+  const cleAccord = (id?: string | null) => (id ? `accord:${id}` : null)
+  const bulleAccord = (validationId?: string | null) => {
+    const cle = cleAccord(validationId)
+    if (!cle) { pushAssistant(TEXTE_ATTENTE_ACCORD, true); return }
+    // La question n'est pas marquée « en creux » : ce n'est pas une tâche de
+    // fond, c'est le tour lui-même qui attend.
+    if (!tachesSuiviesRef.current.has(cle)) marquerEnAttente(null, cle)
+    majBulle(cle, TEXTE_ATTENTE_ACCORD)
+  }
+
   // ── Sondage : l'etat de la file et des accords, en une requete ───────
   // Non reentrant : un tick lent (le chargement du resultat d'une tache active
   // est un await DANS le handler) ne doit pas se faire doubler par le suivant,
@@ -530,10 +551,26 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     accordEnCoursRef.current = id
     setAccordEnCours(id)
     setErreurAccord(null)
+    // La tache liee a cet accord (file d'attente, ou carte locale) : sa
+    // reponse remplira SA bulle. Sinon, c'est la bulle d'accord du fil.
+    const liee = tachesFile.find((t) => t.validationId === id)
+      || tachesLocales.find((t) => t.validationId === id)
+    const cle = cleAccord(id)!
     // Le chat aussi montre qu'il travaille : la décision est prise dans le
     // panneau latéral, mais le résultat arrive dans le fil. Entre les deux,
     // l'indicateur d'activité du chat s'allume comme pendant un tour ordinaire.
     if (accorde) { principalOccupeRef.current = true; setPrincipalOccupe(true) }
+    // « RÉSULTAT EN COURS… » DÈS LE CLIC (07/09). La bulle qui attendait
+    // l'accord change de texte à l'instant : le délai entre l'approbation et
+    // la réponse (un tirage d'image, un envoi) n'est plus un silence. Sans
+    // bulle attachée (fil rechargé, ancienne version), on en ouvre une.
+    if (accorde) {
+      if (liee) majBulle(liee.id, TEXTE_RESULTAT_EN_COURS)
+      else {
+        if (!tachesSuiviesRef.current.has(cle)) marquerEnAttente(null, cle)
+        majBulle(cle, TEXTE_RESULTAT_EN_COURS)
+      }
+    }
     // LA REPRISE SE VOIT (31/08) : sitôt le clic, le journal parle, puis la
     // progression réelle est sondée pendant que le serveur déroule le plan.
     // La sonde s'arrête seule dès que l'accord n'est plus en cours.
@@ -567,11 +604,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       // reponse appartient a l'echange qui attend, elle remplit SA bulle.
       // Sans ce lien, elle atterrissait tout en bas, loin de sa question, et
       // la bulle d'attente battait indefiniment au-dessus.
-      const liee = tachesFile.find((t) => t.validationId === id)
-        || tachesLocales.find((t) => t.validationId === id)
       const texte = res.response
         || (accorde ? "Action approuvée." : "Action refusée : rien n'a été fait.")
       if (liee) poserReponse(liee.id, texte)
+      else if (tachesSuiviesRef.current.has(cle)) poserReponse(cle, texte)
       else pushAssistant(texte)
       if (liee && liee.source === "file") {
         try { await apiRequest(`/api/file/taches/${liee.id}/vu`, { method: "POST", token }) } catch { /* no-op */ }
@@ -598,7 +634,13 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           principalOccupeRef.current = false
           setPrincipalOccupe(false)
         }
+        // La bulle ne peut plus attendre une reponse qui est allee ailleurs.
+        if (tachesSuiviesRef.current.has(cle)) poserReponse(cle, "Cette action a déjà été tranchée.")
       } else {
+        // La decision n'est pas passee : la bulle redit qu'elle attend, au lieu
+        // de rester sur « Résultat en cours… » pour un resultat qui ne viendra pas.
+        if (liee) majBulle(liee.id, TEXTE_ATTENTE_ACCORD)
+        else if (tachesSuiviesRef.current.has(cle)) majBulle(cle, TEXTE_ATTENTE_ACCORD)
         // 403 : la personne n'a pas le droit de valider. Le dire, plutot que de
         // laisser un bouton qui echoue sans expliquer pourquoi.
         setErreurAccord({
@@ -731,7 +773,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       principalOccupeRef.current = true
       setPrincipalOccupe(true)
       terminerTourDetache()
-      pushAssistant("⏳ Une action attend votre accord : approuvez-la pour continuer.", true)
+      bulleAccord(t.suspendu)
       rafraichirEtat()
       return
     }
@@ -769,7 +811,7 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         if (tour.suspendu) filSuspenduRef.current = tour.suspendu
         setLoading(false)
         setThinkingNode(null)
-        pushAssistant("⏳ Une action attend votre accord : approuvez-la pour continuer.", true)
+        bulleAccord(tour.suspendu)
         rafraichirEtat()
       } else if (tour.activite) {
         setActivite(tour.activite)
@@ -1064,7 +1106,7 @@ ${texteAffiche}`)
       } else {
         setThinkingNode(null)
         setLoading(false)
-        pushAssistant("⏳ Une action attend votre accord : approuvez-la pour continuer.", true)
+        bulleAccord(validationId)
       }
       // Le fil principal reste PRIS : c'est ce qui envoie les messages suivants
       // en file au lieu de les lancer sur un fil suspendu. On note quel accord
@@ -1115,7 +1157,7 @@ ${texteAffiche}`)
             : { etat: "terminee", reponse: res.response ?? "", activite: "terminée" })
           if (attend) rafraichirEtat()
         } else if (attend) {
-          pushAssistant("⏳ Une action attend votre accord : approuvez-la pour continuer.", true)
+          bulleAccord(res.validation_id ? String(res.validation_id) : undefined)
           rafraichirEtat()
         } else {
           pushAssistant(res.response ?? "")

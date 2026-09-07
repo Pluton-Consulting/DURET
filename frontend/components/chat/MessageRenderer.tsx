@@ -289,7 +289,7 @@ function renderBlock(block: any, onAction?: (v: string) => void,
     case "doc":           return <DocCard {...p} />
     case "doc_apercu":    return <DocApercu {...p} />
     case "site":          return <SiteApercu url={p.url} titre={p.titre} apercu={p.apercu} apiUrl={acces?.apiUrl} backendToken={acces?.backendToken} />
-    case "visuel":        return <VisuelPaysager titre={p.titre} images={p.images} apiUrl={acces?.apiUrl} backendToken={acces?.backendToken} />
+    case "visuel":        return <VisuelPaysager titre={p.titre} images={p.images} principale={p.principale} apiUrl={acces?.apiUrl} backendToken={acces?.backendToken} />
     // Le telechargement est controle cote serveur : le composant a besoin
     // du jeton, un lien nu partirait sans en-tete et serait refuse. La
     // visionneuse a le meme besoin — d'ou le detour par FichierAvecApercu,

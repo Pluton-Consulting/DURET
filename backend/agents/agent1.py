@@ -2787,15 +2787,15 @@ def _apercu_avant_accord(skill: str, args: dict, texte: str) -> str:
                     + "\n\nCe qui sera envoyé, tel quel :\n\n"
                     + "\n".join(lignes) + "\n\n" + corps)
         if skill == "modifier_visuel" and args.get("image"):
-            changements = args.get("changements") or args.get("modifications") or ""
-            if isinstance(changements, (list, tuple)):
-                changements = "; ".join(str(c) for c in changements)
+            # LES CHANGEMENTS NE S'AFFICHENT PLUS (07/09) : `changements` est
+            # écrit EN ANGLAIS, pour le moteur d'images. La carte d'accord
+            # montrait « Ce qui change : remove the two olive trees… » sous la
+            # photo — relevé par Noa. Ce qui change est déjà dit, en français,
+            # par le texte du modèle juste au-dessus ; la photo suffit ensuite.
             bloc = {"type": "visuel", "titre": "Image de départ",
                     "images": [{"cle": str(args["image"]),
                                 "legende": "La photo qui sera retouchée"}]}
             return ((texte or "Voici la retouche que je vais produire.").rstrip()
-                    + (f"\n\nCe qui change : {str(changements)[:300]}."
-                       if changements else "")
                     + "\n\nLe reste de la scène est conservé à l'identique."
                     + "\n\n```ui\n" + _json.dumps(bloc, ensure_ascii=False) + "\n```")
     except Exception as e:  # noqa: BLE001 — un aperçu manquant n'empêche rien

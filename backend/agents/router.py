@@ -220,9 +220,24 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
         message = await _reponse_apres_echec(
             state, action["skill"], str(getattr(e, "detail", None) or e))
 
+    # L'APERÇU D'AVANT L'ACCORD NE SURVIT PAS AU RÉSULTAT (07/09). Le brouillon
+    # d'une retouche porte la photo de départ en grand (« la photo qui sera
+    # retouchée ») : c'était pour décider. Une fois l'image tirée, la garder
+    # au-dessus du résultat montrait la photo de départ en grand, puis, en
+    # petit, la même photo et le rendu — relevé par Noa. Dès que le skill rend
+    # un bloc `visuel`, le résultat remplace le brouillon ; les autres actions
+    # (un mail parti) gardent le leur : c'est le compte rendu de ce qui est parti.
+    precedent = (state.get("final_response") or "").rstrip()
+    try:
+        from agents.agent1 import _blocs_de as _blocs_de_resultat
+        _sortie_skill = (resultat or {}).get("output") if isinstance(resultat, dict) else None
+        if isinstance(_sortie_skill, dict) and any(
+                b.get("type") == "visuel" for b in _blocs_de_resultat(_sortie_skill.get("bloc_ui"))):
+            precedent = ""
+    except Exception:  # noqa: BLE001 — au pire, le brouillon reste
+        pass
     sortie = {"pending_action": None,
-              "final_response": ((state.get("final_response") or "").rstrip()
-                                 + f"\n\n{message}").strip()}
+              "final_response": (precedent + f"\n\n{message}").strip()}
     # LA SUITE APRÈS UN ACCORD (01/09). Ce chemin ne passe PAS par
     # `rehydrate_node` : jusqu'ici, un visuel tiré ou un mail parti n'a jamais
     # porté la moindre suggestion — alors que c'est le moment où la suite est
@@ -328,8 +343,12 @@ async def _reponse_apres_action(state: AgentState, skill: str, resultat: dict) -
     try:
         # Les champs adressés au modèle rédacteur ou à l'écran ne sont pas des
         # faits à raconter : on les écarte avant de masquer.
+        # `changements` est le brief EN ANGLAIS du moteur d'images : donné au
+        # rédacteur, il ressortait tel quel dans la prose (07/09). Les clés de
+        # dépôt ne racontent rien non plus. La demande, en français, suffit.
         donnees = {k: v for k, v in sortie.items()
-                   if k not in ("bloc_ui", "a_faire", "note", "a_savoir")}
+                   if k not in ("bloc_ui", "a_faire", "note", "a_savoir",
+                                "changements", "source", "cles")}
         brut = _json.dumps(donnees, ensure_ascii=False, default=str)[:1200]
         carte = dict(state.get("entity_map") or {})
         masque, carte = anonymizer.anonymize(brut, carte)

@@ -55,10 +55,14 @@ function BoutonTelecharger({ onClick, titre }: { onClick: (e: React.MouseEvent) 
 }
 
 function Image({
-  image, apiUrl, backendToken, titre, index, surBlob,
+  image, apiUrl, backendToken, titre, index, surBlob, enregistrer = true,
 }: {
   image: ImageVisuel; apiUrl?: string; backendToken?: string; titre?: string
   index: number; surBlob: (index: number, telecharger: () => void) => void
+  // `false` : l'image est déjà montrée ailleurs dans la planche (le rendu en
+  // grand ET dans la paire avant / après) — « Tout télécharger » ne doit pas
+  // la sortir deux fois.
+  enregistrer?: boolean
 }) {
   const [src, setSrc] = useState<string | null>(image.url || null)
   const [etat, setEtat] = useState<"charge" | "pret" | "absent">(image.url ? "pret" : image.cle ? "charge" : "absent")
@@ -99,8 +103,8 @@ function Image({
   // La planche a besoin de savoir télécharger CHAQUE image pour proposer
   // « Tout télécharger » ; l'enfant remonte donc son geste quand il est prêt.
   useEffect(() => {
-    if (etat === "pret" && blob.current) surBlob(index, telecharger)
-  }, [etat, index, telecharger, surBlob])
+    if (etat === "pret" && blob.current && enregistrer) surBlob(index, telecharger)
+  }, [etat, index, telecharger, surBlob, enregistrer])
 
   const ouvrir = () => { if (src) window.open(src, "_blank", "noopener") }
 
@@ -128,9 +132,15 @@ function Image({
 }
 
 export function VisuelPaysager({
-  titre, images = [], apiUrl, backendToken,
-}: { titre?: string; images?: ImageVisuel[]; apiUrl?: string; backendToken?: string }) {
+  titre, images = [], principale, apiUrl, backendToken,
+}: { titre?: string; images?: ImageVisuel[]; principale?: string; apiUrl?: string; backendToken?: string }) {
   const liste = images.filter((i) => i && (i.cle || i.url))
+  // LE RÉSULTAT EN GRAND, L'AVANT / APRÈS EN DESSOUS (07/09, relevé de Noa :
+  // « il affiche en grand l'image de départ et, en petit dessous, encore
+  // l'image de départ et le rendu final »). Quand le serveur désigne une image
+  // principale (le rendu d'une retouche), elle se lit en premier, seule et en
+  // grand ; la paire légendée reste en dessous, plus petite, pour comparer.
+  const grande = principale ? liste.find((i) => i.cle === principale) : undefined
   const gestes = useRef<Map<number, () => void>>(new Map())
   const [prets, setPrets] = useState(0)
 
@@ -163,11 +173,27 @@ export function VisuelPaysager({
           <span style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)" }}>généré par IA</span>
         </div>
       </div>
+      {grande && (
+        <div style={{ padding: "0 10px 6px" }} data-testid="visuel-principal">
+          <Image image={grande} apiUrl={apiUrl} backendToken={backendToken}
+                 titre={titre} index={liste.length} surBlob={surBlob} />
+        </div>
+      )}
       <div style={{ display: "grid", gap: 6, padding: "0 10px",
                     gridTemplateColumns: liste.length > 1 ? "1fr 1fr" : "1fr" }}>
         {liste.map((img, i) => (
-          <Image key={img.cle || img.url || i} image={img} apiUrl={apiUrl} backendToken={backendToken}
-                 titre={titre} index={i} surBlob={surBlob} />
+          <div key={img.cle || img.url || i}>
+            <Image image={img} apiUrl={apiUrl} backendToken={backendToken}
+                   titre={titre} index={i} surBlob={surBlob}
+                   enregistrer={!grande || img.cle !== principale} />
+            {/* La légende n'a de sens que pour comparer : sous la paire, quand
+                un rendu principal est montré au-dessus. */}
+            {grande && img.legende && (
+              <div style={{ fontSize: 11.5, color: "var(--marque-text-muted)", textAlign: "center", padding: "4px 0 0" }}>
+                {img.legende}
+              </div>
+            )}
+          </div>
         ))}
         {liste.length === 0 && <div style={{ padding: 24, textAlign: "center", color: "var(--marque-text-muted)", fontSize: 13 }}>Aucune image.</div>}
       </div>

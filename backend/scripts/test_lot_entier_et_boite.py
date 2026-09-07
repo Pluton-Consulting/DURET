@@ -14,9 +14,15 @@ CE QUE LES TRACES MONTRAIENT :
     liste de destinataires recopiée À LA MAIN, arrêtée à 30. Interrogé, il a
     répondu que « 30 correspond exactement au nombre de clients du tableau » :
     il ne voyait que sa propre liste ;
-  · 03/09 15:24 — « combien d'échanges avec <adresse> » →
-    « votre compte n'appartient pas au domaine de messagerie ». Un seul domaine
-    était accepté, comparé par suffixe, et hors domaine la lecture s'arrêtait.
+  · 03/09 15:18 et 15:24 — « votre compte n'appartient pas au domaine de
+    messagerie ». Ces deux tours-là tournaient sur le compte SUPER-ADMIN (le
+    compte développeur, hors messagerie de l'entreprise), pas sur celui de la
+    direction : `MS_DOMAIN` valait bien `symbiose-paysage.fr`, et le compte
+    direction avait lu SA boîte sans difficulté à 10:30 le même jour. La
+    bascule du super_admin vers la boîte d'un dirigeant existait déjà
+    (03/09, `2d490df`) — elle n'était pas déployée. Restaient deux fragilités
+    voisines, corrigées ici : un seul domaine accepté (un tenant en a
+    plusieurs), et une direction hors domaine laissée sans boîte.
 
 CE QUE CE BANC PROUVE (sans base, sans réseau) :
   · une liste recopiée qui est le DÉBUT du tableau est complétée, avant
@@ -204,10 +210,10 @@ REGLAGES.ms_domain = "symbiose-paysage.fr"
 verifier("un compte du domaine lit SA boîte, quel que soit son rôle",
          asyncio.run(authz.boite_par_defaut(compte("noa@symbiose-paysage.fr", "direction")))
          == "noa@symbiose-paysage.fr")
-verifier("LE CAS DU 03/09 : une direction hors domaine reçoit la boîte d'un dirigeant",
+verifier("une direction hors domaine reçoit la boîte d'un dirigeant (nouveau, 07/09)",
          asyncio.run(authz.boite_par_defaut(compte("benitez.noapro@gmail.com", "direction")))
          == "eric@symbiose-paysage.fr")
-verifier("le super_admin garde la boîte d'un dirigeant (règle du 03/09)",
+verifier("LE CAS DES DEUX REFUS DU 03/09 : le super_admin lit la boîte d'un dirigeant",
          asyncio.run(authz.boite_par_defaut(compte("dev@pluton-consulting.fr", "super_admin")))
          == "eric@symbiose-paysage.fr")
 verifier("un rôle métier hors domaine ne reçoit PAS la boîte d'un dirigeant",

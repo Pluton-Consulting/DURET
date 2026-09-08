@@ -141,3 +141,7 @@ class AgentState(TypedDict):
     # choses : il ramène le tour dans l'assistant (le travail commence), et il
     # remet les étapes sous les yeux du modèle pour qu'il n'en repropose pas.
     plan_valide: Optional[list]
+    # L'ACCORD AVANT CHAQUE ACTION (08/09) : posé à l'armement d'une validation
+    # quand le réglage `validation_totale` est actif ; après l'accord, le tour
+    # REPREND avec le résultat du geste au lieu de se terminer.
+    reprise_apres_accord: Optional[bool]

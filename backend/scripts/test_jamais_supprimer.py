@@ -48,7 +48,7 @@ verifier("le refus nomme le geste, le mot attendu, et ce que le modèle doit dir
          "supprimer_tache" in r and "« supprime »" in r and "Ne réessaie pas" in r and r.startswith("REFUSÉ"))
 
 ag1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
-i_garde, i_effet = ag1.find("from skills.suppression import"), ag1.find('effet = effet_du_skill(action["skill"])')
+i_garde, i_effet = ag1.find("from skills.suppression import"), ag1.find('effet_declare = effet_du_skill(action["skill"])')
 verifier("la boucle d'actions applique le garde AVANT de classer l'effet du geste",
          0 < i_garde < i_effet)
 zone = ag1[i_garde:i_effet]

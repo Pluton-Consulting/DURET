@@ -201,6 +201,7 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                                   "à l'action demandée."}
 
     resultat = None
+    erreur = None
     try:
         resultat = await execute_skill(
             action["skill"], action.get("args") or {}, user=utilisateur,
@@ -208,13 +209,24 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                          "validated_by": state.get("validated_by")},
             trigger={"type": "resume", "id": state.get("thread_id")},
         )
-        message = await _reponse_apres_action(state, action["skill"], resultat)
     except SkillError as e:
-        message = await _reponse_apres_echec(state, action["skill"], str(e))
+        erreur = str(e)
     except Exception as e:  # noqa: BLE001
         logger.warning("Échec de l'action %s : %s", action.get("skill"), e)
-        message = await _reponse_apres_echec(
-            state, action["skill"], str(getattr(e, "detail", None) or e))
+        erreur = str(getattr(e, "detail", None) or e)
+
+    # L'ACCORD AVANT CHAQUE ACTION (08/09) : le geste approuvé n'est pas la fin
+    # du travail. Son résultat entre dans `tool_results` sous la forme exacte
+    # de la boucle d'actions, et l'assistant reprend — jusqu'au geste suivant
+    # (nouvelle carte) ou à la réponse. Aucun rédacteur ne passe ici : c'est le
+    # tour qui rédigera, une fois le travail fini. Le plan garde sa branche.
+    if state.get("reprise_apres_accord") and action["skill"] != "proposer_plan":
+        return await _reprise_du_tour(state, action, approuve, resultat, erreur)
+
+    if erreur is None:
+        message = await _reponse_apres_action(state, action["skill"], resultat)
+    else:
+        message = await _reponse_apres_echec(state, action["skill"], erreur)
 
     # L'APERÇU D'AVANT L'ACCORD NE SURVIT PAS AU RÉSULTAT (07/09). Le brouillon
     # d'une retouche porte la photo de départ en grand (« la photo qui sera
@@ -300,6 +312,46 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                 + "\n\n".join("```ui\n" + _json.dumps(b, ensure_ascii=False) + "\n```" for b in blocs))]
     except Exception:  # noqa: BLE001 - l'historique n'est pas vital
         pass
+    return sortie
+
+
+async def _reprise_du_tour(state: AgentState, action: dict, empreinte: str,
+                           resultat, erreur) -> dict:
+    """Le résultat d'un geste approuvé rendu au modèle, et le tour rouvert.
+
+    Même coupe et même masquage que la boucle d'actions (`resultat_de_geste`) :
+    le modèle ne doit pas distinguer un geste approuvé d'un geste immédiat.
+    Les résultats déjà acquis dans le tour sont conservés ; la boucle repart
+    avec ses drapeaux à neuf et son horloge remise.
+    """
+    import json as _json
+    from skills.executor import expert_du_skill as _expert
+    from agents.agent1 import (PLAFOND_RESULTAT, PLAFOND_RESULTAT_GENEREUX,
+                               RESULTATS_GENEREUX, resultat_de_geste)
+
+    sortie_skill = (resultat or {}).get("output") if isinstance(resultat, dict) else None
+    if erreur is None:
+        bloc_garanti = (sortie_skill.get("bloc_ui")
+                        if isinstance(sortie_skill, dict) and sortie_skill.get("bloc_garanti")
+                        else None)
+        plafond = (PLAFOND_RESULTAT_GENEREUX if action["skill"] in RESULTATS_GENEREUX
+                   else PLAFOND_RESULTAT)
+        contenu, ok = _json.dumps(sortie_skill, ensure_ascii=False, default=str)[:plafond], True
+    else:
+        contenu, ok, bloc_garanti = f"ERREUR : {erreur}", False, None
+    entree, carte = await resultat_de_geste(
+        state, action["skill"], action.get("args") or {}, empreinte, contenu, ok, bloc_garanti)
+    sortie = _reouverture_du_tour()
+    sortie.update({
+        "tool_results": list(state.get("tool_results") or []) + [entree],
+        "tool_iterations": int(state.get("tool_iterations") or 0),
+        "entity_map": carte,
+        "pending_action": None, "llm_response": None, "final_response": None,
+        "requires_validation": False, "validation_status": None,
+    })
+    exp = _expert(action["skill"])
+    if exp:
+        sortie["target_agent"] = exp
     return sortie
 
 
@@ -444,7 +496,10 @@ def route_apres_gate(state: AgentState) -> str:
 
 def route_apres_execution(state: AgentState) -> str:
     """Après une action validée : le travail est fait, sauf si c'était un plan."""
-    return "agent1" if state.get("plan_valide") else "fin"
+    # Un plan approuvé rouvre le travail ; un geste approuvé sous « accord
+    # avant chaque action » (08/09) aussi — le tour n'est fini que quand le
+    # modèle répond sans demander d'autre geste.
+    return "agent1" if (state.get("plan_valide") or state.get("reprise_apres_accord")) else "fin"
 
 
 # ── La main revient à l'assistant après la vision ─────────────────────

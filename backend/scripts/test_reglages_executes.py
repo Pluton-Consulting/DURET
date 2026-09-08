@@ -78,7 +78,7 @@ faux_config = types.ModuleType("config")
 # reste un entier, et le code doit y survivre.
 faux_config.settings = types.SimpleNamespace(
     llm_tete="", llm_simultanes=8, kpi_depuis="", anonymisation="desactivee",
-    modele_rapide=None, modele_puissant=None)
+    validation_totale="active", modele_rapide=None, modele_puissant=None)
 sys.modules["config"] = faux_config
 
 import importlib.util  # noqa: E402
@@ -96,6 +96,7 @@ VALEURS = {
     "llm_simultanes": "10",
     "kpi_depuis": "2026-09-01",
     "anonymisation": "desactivee",
+    "validation_totale": "desactivee",   # 08/09 : l'accord avant chaque action
     "modele_rapide": "ollama_cloud:deepseek-v4-flash:0731",
     "modele_puissant": "ollama_cloud:deepseek-v4-pro:0813",
     # 01/09 : la vision et les embeddings se choisissent aussi à l'écran.
@@ -142,6 +143,7 @@ for nom, mauvais, pourquoi in (
         ("llm_simultanes", "beaucoup", "ce n'est pas un nombre"),
         ("kpi_depuis", "hier", "ce n'est pas une date"),
         ("anonymisation", "peut-être", "valeur hors des deux admises"),
+        ("validation_totale", "parfois", "valeur hors des deux admises"),
         ("modele_rapide", "inconnu:x", "fournisseur hors liste"),
         ("modele_rapide", "ollama_cloud:", "modèle vide"),
         ("modele_vision", "inconnu:x", "fournisseur hors liste, vision aussi"),

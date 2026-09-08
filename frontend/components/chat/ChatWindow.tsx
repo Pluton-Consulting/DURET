@@ -600,6 +600,20 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         `/api/validations/${id}/resolve`,
         { method: "POST", token, body: JSON.stringify({ approved: accorde }) }
       )
+      // L'ACCORD AVANT CHAQUE ACTION (08/09) : la reprise s'est de nouveau
+      // arrêtée sur un geste — une NOUVELLE carte attend. Le fil reste
+      // suspendu sur elle, la bulle d'attente se pose, et rien ne se dit :
+      // c'est le geste suivant qu'on approuve, pas une réponse qu'on lit.
+      if (res.status === "pending_validation" && res.validation_id && String(res.validation_id) !== id) {
+        const suivant = String(res.validation_id)
+        setTachesLocales((prev) => prev.filter((t) => t.validationId !== id))
+        filSuspenduRef.current = suivant
+        principalOccupeRef.current = true
+        setPrincipalOccupe(true)
+        bulleAccord(suivant)
+        await rafraichirEtat()
+        return
+      }
       // La tache liee a cet accord vient d'etre refermee cote backend : sa
       // reponse appartient a l'echange qui attend, elle remplit SA bulle.
       // Sans ce lien, elle atterrissait tout en bas, loin de sa question, et

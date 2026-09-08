@@ -972,6 +972,11 @@ Voici les messages trouvés :
     # action possible sans fouille de l'historique (voir cles_images_du_fil).
     system_prompt += _consigne_images(state)
     system_prompt += _consigne_classement()
+    try:
+        from security.validation_totale import consigne as _consigne_accord
+        system_prompt += _consigne_accord()
+    except Exception:  # noqa: BLE001 — sans le module, rien à dire
+        pass
     # Le plan approuvé prime sur tout le reste : c'est le contrat du tour.
     system_prompt += _consigne_plan(state)
 
@@ -1318,7 +1323,13 @@ async def tools_node(state: AgentState, config=None) -> dict:
                           "resultat_masque": raison_du_refus(action["skill"])})
         return {"tool_results": resultats, "tool_iterations": iteration}
 
-    effet = effet_du_skill(action["skill"])
+    effet_declare = effet_du_skill(action["skill"])
+    # L'ACCORD AVANT CHAQUE ACTION (08/09, règle de Noa) : dans le chat, quand
+    # le réglage `validation_totale` est actif, une lecture est promue en
+    # effet externe — carte d'accord, empreinte, puis REPRISE du tour avec le
+    # résultat. Une tâche planifiée garde les effets déclarés.
+    from security import validation_totale as _vt
+    effet = _vt.effet_effectif(effet_declare, state.get("trigger_kind"))
     if effet == "externe":
         # JAMAIS exécuté ici. On arme la validation humaine du graphe parent.
         armement = {
@@ -1326,7 +1337,10 @@ async def tools_node(state: AgentState, config=None) -> dict:
             "pending_action": {"skill": action["skill"], "args": args,
                                "effet": effet, "payload_hash": empreinte},
             "requires_validation": True,
-            "validation_reason": f"Action à effet externe : {action['skill']}",
+            "validation_reason": _vt.raison_d_accord(action["skill"], effet_declare),
+            # Le tour reprend après l'accord quand CHAQUE action l'attend : la
+            # personne approuve un geste, pas la fin du travail.
+            "reprise_apres_accord": _vt.effet_effectif("lecture", state.get("trigger_kind")) == "externe",
             "validation_payload": {"skill": action["skill"], "args": args,
                                    "payload_hash": empreinte},
             "tools_finished": True, "tool_iterations": iteration,
@@ -1407,21 +1421,14 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # cumulative du fil pour que les jetons restent cohérents.
     # Le bloc garanti est masqué DANS LE MÊME APPEL : une carte de jetons
     # séparée ferait diverger [PER_1] du texte et du bloc.
-    masques, carte_maj = await asyncio.to_thread(
-        anonymizer.anonymize_chunks,
-        [contenu, _json.dumps(bloc_garanti, ensure_ascii=False, default=str)
-         if bloc_garanti else ""],
-        state.get("entity_map") or {})
     # `args` accompagne le resultat POUR L'ECRAN, pas pour le modele : c'est ce
     # qui permet au journal d'activite de dire « je regarde le dossier :
     # Chantiers/2026 » au lieu de « je regarde le dossier ». Seuls des reperes
     # de LOCALISATION en sont extraits (journal._detail), jamais du contenu, et
     # ce champ n'est pas reinjecte dans le prompt : il ne coute aucun jeton.
-    resultats.append({"skill": action["skill"], "ok": ok, "payload_hash": empreinte,
-                      "args": action.get("args") or {},
-                      "resultat_masque": masques[0],
-                      # Hors de la coupe : c'est lui qui garantit l'affichage.
-                      "bloc_garanti_masque": (masques[1] or None) if len(masques) > 1 else None})
+    entree, carte_maj = await resultat_de_geste(
+        state, action["skill"], action.get("args") or {}, empreinte, contenu, ok, bloc_garanti)
+    resultats.append(entree)
     # UNE ACTION A ABOUTI : le drapeau de relance retombe, pour que le modele
     # puisse etre repris s'il cale de nouveau plus loin.
     #
@@ -2732,6 +2739,33 @@ def should_validate(state: AgentState) -> str:
 
 import re as _re_images
 _CLE_IMAGE_RE = _re_images.compile(r'"cle"\s*:\s*"([0-9a-f]{16,64})"')
+
+
+async def resultat_de_geste(state: AgentState, skill: str, args: dict, empreinte: str,
+                            contenu: str, ok: bool, bloc_garanti) -> tuple[dict, dict]:
+    """L'entrée de `tool_results` d'un geste, MASQUÉE, et la carte du fil mise à jour.
+
+    Partagée par la boucle d'actions et par la reprise après accord (08/09) :
+    quand chaque action attend l'accord de la personne, le résultat d'un
+    geste approuvé doit revenir au modèle sous exactement la même forme que
+    s'il avait tourné dans la boucle. Le bloc garanti est masqué DANS LE MÊME
+    APPEL : une carte de jetons séparée ferait diverger [PER_1] du texte et
+    du bloc. `args` accompagne le résultat POUR L'ÉCRAN (journal d'activité),
+    jamais pour le modèle.
+    """
+    import asyncio
+    import json as _json
+    from security.anonymizer import anonymizer
+    masques, carte_maj = await asyncio.to_thread(
+        anonymizer.anonymize_chunks,
+        [contenu, _json.dumps(bloc_garanti, ensure_ascii=False, default=str)
+         if bloc_garanti else ""],
+        state.get("entity_map") or {})
+    return ({"skill": skill, "ok": ok, "payload_hash": empreinte, "args": args or {},
+             "resultat_masque": masques[0],
+             # Hors de la coupe : c'est lui qui garantit l'affichage.
+             "bloc_garanti_masque": (masques[1] or None) if len(masques) > 1 else None},
+            carte_maj)
 
 
 def _question_deja_au_fil(messages, question: str) -> bool:

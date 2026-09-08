@@ -451,6 +451,83 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
   )
 }
 
+// L'ACCORD HUMAIN AVANT CHAQUE ACTION (08/09, demande de Noa : « une
+// validation humaine à chaque fois, vraiment à chaque fois »). Réglage
+// `validation_totale` en base, effet immédiat. Actif : dans le chat, chaque
+// geste (lecture du stockage, mails, web, document…) passe par la carte
+// d'accord, puis le tour reprend avec le résultat. Désactivé : l'ancien
+// régime — lectures immédiates, accord sur les seuls effets externes.
+function ReglageValidationTotale({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [actif, setActif] = useState(true)   // le défaut est « active » (08/09)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/reglages`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const lignes = await res.json()
+      const r = (lignes || []).find((l: any) => l.cle === "validation_totale")
+      // Sans surcharge en base, le défaut (config.py) est « active ».
+      const v = (r?.valeur || "").trim().toLowerCase()
+      setActif(v === "" || v === "active")
+      setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "chargement impossible")
+    }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  const basculer = async () => {
+    setBusy(true); setNote("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/reglages`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ cle: "validation_totale", valeur: actif ? "desactivee" : "active" }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
+      setNote(actif
+        ? "Accord avant chaque action désactivé : les lectures s'exécutent tout de suite, seuls les envois, dépôts et tirages attendent votre accord."
+        : "Accord avant chaque action activé : dans le chat, chaque geste s'affiche dans une carte d'accord avant de s'exécuter, puis l'assistant continue.")
+      setErreur("")
+      await charger()
+    } catch (e: any) {
+      setErreur(e?.message || "enregistrement impossible")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600 }}>Accord avant chaque action</div>
+          <div style={{ fontSize: 13, color: "var(--marque-text-muted)", marginTop: 2 }}>
+            {actif
+              ? "Actif : chaque geste de l'assistant (lecture, recherche, document, mail, web) attend votre accord dans le chat, puis le travail continue. Les tâches planifiées ne demandent l'accord que pour un envoi, un dépôt ou un tirage."
+              : "Désactivé : les lectures s'exécutent tout de suite ; seuls les envois, dépôts et tirages attendent votre accord."}
+          </div>
+        </div>
+        <button type="button" className="v2-bouton-doux" onClick={basculer} disabled={busy}>
+          {busy ? "…" : actif ? "Désactiver" : "Activer"}
+        </button>
+      </div>
+      {note && <div style={{ fontSize: 13, marginTop: 8 }}>{note}</div>}
+      {erreur && <div style={{ fontSize: 13, marginTop: 8, color: "var(--marque-danger, #b00020)" }}>{erreur}</div>}
+    </div>
+  )
+}
+
 // L'anonymisation PII se coupe et se rallume EN UN CLIC (demande de Noa,
 // 30/08 : le masquage cassait des flux réels — une adresse tapée masquée en
 // boucle, des balises dans les comptes rendus de mails). Le réglage vit en
@@ -709,6 +786,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
       <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} signal={clesModifiees} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageValidationTotale apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageConcurrence apiUrl={apiUrl} backendToken={backendToken} />
 
       {erreur && <div className="sym-pop" style={{ color: "var(--marque-error-text)",

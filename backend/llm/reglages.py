@@ -39,6 +39,9 @@ REGLAGES_CONNUS = (
     # La RÉHYDRATATION, elle, reste toujours en service : les jetons déjà
     # posés dans l'historique doivent continuer de se résoudre.
     "anonymisation",
+    # L'accord humain avant CHAQUE action (08/09) : « active » / « desactivee »,
+    # défaut « active » (config.py). Voir security/validation_totale.py.
+    "validation_totale",
     # DEUX MODÈLES, ET RIEN D'AUTRE (demande de Noa, 31/08 : « deux modèles
     # fiables et rapides, un pour répondre vite, un pour les grosses tâches ;
     # on oublie tous les autres LLM »). « fournisseur:modele » chacun. Dès
@@ -168,7 +171,7 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom == "kpi_depuis" and (brut or "").strip() and not _FORMAT_INSTANT.match((brut or "").strip()):
         raise ValueError("Date attendue au format AAAA-MM-JJ, éventuellement "
                          "suivie de HH:MM (ex. 2026-08-22 ou 2026-08-22 18:30).")
-    if nom == "anonymisation" and (brut or "").strip() \
+    if nom in ("anonymisation", "validation_totale") and (brut or "").strip() \
             and (brut or "").strip().lower() not in ("active", "desactivee"):
         raise ValueError("Valeur attendue : « active » ou « desactivee ».")
     if nom == "llm_simultanes" and (brut or "").strip():

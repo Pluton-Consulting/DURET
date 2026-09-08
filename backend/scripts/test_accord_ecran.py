@@ -100,7 +100,8 @@ verifier("ce qui ne change pas est toujours dit", "conservé à l'identique" in 
 print("\n── 3. Après l'exécution")
 src_r = (BACKEND / "agents" / "router.py").read_text(encoding="utf-8")
 verifier("`resultat` existe sur tous les chemins (plus de NameError avalé sur un échec)",
-         "resultat = None\n    try:\n        resultat = await execute_skill(" in src_r)
+         # 08/09 : `erreur` accompagne `resultat` (la reprise après accord lit les deux).
+         "resultat = None\n    erreur = None\n    try:\n        resultat = await execute_skill(" in src_r)
 verifier("quand le skill rend un bloc `visuel`, le brouillon (photo de départ) ne survit pas",
          'b.get("type") == "visuel" for b in _blocs_de_resultat(_sortie_skill.get("bloc_ui"))' in src_r
          and 'precedent = ""' in src_r

@@ -279,6 +279,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # sa consigne interdirait d'en proposer un nouveau. Même piège que
         # `relance_annonce`, qui a gelé l'assistant une fois déjà.
         "plan_valide": None,
+        "reprise_apres_accord": False,
         "forcages": 0,
         "redaction_forcee": False,
         # LA PROVENANCE AUSSI. Ces trois champs survivaient au tour via le

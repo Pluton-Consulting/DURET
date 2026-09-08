@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # (Paramètres → Clés API) ou par ANONYMISATION=active ici ; la
     # RÉHYDRATATION des balises déjà posées ne se coupe jamais.
     anonymisation: str = "desactivee"
+    # L'ACCORD HUMAIN AVANT CHAQUE ACTION (08/09, demande de Noa : « une
+    # validation humaine à chaque fois, vraiment à chaque fois »). « active » :
+    # dans le chat, TOUT geste passe par la carte d'accord puis le tour
+    # reprend ; « desactivee » : l'ancien régime (lectures immédiates, accord
+    # sur les seuls effets externes). Un clic dans Paramètres → Clés API.
+    validation_totale: str = "active"
     screenshot_ttl_minutes: int = 30               # purge des captures d'écran orphelines dans validations.payload
     screenshot_cleanup_interval_s: int = 300       # fréquence du balayage TTL
 

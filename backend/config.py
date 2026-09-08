@@ -466,6 +466,9 @@ class Settings(BaseSettings):
     # Schedule — défaut global (surchargeable par user en DB)
     access_start_hour: int = 8
     access_end_hour: int = 18
+    # Le fuseau dans lequel la plage se lit (08/09 : le conteneur est en UTC,
+    # la plage était décalée de deux heures). Nom IANA ; inconnu → Paris.
+    fuseau_horaire: str = "Europe/Paris"
 
     class Config:
         env_file = ".env"

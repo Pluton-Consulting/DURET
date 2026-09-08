@@ -92,15 +92,11 @@ async def check_schedule_node(state: AgentState) -> dict:
     if bypass:
         return {}
 
-    now = datetime.datetime.now()
-    if not (start_hour <= now.hour < end_hour):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Accès refusé à {now.hour}h{now.minute:02d}. "
-                f"Plage autorisée : {start_hour}h00–{end_hour}h00."
-            ),
-        )
+    # Même horloge que routers/chat.py : celle de l'entreprise (08/09).
+    from security.horaires import dans_la_plage, message_refus
+    ok, local = dans_la_plage(start_hour, end_hour)
+    if not ok:
+        raise HTTPException(status_code=403, detail=message_refus(local, start_hour, end_hour))
     return {}
 
 

@@ -1138,6 +1138,10 @@ ${texteAffiche}`)
           // sur le même poste). On l'oublie et on rejoue sur un fil neuf, sinon le
           // chat resterait définitivement bloqué.
           if (e?.status !== 403) throw e
+          // 08/09 : le 403 de la PLAGE HORAIRE (« Accès refusé à 8h12… »)
+          // était pris pour un fil périmé — on oubliait le fil, on rejouait,
+          // second refus, et la personne ne lisait jamais la raison.
+          if (/^Acc[èe]s refus[ée]/i.test(String(e?.message || ""))) throw e
           forgetThread()
           res = await post(newId())
         }

@@ -247,11 +247,14 @@ async def _check_schedule(current_user: User) -> None:
     start_hour = row["schedule_start_hour"] if (row and row["schedule_start_hour"] is not None) else g_start
     end_hour   = row["schedule_end_hour"]   if (row and row["schedule_end_hour"]   is not None) else g_end
 
-    now = datetime.datetime.now()
-    if not (start_hour <= now.hour < end_hour):
+    # À L'HEURE DE L'ENTREPRISE, pas à celle du conteneur (UTC) — 08/09 :
+    # « toujours bloqué dans les bonnes heures ». Voir security/horaires.py.
+    from security.horaires import dans_la_plage, message_refus
+    ok, local = dans_la_plage(start_hour, end_hour)
+    if not ok:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Accès refusé à {now.hour}h{now.minute:02d}. Plage autorisée : {start_hour}h00–{end_hour}h00.",
+            detail=message_refus(local, start_hour, end_hour),
         )
 
 

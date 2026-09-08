@@ -348,6 +348,125 @@ async def lire(chemin: str, proprietaire: str | None = None) -> dict:
         return await _lire_ouvert(client, base, sid, chemin, proprietaire)
 
 
+# LE BALAYAGE MAISON, ET POURQUOI IL EXISTE.
+#
+# RELEVÉ EN PRODUCTION LE 08/09 : `SYNO.FileStation.Search` rend ZÉRO sur ce
+# NAS, toujours — y compris sur un dossier au chemin exact dont l'arborescence
+# compte 132 fichiers, dont 14 PDF dans un sous-dossier nommé « PDF ». La
+# requête part, DSM répond « terminé, 0 fichier ». C'est le comportement d'un
+# serveur dont l'index de recherche (Universal Search) n'est pas construit sur
+# ces partages, et aucun réglage de notre côté n'y change rien.
+#
+# Or LE LISTAGE, LUI, MARCHE : la même minute, l'arborescence complète du même
+# dossier est rendue en 6,5 secondes. On cesse donc de dépendre d'un index
+# qu'on ne maîtrise pas : on descend nous-mêmes, par niveaux, plusieurs
+# listages de front. C'est plus lent qu'un index — quand il fonctionne — et
+# c'est infiniment mieux qu'une recherche qui répond « rien » sur ce qui
+# existe : une absence FAUSSE fait conclure au modèle que le document n'est
+# pas là, et il l'annonce à l'utilisateur.
+#
+# Les plafonds sont du TEMPS et du NOMBRE DE DOSSIERS, et un balayage
+# incomplet le DIT (règle du 01/09 : jamais bloqué en quantité, mais jamais
+# une absence présentée comme prouvée).
+# UN BALAYAGE NE RELIT PAS CE QU'IL VIENT DE LIRE. Dans le tour du 08/09, le
+# modèle a lancé huit recherches en cinq minutes, sur des variantes du même nom
+# (« AIRBORNE », « 2029 AIRBORNE », « pdf »…). Sans mémoire, chacune redescend
+# toute l'arborescence : le geste devient juste, et le tour devient
+# interminable. Ce cache ne sert QU'AU BALAYAGE : `nas_lister` et
+# `nas_arborescence`, les gestes que l'on demande explicitement, listent
+# toujours frais — un dossier qu'on vient d'ouvrir doit montrer ce qu'il
+# contient MAINTENANT. Cinq minutes est la durée d'une conversation, pas celle
+# d'une journée de travail.
+CACHE_DUREE_S = 300
+CACHE_MAX = 4000
+_CACHE_LISTAGE: dict = {}
+
+BALAYAGE_DE_FRONT = 8
+BALAYAGE_PROFONDEUR = 8
+BALAYAGE_DOSSIERS_MAX = 1500
+BALAYAGE_DELAI_S = 45
+
+
+async def _balayer(client, base, sid, racines: list[str],
+                   correspond, delai_s: float = BALAYAGE_DELAI_S,
+                   dossiers_max: int = BALAYAGE_DOSSIERS_MAX,
+                   profondeur: int = BALAYAGE_PROFONDEUR,
+                   arret_au_premier: bool = False) -> tuple[list[dict], bool]:
+    """Descend l'arborescence et rend les entrées retenues par `correspond`.
+
+    `correspond(entree) -> bool` reçoit un dict `{nom, chemin, dossier, octets}`.
+    Rend `(trouvés, complet)` : `complet` est faux dès qu'un plafond a mordu —
+    l'appelant doit alors dire que l'absence n'est pas prouvée.
+    """
+    import time as _t
+
+    debut = _t.monotonic()
+    porte = asyncio.Semaphore(BALAYAGE_DE_FRONT)
+    trouves: list[dict] = []
+    vus: set = set()
+    complet = True
+    niveau = [r for r in racines if r]
+    listes = 0
+
+    async def _un(chemin: str) -> list[dict]:
+        garde = _CACHE_LISTAGE.get(chemin)
+        if garde and garde[0] > _t.monotonic():
+            return garde[1]
+        async with porte:
+            garde = _CACHE_LISTAGE.get(chemin)      # un autre l'a peut-être lu pendant l'attente
+            if garde and garde[0] > _t.monotonic():
+                return garde[1]
+            try:
+                brut = await _lister_ouvert(client, base, sid, chemin)
+            except Exception as e:  # noqa: BLE001 — un dossier illisible n'arrête pas le balayage
+                logger.info("NAS : dossier ignoré pendant le balayage (%s) : %s",
+                            chemin, str(e)[:100])
+                return []
+            entrees = brut.get("entrees") or []
+            if len(_CACHE_LISTAGE) > CACHE_MAX:
+                _CACHE_LISTAGE.clear()              # borne grossière : on repart à neuf
+            _CACHE_LISTAGE[chemin] = (_t.monotonic() + CACHE_DUREE_S, entrees)
+            return entrees
+
+    for _ in range(max(1, int(profondeur))):
+        if not niveau:
+            break
+        if _t.monotonic() - debut > delai_s or listes >= dossiers_max:
+            complet = False
+            break
+        paquets = await asyncio.gather(*[_un(c) for c in niveau],
+                                       return_exceptions=True)
+        listes += len(niveau)
+        suivant: list[str] = []
+        for paquet in paquets:
+            if isinstance(paquet, BaseException):
+                continue
+            for e in paquet:
+                chemin = e.get("chemin")
+                if not chemin or chemin in vus:
+                    continue
+                vus.add(chemin)
+                if correspond(e):
+                    trouves.append(e)
+                    if arret_au_premier:
+                        return trouves, complet
+                if e.get("dossier"):
+                    suivant.append(chemin)
+        niveau = suivant
+    else:
+        # La profondeur maximale est atteinte alors qu'il restait des dossiers.
+        if niveau:
+            complet = False
+    return trouves, complet
+
+
+def _sans_accent_nas(texte: str) -> str:
+    """Comparaison de noms indulgente aux accents et à la casse."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", (texte or "").lower())
+                   if unicodedata.category(c) != "Mn")
+
+
 async def _chercher_ouvert(client, base, sid, motif: str,
                            dossier: Optional[str] = None) -> dict:
     """Cherche par nom dans une session DÉJÀ ouverte."""
@@ -419,26 +538,41 @@ async def _chercher_ouvert(client, base, sid, motif: str,
             continue
         trouves.extend(g)
 
-    # UN ÉCHEC N'EST PAS ZÉRO RÉSULTAT. Quand AUCUNE racine n'a pu être
-    # cherchée, le dire comme une erreur : « aucun fichier ne correspond »
-    # faisait conclure au modèle que le fichier n'existait pas.
     pannes = [g for g in groupes if isinstance(g, BaseException)]
-    if groupes and len(pannes) == len(groupes):
-        raise NasRefuse(
-            "La recherche par nom a ÉCHOUÉ sur le serveur "
-            f"({str(pannes[0])[:120]}) : ce n'est PAS « aucun résultat ». "
-            "Passe par le listage (`nas_lister`) et le `chemin` exact.")
     inacheve = any(t.pop("inacheve", None) for t in trouves)
+    methode = "index du serveur"
+
+    # ZÉRO RÉSULTAT DE L'INDEX N'EST PAS UNE ABSENCE : ON VA VOIR NOUS-MÊMES.
+    # Sur ce serveur, `SYNO.FileStation.Search` rend toujours zéro (index non
+    # construit) — y compris sur un dossier dont on vient de lister 132
+    # fichiers. Le balayage par listages, lui, voit ce qui est là. Il prend le
+    # relais dès que l'index ne rend RIEN, et aussi quand il est tombé partout.
+    if not trouves:
+        cible = _sans_accent_nas(motif)
+
+        def _correspond(e):
+            return cible in _sans_accent_nas(e.get("nom") or "")
+
+        balayes, complet = await _balayer(client, base, sid, racines, _correspond)
+        if balayes or not pannes:
+            trouves = [{"nom": e.get("nom"), "chemin": e.get("chemin"),
+                        "dossier": bool(e.get("dossier")),
+                        "octets": e.get("octets")} for e in balayes]
+            methode = "parcours des dossiers"
+            inacheve = not complet
+        elif pannes and len(pannes) == len(groupes):
+            raise NasRefuse(
+                "La recherche par nom a ÉCHOUÉ sur le serveur "
+                f"({str(pannes[0])[:120]}) : ce n'est PAS « aucun résultat ». "
+                "Passe par le listage (`nas_lister`) et le `chemin` exact.")
+
     sortie = {"motif": motif, "nombre": len(trouves), "resultats": trouves[:200],
-              "dossiers_explores": racines}
-    if pannes:
-        sortie["note"] = (f"Recherche en ÉCHEC sur {len(pannes)} racine(s) sur "
-                          f"{len(groupes)} : résultats partiels, une absence n'est "
-                          "pas prouvée — dis-le tel quel.")
+              "dossiers_explores": racines, "methode": methode}
     if inacheve:
-        sortie["note"] = ("Recherche INTERROMPUE avant la fin sur au moins une "
-                          "racine : résultats partiels, une absence n'est pas "
-                          "prouvée — dis-le tel quel.")
+        sortie["note"] = ("Parcours INTERROMPU avant d'avoir tout vu (temps ou "
+                          "nombre de dossiers) : résultats partiels, une absence "
+                          "n'est PAS prouvée — dis-le tel quel, et propose de "
+                          "chercher dans un dossier précis.")
     return sortie
 
 

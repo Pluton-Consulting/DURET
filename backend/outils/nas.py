@@ -37,11 +37,12 @@ MAX_SCHEMA_CARACTERES = 9000
 # À 90 s, un serveur chargé rendait un arbre partiel sur des demandes légitimes.
 DELAI_ARBRE_S = 300
 _LISTAGES_DE_FRONT = 6
-# La résolution d'un NOM descend jusqu'à trois niveaux sous les racines, en
-# soixante listages au plus : au-delà, ce n'est plus une résolution mais un
-# balayage, et `nas_chercher` existe pour ça.
-PROFONDEUR_RESOLUTION = 3
-MAX_LISTAGES_RESOLUTION = 60
+# La résolution d'un NOM s'appuie sur le balayage partagé
+# (`nas.acces._balayer`) : ses bornes vivent là-bas, en TEMPS et en nombre de
+# dossiers. Les deux constantes qui suivent ne bornent plus la descente ; elles
+# restent lues par les messages et les bancs.
+PROFONDEUR_RESOLUTION = 8
+MAX_LISTAGES_RESOLUTION = 1500
 MAX_LOT = 5
 
 
@@ -113,6 +114,13 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
                 break
             except Exception:  # noqa: BLE001 - racine fantôme : on cherche ailleurs
                 continue
+    # PAR NIVEAUX, ET AUSSI PROFOND QU'IL LE FAUT (08/09). La première version
+    # s'arrêtait à 3 niveaux et 60 listages : « ETUDES EN COURS » (niveau 3) et
+    # « 2029 AIRBORNE… » (niveau 4) étaient donc introuvables, alors que
+    # l'utilisateur les avait sous les yeux. Le balayage partagé
+    # (`nas.acces._balayer`) descend plus loin, plusieurs listages de front, et
+    # c'est le TEMPS qui borne — pas un compte de dossiers choisi à l'avance.
+    #
     # PAR NIVEAUX, PAS SEULEMENT CHEZ LES ENFANTS DIRECTS DES RACINES. Relevé
     # du 08/09 : la racine ouverte est /home, le classement vit dans
     # /home/Drive, et ce que le modèle nomme — « 03-Appel d'offres etudes »,
@@ -121,45 +129,39 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
     # montrer. Un niveau se lit en entier avant de descendre, l'exact prime le
     # « contient » au même niveau, et le nombre de listages est plafonné.
     disponibles: list[str] = []
+    complet = True
     if courant is None:
-        niveau = list(racines)
-        listages = 0
-        for profondeur in range(PROFONDEUR_RESOLUTION):
-            suivant: list[str] = []
-            exacts: list[dict] = []
-            contient: list[dict] = []
-            for dossier in niveau:
-                if listages >= MAX_LISTAGES_RESOLUTION:
-                    break
-                listages += 1
-                try:
-                    enfants = await _enfants_dossiers(client, base, sid, dossier)
-                except Exception:  # noqa: BLE001 - une racine fantôme ou un dossier illisible ne bloque pas
-                    continue
-                if profondeur == 0:
-                    disponibles += [e.get("nom") or "" for e in enfants]
-                for e in enfants:
-                    nom = (e.get("nom") or "").lower()
-                    if nom == segments[0].lower():
-                        exacts.append(e)
-                    elif segments[0].lower() in nom:
-                        contient.append(e)
-                    if e.get("chemin"):
-                        suivant.append(e["chemin"])
-            choisi = exacts or contient
-            if choisi:
-                courant = choisi[0]["chemin"]
-                break
-            if not suivant or listages >= MAX_LISTAGES_RESOLUTION:
-                break
-            niveau = suivant
+        from nas.acces import _balayer, _sans_accent_nas
+        cible = _sans_accent_nas(segments[0])
+
+        # L'EXACT PRIME LE « CONTIENT », mais on ne peut pas s'arrêter au
+        # premier venu : « DCE » est le début de vingt noms. On récolte donc
+        # tout ce qui correspond au cours du balayage, puis on tranche.
+        def _correspond(e):
+            return e.get("dossier") and cible in _sans_accent_nas(e.get("nom") or "")
+
+        for r in racines:
+            try:
+                disponibles += [e.get("nom") or ""
+                                for e in await _enfants_dossiers(client, base, sid, r)]
+            except Exception:  # noqa: BLE001 - une racine fantôme ne bloque pas
+                continue
+        candidats, complet = await _balayer(client, base, sid, racines, _correspond)
+        exacts = [e for e in candidats if _sans_accent_nas(e.get("nom") or "") == cible]
+        if exacts or candidats:
+            # Le plus HAUT dans l'arborescence l'emporte à égalité : un dossier
+            # proche de la racine est presque toujours celui qu'on nomme.
+            choisis = sorted(exacts or candidats,
+                             key=lambda e: str(e.get("chemin") or "").count("/"))
+            courant = choisis[0]["chemin"]
     if courant is None:
         raise NasRefuse(
             f"Aucun dossier « {segments[0]} » sous les racines ouvertes "
-            f"({', '.join(racines)}), jusqu'à {PROFONDEUR_RESOLUTION} niveaux. "
-            f"Dossiers présents : "
+            f"({', '.join(racines)})"
+            + ("" if complet else " (parcours interrompu : l'absence n'est pas prouvée)")
+            + f". Dossiers de premier niveau : "
             f"{', '.join(sorted(set(d for d in disponibles if d))[:25])}. "
-            "Reprends le nom EXACT dans un listage, ou cherche-le avec `nas_chercher`.")
+            "Reprends le `chemin` EXACT d'un listage, ou cherche-le avec `nas_chercher`.")
 
     # Segments suivants : contraints à leur parent — c'est le sens d'un chemin.
     for segment in segments[1:]:

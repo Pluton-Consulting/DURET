@@ -204,7 +204,12 @@ if NAS:
              premiers and all(v.startswith("[") for v in premiers.values()), debuts)
     verifier("« 2029 RC VF.pdf » est TROUVÉ (la racine fantôme /Drive en panne n'annule pas /home)",
              r.get("nombre") == 1 and r["resultats"][0]["nom"] == "2029 RC VF.pdf", r)
-    verifier("…et la panne partielle est DITE", "ÉCHEC" in r.get("note", "") or "échec" in r.get("note", "").lower(), r.get("note"))
+    # 08/09 : quand l'index ne rend rien, le BALAYAGE prend le relais et
+    # trouve — la note ne parle donc plus d'échec, elle ne parle que si le
+    # parcours a été interrompu. Ce qui compte reste : une absence n'est
+    # jamais présentée comme prouvée quand on n'a pas tout vu.
+    verifier("le résultat dit par quelle méthode il a trouvé",
+             r.get("methode") in ("index du serveur", "parcours des dossiers"), r.get("methode"))
     async def _appel_mort(client, base, api, method, version, sid=None, **params):
         raise SynologyError("Synology (SYNO.FileStation.Search.start) : paramètre invalide")
     sys.modules["ingestion.connectors.synology"]._appel = _appel_mort

@@ -143,8 +143,14 @@ else:
     nas = (BACKEND / "nas" / "acces.py").read_text(encoding="utf-8")
     verifier("le sondage de la recherche NAS va jusqu'à une minute (150 × 0,4 s)",
              "for _ in range(150)" in nas and "limit=200" in nas)
+    # 08/09 : l'index du serveur rendant toujours zéro, la recherche passe par
+    # un BALAYAGE de listages. Le mot a changé, la règle non : une absence
+    # jamais présentée comme prouvée quand le parcours n'est pas allé au bout.
     verifier("une recherche interrompue le DIT (résultats partiels, absence non prouvée)",
-             "Recherche INTERROMPUE" in nas)
+             "Parcours INTERROMPU" in nas and "n'est PAS prouvée" in nas)
+    verifier("le balayage existe, borné en TEMPS et en nombre de dossiers",
+             "async def _balayer" in nas and "BALAYAGE_DELAI_S" in nas
+             and "BALAYAGE_DOSSIERS_MAX" in nas)
     verifier("l'arbre du serveur a cinq minutes, plus 90 secondes",
              re.search(r"DELAI_ARBRE_S = 300",
                        (BACKEND / "outils" / "nas.py").read_text(encoding="utf-8")))

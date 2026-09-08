@@ -280,7 +280,11 @@ SKILLS = {
             "un fournisseur ne sort ni des fichiers importes ni des "
             "documents : le classement porte les noms des clients. Le "
             "resultat s'affiche automatiquement ; propose ensuite d'ouvrir "
-            "ou d'explorer ce qui est trouve. `motif` : le nom cherche"),
+            "ou d'explorer ce qui est trouve. `motif` : le nom cherche. "
+            "`dossier` (optionnel) : ou chercher -- le `chemin` EXACT d'un "
+            "listage, ce qui rend la recherche BEAUCOUP plus rapide. Sans lui, "
+            "tout le serveur est parcouru : c'est long, ne le relance pas a "
+            "l'identique"),
         requis=["motif"], optionnels=["dossier"],
         effet="lecture",
         libelle="je cherche ce nom sur le serveur"),

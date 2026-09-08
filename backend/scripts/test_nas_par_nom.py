@@ -106,9 +106,38 @@ def _poser(nom, **attrs):
 
 
 _poser("nas")
+# 08/09 : la résolution d'un nom passe par le balayage partagé de `nas.acces`
+# (l'index du serveur rendait toujours zéro). On le double ici sur le MÊME
+# arbre, avec la même règle de correspondance.
+async def _balayer(client, base, sid, racines, correspond, **k):
+    trouves, vus, niveau = [], set(), list(racines)
+    for _ in range(8):
+        suivant = []
+        for d in niveau:
+            for e in ARBRE.get(_verifier(d) if d.startswith("/") else d, []):
+                if e["chemin"] in vus:
+                    continue
+                vus.add(e["chemin"])
+                if correspond(e):
+                    trouves.append(e)
+                if e.get("dossier"):
+                    suivant.append(e["chemin"])
+        niveau = suivant
+        if not niveau:
+            break
+    return trouves, True
+
+
+def _sans_accent_nas(texte):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", (texte or "").lower())
+                   if unicodedata.category(c) != "Mn")
+
+
 _poser("nas.acces", _lister_ouvert=_lister_ouvert, _chercher_ouvert=_chercher_ouvert,
        _lire_ouvert=_lire_ouvert, connexion=lambda: _Connexion(),
-       dossiers_autorises=lambda: list(RACINES),
+       dossiers_autorises=lambda: list(RACINES), _balayer=_balayer,
+       _sans_accent_nas=_sans_accent_nas,
        normaliser=lambda c: "/" + (c or "").strip("/"), NasRefuse=NasRefuse,
        verifier=_verifier, lire=None)
 _poser("config", settings=types.SimpleNamespace(synology_folders="/home,/Drive"))

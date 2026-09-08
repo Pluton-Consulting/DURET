@@ -36,8 +36,17 @@ def _module_present(chemin: str) -> bool:
 def fournisseur() -> str:
     """'outlook', 'gmail', ou lève si rien n'est configuré."""
     choix = (getattr(settings, "mail_provider", "auto") or "auto").strip().lower()
-    if choix in ("outlook", "gmail"):
+    if choix in ("outlook", "gmail", "imap"):
         return choix
+    # LA BOÎTE UNIQUE PAR MOT DE PASSE D'APPLICATION (08/09) : des identifiants
+    # IMAP sont le signal le plus explicite — ils passent avant les clés Google
+    # ou Microsoft qui pourraient traîner dans le même `.env`.
+    try:
+        from mail.imap import configure as _imap_configure
+        if _imap_configure():
+            return "imap"
+    except Exception:  # noqa: BLE001 — sans le module, on continue
+        pass
 
     if settings.ms_tenant_id and settings.ms_client_id and settings.ms_client_secret:
         return "outlook"
@@ -70,7 +79,8 @@ def fournisseur() -> str:
         return "gmail"
 
     raise NotImplementedError(
-        "Aucune messagerie configurée : renseignez les identifiants Microsoft 365 "
+        "Aucune messagerie configurée : renseignez une boîte unique par mot de passe "
+        "d'application (MAIL_IMAP_USER / MAIL_IMAP_PASSWORD), les identifiants Microsoft 365 "
         "(MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET), déposez la clé du "
         "compte de service Google (GOOGLE_SA_FILE / GOOGLE_SA_JSON), ou "
         "configurez le client OAuth des connexions personnelles "

@@ -323,6 +323,24 @@ async def envoyer_message(boite: str, destinataire: str, objet: str,
             f"L'envoi a été refusé par le serveur de courrier "
             f"(HTTP {reponse.status_code}) : {reponse.text[:300]}")
 
+    if nom == "imap":
+        # LA BOÎTE UNIQUE (08/09) : le même message MIME que Gmail, par SMTP.
+        import asyncio as _asyncio
+        import base64 as _b64
+        from mail import imap
+        brut = _b64.urlsafe_b64decode(_mime_gmail(boite, destinataire, objet, corps, cc, pieces, html))
+        try:
+            await _asyncio.to_thread(imap.envoyer, brut, boite, [destinataire] + _adresses(cc))
+        except Exception as e:  # noqa: BLE001 — smtplib lève ses propres types
+            texte = str(e)
+            if "535" in texte or "Username and Password not accepted" in texte:
+                raise RuntimeError(
+                    "Le serveur de courrier refuse l'identifiant : vérifiez MAIL_IMAP_USER et "
+                    "le mot de passe d'application (MAIL_IMAP_PASSWORD), et que la validation "
+                    "en deux étapes est active sur le compte.") from e
+            raise RuntimeError(f"L'envoi a été refusé par le serveur de courrier : {texte[:300]}") from e
+        return {"envoye": True, "boite": boite, "destinataire": destinataire, "objet": objet}
+
     # Gmail. Le connecteur est propre au client qui vit dans Google Workspace :
     # sur un projet qui n'en a pas, l'erreur dit la vraie cause au lieu d'un
     # ModuleNotFoundError anonyme au fond d'un journal.

@@ -88,8 +88,36 @@ async def delegations(user_id: str) -> list[dict]:
     return [{"mailbox": r["mailbox"], "can_send": r["can_send"]} for r in rows]
 
 
+def boite_unique() -> Optional[str]:
+    """La boîte UNIQUE de l'entreprise (mot de passe d'application), ou None.
+
+    08/09, décision de Noa pour Duret : « un seul mail pour tout le monde ».
+    Quand elle existe, c'est ELLE que tout le monde lit — sous la permission
+    « Accès au mail » de la matrice des rôles (`access_mail`), et rien d'autre.
+    """
+    try:
+        from mail.imap import boite_unique as _bu
+        return _bu()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def a_acces_au_mail(role: Optional[str]) -> bool:
+    """La colonne « Accès au mail » de la matrice (08/09). Fail-closed : un rôle
+    inconnu n'a rien ; le super_admin a toujours tout (`has_permission`)."""
+    from security.rbac import has_permission
+    return has_permission((role or "").strip(), "access_mail")
+
+
 async def boites_autorisees(user) -> list[dict]:
-    """Toutes les boîtes accessibles : la sienne (envoi permis) + les délégations."""
+    """Toutes les boîtes accessibles : la sienne (envoi permis) + les délégations.
+    Avec une boîte unique : ELLE, pour qui a l'accès au mail."""
+    unique = boite_unique()
+    if unique:
+        if not a_acces_au_mail(getattr(user, "role", None)):
+            return []
+        return [{"mailbox": unique, "can_send": True, "propre": True,
+                 "libelle": "La boîte de l'entreprise (unique)"}]
     # PAS DE JETON « TOUTES LES BOÎTES » ICI (01/09). Ce jeton est lu ailleurs
     # comme un blanc-seing (filtrage RAG), alors que le DÉFAUT de ces rôles est
     # désormais leur propre boîte. On rend donc les boîtes RÉELLES, et on dit à
@@ -138,6 +166,10 @@ async def boites_par_id(user_id: Optional[str]) -> list[str]:
     # et n'ouvre une autre boîte qu'en la NOMMANT (journalisé).
     if ligne and (ligne["role"] or "").strip().lower() == "super_admin":
         return [TOUTES_LES_BOITES]
+    unique = boite_unique()
+    if unique:
+        # La boîte unique, pour qui a l'accès au mail ; sinon rien du tout.
+        return [unique] if (ligne and a_acces_au_mail(ligne["role"])) else []
     boites = []
     propre = normaliser(ligne["email"] if ligne else None)
     if propre:
@@ -221,6 +253,11 @@ async def boite_par_defaut(user) -> Optional[str]:
     """
     propre = normaliser(getattr(user, "email", None))
     role = (getattr(user, "role", "") or "").strip().lower()
+    unique = boite_unique()
+    if unique:
+        # LA BOÎTE UNIQUE (08/09) : la même pour tout le monde. Sans l'accès au
+        # mail, personne — `verifier_acces` le dira avec la raison.
+        return unique
     if role == "super_admin" or (role == "direction" and not est_du_domaine(propre)):
         return (await _boite_du_dirigeant()) or propre or None
     return propre or None
@@ -236,6 +273,24 @@ async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> s
     cible = normaliser(mailbox)
     if not cible:
         raise AccesBoiteRefuse("Aucune boîte mail précisée.")
+
+    # LA COLONNE « ACCÈS AU MAIL » (08/09) : sans elle, aucune boîte, la
+    # sienne comprise. Semée VRAIE pour tous les rôles existants (migration
+    # 039) : rien ne change tant que la direction ne décoche pas.
+    if not a_acces_au_mail(getattr(user, "role", None)):
+        raise AccesBoiteRefuse(
+            "Votre rôle n'a pas l'accès au mail : la direction peut l'accorder dans "
+            "Paramètres → Permissions, colonne « Accès au mail ».")
+
+    unique = boite_unique()
+    if unique:
+        # LA BOÎTE UNIQUE : c'est elle, ou rien. Une autre adresse n'existe pas
+        # ici — on le dit, sans révéler quoi que ce soit d'autre.
+        if cible == unique:
+            return cible
+        raise AccesBoiteRefuse(
+            f"La messagerie de l'entreprise est une boîte unique ({unique}) : "
+            f"« {cible} » n'est pas une boîte accessible ici.")
 
     if acces_total(getattr(user, "role", None)):
         # Journalisé : un accès administrateur à la boîte d'autrui doit laisser

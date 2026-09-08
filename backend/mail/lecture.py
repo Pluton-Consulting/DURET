@@ -63,6 +63,9 @@ logger = logging.getLogger("symbiose.mail.lecture")
 DOSSIERS = {
     "outlook": {"recus": "inbox", "envoyes": "sentitems"},
     "gmail": {"recus": "INBOX", "envoyes": "SENT"},
+    # « imap » : les dossiers se lisent dans `mail.imap.dossier_imap` (le nom du
+    # dossier des envoyés dépend du fournisseur).
+    "imap": {"recus": "recus", "envoyes": "envoyes"},
 }
 
 MAX_MESSAGES = 25
@@ -667,6 +670,30 @@ async def _ouvrir_gmail(boite: str, identifiant: str) -> dict:
     return await asyncio.to_thread(_travail)
 
 
+# ── La boîte unique, par IMAP (08/09) ────────────────────────────────────
+# Même forme de fiche que Graph et Gmail : la chaîne ne sait pas d'où vient
+# le message. Les appels réseau sont synchrones : dans un thread.
+
+async def _lire_imap(boite: str, dossier: str, limite: int,
+                     depuis: Optional[datetime], recherche: Optional[str] = None,
+                     avant: Optional[datetime] = None,
+                     apercu=None) -> tuple[list[dict], Optional[int]]:
+    import asyncio
+    from mail import imap
+    longueur = _longueur_apercu(limite, apercu)
+    return await asyncio.to_thread(
+        imap.lister, boite, imap.dossier_imap(dossier), limite, depuis, recherche, avant, longueur)
+
+
+async def _ouvrir_imap(boite: str, identifiant: str) -> dict:
+    import asyncio
+    from mail import imap
+    dossier, _, uid = str(identifiant).partition("|")
+    if not uid:
+        dossier, uid = "INBOX", dossier
+    return await asyncio.to_thread(imap.ouvrir, boite, uid, dossier)
+
+
 async def lire_boite(boite: str, dossier: str = "recus",
                      limite: int = 10, depuis=None, recherche=None, avant=None,
                      apercu=None) -> dict:
@@ -699,6 +726,9 @@ async def lire_boite(boite: str, dossier: str = "recus",
     if nom == "outlook":
         messages, total = await _lire_outlook(boite, DOSSIERS["outlook"][cle], limite, debut,
                                               recherche=mots, avant=borne, apercu=apercu)
+    elif nom == "imap":
+        messages, total = await _lire_imap(boite, cle, limite, debut,
+                                           recherche=mots, avant=borne, apercu=apercu)
     else:
         messages, total = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite, debut,
                                             recherche=mots, avant=borne, apercu=apercu)
@@ -815,6 +845,14 @@ async def telecharger_piece(boite: str, info: dict) -> bytes:
             raise ValueError("cette pièce n'est pas un fichier (message joint ou lien de partage)")
         return base64.b64decode(contenu)
 
+    if fournisseur() == "imap":
+        import asyncio as _asyncio
+        from mail import imap
+        dossier, _, uid = str(info["message"]).partition("|")
+        if not uid:
+            dossier, uid = "INBOX", dossier
+        return await _asyncio.to_thread(imap.piece, uid, str(info["id"]), dossier)
+
     def _travail() -> bytes:
         from ingestion.connectors.gmail import _service
         service = _service(boite)
@@ -856,6 +894,8 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
             n = 1
         if nom == "outlook":
             recents, _ = await _lire_outlook(boite, DOSSIERS["outlook"][cle], n, None)
+        elif nom == "imap":
+            recents, _ = await _lire_imap(boite, cle, n, None)
         else:
             recents, _ = await _lire_gmail(boite, DOSSIERS["gmail"][cle], n, None)
         if len(recents) < n:
@@ -867,6 +907,8 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
         if nom == "outlook":
             candidats, _ = await _lire_outlook(boite, DOSSIERS["outlook"][cle], 5, None,
                                                recherche=recherche)
+        elif nom == "imap":
+            candidats, _ = await _lire_imap(boite, cle, 5, None, recherche=recherche)
         else:
             candidats, _ = await _lire_gmail(boite, DOSSIERS["gmail"][cle], 5, None,
                                              recherche=recherche)
@@ -876,6 +918,7 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
         identifiant = _resoudre(choisi["ref"], boite)
     logger.info("Ouverture d'un message de %s via %s", boite, nom)
     fiche = (await _ouvrir_outlook(boite, identifiant) if nom == "outlook"
+             else await _ouvrir_imap(boite, identifiant) if nom == "imap"
              else await _ouvrir_gmail(boite, identifiant))
     corps = fiche.get("corps") or ""
     longueur = len(corps)

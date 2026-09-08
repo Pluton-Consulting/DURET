@@ -423,7 +423,20 @@ class Settings(BaseSettings):
     agenda_pause_fin: int = 13
     agenda_jours: str = "0,1,2,3,4"
 
-    mail_provider: str = "auto"        # auto | outlook | gmail
+    mail_provider: str = "auto"        # auto | outlook | gmail | imap
+    # LA BOÎTE UNIQUE PAR MOT DE PASSE D'APPLICATION (08/09, décision de Noa :
+    # « un seul mail pour tout le monde »). Une adresse, un mot de passe
+    # d'application (Google → Sécurité → Mots de passe des applications, la
+    # validation en deux étapes doit être active), et tout le monde lit et
+    # envoie depuis cette boîte sous la permission « Accès au mail ». Sans
+    # Workspace, sans compte de service, sans consentement par personne.
+    # Les hôtes sont préréglés pour Gmail. `mail/imap.py`.
+    mail_imap_user: Optional[str] = None            # l'adresse de la boîte unique
+    mail_imap_password: Optional[str] = None        # le mot de passe d'APPLICATION, jamais celui du compte
+    mail_imap_host: str = "imap.gmail.com"
+    mail_imap_dossier_envoyes: str = "[Gmail]/Sent Mail"
+    mail_smtp_host: str = "smtp.gmail.com"
+    mail_smtp_port: int = 587
 
     # Apprentissage du style rédactionnel (mail/style.py)
     mail_style_samples: int = 50        # nb de messages envoyés analysés par boîte

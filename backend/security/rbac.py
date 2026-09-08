@@ -47,6 +47,13 @@ ROLE_PERMISSIONS: dict[str, List[str]] = {
     ],
 }
 
+# L'ACCÈS AU MAIL EST ACCORDÉ PAR DÉFAUT À TOUS LES RÔLES (08/09) : c'est le
+# comportement qu'ils avaient avant que la colonne existe. La direction retire
+# ce qu'elle veut dans la matrice ; la base fait foi (migration 039).
+for _role in list(ROLE_PERMISSIONS):
+    if "access_mail" not in ROLE_PERMISSIONS[_role]:
+        ROLE_PERMISSIONS[_role].append("access_mail")
+
 # Rôles exemptés des plages horaires (ne passent jamais par check_schedule)
 SCHEDULE_EXEMPT_ROLES = {"super_admin", "direction"}
 
@@ -82,6 +89,9 @@ ALL_FEATURES = [
     "view_dashboard_global", "view_costs_global", "view_audit_log",
     "validate_skills", "configure_agents", "manage_agent3",
     "manage_users", "manage_system", "run_browser_agent", "import_documents",
+    # « Accès au mail » (08/09, demande de Noa) : la colonne qui dit qui lit
+    # la messagerie — avec une boîte unique, c'est elle seule qui décide.
+    "access_mail",
     # `manage_mailboxes` a QUITTÉ la matrice (01/09, demande de Noa : la
     # colonne « Gérer les boîtes » disparaît de l'onglet Permissions). La
     # permission EXISTE toujours (délégations, routers/mail.py) et garde ses
@@ -103,6 +113,7 @@ FEATURE_LABELS = {
     "manage_users": "Gérer utilisateurs",
     "import_documents": "Importer des documents",
     "manage_mailboxes": "Gérer les boîtes mail",
+    "access_mail": "Accès au mail",
     "manage_system": "Admin système",
     "run_browser_agent": "Agent Navigateur",
 }

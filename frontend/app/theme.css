@@ -295,6 +295,16 @@ button, input, select, textarea { font-family: var(--marque-font); }
  * niveau de la carte : tout ce que la barre contient s'aligne sur l'axe du
  * champ, quelle que soit la variante que la bibliothèque calcule. */
 .sym-barre-saisie [class*="items-"] { align-items: center !important; }
+
+/* 08/09 — LA SAISIE NE GRANDISSAIT PAS, et ce n'était ni le JavaScript ni
+ * `field-sizing` (deux correctifs posés sur le champ le 03/09, revus en
+ * échec par Noa). Le conteneur de la bibliothèque (`InputGroup`, rendu par
+ * `PromptInput`) porte une hauteur FIXE de 36 px (`h-9`) qu'il ne lève
+ * (`has-[>textarea]:h-auto`) que si le champ est son enfant DIRECT. Ici le
+ * champ vit dans la rangée des boutons : la règle ne s'appliquait jamais, et
+ * l'`overflow-hidden` du même conteneur coupait ce que le champ avait
+ * grandi. Le plafond était sur le parent, pas sur le champ. */
+.sym-barre-saisie [data-slot="input-group"]:has(textarea) { height: auto; }
 .sym-barre-saisie button { align-self: center; }
 
 .sym-in   { animation: symFadeUp .5s cubic-bezier(.22,.61,.36,1) both; }

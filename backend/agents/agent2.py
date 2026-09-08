@@ -546,6 +546,17 @@ def _entete_pages(piece: dict) -> str:
     return entete
 
 
+def _retouche_disponible() -> bool:
+    """Le skill de retouche (`modifier_visuel`) est-il livré ici ? Le registre
+    fait foi : la phrase « je peux produire une variante » ne se dit que là où
+    un geste peut la tenir (08/09)."""
+    try:
+        from skills.registre import fonction
+        return fonction("modifier_visuel") is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _appel_vision(candidats, entete: str, images: list, nom: str, config=None) -> dict:
     """UN appel de vision, sa cascade de candidats — le texte, ou la raison d'échec.
 
@@ -971,6 +982,13 @@ async def prechiffrage_node(state: AgentState) -> dict:
         # variante » est du blabla quand on a posé une question.
         if mode_reponse:
             pass
+        elif not _retouche_disponible():
+            # Sans moteur d'images (08/09) : la référence est dite, rien n'est
+            # promis — « je peux produire une variante » serait un mensonge.
+            summary += ("\n\n_Photo enregistrée sous la référence `" + cle + "`._"
+                        if len(photos) == 1 else
+                        "\n\n_Les " + str(len(photos)) + " fichiers sont enregistrés : "
+                        + " ; ".join(f"{n} → `{c}`" for n, c in photos) + "._")
         elif len(photos) == 1:
             summary += (f"\n\n_Photo enregistrée sous la référence `{cle}`. Je peux en "
                         "produire une variante : dites-moi ce que vous voulez changer "

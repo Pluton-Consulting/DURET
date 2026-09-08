@@ -171,8 +171,8 @@ export default function FileAttente({ taches, accords, accordEnCours, erreurAcco
               <div style={{ marginTop: 10 }} role="status" aria-live="polite">
                 <div className="sym-piste" aria-label="Exécution en cours"><i /></div>
                 <div className="sym-carte-etat" style={{ marginTop: 6 }}>
-                  Accord transmis, exécution en cours… Un visuel ou un envoi peut prendre
-                  jusqu&apos;à une minute. Le résultat s&apos;affichera dans le chat.
+                  Accord transmis, exécution en cours… Elle peut prendre jusqu&apos;à
+                  une minute. Le résultat s&apos;affichera dans le chat.
                 </div>
               </div>
             ) : peutDecider ? (

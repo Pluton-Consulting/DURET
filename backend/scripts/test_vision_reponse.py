@@ -134,6 +134,11 @@ _poser("agents.suggestions",
 _poser("config", settings=types.SimpleNamespace(browser_enabled=False))
 
 agent2 = _exec_module(BACKEND / "agents" / "agent2.py", "agent2_double")
+# L'OFFRE VISUELLE EST SUPPOSÉE PRÉSENTE ICI (08/09) : la phrase « je peux
+# produire une variante » ne se dit plus que là où `modifier_visuel` existe
+# (le registre fait foi). Ce banc juge le régime de la vision, pas l'offre :
+# on la déclare présente, et `test_images_selon_offre` juge l'autre cas.
+agent2._retouche_disponible = lambda: True
 src = (BACKEND / "agents" / "agent2.py").read_text(encoding="utf-8")
 
 

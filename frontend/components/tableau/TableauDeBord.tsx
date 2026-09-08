@@ -78,7 +78,11 @@ const SKILLS: Record<string, string> = {
   chercher_web: "a cherché sur le web", ouvrir_page: "a lu une page web", naviguer: "a navigué sur le web",
   retenir: "a retenu une consigne", connaissances_acquises: "a consulté ses connaissances",
 }
-const EXPERT_PAR_AGENT: Record<string, string> = { agent1: "L'expert devis & clients", agent2: "L'expert plans & visuels", agent3: "L'expert savoir-faire" }
+// Les noms d'experts viennent de `lib/permissions.ts` (la donnée par client) :
+// ce tableau les recopiait en dur, et un client sans offre visuelle affichait
+// « L'expert plans & visuels » (08/09).
+const EXPERT_PAR_AGENT: Record<string, string> = Object.fromEntries(
+  EXPERTS.map((e) => [e.cle, `L'${e.nom.charAt(0).toLowerCase()}${e.nom.slice(1)}`]))
 const STATUTS: Record<string, { libelle: string; ton: string }> = {
   terminee: { libelle: "Terminée", ton: "ok" }, termine: { libelle: "Terminée", ton: "ok" },
   en_cours: { libelle: "En cours", ton: "attente" }, attente_validation: { libelle: "Attend votre accord", ton: "attente" },

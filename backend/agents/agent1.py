@@ -43,7 +43,7 @@ OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de r
 2. DOCUMENTS (contrats, comptes rendus, plans, pièces d'un dossier, courrier archivé) : `rechercher_documents` retrouve un texte par ressemblance. Pour parcourir ou ouvrir les fichiers eux-mêmes : les gestes du serveur de fichiers (`nas_arborescence`, `nas_lister`, `nas_ouvrir`, `nas_lire`, `nas_lire_lot`, `nas_chercher`, `nas_apercu`).
 3. MAILS : `boites_mail` pour LISTER les boîtes et adresses mail accessibles ; `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord ; `pieces: true` récupère et LIT ses pièces jointes) ; `lire_piece_jointe` pour UNE pièce jointe (PDF, image, plan DWG/DXF : téléchargeable, aperçu, contenu lu) ; `redaction_email` pour écrire ; `preparer_envois` pour un MÊME mail à PLUSIEURS destinataires (10, 100, sans limite : une carte par destinataire, gabarit à variables {nom} {email} ou corps sur mesure par destinataire, pages de 40 à enchaîner — rien ne part sans validation). Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
 4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
-La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, produire un visuel), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
+La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, analyser un DCE), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
 
 AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » ni « je n'ai pas de commande pour » : la plupart de ces demandes se composent de gestes que tu as déjà — relis le catalogue, compose-les. ESSAIE D'ABORD : exécute la voie la plus directe et montre le résultat ; ne demande une précision QUE si, sans elle, le résultat serait FAUX (le destinataire d'un envoi, le montant d'une facture) — jamais « que préférez-vous ? » entre deux voies que tu peux toutes les deux prendre, jamais « voulez-vous que je… ? » pour un geste de lecture : fais-le. UNE SEULE SALVE DE QUESTIONS, JAMAIS DEUX : si tu dois demander une précision, pose TOUT ce qui te manque en UN message, puis agis avec ce qu'on te répond. Ne reviens pas demander autre chose au tour suivant — ce qui manque encore, tu le cherches (une adresse est dans l'annuaire, une période se déduit de la date du jour, un client se retrouve par son nom) ou tu prends l'hypothèse la plus raisonnable EN LA DISANT. Zéro question vaut mieux qu'une, et une vaut infiniment mieux que deux. Si la marche à suivre a demandé plusieurs gestes et qu'elle a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
 
@@ -926,7 +926,7 @@ DOCUMENTS. Un cahier des charges, un rapport, un compte rendu, une note, un mém
 
 LE WEB, QUAND IL FAUT. `chercher_web`, `ouvrir_page` et `naviguer` existent : ne réponds jamais que tu ne peux pas accéder à internet. Mais ils servent à l'information PUBLIQUE (prix public, norme, fournisseur, contenu d'un site) ou à ce que l'utilisateur te demande d'aller voir, jamais aux données de l'entreprise (voir OÙ EST CHAQUE DONNÉE). Si une page ne rend rien d'exploitable — site qui n'affiche rien sans JavaScript, bannière de cookies, information à plusieurs clics —, PASSE À `naviguer` : il voit la page et clique comme le ferait un humain. Il est lent, garde-le pour ces cas-là.
 
-SUGGESTIONS. Termine par `quick_replies` (2 ou 3 options) quand TU vois une suite précise que l’écran ne devinerait pas — « Chiffre la variante en pierre naturelle », « Relance le devis de mars ». Sinon n’en écris pas : une suite générique est ajoutée toute seule. Jamais une question dans une pastille.
+SUGGESTIONS. Termine par `quick_replies` (2 ou 3 options) quand TU vois une suite précise que l’écran ne devinerait pas — « Chiffre la variante en résine », « Relance le devis de mars ». Sinon n’en écris pas : une suite générique est ajoutée toute seule. Jamais une question dans une pastille.
 
 SCHEMAS. Pour un enchainement d'etapes, une arborescence, un organigramme ou un circuit de validation, ecris un bloc ```mermaid (PAS ```ui, ce n'est pas un composant : c'est un dessin). Le schema se dessine aux couleurs du client, tu n'as donc aucune couleur ni aucun style a indiquer, seulement la structure. Exemple :
 ```mermaid
@@ -2830,10 +2830,34 @@ def _consigne_plan(state: AgentState) -> str:
             "poursuis les suivantes.")
 
 
+def _retouche_disponible() -> bool:
+    """Le skill de retouche d'image est-il livré ici ?
+
+    La consigne ci-dessous ordonnait d'appeler `modifier_visuel` des deux
+    côtés, alors que ce skill n'existe que chez le client qui a l'offre
+    visuelle : ailleurs, le modèle promettait une retouche qu'aucun geste ne
+    pouvait faire (08/09). Le registre fait foi, pas un drapeau.
+    """
+    try:
+        from skills.registre import fonction
+        return fonction("modifier_visuel") is not None
+    except Exception:  # noqa: BLE001 — registre indisponible : on n'en parle pas
+        return False
+
+
 def _consigne_images(state: AgentState) -> str:
     cles = cles_images_du_fil(state)
     if not cles:
         return ""
+    if not _retouche_disponible():
+        # Sans moteur d'images : les références servent à REMONTRER une photo
+        # (bloc `visuel`) ou à la joindre, jamais à la modifier — et la
+        # consigne ne doit pas laisser croire le contraire.
+        return ("\n\nIMAGES DE CETTE CONVERSATION (références, la plus récente en dernier) : "
+                + ", ".join(cles) + ". Sans autre précision, « cette image » désigne la "
+                "dernière. Pour la remontrer, écris un bloc ```ui `visuel` avec cette "
+                "référence recopiée telle quelle. Aucune retouche ni génération d'image "
+                "n'est possible ici : ne le propose jamais.")
     return ("\n\nIMAGES DE CETTE CONVERSATION (références, la plus récente en dernier) : "
             + ", ".join(cles) + ". Pour en RETOUCHER une (changer un détail, une couleur, "
             "ajouter ou retirer un élément en gardant tout le reste identique), appelle "

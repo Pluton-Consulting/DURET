@@ -307,6 +307,20 @@ async def ecrire_cle(body: CleBody, current_user: User = Depends(get_current_use
     return {"cle": body.cle, "empreinte": empreinte,
             "note": "Prise en compte immédiate, sans redéploiement."}
 
+def _moteur_images_present() -> bool:
+    """Le moteur d'images (`visuels/nano_banana.py`) est-il livré ici ?
+
+    L'offre visuelle n'existe que chez le client qui l'a : ailleurs, décrire un
+    modèle d'images « choix arrêté » parlait d'une chose qui ne tourne pas
+    (08/09, demande de Noa : « enlève toutes mentions de génération d'images »).
+    """
+    import importlib.util
+    try:
+        return importlib.util.find_spec("visuels.nano_banana") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 @router.get("/modeles")
 async def modeles_disponibles(current_user: User = Depends(get_current_user)):
     """Ce que la carte « Le modèle de l'assistant » a besoin de savoir : les
@@ -329,13 +343,15 @@ async def modeles_disponibles(current_user: User = Depends(get_current_user)):
             # sache ce qui tire les visuels — ne rien montrer laisserait croire
             # que rien ne s'en occupe — mais aucune route ne permet d'en
             # changer, et c'est voulu.
-            "modele_image": {
+            # …et seulement LÀ OÙ LE MOTEUR EXISTE : sans lui, l'écran n'a rien
+            # à décrire, et `ClesApiTab` tait la carte quand la clé manque.
+            **({"modele_image": {
                 "fournisseur": "google",
                 "modele": getattr(_s, "model_nano_banana", "") or "nano-banana-pro",
                 "verrouille": True,
                 "raison": "choix arrêté : un rendu montré à un client ne doit "
                           "pas sortir d'un modèle moindre",
-            },
+            }} if _moteur_images_present() else {}),
             # La dimension des vecteurs : changer de modèle d'embedding impose
             # de tout re-vectoriser, et l'écran doit le dire AVANT le clic.
             "embedding_dimensions": int(getattr(_s, "embedding_dimensions", 1536) or 1536),

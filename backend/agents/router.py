@@ -484,7 +484,7 @@ async def passer_la_main_node(state: AgentState) -> dict:
         # l'attribution qu'on venait de réparer le 23/08 repartirait à zéro.
         "attachment_b64": None,
         "attachment_text": (f"ANALYSE DU DOCUMENT JOINT ({nom}), faite par l'expert "
-                            f"plans & visuels :\n{analyse}"),
+                            f"qui lit les plans et les photos :\n{analyse}"),
         "final_response": None,
         "llm_response": None,
         # La lecture du plan n'a demandé aucun accord ; ce qui suivra le

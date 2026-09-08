@@ -62,7 +62,14 @@ ARBRE = {
         ("AFF 00 Dossier Modèle", True),
         ("IKOS Village réemploi 18-09-2026 AOS", True)],
     "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/AFF 00 Dossier Modèle": [],
-    "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/IKOS Village réemploi 18-09-2026 AOS": [],
+    "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/IKOS Village réemploi 18-09-2026 AOS": [("1 - DCE", True)],
+    "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/IKOS Village réemploi 18-09-2026 AOS/1 - DCE": [
+        ("1- PIE\u0301CES E\u0301CRITES TECHNIQUES", True)],       # NFD : le « É » en deux codes, comme sur le partage
+    "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/IKOS Village réemploi 18-09-2026 AOS/1 - DCE/1- PIE\u0301CES E\u0301CRITES TECHNIQUES": [
+        ("CCTP", True)],
+    "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/IKOS Village réemploi 18-09-2026 AOS/1 - DCE/1- PIE\u0301CES E\u0301CRITES TECHNIQUES/CCTP": [
+        ("17_IKOS BORDEAUX - PRO - IND A - CCTP17 - PLATRERIE-CLOISONS MODULAIRES.pdf", False),
+        ("18_IKOS BORDEAUX - PRO - IND A - CCTP18 - PEINTURE.pdf", False)],
     "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS": [
         ("1 - DCE", True), ("2 - Etudes", True)],
     "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS/2 - Etudes": [],
@@ -110,6 +117,9 @@ async def _appel(client, base, api, method, version, sid=None, **params):
         import json as _j
         chemin = _j.loads(params.get("path"))[0]
         GETINFO.append(chemin)
+        parent, nom = chemin.rsplit("/", 1)
+        if not any(n == nom and not d for n, d in ARBRE.get(parent, [])):
+            return {"files": [{"path": chemin, "code": 408}]}     # DSM : n'existe pas sous ce nom EXACT
         taille = 179_337_215 if chemin.endswith(".zip") else 1024
         return {"files": [{"path": chemin, "isdir": False, "additional": {"size": taille}}]}
     if api == "SYNO.FileStation.List":
@@ -133,12 +143,24 @@ def _poser(nom, **attrs):
 
 _poser("ingestion")
 _poser("ingestion.connectors")
-async def _telecharger(client, base, sid, chemin):
+async def _telecharger_ou_raison(client, base, sid, chemin):
     TELECHARGES.append(chemin)
-    return b"%PDF-1.4 contenu"
+    parent, nom = chemin.rsplit("/", 1)
+    if not any(n == nom and not d for n, d in ARBRE.get(parent, [])):
+        return None, "Synology (SYNO.FileStation.Download.download) : ce dossier ou fichier N'EXISTE PAS sur le NAS"
+    return b"%PDF-1.4 contenu", ""
 
 
-_poser("ingestion.connectors.synology", _appel=_appel, _telecharger=_telecharger)
+async def _telecharger(client, base, sid, chemin):
+    return (await _telecharger_ou_raison(client, base, sid, chemin))[0]
+
+
+def _message(code, contexte):
+    return f"Synology ({contexte}) : " + {408: "ce dossier ou fichier N'EXISTE PAS sur le NAS", 407: "opération non autorisée"}.get(code, f"erreur DSM {code}")
+
+
+_poser("ingestion.connectors.synology", _appel=_appel, _telecharger=_telecharger,
+       _telecharger_ou_raison=_telecharger_ou_raison, _message=_message)
 _poser("ingestion.parsers", analyser=lambda n, b: {"kind": "texte", "text": "x"},
        FichierNonSupporte=Exception)
 _poser("config", settings=types.SimpleNamespace(synology_folders="/home,/Drive",
@@ -205,7 +227,8 @@ verifier("« pdf » dans le dossier DCE rend les 3 PDF ET le dossier « PDF » (
          r.get("nombre") == 4 and "2029 RC VF.pdf" in noms and "2029 PLAN RDC.pdf" in noms, noms)
 
 r = asyncio.run(acces._chercher_ouvert(None, "http://nas", "sid", "IKOS"))
-verifier("la recherche est indulgente aux accents (« réemploi »)", r.get("nombre") == 1, r.get("nombre"))
+verifier("la recherche est indulgente aux accents (« réemploi » trouve le dossier IKOS)",
+         any(x.get("dossier") and "IKOS Village" in x["nom"] for x in r.get("resultats") or []), r.get("nombre"))
 
 r = asyncio.run(acces._chercher_ouvert(None, "http://nas", "sid", "zzz-introuvable"))
 # Sans catalogue, la seule note admise dit qu'il se construit — jamais une
@@ -333,6 +356,20 @@ TELECHARGES.clear()
 r = asyncio.run(acces._lire_ouvert(None, "http://nas", "sid", DCE + "/2029 RC VF.pdf", "u1"))
 verifier("un fichier de taille normale est téléchargé et lu comme avant",
          TELECHARGES == [DCE + "/2029 RC VF.pdf"] and r.get("type") == "document", (TELECHARGES, r.get("type")))
+
+# ── 7 bis. Le cas de 11:40 : un chemin EXACT en apparence, refusé par le serveur ──
+NFC = "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/IKOS Village réemploi 18-09-2026 AOS/1 - DCE/1- PIÉCES ÉCRITES TECHNIQUES/CCTP/17_IKOS BORDEAUX - PRO - IND A - CCTP17 - PLATRERIE-CLOISONS MODULAIRES.pdf"
+acces._CACHE_LISTAGE.clear()
+r = asyncio.run(acces._lire_ouvert(None, "http://nas", "sid", NFC, "u1"))
+verifier("le chemin recopié par le modèle (accents recomposés) OUVRE le fichier stocké sous une autre forme Unicode",
+         r.get("type") == "document" and "PIE\u0301CES" in (r.get("chemin") or ""), (r.get("type"), r.get("message"), r.get("chemin")))
+r = asyncio.run(acces._lire_ouvert(None, "http://nas", "sid", NFC.replace("CCTP17", "CCTP99"), "u1"))
+verifier("un nom qui n'existe VRAIMENT pas : le refus dit la raison du serveur ET les fichiers du dossier",
+         "N'EXISTE PAS" in r.get("message", "") and "CCTP18 - PEINTURE.pdf" in r.get("message", ""), r.get("message"))
+verifier("…et l'a_faire interdit de relancer le même chemin",
+         "Ne relance PAS" in r.get("a_faire", "") and "nom EXACT" in r.get("a_faire", ""))
+verifier("le refus ne dit plus jamais « introuvable ou vide » sans raison",
+         "introuvable ou vide" not in (BACKEND / "nas" / "acces.py").read_text(encoding="utf-8"))
 
 # ── 8. Le plafond mord pendant un niveau, et la résolution s'arrête au nom exact ──
 acces.catalogue_pret = lambda: None

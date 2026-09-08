@@ -168,7 +168,11 @@ if NAS:
         return b"%PDF-1.4 " + b"x" * 500
     _poser("ingestion")
     _poser("ingestion.connectors")
-    _poser("ingestion.connectors.synology", _appel=_appel, _telecharger=_telecharger, SynologyError=SynologyError)
+    async def _telecharger_ou_raison(client, base, sid, chemin):
+        return await _telecharger(client, base, sid, chemin), ""
+    _poser("ingestion.connectors.synology", _appel=_appel, _telecharger=_telecharger,
+           _telecharger_ou_raison=_telecharger_ou_raison, SynologyError=SynologyError,
+           _message=lambda code, ctx: f"Synology ({ctx}) : erreur DSM {code}")
     class FichierNonSupporte(Exception):
         pass
     _poser("ingestion.parsers", analyser=lambda nom, brut: {"kind": "texte", "text": "Règlement de consultation…"},

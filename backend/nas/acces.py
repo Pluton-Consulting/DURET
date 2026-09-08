@@ -322,8 +322,10 @@ async def lister(chemin: str) -> dict:
         return await _lister_ouvert(client, base, sid, chemin)
 
 
-async def _taille_ouverte(client, base, sid, chemin: str) -> int:
-    """La taille d'un fichier, sans le télécharger. 0 si le serveur ne la dit pas."""
+async def _taille_ouverte(client, base, sid, chemin: str) -> tuple:
+    """(taille, raison). La taille d'un fichier sans le télécharger — 0 si le
+    serveur ne la dit pas, et alors la raison quand il en donne une : `getinfo`
+    rend un `code` PAR FICHIER (408 : n'existe pas sous ce nom exact)."""
     import json as _json
 
     from ingestion.connectors import synology as c
@@ -332,12 +334,80 @@ async def _taille_ouverte(client, base, sid, chemin: str) -> int:
         data = await c._appel(client, base, "SYNO.FileStation.List", "getinfo", 2,
                               sid=sid, path=_json.dumps([chemin]), additional='["size"]')
         for f in (data.get("files") or []):
+            if f.get("code"):
+                return 0, c._message(int(f["code"]), "SYNO.FileStation.List.getinfo")
             if f.get("isdir"):
-                return 0
-            return int(((f.get("additional") or {}).get("size")) or 0)
+                return 0, ""
+            return int(((f.get("additional") or {}).get("size")) or 0), ""
     except Exception as e:  # noqa: BLE001 — sans taille, on télécharge comme avant
         logger.info("NAS : taille de %s inconnue (%s)", chemin, str(e)[:80])
-    return 0
+    return 0, ""
+
+
+def _meme_nom(a: str, b: str) -> bool:
+    """Deux noms de fichier sont « les mêmes » aux accents, à la casse, à la
+    forme Unicode (NFC/NFD : un « é » composé ou décomposé) et aux espaces
+    doublés près. C'est la tolérance déjà accordée aux DOSSIERS par la
+    résolution ; un FICHIER y avait droit aussi."""
+    import re as _re
+    na = _re.sub(r"\s+", " ", _sans_accent_nas(a)).strip()
+    nb = _re.sub(r"\s+", " ", _sans_accent_nas(b)).strip()
+    return bool(na) and na == nb
+
+
+async def _rattraper_chemin(client, base, sid, chemin: str) -> Optional[str]:
+    """Le VRAI chemin d'un fichier dont le chemin donné n'existe pas tel quel.
+
+    08/09, 11:40 : le chemin venait du listage, recopié par le modèle — et le
+    serveur répond « n'existe pas ». Un accent recomposé (É/È, forme NFC/NFD),
+    un espace en trop : le nom paraît identique et ne l'est pas octet à octet.
+    On résout le DOSSIER parent (tolérant, segment par segment), on le liste,
+    et on prend l'entrée qui porte le même nom aux accents près. Rend None si
+    rien ne correspond — l'appelant dira alors ce que le dossier contient.
+    """
+    from outils.nas import _resoudre
+
+    parent, nom = posixpath.split(chemin.rstrip("/"))
+    if not parent or not nom:
+        return None
+    try:
+        parent_reel = await _resoudre(client, base, sid, parent)
+        entrees = (await _lister_ouvert(client, base, sid, parent_reel)).get("entrees") or []
+    except Exception as e:  # noqa: BLE001 — un parent introuvable : rien à rattraper
+        logger.info("NAS : rattrapage impossible pour %s (%s)", chemin, str(e)[:80])
+        return None
+    for e in entrees:
+        if not e.get("dossier") and _meme_nom(e.get("nom") or "", nom):
+            if e.get("chemin") and e["chemin"] != chemin:
+                logger.info("NAS : chemin rattrapé %s → %s", chemin, e["chemin"])
+            return e.get("chemin")
+    return None
+
+
+async def _voisins(client, base, sid, chemin: str) -> list[str]:
+    """Les noms de fichiers du dossier parent (12 au plus), pour un refus utile."""
+    try:
+        from outils.nas import _resoudre
+        parent = posixpath.dirname(chemin.rstrip("/"))
+        parent_reel = await _resoudre(client, base, sid, parent)
+        entrees = (await _lister_ouvert(client, base, sid, parent_reel)).get("entrees") or []
+        return [e.get("nom") or "" for e in entrees if not e.get("dossier")][:12]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _refus_lecture(chemin: str, raison: str, voisins: list[str]) -> dict:
+    """Un refus qui dit la raison du serveur et ce qui existe à côté."""
+    nom = posixpath.basename(chemin)
+    return {"chemin": chemin,
+            "message": (f"« {nom} » n'a pas pu être ouvert : {raison}."
+                        + (f" Le dossier contient : {' ; '.join(voisins)}." if voisins else "")),
+            "a_faire": ("Ne relance PAS ce chemin : le serveur l'a refusé et redira la même "
+                        "chose. " + ("Choisis un nom EXACT dans la liste ci-dessus et rouvre-le "
+                                      "avec ce nom, ou demande à la personne lequel elle veut."
+                                      if voisins else
+                                      "Liste le dossier parent (`nas_lister`) et reprends le `chemin` "
+                                      "exact d'une entrée `dossier: false`."))}
 
 
 async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None = None) -> dict:
@@ -359,7 +429,17 @@ async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None 
     # refuse en une requête de quelques millisecondes, pas après quatre
     # minutes de transfert. Si le serveur ne sait pas répondre, on télécharge
     # comme avant : ne pas savoir n'est pas une raison de refuser.
-    taille = await _taille_ouverte(client, base, sid, vise)
+    taille, raison = await _taille_ouverte(client, base, sid, vise)
+    if not taille and raison:
+        # LE NOM EXACT N'EXISTE PAS : ON RATTRAPE PAR LE DOSSIER. Si le
+        # rattrapage échoue, on dit la raison du serveur ET ce que le dossier
+        # contient réellement, pour que personne ne relance dix fois le même
+        # chemin (08/09 : « déjà tenté à l'instant… introuvable »).
+        rattrape = await _rattraper_chemin(client, base, sid, vise)
+        if rattrape and rattrape != vise:
+            return await _lire_ouvert(client, base, sid, rattrape, proprietaire)
+        if not rattrape:
+            return _refus_lecture(vise, raison, await _voisins(client, base, sid, vise))
     if taille and taille > MAX_OCTETS_TELECHARGEMENT:
         extension = nom.rsplit(".", 1)[-1].lower() if "." in nom else ""
         archive = extension in ("zip", "7z", "rar", "tar", "gz")
@@ -374,10 +454,14 @@ async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None 
                             "Ne relance pas l'ouverture : dis la taille et propose d'ouvrir un "
                             "autre fichier du même dossier, ou une synchronisation pour l'ingérer.")}
 
-    brut = await c._telecharger(client, base, sid, vise)
+    brut, raison = await c._telecharger_ou_raison(client, base, sid, vise)
 
     if not brut:
-        return {"chemin": vise, "message": "Fichier introuvable ou vide sur le NAS."}
+        rattrape = await _rattraper_chemin(client, base, sid, vise)
+        if rattrape and rattrape != vise:
+            return await _lire_ouvert(client, base, sid, rattrape, proprietaire)
+        return _refus_lecture(vise, raison or "le serveur n'a rien rendu",
+                              await _voisins(client, base, sid, vise))
     depot = garantir_fichier_lu({}, nom, brut, proprietaire) if proprietaire else {}
     if len(brut) > MAX_OCTETS_LECTURE:
         return {"chemin": vise, "octets": len(brut), **depot,

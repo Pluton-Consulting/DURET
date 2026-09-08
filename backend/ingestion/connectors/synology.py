@@ -375,7 +375,14 @@ async def _lister_recursif(client, base: str, sid: str, dossier: str,
     return fichiers
 
 
-async def _telecharger(client, base: str, sid: str, chemin: str) -> Optional[bytes]:
+async def _telecharger_ou_raison(client, base: str, sid: str, chemin: str) -> tuple:
+    """(octets, raison). Les octets, ou None ET la raison lisible du refus.
+
+    08/09, 11:40 : « affiche ça <nom exact d'un fichier listé> » → « Fichier
+    introuvable ou vide sur le NAS ». Le refus de DSM (un JSON avec son code :
+    408 inexistant, 407 non autorisé…) partait dans le journal et le chat ne
+    recevait qu'une phrase passe-partout. La raison remonte désormais.
+    """
     url = (f"{base}/webapi/entry.cgi?api=SYNO.FileStation.Download&version=2"
            f"&method=download&mode=download&_sid={sid}"
            f"&path={quote('[\"' + chemin + '\"]')}")
@@ -384,12 +391,26 @@ async def _telecharger(client, base: str, sid: str, chemin: str) -> Optional[byt
         r.raise_for_status()
         # DSM renvoie du JSON (et non le fichier) quand l'appel échoue.
         if r.headers.get("content-type", "").startswith("application/json"):
-            logger.warning("Téléchargement refusé : %s", chemin)
-            return None
-        return r.content
+            code = 0
+            try:
+                code = int(((r.json() or {}).get("error") or {}).get("code") or 0)
+            except Exception:  # noqa: BLE001 — JSON illisible : le code reste inconnu
+                pass
+            raison = _message(code, "SYNO.FileStation.Download.download") if code else "refus sans code"
+            logger.warning("Téléchargement refusé : %s (%s)", chemin, raison)
+            return None, raison
+        if not r.content:
+            return None, "le serveur a rendu un fichier VIDE (0 octet)"
+        return r.content, ""
     except Exception as e:
         logger.warning("Téléchargement de %s échoué : %s", chemin, e)
-        return None
+        return None, f"le téléchargement a échoué ({type(e).__name__} : {str(e)[:80]})"
+
+
+async def _telecharger(client, base: str, sid: str, chemin: str) -> Optional[bytes]:
+    """Les octets, ou None. Conservée pour la synchronisation et le lot."""
+    octets, _ = await _telecharger_ou_raison(client, base, sid, chemin)
+    return octets
 
 
 async def sync(dossiers: Optional[list[str]] = None) -> dict:

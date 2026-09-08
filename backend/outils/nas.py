@@ -191,10 +191,16 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
             raise NasRefuse(
                 f"« {courant} » n'a pas pu être lu pendant la résolution : "
                 f"{str(e)[:120]}")
+        # AUX ACCENTS PRÈS, ET À LA FORME UNICODE PRÈS (08/09, 11:40) : un
+        # partage rend « PIÉCES » avec le É en deux codes (forme décomposée),
+        # le modèle le recopie en un seul ; « .lower() » les voyait différents
+        # et le segment était « introuvable » alors qu'il était à l'écran. Le
+        # premier segment avait déjà cette tolérance ; les suivants non.
+        from nas.acces import _sans_accent_nas as _nu
         exacts = [e for e in enfants
-                  if (e.get("nom") or "").lower() == segment.lower()]
+                  if _nu(e.get("nom") or "") == _nu(segment)]
         contient = [e for e in enfants
-                    if segment.lower() in (e.get("nom") or "").lower()]
+                    if _nu(segment) in _nu(e.get("nom") or "")]
         choisi = exacts or contient
         if not choisi:
             noms = ", ".join(sorted((e.get("nom") or "") for e in enfants)[:25])

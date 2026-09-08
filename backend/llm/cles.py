@@ -26,6 +26,12 @@ logger = logging.getLogger("duret.llm.cles")
 # Clés surchargeables. Liste FERMÉE : on ne veut pas qu'une ligne fantaisiste en
 # base puisse redéfinir n'importe quel réglage de l'application.
 CLES_CONNUES = (
+    # LA BOÎTE MAIL DE L'ENTREPRISE (08/09, Noa : « en admin je dois avoir juste
+    # à mettre le mot de passe d'application et le mail ») : deux secrets de
+    # plus dans la même table, même cache, même priorité (Paramètres > .env).
+    # Ils ont leur propre carte à l'écran : hors de la liste des clés de modèles.
+    "mail_imap_user",
+    "mail_imap_password",
     "ollama_cloud_api_key",
     "longcat_api_key",
     "deepseek_api_key",
@@ -35,6 +41,7 @@ CLES_CONNUES = (
     "google_api_key",
 )
 
+CLES_HORS_ECRAN = frozenset({"mail_imap_user", "mail_imap_password"})
 DUREE_CACHE_S = 30
 
 _CACHE: dict[str, str] = {}
@@ -124,6 +131,8 @@ async def etat() -> list[dict]:
     await rafraichir(force=True)
     lignes = []
     for nom in CLES_CONNUES:
+        if nom in CLES_HORS_ECRAN:
+            continue
         surcharge = _CACHE.get(nom)
         depuis_env = (getattr(settings, nom, None) or "").strip()
         effective = surcharge or depuis_env

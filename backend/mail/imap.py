@@ -52,16 +52,30 @@ MAX_FETCH = 50                  # messages rapatriés par listage
 DELAI_S = 60
 
 
+def _identifiant(nom: str) -> str:
+    """Paramètres (table `cles_api`) d'abord, `.env` ensuite — même priorité que
+    les clés de modèles (`llm/cles.py`)."""
+    try:
+        from llm.cles import valeur
+        v = valeur(nom)
+    except Exception:  # noqa: BLE001 — sans cache de clés, le .env
+        v = getattr(settings, nom, None)
+    return str(v or "").strip()
+
+
 def configure() -> bool:
     """Des identifiants IMAP existent-ils ?"""
-    return bool((getattr(settings, "mail_imap_user", None) or "").strip()
-                and (getattr(settings, "mail_imap_password", None) or "").strip())
+    return bool(_identifiant("mail_imap_user") and _identifiant("mail_imap_password"))
 
 
 def boite_unique() -> Optional[str]:
     """L'adresse de la boîte unique, ou None : c'est elle que tout le monde lit."""
-    u = (getattr(settings, "mail_imap_user", None) or "").strip().lower()
+    u = _identifiant("mail_imap_user").lower()
     return u or None
+
+
+def _mot_de_passe() -> str:
+    return _identifiant("mail_imap_password")
 
 
 def dossier_imap(cle: str) -> str:
@@ -73,7 +87,7 @@ def dossier_imap(cle: str) -> str:
 def _connexion() -> imaplib.IMAP4_SSL:
     hote = (getattr(settings, "mail_imap_host", None) or HOTE_IMAP_DEFAUT).strip()
     client = imaplib.IMAP4_SSL(hote, 993, ssl_context=ssl.create_default_context(), timeout=DELAI_S)
-    client.login(boite_unique() or "", (getattr(settings, "mail_imap_password", None) or "").strip())
+    client.login(boite_unique() or "", _mot_de_passe())
     return client
 
 
@@ -241,6 +255,66 @@ def ouvrir(boite: str, uid: str, dossier: str = "INBOX") -> dict:
     return fiche
 
 
+def parcourir(dossier: str, maximum: int) -> list[tuple[str, object]]:
+    """Les `maximum` messages les plus récents d'un dossier, PARSÉS, avec leur
+    UID — pour l'ingestion, qui a besoin du corps entier de chacun."""
+    client = _connexion()
+    try:
+        statut, _ = client.select(f'"{dossier}"', readonly=True)
+        if statut != "OK":
+            raise RuntimeError(f"dossier IMAP « {dossier} » introuvable")
+        uids = _uids(client, "ALL")
+        messages = []
+        for uid in reversed(uids[-max(1, int(maximum)):]):
+            try:
+                m, _ = _charger(client, uid)
+                messages.append((uid.decode(), m))
+            except Exception as e:  # noqa: BLE001
+                logger.info("IMAP : message %s non lu (%s)", uid, str(e)[:80])
+        return messages
+    finally:
+        try:
+            client.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def tester() -> dict:
+    """Une connexion IMAP puis SMTP, pour le bouton « Tester » de l'écran.
+    Rend {ok, imap, smtp, boite, erreur} — jamais le mot de passe."""
+    boite = boite_unique()
+    if not boite or not _mot_de_passe():
+        return {"ok": False, "boite": boite, "erreur": "adresse ou mot de passe d'application absent"}
+    resultat = {"ok": False, "boite": boite, "imap": False, "smtp": False, "erreur": ""}
+    try:
+        client = _connexion()
+        try:
+            statut, donnees = client.select('"INBOX"', readonly=True)
+            resultat["imap"] = statut == "OK"
+            try:
+                resultat["messages"] = int((donnees or [b"0"])[0] or 0)
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            client.logout()
+    except Exception as e:  # noqa: BLE001
+        resultat["erreur"] = f"IMAP : {str(e)[:160]}"
+        return resultat
+    try:
+        hote = (getattr(settings, "mail_smtp_host", None) or HOTE_SMTP_DEFAUT).strip()
+        port = int(getattr(settings, "mail_smtp_port", None) or PORT_SMTP_DEFAUT)
+        with smtplib.SMTP(hote, port, timeout=DELAI_S) as s:
+            s.ehlo()
+            s.starttls(context=ssl.create_default_context())
+            s.login(boite, _mot_de_passe())
+        resultat["smtp"] = True
+    except Exception as e:  # noqa: BLE001
+        resultat["erreur"] = f"SMTP : {str(e)[:160]}"
+        return resultat
+    resultat["ok"] = True
+    return resultat
+
+
 def piece(uid: str, rang: str, dossier: str = "INBOX") -> bytes:
     """Les octets de la partie `rang` du message `uid`."""
     client = _connexion()
@@ -265,7 +339,7 @@ def envoyer(brut: bytes, expediteur: str, destinataires: list[str]) -> None:
     with smtplib.SMTP(hote, port, timeout=DELAI_S) as s:
         s.ehlo()
         s.starttls(context=ssl.create_default_context())
-        s.login(boite_unique() or expediteur, (getattr(settings, "mail_imap_password", None) or "").strip())
+        s.login(boite_unique() or expediteur, _mot_de_passe())
         s.sendmail(expediteur, [d for d in destinataires if d], brut)
 
 

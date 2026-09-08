@@ -451,6 +451,138 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
   )
 }
 
+// LA BOÎTE MAIL DE L'ENTREPRISE (08/09, demande de Noa : « en admin je dois
+// avoir juste à mettre le mot de passe d'application et le mail »). Une
+// adresse, un mot de passe d'application, « Enregistrer », « Tester » : tout le
+// reste est câblé (lecture, réponses, envoi, courrier entrant, synchronisation
+// de la mémoire). Qui lit cette boîte se règle dans Permissions → « Accès au
+// mail ». Le mot de passe ne ressort jamais : seule son empreinte s'affiche.
+function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [etat, setEtat] = useState<any>(null)
+  const [adresse, setAdresse] = useState("")
+  const [mdp, setMdp] = useState("")
+  const [busy, setBusy] = useState("")
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/boite-mail`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const j = await res.json()
+      setEtat(j); setAdresse(j.adresse || ""); setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "chargement impossible")
+    }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  const enregistrer = async (retirer = false) => {
+    setBusy("enregistrer"); setNote("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/boite-mail`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ adresse: retirer ? "" : adresse, mot_de_passe: retirer ? "" : mdp }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
+      setMdp("")
+      setNote(retirer ? "Boîte unique retirée : chacun retrouve sa propre boîte."
+                      : "Boîte enregistrée. Prise en compte immédiate : lecture, réponses, envoi, courrier entrant et synchronisation passent par elle.")
+      setErreur("")
+      await charger()
+    } catch (e: any) {
+      setErreur(e?.message || "enregistrement impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const tester = async () => {
+    setBusy("tester"); setNote("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/boite-mail/tester`, {
+        method: "POST", headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j?.detail || `HTTP ${res.status}`)
+      setNote(j.ok
+        ? `Connexion réussie : lecture (IMAP) et envoi (SMTP) fonctionnent${typeof j.messages === "number" ? ` · ${j.messages} message(s) dans la boîte de réception` : ""}.`
+        : `Échec : ${j.erreur || "raison inconnue"}. Vérifiez l'adresse, le mot de passe d'APPLICATION (pas celui du compte) et que la validation en deux étapes est active.`)
+      setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "test impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const champ = {
+    flex: 1, minWidth: 220, padding: "8px 12px", fontSize: 13,
+    border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)",
+    color: "var(--marque-text-body)", outline: "none",
+  }
+
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>La boîte mail de l'entreprise</div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
+            Une seule boîte pour tout le monde : l'adresse et son mot de passe d'application (compte Google → Sécurité → Mots de passe des applications). Qui la lit se règle dans Permissions, colonne « Accès au mail ».
+          </div>
+        </div>
+        <span style={{
+          background: etat?.adresse ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+          color: etat?.adresse ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+          padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
+        }}>
+          {etat === null ? "…" : etat.adresse
+            ? `${etat.adresse} · ${etat.mot_de_passe_configure ? `mot de passe ${etat.empreinte}` : "mot de passe absent"} · ${etat.origine === "parametres" ? "Paramètres" : "fichier serveur"}`
+            : "Non configurée"}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <input type="email" autoComplete="off" placeholder="adresse@gmail.com" value={adresse}
+               onChange={(e) => setAdresse(e.target.value)} style={champ} />
+        <input type="password" autoComplete="new-password" placeholder="mot de passe d'application (16 caractères)"
+               value={mdp} onChange={(e) => setMdp(e.target.value)} style={{ ...champ, fontFamily: "monospace" }} />
+        <button onClick={() => enregistrer(false)} disabled={busy !== "" || !adresse.trim()} className="sym-tap" style={{
+          padding: "8px 16px", borderRadius: "var(--marque-radius-pill)", border: "none",
+          background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+          color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+          opacity: adresse.trim() ? 1 : 0.5,
+        }}>{busy === "enregistrer" ? "…" : "Enregistrer"}</button>
+        <button onClick={tester} disabled={busy !== "" || !etat?.adresse} className="sym-tap" style={{
+          padding: "8px 14px", borderRadius: "var(--marque-radius-pill)", border: "1px solid var(--marque-border)",
+          background: "var(--marque-surface)", color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+        }}>{busy === "tester" ? "…" : "Tester la connexion"}</button>
+        {etat?.origine === "parametres" && (
+          <button onClick={() => enregistrer(true)} disabled={busy !== ""} className="sym-tap"
+                  title="Retirer la boîte unique : chacun retrouve sa propre boîte" style={{
+            padding: "8px 14px", borderRadius: "var(--marque-radius-pill)", border: "1px solid var(--marque-border)",
+            background: "var(--marque-surface)", color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+          }}>Retirer</button>
+        )}
+      </div>
+      {etat?.fournisseur && etat.fournisseur !== "imap" && etat.adresse && (
+        <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>
+          Le fournisseur effectif est « {etat.fournisseur} » : MAIL_PROVIDER force une autre messagerie sur le serveur.
+        </div>
+      )}
+      {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
+      {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
 // L'ACCORD HUMAIN AVANT CHAQUE ACTION (08/09, demande de Noa : « une
 // validation humaine à chaque fois, vraiment à chaque fois »). Réglage
 // `validation_totale` en base, effet immédiat. Actif : dans le chat, chaque
@@ -784,6 +916,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
   return (
     <div>
       <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} signal={clesModifiees} />
+      <ReglageBoiteMail apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageValidationTotale apiUrl={apiUrl} backendToken={backendToken} />

@@ -307,6 +307,68 @@ async def ecrire_cle(body: CleBody, current_user: User = Depends(get_current_use
     return {"cle": body.cle, "empreinte": empreinte,
             "note": "Prise en compte immédiate, sans redéploiement."}
 
+class BoiteMailBody(BaseModel):
+    adresse: Optional[str] = None
+    mot_de_passe: Optional[str] = None     # le mot de passe d'APPLICATION ; vide = inchangé
+
+
+@router.get("/boite-mail")
+async def lire_boite_mail(current_user: User = Depends(get_current_user)):
+    """La boîte mail de l'entreprise : l'adresse, si le mot de passe est posé, d'où
+    ça vient, et le fournisseur effectif. Jamais le mot de passe."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.cles import rafraichir, _CACHE, masquer
+    await rafraichir(force=True)
+    from config import settings as _s
+    adresse = (_CACHE.get("mail_imap_user") or getattr(_s, "mail_imap_user", None) or "").strip()
+    mdp = (_CACHE.get("mail_imap_password") or getattr(_s, "mail_imap_password", None) or "").strip()
+    try:
+        from mail.collecte import fournisseur
+        effectif = fournisseur()
+    except Exception:  # noqa: BLE001 — rien de configuré
+        effectif = None
+    return {"adresse": adresse, "mot_de_passe_configure": bool(mdp),
+            "empreinte": masquer(mdp),
+            "origine": ("parametres" if _CACHE.get("mail_imap_user") else ("env" if adresse else None)),
+            "fournisseur": effectif,
+            "hotes": {"imap": getattr(_s, "mail_imap_host", ""), "smtp": getattr(_s, "mail_smtp_host", ""),
+                      "port_smtp": getattr(_s, "mail_smtp_port", 587)}}
+
+
+@router.put("/boite-mail")
+async def ecrire_boite_mail(body: BoiteMailBody, current_user: User = Depends(get_current_user)):
+    """Enregistre l'adresse et le mot de passe d'application. Une adresse vide
+    RETIRE la boîte unique (l'ancien régime revient)."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.cles import enregistrer
+    adresse = (body.adresse or "").strip().lower()
+    if adresse and ("@" not in adresse or " " in adresse):
+        raise HTTPException(status_code=422, detail="L'adresse de la boîte n'est pas une adresse mail.")
+    await enregistrer("mail_imap_user", adresse, str(current_user.id))
+    mdp = (body.mot_de_passe or "").replace(" ", "").strip()
+    if not adresse:
+        await enregistrer("mail_imap_password", "", str(current_user.id))
+    elif mdp:
+        await enregistrer("mail_imap_password", mdp, str(current_user.id))
+    await log_action(action="boite_mail_modifiee", user_id=str(current_user.id),
+                     metadata={"adresse_posee": bool(adresse), "mot_de_passe_pose": bool(mdp)})
+    return {"adresse": adresse, "note": "Prise en compte immédiate, sans redéploiement."}
+
+
+@router.post("/boite-mail/tester")
+async def tester_boite_mail(current_user: User = Depends(get_current_user)):
+    """Une connexion IMAP puis SMTP avec ce qui est enregistré : ok, ou la raison."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    import asyncio
+    from llm.cles import rafraichir
+    await rafraichir(force=True)
+    from mail import imap
+    return await asyncio.to_thread(imap.tester)
+
+
 def _moteur_images_present() -> bool:
     """Le moteur d'images (`visuels/nano_banana.py`) est-il livré ici ?
 

@@ -21,7 +21,7 @@ from config import settings
 logger = logging.getLogger("duret.mail.collecte")
 
 # Dossier « éléments envoyés » selon le fournisseur.
-DOSSIER_ENVOYES = {"outlook": "sentitems", "gmail": "SENT"}
+DOSSIER_ENVOYES = {"outlook": "sentitems", "gmail": "SENT", "imap": "SENT"}
 
 
 def _module_present(chemin: str) -> bool:
@@ -99,6 +99,8 @@ async def collecter_envoyes(boite: str, maximum: int | None = None) -> dict:
 
     if nom == "outlook":
         from ingestion.connectors.outlook import sync
+    elif nom == "imap":
+        from ingestion.connectors.imap import sync
     else:
         from ingestion.connectors.gmail import sync
 

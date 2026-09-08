@@ -129,6 +129,8 @@ _SYNCS: dict[str, dict] = {}
 # La liste se change en dupliquant le projet, comme `skills/` et `outils/`.
 CONNECTEURS = {
     "outlook": ("Messagerie Microsoft 365", "ingestion.connectors.outlook"),
+    # LA BOÎTE UNIQUE (08/09) : réglée dans Paramètres → Clés API. Socle.
+    "imap": ("Messagerie (boîte unique, mot de passe d'application)", "ingestion.connectors.imap"),
     "gmail": ("Messagerie Google Workspace", "ingestion.connectors.gmail"),
     "extrabat": ("Extrabat", "ingestion.connectors.extrabat"),
     "deytime": ("Deytime", "ingestion.connectors.deytime"),

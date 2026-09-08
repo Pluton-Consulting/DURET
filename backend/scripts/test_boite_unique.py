@@ -56,6 +56,11 @@ cfg.settings = types.SimpleNamespace(mail_imap_user="Contact@Duret-Sols.fr", mai
                                      ms_domain=None, gmail_domain="duret-sols.fr", ms_tenant_id=None,
                                      ms_client_id=None, ms_client_secret=None)
 sys.modules["config"] = cfg
+# 08/09 soir : les identifiants se lisent dans Paramètres (table cles_api) d'abord.
+CLES_BASE = {}
+llm_cles = types.ModuleType("llm.cles")
+llm_cles.valeur = lambda nom: CLES_BASE.get(nom) or getattr(cfg.settings, nom, None)
+sys.modules["llm"] = types.ModuleType("llm"); sys.modules["llm.cles"] = llm_cles
 fa = types.ModuleType("fastapi")
 
 
@@ -246,6 +251,74 @@ try:
 except aut.AccesBoiteRefuse:
     verifier("…et un rôle sans accès au mail est refusé même sur sa propre boîte", True)
 cfg.settings.mail_imap_user = "Contact@Duret-Sols.fr"
+
+print("— l'écran règle la boîte, tout est câblé")
+CLES_BASE["mail_imap_user"] = "Autre@Duret-Sols.fr"; CLES_BASE["mail_imap_password"] = "zzzz zzzz zzzz zzzz"
+verifier("l'adresse et le mot de passe posés dans Paramètres PRIMENT sur le .env",
+         imap.boite_unique() == "autre@duret-sols.fr" and imap._mot_de_passe() == "zzzz zzzz zzzz zzzz")
+JOURNAL["login"] = None
+imap.lister("autre@duret-sols.fr", "INBOX", 2)
+verifier("…et servent à la connexion", JOURNAL["login"] == ("autre@duret-sols.fr", "zzzz zzzz zzzz zzzz"))
+CLES_BASE.clear()
+t_ok = imap.tester()
+verifier("« Tester la connexion » : IMAP puis SMTP, le compte des messages, jamais le mot de passe",
+         t_ok["ok"] is True and t_ok["imap"] and t_ok["smtp"] and t_ok.get("messages") == 2
+         and "zzzz" not in str(t_ok) and "abcd" not in str(t_ok))
+cfg.settings.mail_imap_password = ""
+verifier("sans mot de passe : le test dit ce qui manque", "absent" in imap.tester()["erreur"])
+cfg.settings.mail_imap_password = "abcd efgh ijkl mnop"
+msgs = imap.parcourir("INBOX", 10)
+verifier("`parcourir` rend les messages parsés avec leur UID, les plus récents d'abord",
+         [u for u, _ in msgs] == ["102", "101"] and msgs[1][1]["Subject"] == "Demande de devis carrelage")
+# le connecteur d'ingestion
+INGERES = []
+
+
+async def _ingest(text, source_type, source_id, source_filename, access_level, anonymize):
+    INGERES.append((source_type, source_id, source_filename, access_level, anonymize, text[:40]))
+    return True
+pipe = types.ModuleType("ingestion.pipeline"); pipe.ingest_document = _ingest
+sys.modules["ingestion"] = types.ModuleType("ingestion"); sys.modules["ingestion.pipeline"] = pipe
+sys.modules["ingestion.connectors"] = types.ModuleType("ingestion.connectors")
+sty = types.ModuleType("mail.style"); sty.PREFIXE_ENVOYE = "email_sent"; sty.source_id = lambda b, i: f"email_sent:{b}:{i}"
+
+
+async def _profil(boite):
+    return {"profil": {"ton": "sobre"}}
+sty.construire_profil = _profil
+sys.modules["mail.style"] = sty
+sys.modules["mail.imap"] = imap
+cfg.settings.gmail_access_level = "all"; cfg.settings.gmail_max_messages = 100
+con = charger(BACKEND / "ingestion" / "connectors" / "imap.py", "connecteur_imap_double")
+bilan = asyncio.run(con.sync(boites=["quelquun@ailleurs.fr"]))
+verifier("la synchronisation ingère la boîte unique : reçus (email:…) et envoyés (email_sent:…), profil de style recalculé",
+         bilan["boite"] == "contact@duret-sols.fr" and bilan["recus"] == 2 and bilan["envoyes"] == 2 and bilan["profils"] == 1
+         and any(s[0] == "email" and s[1].startswith("email:contact@duret-sols.fr:") for s in INGERES)
+         and any(s[0] == "email_sent" for s in INGERES) and all(s[4] is False for s in INGERES), bilan)
+verifier("le texte ingéré porte les en-têtes puis le corps, avec le niveau d'accès du réglage",
+         INGERES[0][5].startswith("Objet : ") and INGERES[0][3] == "all")
+cfg.settings.mail_imap_user = None
+try:
+    asyncio.run(con.sync())
+    verifier("sans boîte unique : la synchro dit où la régler", False)
+except NotImplementedError as e:
+    verifier("sans boîte unique : la synchro dit où la régler", "Paramètres" in str(e))
+cfg.settings.mail_imap_user = "Contact@Duret-Sols.fr"
+cl = (BACKEND / "llm" / "cles.py").read_text(encoding="utf-8")
+verifier("les deux identifiants sont des clés de Paramètres, hors de la liste des clés de modèles",
+         '"mail_imap_user",' in cl and '"mail_imap_password",' in cl and "CLES_HORS_ECRAN" in cl)
+stg = (BACKEND / "routers" / "settings.py").read_text(encoding="utf-8")
+verifier("les routes : lire (jamais le mot de passe), enregistrer, tester",
+         '@router.get("/boite-mail")' in stg and '@router.put("/boite-mail")' in stg and '"/boite-mail/tester"' in stg
+         and "imap.tester" in stg and '"empreinte": masquer(mdp)' in stg)
+ing = (BACKEND / "routers" / "ingestion.py").read_text(encoding="utf-8")
+verifier("la synchronisation propose la boîte unique, et la collecte des envois passe par IMAP",
+         '"imap": ("Messagerie (boîte unique' in ing
+         and 'from ingestion.connectors.imap import sync' in (BACKEND / "mail" / "collecte.py").read_text(encoding="utf-8"))
+tab = (BACKEND.parent / "frontend" / "components" / "settings" / "ClesApiTab.tsx").read_text(encoding="utf-8")
+verifier("Paramètres → Clés API : la carte « La boîte mail de l'entreprise » (adresse, mot de passe, Enregistrer, Tester)",
+         "function ReglageBoiteMail(" in tab and "<ReglageBoiteMail" in tab and "Tester la connexion" in tab
+         and "/api/settings/boite-mail" in tab)
 
 print("— la permission et le câblage")
 rbac_reel = charger(BACKEND / "security" / "rbac.py", "rbac_double", futur=True)

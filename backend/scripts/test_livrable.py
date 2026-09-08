@@ -327,6 +327,8 @@ espace2.update({
     "_reponses_mail_manquantes": lambda state, texte: False,
     "demande_un_visuel": _annonce.demande_un_visuel,
     "demande_de_montrer": _annonce.demande_de_montrer,
+    # 08/09 : le contenu décrit sans lecture traverse aussi `route_apres_llm`.
+    "decrit_un_contenu_lu": _annonce.decrit_un_contenu_lu,
     # 02/09 : le filet « une seule salve de questions » traverse aussi
     # `route_apres_llm` — sans lui dans l'espace doublé, la fonction lève.
     "deuxieme_salve_de_questions": _annonce.deuxieme_salve_de_questions,

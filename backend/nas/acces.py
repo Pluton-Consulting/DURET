@@ -301,42 +301,51 @@ async def lister(chemin: str) -> dict:
         return await _lister_ouvert(client, base, sid, chemin)
 
 
-async def _lire_ouvert(client, base, sid, chemin: str) -> dict:
-    """Lit un fichier dans une session DÉJÀ ouverte."""
+async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None = None) -> dict:
+    """Lit un fichier dans une session DÉJÀ ouverte.
+
+    Avec `proprietaire`, le fichier est aussi DÉPOSÉ pour la personne (carte
+    avec aperçu et téléchargement, `garantir_fichier_lu`) — avant tout
+    contrôle de taille : un fichier trop lourd pour être lu dans le chat se
+    télécharge quand même (08/09).
+    """
     from ingestion.connectors import synology as c
     from ingestion.parsers import analyser, FichierNonSupporte
+    from skills.affichage import garantir_fichier_lu
 
     vise = verifier(chemin)
     brut = await c._telecharger(client, base, sid, vise)
 
     if not brut:
         return {"chemin": vise, "message": "Fichier introuvable ou vide sur le NAS."}
-    if len(brut) > MAX_OCTETS_LECTURE:
-        return {"chemin": vise, "octets": len(brut),
-                "message": (f"Fichier trop volumineux à lire dans le chat "
-                            f"({len(brut) // (1024 * 1024)} Mo). Passe par une "
-                            "synchronisation pour l'ingérer en mémoire.")}
-
     nom = posixpath.basename(vise)
+    depot = garantir_fichier_lu({}, nom, brut, proprietaire) if proprietaire else {}
+    if len(brut) > MAX_OCTETS_LECTURE:
+        return {"chemin": vise, "octets": len(brut), **depot,
+                "message": (f"Fichier trop volumineux à lire dans le chat "
+                            f"({len(brut) // (1024 * 1024)} Mo)"
+                            + (" ; il est affiché et téléchargeable." if depot else
+                               ". Passe par une synchronisation pour l'ingérer en mémoire."))}
+
     try:
         structure = analyser(nom, brut)
     except FichierNonSupporte as e:
-        return {"chemin": vise, "message": str(e)}
+        return {"chemin": vise, "message": str(e), **depot}
 
     if structure["kind"] == "tabulaire":
         lignes = structure["rows"]
         return {"chemin": vise, "type": "tableau", "colonnes": structure["columns"],
                 "lignes_totales": len(lignes), "apercu": lignes[:50],
-                "note": f"{len(lignes)} ligne(s) ; 50 premières montrées."}
+                "note": f"{len(lignes)} ligne(s) ; 50 premières montrées.", **depot}
     texte = (structure.get("text") or "")[:MAX_CARACTERES]
     return {"chemin": vise, "type": "document", "texte": texte,
-            "tronque": len(structure.get("text") or "") > MAX_CARACTERES}
+            "tronque": len(structure.get("text") or "") > MAX_CARACTERES, **depot}
 
 
-async def lire(chemin: str) -> dict:
+async def lire(chemin: str, proprietaire: str | None = None) -> dict:
     """Texte d'un fichier du NAS, extrait par le même lecteur que les imports."""
     async with connexion() as (client, base, sid):
-        return await _lire_ouvert(client, base, sid, chemin)
+        return await _lire_ouvert(client, base, sid, chemin, proprietaire)
 
 
 async def _chercher_ouvert(client, base, sid, motif: str,
@@ -361,8 +370,21 @@ async def _chercher_ouvert(client, base, sid, motif: str,
         est resserré (0,4 s) : la recherche DSM rend en une à deux secondes,
         attendre une seconde pleine entre deux regards doublait le temps perçu.
         """
-        depart = await c._appel(client, base, "SYNO.FileStation.Search", "start", 2,
-                                sid=sid, folder_path=racine, pattern=f"*{motif}*")
+        # LE CHEMIN EST UN TABLEAU JSON, comme pour le téléchargement
+        # (`_telecharger` passe `["/chemin"]`). Passé nu, DSM refusait la
+        # recherche ; l'erreur était avalée plus bas (« une racine en panne
+        # n'annule pas les autres ») et TOUTE recherche par nom rendait
+        # « aucun fichier » — sur un fichier listé une minute plus tôt (08/09 :
+        # « 2029 RC VF.pdf » introuvable par `nas_ouvrir`, ouvert par son
+        # chemin). L'ancienne forme reste en second essai.
+        import json as _json
+        try:
+            depart = await c._appel(client, base, "SYNO.FileStation.Search", "start", 2,
+                                    sid=sid, folder_path=_json.dumps([racine]),
+                                    pattern=f"*{motif}*")
+        except Exception:  # noqa: BLE001 — un DSM qui n'accepte que la forme nue
+            depart = await c._appel(client, base, "SYNO.FileStation.Search", "start", 2,
+                                    sid=sid, folder_path=racine, pattern=f"*{motif}*")
         tache = depart.get("taskid")
         if not tache:
             return []
@@ -397,9 +419,22 @@ async def _chercher_ouvert(client, base, sid, motif: str,
             continue
         trouves.extend(g)
 
+    # UN ÉCHEC N'EST PAS ZÉRO RÉSULTAT. Quand AUCUNE racine n'a pu être
+    # cherchée, le dire comme une erreur : « aucun fichier ne correspond »
+    # faisait conclure au modèle que le fichier n'existait pas.
+    pannes = [g for g in groupes if isinstance(g, BaseException)]
+    if groupes and len(pannes) == len(groupes):
+        raise NasRefuse(
+            "La recherche par nom a ÉCHOUÉ sur le serveur "
+            f"({str(pannes[0])[:120]}) : ce n'est PAS « aucun résultat ». "
+            "Passe par le listage (`nas_lister`) et le `chemin` exact.")
     inacheve = any(t.pop("inacheve", None) for t in trouves)
     sortie = {"motif": motif, "nombre": len(trouves), "resultats": trouves[:200],
               "dossiers_explores": racines}
+    if pannes:
+        sortie["note"] = (f"Recherche en ÉCHEC sur {len(pannes)} racine(s) sur "
+                          f"{len(groupes)} : résultats partiels, une absence n'est "
+                          "pas prouvée — dis-le tel quel.")
     if inacheve:
         sortie["note"] = ("Recherche INTERROMPUE avant la fin sur au moins une "
                           "racine : résultats partiels, une absence n'est pas "

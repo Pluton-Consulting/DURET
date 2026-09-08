@@ -104,7 +104,8 @@ async def nas_lister(data: dict, user) -> dict:
                             "Dis-le tel quel, ne propose pas de nom de dossier au "
                             "hasard : tu ne sais pas lesquels existent.")}
     try:
-        return await lister(chemin)
+        from skills.affichage import garantir_listage
+        return garantir_listage(await lister(chemin), chemin, ouvreur="nas_ouvrir")
     except NasRefuse as e:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001 - un NAS injoignable n'est pas une panne du chat
@@ -122,7 +123,7 @@ async def nas_lire(data: dict, user) -> dict:
     if not chemin:
         _echec("Donne le chemin complet du fichier à lire.")
     try:
-        return await lire(chemin)
+        return await lire(chemin, str(getattr(user, "id", "") or ""))
     except NasRefuse as e:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001

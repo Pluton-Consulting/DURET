@@ -525,7 +525,7 @@ async def arborescence(chemin: Optional[str] = None, profondeur: int = 0) -> dic
     return sortie
 
 
-async def ouvrir(nom_ou_chemin: str) -> dict:
+async def ouvrir(nom_ou_chemin: str, proprietaire: str | None = None) -> dict:
     """Lit un fichier depuis son NOM, sans en connaître le chemin.
 
     C'est la fonction qui remplace le plus d'allers-retours : jusqu'ici il
@@ -547,7 +547,7 @@ async def ouvrir(nom_ou_chemin: str) -> dict:
         # plus fréquent quand la fonction suit un `apercu` ou une `arborescence`.
         if demande.startswith("/"):
             try:
-                lu = await _lire_ouvert(client, base, sid, demande)
+                lu = await _lire_ouvert(client, base, sid, demande, proprietaire)
                 if lu.get("type"):
                     return {**lu, "trouve_par": "chemin"}
                 # Le chemin EXISTE mais n'a pas pu être lu (trop volumineux,
@@ -581,7 +581,7 @@ async def ouvrir(nom_ou_chemin: str) -> dict:
         # autres. Rendre une liste sans contenu obligerait à un aller-retour de
         # plus pour choisir, ce que cette fonction existe précisément pour éviter.
         premier = fichiers[0]
-        lu = await _lire_ouvert(client, base, sid, premier["chemin"])
+        lu = await _lire_ouvert(client, base, sid, premier["chemin"], proprietaire)
 
     autres = [f["chemin"] for f in fichiers[1:6]]
     return {**lu, "trouve_par": "nom", "recherche": motif,

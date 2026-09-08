@@ -71,11 +71,13 @@ async def nas_ouvrir(data: dict, user) -> dict:
     """Lit un fichier depuis son nom, sans en connaître le chemin."""
     from outils.nas import ouvrir
     await _garde_nas(user)
-    quoi = (data.get("nom") or data.get("chemin") or "").strip()
+    # Le `chemin` EXACT d'un listage d'abord : un nom seul passe par la
+    # recherche du serveur, plus lente et moins sûre (08/09).
+    quoi = (data.get("chemin") or data.get("nom") or "").strip()
     if not quoi:
-        _echec("Donne le `nom` du fichier à ouvrir (ou son `chemin` complet).")
+        _echec("Donne le `chemin` du fichier (repris d'un listage) ou son `nom`.")
     try:
-        return await ouvrir(quoi)
+        return await ouvrir(quoi, _proprietaire(user))
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
 
@@ -190,9 +192,12 @@ SKILLS = {
         libelle="je parcours les dossiers du serveur"),
     "nas_ouvrir": Declaration(
         fonction=nas_ouvrir,
-        description=("OUVRE et lit un fichier du serveur depuis son NOM, sans en "
-                     "connaitre le chemin. La voie normale pour lire un fichier"),
-        requis=["nom"],
+        description=("OUVRE et LIT un fichier du serveur, et l'AFFICHE dans le chat "
+                     "(carte avec apercu et telechargement, automatique). La voie "
+                     "normale pour lire un fichier. Donne `chemin` = le champ `chemin` "
+                     "EXACT d'une entree `dossier: false` d'un listage ; `nom` seul "
+                     "(sans chemin) declenche une recherche sur tout le serveur"),
+        optionnels=["chemin", "nom"],
         effet="lecture",
         libelle="j'ouvre le fichier"),
     "nas_lire_lot": Declaration(

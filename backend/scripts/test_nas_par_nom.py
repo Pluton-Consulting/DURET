@@ -84,7 +84,7 @@ async def _chercher_ouvert(client, base, sid, motif, dossier=None):
     return {"motif": motif, "nombre": len(trouves), "resultats": trouves, "dossiers_explores": racines}
 
 
-async def _lire_ouvert(client, base, sid, chemin):
+async def _lire_ouvert(client, base, sid, chemin, proprietaire=None):
     chemin = _verifier(chemin)
     return {"chemin": chemin, "type": "pdf", "contenu": "DCE"}
 

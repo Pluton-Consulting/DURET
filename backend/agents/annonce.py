@@ -358,6 +358,27 @@ def demande_un_visuel(texte: str) -> bool:
     return bool(_DEMANDE_VISUEL.search(_sans_accent(texte)))
 
 
+# LE CONTENU DÉCRIT SANS AVOIR ÉTÉ LU (08/09, Duret). « ouvre le » → « Le
+# dossier X a été ouvert. Voici son contenu : Fichiers (4) : … » — quatre
+# fichiers INVENTÉS, aucun geste dans le tour (le forceur avait rendu de la
+# prose). Un listage, une ouverture, une lecture affirmés au passé n'ont de
+# valeur que si un geste les porte ; l'appelant vérifie qu'aucun n'a réussi.
+_DECRIT_CONTENU_LU = re.compile(
+    r"\b(?:a|ont) ete (?:ouverts?|listes?|lus?|consultes?|parcourus?)\b"
+    r"|\bvoici (?:son|le|leur) contenu\b"
+    r"|\bcontient les (?:fichiers|documents|elements) suivants\b"
+    r"|\b(?:fichiers|documents|sous-dossiers) \(\d+\)\s*:",
+    re.IGNORECASE)
+
+
+def decrit_un_contenu_lu(texte: str) -> bool:
+    """Le texte affirme-t-il avoir ouvert, listé ou lu quelque chose et en
+    décrire le contenu ? (À croiser avec les gestes réellement exécutés.)"""
+    if not isinstance(texte, str) or not texte:
+        return False
+    return bool(_DECRIT_CONTENU_LU.search(_sans_accent(texte)))
+
+
 def pretend_avoir_livre(texte: str) -> bool:
     """Le texte affirme-t-il qu'un fichier existe ou est téléchargeable ?"""
     if not isinstance(texte, str) or not texte:

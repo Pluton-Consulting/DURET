@@ -198,3 +198,102 @@ def garantir_recherche(resultat: dict, motif: str) -> dict:
            "les pages (`page` suivante) — rien ne te limite en nombre de pages."
            if pages > 1 else ""))
     return resultat
+
+
+def garantir_fichier_lu(resultat: dict, nom: str, octets: bytes, proprietaire: str,
+                        mime: str | None = None) -> dict:
+    """Un fichier LU sur le serveur de fichiers s'affiche : carte avec aperçu et
+    téléchargement, posée MÉCANIQUEMENT dans le résultat.
+
+    Relevé de Noa du 08/09 (export Langfuse de Duret) : « il n'arrive pas à
+    ouvrir un document du NAS et le prévisualiser dans le chat, il n'arrive à
+    prévisualiser que les documents qu'il crée ». Cause : `nas_ouvrir` et
+    `drive_ouvrir` rendaient le TEXTE extrait, rien d'autre — aucun dépôt,
+    donc aucune carte, aucun aperçu, rien à télécharger ; le modèle résumait
+    le texte et l'écran restait vide. Les pièces jointes des mails, elles,
+    passent par le dépôt depuis le 31/08 (`mail/pieces.py`) : même geste ici,
+    même écran. Une image va au dépôt des visuels (bloc `visuel`), tout le
+    reste à l'atelier (bloc `fichier`, aperçu PDF / Word / Excel), sous
+    l'origine « serveur » — un fichier lu n'est pas un document PRODUIT.
+
+    Un dépôt qui échoue ne fait pas tomber la lecture : le texte reste.
+    """
+    import logging
+    if not isinstance(resultat, dict) or not octets or not (proprietaire or "").strip():
+        return resultat
+    nom = (nom or "fichier").rsplit("/", 1)[-1]
+    extension = nom.rsplit(".", 1)[-1].lower() if "." in nom else ""
+    try:
+        if (mime or "").startswith("image/") or extension in ("jpg", "jpeg", "png", "webp", "gif"):
+            from visuels.depot import deposer_octets
+            cle = deposer_octets(octets, mime or f"image/{'jpeg' if extension == 'jpg' else extension or 'png'}")
+            if not cle:
+                return resultat
+            resultat["url"] = f"/api/visuels/{cle}"
+            resultat["bloc_ui"] = {"type": "visuel", "titre": nom,
+                                   "images": [{"cle": cle, "legende": nom}]}
+        else:
+            from bureautique.atelier import deposer_fichier
+            jeton = deposer_fichier(nom, octets, proprietaire, origine="serveur")
+            if not jeton:
+                return resultat
+            resultat["url"] = f"/api/documents/{jeton}"
+            resultat["bloc_ui"] = {"type": "fichier", "url": resultat["url"], "nom": nom,
+                                   "titre": nom.rsplit(".", 1)[0], "format": extension or "bin",
+                                   "octets": len(octets)}
+    except Exception as e:  # noqa: BLE001 — la lecture vaut sans la carte
+        logging.getLogger("skills.affichage").warning(
+            "Dépôt du fichier lu « %s » impossible : %s", nom, e)
+        return resultat
+    resultat["bloc_garanti"] = True
+    resultat["message_final"] = (f"« {nom} » ({octets_lisibles(len(octets))}) est affiché : "
+                                 "aperçu et téléchargement dans le chat.")
+    resultat["a_faire"] = (
+        "Le fichier est DÉJÀ affiché à l'écran par un bloc mécanique (carte avec "
+        "aperçu et téléchargement) : n'écris AUCUN bloc fichier, doc ou visuel pour "
+        "lui, ne colle pas son contenu. Réponds à la demande avec ce que le fichier "
+        "contient (`texte` ou `apercu`), en quelques lignes, puis propose la suite "
+        "si elle est évidente (résumer, chiffrer, comparer).")
+    return resultat
+
+
+def garantir_listage(resultat: dict, quoi: str, ouvreur: str = "nas_ouvrir") -> dict:
+    """Le contenu d'un dossier en tableau MÉCANIQUE : nom, type, taille.
+
+    08/09 : « ouvre le » → le modèle a décrit un dossier avec QUATRE fichiers
+    inventés (DPGF, DCE 10,5 Mo, plan de réception) alors qu'aucun listage
+    n'avait tourné ; et sur un vrai listage, il recopiait la liste à sa façon,
+    puis demandait « lequel je prends ? ». Le tableau vient du serveur, pas du
+    modèle ; `entrees` reste dans le résultat (le modèle a besoin des
+    `chemin`) ; et la consigne dit d'ENCHAÎNER l'ouverture quand c'est ce que
+    la demande réclame.
+    """
+    if not isinstance(resultat, dict):
+        return resultat
+    entrees = [e for e in (resultat.get("entrees") or []) if isinstance(e, dict)]
+    if not entrees:
+        return resultat
+    lignes = [[str(e.get("nom") or ""),
+               "Dossier" if e.get("dossier") else "Fichier",
+               ("" if e.get("dossier") else octets_lisibles(e.get("octets") or 0))]
+              for e in entrees]
+    dossiers = sum(1 for e in entrees if e.get("dossier"))
+    fichiers = len(entrees) - dossiers
+    resultat["bloc_ui"] = {"type": "table",
+                           "titre": f"Contenu — {(resultat.get('chemin') or quoi or '').rsplit('/', 1)[-1]}",
+                           "columns": ["Nom", "Type", "Taille"],
+                           "rows": lignes}
+    resultat["bloc_garanti"] = True
+    resultat["message_final"] = (f"{dossiers} dossier(s) et {fichiers} fichier(s) dans "
+                                 f"« {(resultat.get('chemin') or quoi or '').rsplit('/', 1)[-1]} »"
+                                 + (" (liste tronquée)." if resultat.get("tronque") else "."))
+    resultat["a_faire"] = (
+        "Le contenu du dossier est DÉJÀ affiché à l'écran par un tableau mécanique : "
+        "ne le recopie pas, n'écris aucun bloc list, doc ou fichier pour lui. "
+        f"Si la demande de ce tour est d'OUVRIR ou de LIRE un document, enchaîne "
+        f"MAINTENANT avec `{ouvreur}` et le `chemin` EXACT d'une entrée `dossier: false` "
+        "(« au hasard », « le plus lourd », « le plus récent », « le DCE » : choisis toi-même "
+        "d'après les noms et les tailles, ne demande pas lequel). Si la demande était de "
+        "voir le contenu, une phrase suffit. "
+        + (resultat.get("note") or ""))
+    return resultat

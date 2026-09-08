@@ -325,6 +325,7 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
                             propose_au_lieu_d_agir, renvoie_au_deja_fait,
                             demande_sur_le_passe, demande_un_visuel,
                             suite_qui_retouche, demande_de_montrer,
+                            decrit_un_contenu_lu,
                             deuxieme_salve_de_questions)
 
 
@@ -2394,6 +2395,13 @@ async def rehydrate_node(state: AgentState) -> dict:
     besoin = None
     if not text or est_une_annonce(text) or promesse_sans_suite(text):
         besoin = "redaction_absente_ou_promesse"
+    elif (decrit_un_contenu_lu(text)
+          and not any(r.get("ok") for r in (state.get("tool_results") or []))):
+        # 08/09 : le forceur a rendu de la prose et la dernière passe décrit un
+        # dossier que personne n'a listé — la liste inventée ne doit pas
+        # atteindre l'écran ni l'historique. Le rédacteur de secours, sans
+        # résultat, dit honnêtement que rien n'a été lu.
+        besoin = "contenu_decrit_sans_lecture"
     elif _redaction_dement_le_livrable(text, state.get("tool_results") or []):
         # LE DÉMENTI DU TRAVAIL FAIT : la rédaction réclame un préalable
         # (« j'ai besoin de votre adresse ») alors que le livrable est produit
@@ -3198,7 +3206,11 @@ def route_apres_llm(state: AgentState) -> str:
                  and cles_images_du_fil(state) and "?" not in visible
                  and not remontre_a_bon_droit)
              or (pretend_avoir_livre(visible)
-                 and not _montre_un_fichier_du_fil(visible, state))))
+                 and not _montre_un_fichier_du_fil(visible, state))
+             # 08/09 : « a été ouvert, voici son contenu » sans qu'un seul
+             # geste ait réussi = un contenu inventé → forceur (contexte neuf).
+             or (decrit_un_contenu_lu(visible)
+                 and not any(r.get("ok") for r in (state.get("tool_results") or [])))))
     if fantome:
         logger.info("Livraison fantôme : la réponse prétend livrer sans production — forçage")
         _tracer_filet(state, "livraison_fantome", "pretention_sans_production",

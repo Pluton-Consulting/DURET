@@ -2823,7 +2823,7 @@ export const PDFViewer = React.forwardRef<PDFViewerHandle, PDFViewerProps>(
         <PDFViewerFallbackShell
           className={className}
           defaultZoom={defaultZoom}
-          errorMessage="Unable to load the PDF engine."
+          errorMessage={`Le moteur PDF n'a pas pu être chargé (${engineError.message}). Le fichier reste téléchargeable.`}
           showDownload={showDownload}
           showRotateControls={showRotateControls}
           showToolbar={showToolbar}

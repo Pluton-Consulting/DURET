@@ -6,6 +6,11 @@ import { useSearchParams } from "next/navigation"
 function VerifyContent() {
   const params = useSearchParams()
   const [status, setStatus] = useState<"loading" | "error">("loading")
+  // POURQUOI le lien est refusé (08/09). `signIn` de next-auth ne rend qu'un
+  // booléen : la raison se demande au serveur, par une route qui ne consomme
+  // rien. Sans elle, « Lien invalide ou expiré » couvrait quatre situations
+  // dont un compte désactivé — impossible à deviner depuis l'écran.
+  const [raison, setRaison] = useState("")
   // Le lien est à usage unique : on garantit un SEUL appel de vérification,
   // même avec le double-rendu de React en dev (sinon le token est consommé 2×).
   const started = useRef(false)
@@ -21,9 +26,21 @@ function VerifyContent() {
     }
     started.current = true
 
-    signIn("credentials", { token, email, redirect: false }).then((res) => {
+    signIn("credentials", { token, email, redirect: false }).then(async (res) => {
       if (res?.error) {
         setStatus("error")
+        try {
+          const api = process.env.NEXT_PUBLIC_API_URL || ""
+          const r = await fetch(`${api}/api/auth/magic-link/etat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token, email }),
+          })
+          if (r.ok) {
+            const j = await r.json()
+            if (j?.message) setRaison(String(j.message))
+          }
+        } catch { /* le serveur ne répond pas : le message générique suffit */ }
       } else {
         window.location.href = "/chat"
       }
@@ -54,9 +71,9 @@ function VerifyContent() {
           </>
         ) : (
           <>
-            <p className="sym-in sym-in-1" style={{ fontWeight: 500, margin: "0 0 8px", color: "var(--marque-error-text)" }}>Lien invalide ou expiré</p>
+            <p className="sym-in sym-in-1" style={{ fontWeight: 500, margin: "0 0 8px", color: "var(--marque-error-text)" }}>Connexion impossible</p>
             <p className="sym-in sym-in-2" style={{ color: "var(--marque-text-muted)", fontSize: 13, margin: "0 0 20px" }}>
-              Le lien a peut-être déjà été utilisé ou a expiré (15 min).
+              {raison || "Le lien a peut-être déjà été utilisé ou a expiré (15 min)."}
             </p>
             <a href="/login" className="sym-tap sym-in sym-in-3" style={{
               display: "inline-block",

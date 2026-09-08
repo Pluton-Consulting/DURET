@@ -177,6 +177,63 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
     }
 
 
+@router.post("/magic-link/etat")
+async def etat_magic_link(body: VerifyTokenRequest):
+    """POURQUOI ce lien a été refusé — sans rien consommer ni modifier.
+
+    RELEVÉ DE NOA DU 08/09 : une employée n'arrive pas à se connecter, et
+    l'écran répond « Lien invalide ou expiré » quoi qu'il arrive. Le serveur,
+    lui, distingue quatre situations très différentes — lien inconnu, déjà
+    utilisé, périmé, compte désactivé — dont trois appellent un geste précis.
+    Sans cette route, il faut ouvrir la base pour savoir laquelle : c'est la
+    même faute que le 429 sans cause de Nano Banana ou le refus Drive muet.
+
+    ⚠️ ANTI-ÉNUMÉRATION. On ne répond en détail QUE si le couple (jeton,
+    adresse) existe vraiment : le porteur du lien connaît déjà l'adresse, on
+    ne lui apprend rien. À un jeton inventé, la réponse reste générique — sinon
+    la route deviendrait un moyen de tester des adresses.
+    """
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM verification_tokens WHERE token = $1 AND email = $2",
+            body.token, body.email,
+        )
+        actif = None
+        if row:
+            actif = await conn.fetchval(
+                "SELECT actif FROM users WHERE email = $1", body.email)
+
+    if not row:
+        return {"raison": "inconnu",
+                "message": ("Ce lien ne correspond à rien. Demandez-en un nouveau "
+                            "depuis la page de connexion.")}
+
+    d = dict(row)
+    maxi = int(d.get("utilisations_max") or 1)
+    faites = int(d.get("utilisations") or 0)
+    if d.get("used") or faites >= maxi:
+        return {"raison": "deja_utilise",
+                "message": ("Ce lien a déjà servi" + (f" ({faites} fois sur {maxi})" if maxi > 1 else "")
+                            + ". Demandez-en un nouveau : chaque lien ne vaut "
+                              "que pour une ouverture de session.")}
+    if d["expires_at"] < datetime.now(timezone.utc):
+        return {"raison": "expire",
+                "message": (f"Ce lien a expiré (il vaut {MAGIC_LINK_EXPIRE_MINUTES} minutes). "
+                            "Demandez-en un nouveau et ouvrez-le tout de suite.")}
+    if actif is False:
+        return {"raison": "compte_desactive",
+                "message": ("Ce compte est désactivé : aucun lien ne l'ouvrira. "
+                            "Demandez à un administrateur de le réactiver dans "
+                            "Paramètres puis Utilisateurs.")}
+    if actif is None:
+        return {"raison": "compte_absent",
+                "message": ("Aucun compte ne porte cette adresse. Un administrateur "
+                            "doit la créer, ou corriger l'orthographe.")}
+    return {"raison": "valide",
+            "message": ("Ce lien est encore valable. Si la connexion échoue quand même, "
+                        "le serveur n'a pas répondu : réessayez dans un instant.")}
+
+
 @router.post("/refresh")
 async def refresh_session(body: RefreshRequest):
     """Échange le jeton d'appareil contre un JWT frais — sans mail, sans clic.

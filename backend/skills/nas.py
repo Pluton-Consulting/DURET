@@ -135,7 +135,10 @@ async def nas_chercher(data: dict, user) -> dict:
     Le résultat s'affiche en tableau MÉCANIQUE (`garantir_recherche`, 01/09) :
     même forme et même écran que le `drive_chercher` du projet jumeau.
     """
-    from nas.acces import chercher, verifier_role, NasRefuse
+    # `outils.nas.chercher` RÉSOUT le `dossier` par son nom ; `nas.acces.chercher`
+    # l'exigeait en chemin de montage exact et refusait le reste (08/09).
+    from outils.nas import chercher
+    from nas.acces import verifier_role, NasRefuse
     from skills.affichage import garantir_recherche
     try:
         verifier_role(user)
@@ -183,7 +186,11 @@ async def nas_deposer(data: dict, user) -> dict:
     try:
         with open(chemin, "rb") as fichier:
             contenu = fichier.read()
-        return await deposer(dossier, nom, contenu)
+        # « Dépose-le dans 02-Devis-affaires » : le dossier se résout par NOM,
+        # comme pour `nas_deposer_document` — le chemin exact n'est pas ce que
+        # le modèle a sous les yeux après un listage.
+        from outils.nas import resoudre_dossier
+        return await deposer(await resoudre_dossier(dossier), nom, contenu)
     except NasRefuse as e:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001

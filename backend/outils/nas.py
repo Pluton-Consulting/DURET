@@ -37,6 +37,11 @@ MAX_SCHEMA_CARACTERES = 9000
 # À 90 s, un serveur chargé rendait un arbre partiel sur des demandes légitimes.
 DELAI_ARBRE_S = 300
 _LISTAGES_DE_FRONT = 6
+# La résolution d'un NOM descend jusqu'à trois niveaux sous les racines, en
+# soixante listages au plus : au-delà, ce n'est plus une résolution mais un
+# balayage, et `nas_chercher` existe pour ça.
+PROFONDEUR_RESOLUTION = 3
+MAX_LISTAGES_RESOLUTION = 60
 MAX_LOT = 5
 
 
@@ -71,7 +76,18 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
         await _enfants_dossiers(client, base, sid, vise)
         return vise
     except NasRefuse:
-        raise                    # hors périmètre : la résolution ne contourne pas
+        # UN NOM NU N'EST PAS UN CHEMIN HORS PÉRIMÈTRE. Relevé en production
+        # (08/09) : « 03-Appel d'offres etudes », lu dans le listage de
+        # /home/Drive, se normalise en « /03-Appel d'offres etudes » — sous
+        # aucune racine — et était REFUSÉ ici (« hors du périmètre autorisé »)
+        # avant que la résolution par nom n'ait tourné. « Drive » ne passait
+        # que par accident : c'est aussi le nom de la racine fantôme du .env,
+        # donc `verifier` l'acceptait et c'est l'inexistence qui menait à la
+        # résolution. Le confinement ne perd rien à continuer : la résolution
+        # ne cherche que SOUS les racines ouvertes, et `_lister_ouvert`
+        # revérifie le chemin rendu. Ce qui est vraiment hors périmètre reste
+        # introuvable et se refuse plus bas, avec la liste de ce qui existe.
+        pass
     except Exception:  # noqa: BLE001 - inexistant : on cherche par nom
         pass
 
@@ -97,28 +113,53 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
                 break
             except Exception:  # noqa: BLE001 - racine fantôme : on cherche ailleurs
                 continue
+    # PAR NIVEAUX, PAS SEULEMENT CHEZ LES ENFANTS DIRECTS DES RACINES. Relevé
+    # du 08/09 : la racine ouverte est /home, le classement vit dans
+    # /home/Drive, et ce que le modèle nomme — « 03-Appel d'offres etudes »,
+    # vu dans le listage du Drive — est donc un PETIT-enfant de la racine. Ne
+    # regarder qu'un niveau rendait introuvable tout ce que l'écran venait de
+    # montrer. Un niveau se lit en entier avant de descendre, l'exact prime le
+    # « contient » au même niveau, et le nombre de listages est plafonné.
     disponibles: list[str] = []
     if courant is None:
-        for r in racines:
-            try:
-                enfants = await _enfants_dossiers(client, base, sid, r)
-            except Exception:  # noqa: BLE001 - une racine fantôme ne bloque pas
-                continue
-            disponibles += [e.get("nom") or "" for e in enfants]
-            exacts = [e for e in enfants
-                      if (e.get("nom") or "").lower() == segments[0].lower()]
-            contient = [e for e in enfants
-                        if segments[0].lower() in (e.get("nom") or "").lower()]
+        niveau = list(racines)
+        listages = 0
+        for profondeur in range(PROFONDEUR_RESOLUTION):
+            suivant: list[str] = []
+            exacts: list[dict] = []
+            contient: list[dict] = []
+            for dossier in niveau:
+                if listages >= MAX_LISTAGES_RESOLUTION:
+                    break
+                listages += 1
+                try:
+                    enfants = await _enfants_dossiers(client, base, sid, dossier)
+                except Exception:  # noqa: BLE001 - une racine fantôme ou un dossier illisible ne bloque pas
+                    continue
+                if profondeur == 0:
+                    disponibles += [e.get("nom") or "" for e in enfants]
+                for e in enfants:
+                    nom = (e.get("nom") or "").lower()
+                    if nom == segments[0].lower():
+                        exacts.append(e)
+                    elif segments[0].lower() in nom:
+                        contient.append(e)
+                    if e.get("chemin"):
+                        suivant.append(e["chemin"])
             choisi = exacts or contient
             if choisi:
                 courant = choisi[0]["chemin"]
                 break
+            if not suivant or listages >= MAX_LISTAGES_RESOLUTION:
+                break
+            niveau = suivant
     if courant is None:
         raise NasRefuse(
             f"Aucun dossier « {segments[0]} » sous les racines ouvertes "
-            f"({', '.join(racines)}). Dossiers présents : "
+            f"({', '.join(racines)}), jusqu'à {PROFONDEUR_RESOLUTION} niveaux. "
+            f"Dossiers présents : "
             f"{', '.join(sorted(set(d for d in disponibles if d))[:25])}. "
-            "Reprends le nom EXACT dans cette liste.")
+            "Reprends le nom EXACT dans un listage, ou cherche-le avec `nas_chercher`.")
 
     # Segments suivants : contraints à leur parent — c'est le sens d'un chemin.
     for segment in segments[1:]:
@@ -142,6 +183,43 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
                 f"présents : {noms}. Reprends le nom EXACT dans cette liste.")
         courant = choisi[0]["chemin"]
     return courant
+
+
+async def _dossier_resolu(client, base, sid, dossier: Optional[str]) -> Optional[str]:
+    """Le `dossier` d'une recherche, résolu par NOM s'il est donné ; None sinon.
+
+    Toutes les fonctions qui acceptent un `dossier` facultatif (recherche, lot,
+    photos) le passaient tel quel à `verifier()`, qui n'accepte qu'un chemin de
+    montage : « cherche dans 03-Appel d'offres etudes » était refusé comme hors
+    périmètre. Même résolution que le listage, même confinement.
+    """
+    if not (dossier or "").strip():
+        return None
+    return await _resoudre(client, base, sid, dossier)
+
+
+async def resoudre_dossier(chemin: str) -> str:
+    """Le chemin de montage d'un dossier donné par son nom (session propre)."""
+    from nas.acces import connexion
+
+    async with connexion() as (client, base, sid):
+        return await _resoudre(client, base, sid, chemin)
+
+
+async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
+    """Recherche par NOM, dans un dossier lui-même désigné par son nom.
+
+    Le skill `nas_chercher` appelait `nas.acces.chercher` directement : le
+    `dossier` y est vérifié comme un chemin exact, jamais résolu. Relevé le
+    08/09 : « je n'ai pas ouvert d'appel d'offres, le dossier existe dans la
+    liste mais son chemin exact est hors du périmètre » — le modèle avait
+    passé le nom du dossier qu'il venait de voir dans le listage.
+    """
+    from nas.acces import connexion, _chercher_ouvert
+
+    async with connexion() as (client, base, sid):
+        vise = await _dossier_resolu(client, base, sid, dossier)
+        return await _chercher_ouvert(client, base, sid, motif, vise)
 
 
 async def lister(chemin: str) -> dict:
@@ -478,7 +556,11 @@ async def ouvrir(nom_ou_chemin: str) -> dict:
                 # pareil — deux appels lents pour rien.
                 return {**lu, "trouve_par": "chemin"}
             except NasRefuse:
-                raise            # hors périmètre : ne pas contourner par la recherche
+                # Un chemin recomposé (« /03-Appel d'offres etudes/DCE.pdf »)
+                # n'est pas une tentative de sortir du périmètre : la
+                # recherche qui suit ne regarde que sous les racines ouvertes,
+                # et `_lire_ouvert` revérifie ce qu'elle trouve (08/09).
+                pass
             except Exception:
                 pass             # inexistant : on retombe sur la recherche
 
@@ -577,6 +659,7 @@ async def lire_lot(motif: str, dossier: Optional[str] = None,
 
     limite = max(1, min(int(limite or MAX_LOT), MAX_LOT))
     async with connexion() as (client, base, sid):
+        dossier = await _dossier_resolu(client, base, sid, dossier)
         trouve = await _chercher_ouvert(client, base, sid, motif, dossier)
         fichiers = [r for r in (trouve.get("resultats") or []) if not r.get("dossier")]
         if not fichiers:
@@ -741,6 +824,7 @@ async def photos(dossier: Optional[str] = None, motif: Optional[str] = None,
 
     trouves, vus = [], set()
     async with connexion() as (client, base, sid):
+        dossier = await _dossier_resolu(client, base, sid, dossier)
         for m in motifs:
             if len(trouves) >= limite * 2:
                 break

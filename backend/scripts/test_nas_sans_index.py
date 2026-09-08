@@ -68,7 +68,7 @@ ARBRE = {
     "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS/2 - Etudes": [],
     "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS/1 - DCE": [
         ("04 Plans Architecte et BE", True),
-        ("2029 RC VF.pdf", False)],
+        ("2029 RC VF.pdf", False), ("AOS - merignac-sonovision - DCE.zip", False)],
     "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS/1 - DCE/04 Plans Architecte et BE": [
         ("PDF", True)],
     "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS/1 - DCE/04 Plans Architecte et BE/PDF": [
@@ -81,6 +81,8 @@ for d in list(ARBRE):
 
 DCE = "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS/1 - DCE"
 APPELS_SEARCH = []
+GETINFO = []
+TELECHARGES = []
 
 
 class NasRefuse(PermissionError):
@@ -104,6 +106,12 @@ async def _appel(client, base, api, method, version, sid=None, **params):
         if method == "list":
             return {"finished": True, "files": []}     # l'index est vide, TOUJOURS
         return {}
+    if api == "SYNO.FileStation.List" and method == "getinfo":
+        import json as _j
+        chemin = _j.loads(params.get("path"))[0]
+        GETINFO.append(chemin)
+        taille = 179_337_215 if chemin.endswith(".zip") else 1024
+        return {"files": [{"path": chemin, "isdir": False, "additional": {"size": taille}}]}
     if api == "SYNO.FileStation.List":
         chemin = params.get("folder_path")
         if chemin not in ARBRE:
@@ -126,6 +134,7 @@ def _poser(nom, **attrs):
 _poser("ingestion")
 _poser("ingestion.connectors")
 async def _telecharger(client, base, sid, chemin):
+    TELECHARGES.append(chemin)
     return b"%PDF-1.4 contenu"
 
 
@@ -313,7 +322,33 @@ for c in (BACKEND / "main.py", BACKEND.parent.parent / "SYMBIOSE-git" / "symbios
         verifier(f"le démarrage lance le catalogue en tâche de fond ({c.parent.parent.name})",
                  "demarrer_catalogue" in c.read_text(encoding="utf-8"))
 
-# ── 7. Le catalogue dit ce que coûte un parcours complet ──
+# ── 7. La taille AVANT le téléchargement (le ZIP de 179 Mo, 10:57) ──
+TELECHARGES.clear()
+r = asyncio.run(acces._lire_ouvert(None, "http://nas", "sid", DCE + "/AOS - merignac-sonovision - DCE.zip", "u1"))
+verifier("une archive de 179 Mo est REFUSÉE sans être téléchargée (4 min d'attente le 08/09)",
+         not TELECHARGES and "171 Mo" in r.get("message", "") and "ARCHIVE" in r.get("message", ""), (TELECHARGES, r.get("message")))
+verifier("…et l'a_faire dit quoi faire : lister le dossier et ouvrir un fichier qu'il contient",
+         "nas_lister" in r.get("a_faire", "") and "archive" in r.get("a_faire", "").lower())
+TELECHARGES.clear()
+r = asyncio.run(acces._lire_ouvert(None, "http://nas", "sid", DCE + "/2029 RC VF.pdf", "u1"))
+verifier("un fichier de taille normale est téléchargé et lu comme avant",
+         TELECHARGES == [DCE + "/2029 RC VF.pdf"] and r.get("type") == "document", (TELECHARGES, r.get("type")))
+
+# ── 8. Le plafond mord pendant un niveau, et la résolution s'arrête au nom exact ──
+acces.catalogue_pret = lambda: None
+acces._CACHE_LISTAGE.clear()
+LISTAGES.clear()
+acces._lister_ouvert = _compte
+r = _lister("Drive")
+verifier("sans catalogue, « Drive » (niveau 1) se résout en quelques listages, sans balayer tout l'arbre (71 s le 08/09)",
+         r.get("chemin") == "/home/Drive" and len(LISTAGES) <= 8, (r.get("chemin"), len(LISTAGES)))
+acces._lister_ouvert = _vrai_lister
+acces.catalogue_pret = _vrai_catalogue_pret
+src_acces = (BACKEND / "nas" / "acces.py").read_text(encoding="utf-8")
+verifier("le délai du balayage se vérifie DANS le listage, plus seulement entre deux niveaux",
+         "nonlocal coupe" in src_acces and src_acces.count("_t.monotonic() - debut > delai_s") >= 3)
+
+# ── 9. Le catalogue dit ce que coûte un parcours complet ──
 skills = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
 verifier("le catalogue de `nas_chercher` conseille de donner le dossier, et dit que sans lui c'est long",
          "BEAUCOUP plus rapide" in skills and "ne le relance pas a" in skills)

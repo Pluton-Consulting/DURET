@@ -39,6 +39,12 @@ logger = logging.getLogger("duret.nas.acces")
 
 MAX_ENTREES = 200
 MAX_OCTETS_LECTURE = 15 * 1024 * 1024
+# CE QU'ON ACCEPTE DE TÉLÉCHARGER pour l'afficher dans le chat (aperçu et
+# bouton). 08/09, 10:57 : « ouvre le DCE » → l'archive ZIP de 179 Mo est
+# partie en téléchargement, quatre minutes, jusqu'à ce que Noa clique
+# « Arrêter ». La taille est connue AVANT (le serveur la donne) : au-delà de
+# cette borne, on ne télécharge pas, on le dit, et on dit quoi faire.
+MAX_OCTETS_TELECHARGEMENT = 40 * 1024 * 1024
 MAX_CARACTERES = 40_000
 
 
@@ -301,6 +307,24 @@ async def lister(chemin: str) -> dict:
         return await _lister_ouvert(client, base, sid, chemin)
 
 
+async def _taille_ouverte(client, base, sid, chemin: str) -> int:
+    """La taille d'un fichier, sans le télécharger. 0 si le serveur ne la dit pas."""
+    import json as _json
+
+    from ingestion.connectors import synology as c
+
+    try:
+        data = await c._appel(client, base, "SYNO.FileStation.List", "getinfo", 2,
+                              sid=sid, path=_json.dumps([chemin]), additional='["size"]')
+        for f in (data.get("files") or []):
+            if f.get("isdir"):
+                return 0
+            return int(((f.get("additional") or {}).get("size")) or 0)
+    except Exception as e:  # noqa: BLE001 — sans taille, on télécharge comme avant
+        logger.info("NAS : taille de %s inconnue (%s)", chemin, str(e)[:80])
+    return 0
+
+
 async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None = None) -> dict:
     """Lit un fichier dans une session DÉJÀ ouverte.
 
@@ -314,11 +338,31 @@ async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None 
     from skills.affichage import garantir_fichier_lu
 
     vise = verifier(chemin)
+    nom = posixpath.basename(vise)
+
+    # LA TAILLE D'ABORD, LE TÉLÉCHARGEMENT ENSUITE. Un fichier trop lourd se
+    # refuse en une requête de quelques millisecondes, pas après quatre
+    # minutes de transfert. Si le serveur ne sait pas répondre, on télécharge
+    # comme avant : ne pas savoir n'est pas une raison de refuser.
+    taille = await _taille_ouverte(client, base, sid, vise)
+    if taille and taille > MAX_OCTETS_TELECHARGEMENT:
+        extension = nom.rsplit(".", 1)[-1].lower() if "." in nom else ""
+        archive = extension in ("zip", "7z", "rar", "tar", "gz")
+        return {"chemin": vise, "octets": taille,
+                "message": (f"« {nom} » pèse {taille // (1024 * 1024)} Mo : trop lourd pour "
+                            "être lu ou affiché dans le chat"
+                            + (" — c'est une ARCHIVE, elle contient d'autres fichiers." if archive
+                               else ".")),
+                "a_faire": (("C'est une archive : ne la rouvre pas. Liste le dossier voisin "
+                             "(`nas_lister`) et ouvre un des fichiers qu'il contient, ou dis à la "
+                             "personne d'ouvrir l'archive depuis le serveur. ") if archive else
+                            "Ne relance pas l'ouverture : dis la taille et propose d'ouvrir un "
+                            "autre fichier du même dossier, ou une synchronisation pour l'ingérer.")}
+
     brut = await c._telecharger(client, base, sid, vise)
 
     if not brut:
         return {"chemin": vise, "message": "Fichier introuvable ou vide sur le NAS."}
-    nom = posixpath.basename(vise)
     depot = garantir_fichier_lu({}, nom, brut, proprietaire) if proprietaire else {}
     if len(brut) > MAX_OCTETS_LECTURE:
         return {"chemin": vise, "octets": len(brut), **depot,
@@ -426,11 +470,24 @@ async def _balayer(client, base, sid, racines: list[str],
     niveau = [r for r in racines if r]
     listes = 0
 
+    coupe = False
+
     async def _un(chemin: str) -> list[dict]:
+        nonlocal coupe
         garde = _CACHE_LISTAGE.get(chemin)
         if garde and garde[0] > _t.monotonic():
             return garde[1]
+        # LE DÉLAI SE VÉRIFIE ICI AUSSI, pas seulement entre deux niveaux :
+        # un niveau de deux mille dossiers dure plus que tout le budget, et le
+        # contrôle d'entre-niveaux n'arrivait qu'après (08/09 : « 45 s » de
+        # plafond, 93 s mesurées). Passé le délai, on ne lance plus rien.
+        if _t.monotonic() - debut > delai_s:
+            coupe = True
+            return []
         async with porte:
+            if _t.monotonic() - debut > delai_s:
+                coupe = True
+                return []
             garde = _CACHE_LISTAGE.get(chemin)      # un autre l'a peut-être lu pendant l'attente
             if garde and garde[0] > _t.monotonic():
                 return garde[1]
@@ -471,6 +528,9 @@ async def _balayer(client, base, sid, racines: list[str],
                 if e.get("dossier"):
                     suivant.append(chemin)
         niveau = suivant
+        if coupe:
+            complet = False
+            break
     else:
         # La profondeur maximale est atteinte alors qu'il restait des dossiers.
         if niveau:

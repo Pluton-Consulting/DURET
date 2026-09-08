@@ -152,7 +152,19 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
             candidats = [e for e in cat if _correspond(e)]
             complet = bool(_CATALOGUE.get("complet"))
         else:
-            candidats, complet = await _balayer(client, base, sid, racines, _correspond)
+            # SANS CATALOGUE, DEUX PASSES ET ON S'ARRÊTE. La première cherche
+            # le nom EXACT et s'arrête au premier trouvé : « Drive » vit au
+            # niveau 1, inutile de balayer 45 s de plus pour recenser tous les
+            # dossiers dont le nom contient « drive » (08/09 : un simple
+            # `nas_lister` sur un chemin recomposé coûtait 71 s). La seconde
+            # passe, « contient », ne part que si l'exact n'existe pas.
+            def _exact(e):
+                return e.get("dossier") and _sans_accent_nas(e.get("nom") or "") == cible
+
+            candidats, complet = await _balayer(client, base, sid, racines, _exact,
+                                                arret_au_premier=True)
+            if not candidats:
+                candidats, complet = await _balayer(client, base, sid, racines, _correspond)
         exacts = [e for e in candidats if _sans_accent_nas(e.get("nom") or "") == cible]
         if exacts or candidats:
             # Le plus HAUT dans l'arborescence l'emporte à égalité : un dossier

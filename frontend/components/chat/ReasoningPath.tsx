@@ -59,13 +59,14 @@ const STAGES: { label: string; desc: string; nodes: string[] }[] = [
 // demande n'a pas été confiée, l'étape garde son nom générique.
 const EXPERTS: { noeuds: string[]; label: string; desc: string }[] = [
   { noeuds: ["agent2", "vision", "extraction", "preprocess", "prechiffrage"],
-    label: "Expert conception", desc: "Plans, photos, chiffrage" },
+    label: "Expert appels d'offres", desc: "DCE, plans, métrés, chiffrage" },
   { noeuds: ["agent3", "generate_skill", "test_skill"],
     label: "Atelier", desc: "Apprentissage d'une compétence" },
-  // agent1 est l'assistant lui-même (clients, mails, documents, visuels) :
-  // l'appeler « expert commercial » mentait sur un rendu 3D. Relevé le 22/08.
+  // agent1 est l'assistant lui-même (chantiers, clients, mails, documents) :
+  // l'appeler « expert commercial » mentait. Relevé le 22/08. Aucun visuel
+  // ici : l'offre d'images n'existe pas chez Duret (08/09).
   { noeuds: ["agent1"],
-    label: "Assistant", desc: "Clients, devis, mails, documents, visuels" },
+    label: "Assistant", desc: "Chantiers, clients, mails, documents" },
 ]
 
 function expertDe(steps: string[]): { label: string; desc: string } | null {

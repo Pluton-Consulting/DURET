@@ -237,9 +237,8 @@ async def nas_photos(data: dict, user) -> dict:
                if resultat.get("trop_volumineuses") else "") + ".")
         resultat["a_faire"] = (
             "AFFICHE les photos : insère un bloc ```ui contenant EXACTEMENT le "
-            "contenu de `bloc_ui`. Ce sont de VRAIES photos du serveur, pas des "
-            "images générées : ne les présente jamais comme un rendu ou une "
-            "simulation. Ne colle aucune adresse d'image en texte.")
+            "contenu de `bloc_ui`. Ce sont les photos du serveur, telles quelles. "
+            "Ne colle aucune adresse d'image en texte.")
     return resultat
 
 
@@ -250,10 +249,9 @@ SKILLS = {
             "MONTRE LES PHOTOS d'un dossier du serveur dans le chat : elles "
             "sont affichees en planche et telechargeables. A utiliser des qu'on "
             "demande de VOIR des images (« montre-moi les photos du chantier "
-            "X », « les visuels de ce dossier »). `dossier` : le chemin ou le "
+            "X », « les photos de ce dossier »). `dossier` : le chemin ou le "
             "nom du dossier. `motif` : un bout de nom de fichier. `limite` : 1 a "
-            "12 (6 par defaut). Ce sont de VRAIES photos, jamais un rendu "
-            "genere : ne les presente pas comme une simulation"),
+            "12 (6 par defaut)"),
         optionnels=["dossier", "motif", "limite"],
         effet="lecture",
         libelle="je vais chercher les photos"),

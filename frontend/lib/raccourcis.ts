@@ -24,6 +24,13 @@ N'invente aucun responsable ni aucune échéance qui n'aurait pas été dit : la
 
 Transcription :
 ` },
+  // 08/09, demande de Noa : « recréer des documents sur la base de la
+  // structure visuelle d'un document de leur Drive ». La capacité existe
+  // (`reproduire_document`) ; sans entrée au menu, personne ne sait la
+  // formuler. Le prompt DIT la voie — retrouver le fichier, voir ce qu'il
+  // porte, puis remplacer — parce que le geste se joue en deux temps.
+  { libelle: "Reprendre la présentation d'un document",
+    prompt: "Reprends la présentation d'un document du serveur pour en faire un nouveau. Retrouve d'abord le fichier (dis-moi où tu l'as trouvé), montre-moi ce qu'il contient et ce que tu comptes remplacer, puis produis le nouveau document en gardant sa mise en page, son logo et ses styles. Le document à reprendre : " },
   { libelle: "Analyser un DCE",
     prompt: "Je joins une pièce du DCE : analyse-la (lots, contraintes, délais, pièges) et dis ce qu’il faut vérifier avant de chiffrer." },
   // LE CHIFFRAGE D'UN PLAN, EN PASSES SÉPARÉES (02/09, demande de Noa).

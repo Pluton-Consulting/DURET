@@ -47,6 +47,13 @@ MAX_TRAMES = 200
 # reconnaître, pas de quoi la lire en entier.
 EXTRAIT = 300
 
+# CE QU'ON MONTRE DE LA STRUCTURE D'UN DOCUMENT qu'on s'apprête à reproduire.
+# Le modèle doit voir assez de texte pour désigner ce qu'il veut remplacer, et
+# pas au point de noyer le tour : un CCTP de 80 pages tient en dizaines de
+# milliers de caractères, et un résultat de skill est tranché bien avant.
+MAX_TEXTES_MONTRES = 120
+MAX_CARACTERES_STRUCTURE = 6000
+
 
 class TrameInvalide(Exception):
     """Refus explicite : la demande ne peut pas aboutir, et on dit pourquoi."""
@@ -334,6 +341,169 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
     }
 
 
+# ── Reproduire : le document d'un autre, avec notre contenu ──────────────
+
+async def reproduire_document(parametres: dict, utilisateur) -> dict:
+    """Rouvre un document du serveur et n'en change que le texte.
+
+    DEMANDE DE NOA (08/09) : « il doit être capable de recréer des documents
+    sur la base de la structure visuelle d'un document de leur Drive ».
+
+    POURQUOI CE GESTE EXISTE À CÔTÉ DES TRAMES. `enregistrer_trame` puis
+    `utiliser_trame` savaient déjà le faire, mais au prix d'un ENREGISTREMENT :
+    le document entrait en base, sous un nom, pour toujours, et comptait dans
+    le plafond des trames. Or reprendre la présentation d'un devis qu'on vient
+    de trouver dans un dossier est un geste de tous les jours, pas une décision
+    de bibliothèque. On sépare donc les deux : ici, on reproduit une fois ; là,
+    on retient ce qu'on reprendra toujours. Le moteur est le MÊME
+    (`bureautique/trame.py`), donc la garantie est la même — on n'écrit pas le
+    document, on ouvre l'original et on n'en change que le texte : styles,
+    logo, en-têtes, largeurs de colonnes et formules restent par construction.
+
+    DEUX TEMPS, ET C'EST VOULU. Sans `remplacements`, le geste RÉPOND par la
+    structure : paragraphes, tableaux, textes présents, variables reconnues.
+    Le modèle ne peut pas remplacer à l'aveugle ce qu'il n'a pas lu, et deviner
+    « ce qui ressemble à un nom de client » détruirait « rue Dupont ». Avec
+    `remplacements`, il produit le document. Le second appel n'est pas un
+    rejeu : il porte une table que le premier a rendue possible.
+    """
+    from bureautique import atelier, trame as moteur
+
+    reference = str(parametres.get("fichier") or parametres.get("chemin")
+                    or parametres.get("document") or "").strip()
+    if not reference:
+        raise TrameInvalide(
+            "Indiquez le document à reproduire, par la référence qu'un geste "
+            "précédent vous a rendue : le `chemin` exact d'un fichier listé sur "
+            "le serveur, une pièce jointe ouverte, ou un document produit ici.")
+
+    # LE MODÈLE NE DÉSIGNE QUE CE QU'UN GESTE LUI A RENDU — même règle que
+    # `enregistrer_trame` et les pièces jointes d'un envoi : c'est elle qui
+    # empêche de faire ouvrir au serveur un fichier que personne ne lui a
+    # montré, et le périmètre du serveur de fichiers s'applique en dessous.
+    from mail.attaches import resoudre
+
+    boite = str(getattr(utilisateur, "email", "") or "").lower()
+    pretes, refusees = await resoudre([reference], utilisateur, boite)
+    if not pretes:
+        pourquoi = (refusees[0].get("raison") if refusees
+                    else "cette référence ne correspond à aucun fichier connu")
+        raise TrameInvalide(
+            f"Je ne retrouve pas « {reference} » : {pourquoi}. Listez le dossier "
+            "(le geste de listage du serveur) et reprenez le `chemin` EXACT "
+            "d'une entrée, puis redemandez.")
+
+    piece = pretes[0]
+    octets, nom_fichier = piece["octets"], piece["nom"]
+    if len(octets) > MAX_OCTETS:
+        raise TrameInvalide(
+            f"Ce fichier fait {len(octets) // 1024} ko, au-delà des "
+            f"{MAX_OCTETS // (1024 * 1024)} Mo qu'on sait rouvrir.")
+
+    genre = moteur.type_de(nom_fichier or "", piece.get("mime") or "")
+    if not genre:
+        raise TrameInvalide(
+            "Seuls les fichiers Word (.docx) et Excel (.xlsx) se reproduisent "
+            "sans rien perdre de leur mise en page : ce sont les seuls qu'on "
+            "sache rouvrir. Un PDF ne se rouvre pas — il faudrait le "
+            "reconstruire, donc perdre ce qu'on cherche justement à garder.")
+
+    try:
+        analyse = moteur.analyser(octets, genre)
+    except Exception as e:  # noqa: BLE001 — un fichier abîmé se DIT
+        raise TrameInvalide(
+            f"Ce document n'a pas pu être ouvert : {str(e)[:160]}") from e
+    bon, pourquoi = moteur.exploitable(analyse)
+    if not bon:
+        raise TrameInvalide(pourquoi)
+
+    remplacements = parametres.get("remplacements") or {}
+    if isinstance(remplacements, str):
+        try:
+            remplacements = json.loads(remplacements)
+        except ValueError:
+            raise TrameInvalide("Les remplacements doivent être une table "
+                                "« texte cherché » → « texte à mettre ».")
+
+    # ── Premier temps : la structure, pour savoir quoi remplacer ──
+    if not isinstance(remplacements, dict) or not remplacements:
+        textes, total = [], 0
+        for t in (analyse.get("textes") or []):
+            if len(textes) >= MAX_TEXTES_MONTRES or total >= MAX_CARACTERES_STRUCTURE:
+                break
+            textes.append(t)
+            total += len(t)
+        coupe = len(analyse.get("textes") or []) > len(textes)
+        structure = {"nom": nom_fichier, "type": genre,
+                     "variables": analyse.get("variables") or []}
+        if genre == "docx":
+            structure.update({"paragraphes": analyse.get("paragraphes"),
+                              "tableaux": analyse.get("tableaux"),
+                              "images": analyse.get("images"),
+                              "entete": analyse.get("entete")})
+        else:
+            structure["feuilles"] = analyse.get("feuilles")
+        return {
+            "fichier": nom_fichier, "structure": structure, "textes": textes,
+            "textes_coupes": coupe or None,
+            "message_final": (
+                f"« {nom_fichier} » est ouvert : sa présentation est prête à être "
+                "reprise. Dites ce qu'il faut y changer."),
+            "a_faire": (
+                "Le document n'est PAS encore produit : ce tour rend sa STRUCTURE. "
+                "Rappelle CE MÊME geste avec `remplacements` — une table « texte "
+                "exactement présent ci-dessus » vers « texte à mettre ». Prends les "
+                "textes cherchés dans la liste rendue, JAMAIS de mémoire : un texte "
+                "approché ne remplace rien. "
+                + (f"Ce document porte des variables ({', '.join(structure['variables'][:12])}) : "
+                   "remplace-les en priorité. " if structure["variables"] else
+                   "Ce document ne porte aucune variable entre accolades : remplace "
+                   "les valeurs réelles (nom du client, référence, dates, montants). ")
+                + ("La liste des textes est COUPÉE : si ce qu'il faut changer n'y "
+                   "figure pas, dis-le plutôt que de deviner. " if coupe else "")
+                + "Montre à la personne ce que tu comptes remplacer avant de le faire."),
+        }
+
+    # ── Second temps : le document ──
+    try:
+        produits, faits = moteur.remplir(octets, genre, remplacements)
+    except ValueError as e:
+        raise TrameInvalide(str(e)) from e
+
+    base = (nom_fichier or f"document.{genre}").rsplit(".", 1)[0]
+    nom_sortie = f"{base} (repris).{genre}"
+    jeton = atelier.deposer_fichier(
+        nom_sortie, produits, str(getattr(utilisateur, "id", "")),
+        origine="reproduction")
+
+    if faits == 0:
+        # RIEN N'A CHANGÉ, ET ON LE DIT — même règle que `utiliser_trame` :
+        # rendre une copie conforme sans le signaler ferait croire au travail
+        # fait, et c'est ce document-là qui part chez un client.
+        message = (f"Aucun des textes cherchés n'a été trouvé dans "
+                   f"« {nom_fichier} ». Le document est rendu tel quel : "
+                   "reprenez l'orthographe exacte de ce qu'il fallait changer.")
+    else:
+        message = (f"« {nom_fichier} » est repris avec {faits} remplacement(s). "
+                   "La mise en page, le logo, les styles et les formules d'origine "
+                   "sont conservés : c'est le fichier lui-même, pas une copie "
+                   "reconstruite.")
+    return {
+        "fichier": nom_sortie, "source": nom_fichier, "remplacements": faits,
+        "bloc_garanti": True,
+        "bloc_ui": {"type": "fichier", "nom": nom_sortie,
+                    "url": f"/api/documents/{jeton}",
+                    "titre": nom_sortie, "format": genre,
+                    "octets": len(produits)},
+        "message_final": message,
+        "a_faire": ("La carte du document et son aperçu s'affichent "
+                    "AUTOMATIQUEMENT : n'écris aucun bloc. Dis en une phrase ce "
+                    "qui a été repris et ce qui a été remplacé. Si la personne "
+                    "voudra le refaire souvent, propose de RETENIR ce document "
+                    "comme trame."),
+    }
+
+
 # ── Oublier ──────────────────────────────────────────────────────────────
 
 async def oublier_trame(parametres: dict, utilisateur) -> dict:
@@ -415,6 +585,29 @@ SKILLS = {
         requis=["trame"], optionnels=["remplacements"],
         effet="ecriture_interne",
         libelle="je reprends la trame"),
+    "reproduire_document": Declaration(
+        fonction=reproduire_document,
+        description=(
+            "RECREE un document Word ou Excel EN REPRENANT LA PRESENTATION d'un "
+            "document existant : on rouvre le fichier d'origine et on n'en change "
+            "que le texte, donc le logo, les styles, les en-tetes, les largeurs "
+            "de colonnes et les formules sont conserves a l'identique. A utiliser "
+            "des qu'on demande « refais ce devis pour un autre client », « meme "
+            "presentation que ce document », « reprends la trame de ce fichier ». "
+            "`fichier` : la REFERENCE rendue par un geste precedent -- le `chemin` "
+            "EXACT d'un fichier liste sur le serveur, une piece jointe ouverte, ou "
+            "un document produit ici ; jamais un chemin que tu composes. "
+            "`remplacements` : la table « texte cherche » vers « texte a mettre ». "
+            "SANS `remplacements`, ce geste rend la STRUCTURE du document (textes "
+            "presents, variables) : appelle-le une premiere fois pour voir, puis "
+            "une seconde avec la table. Le document produit s'affiche "
+            "AUTOMATIQUEMENT, avec son apercu. Pour un document qu'on reprendra "
+            "TOUJOURS, `enregistrer_trame` le retient une fois pour toutes"),
+        requis=["fichier"], optionnels=["remplacements"],
+        # Produit un document DANS l'application : rien ne sort de l'entreprise,
+        # comme `utiliser_trame` et `produire_document`.
+        effet="ecriture_interne",
+        libelle="je reprends la presentation du document"),
     "oublier_trame": Declaration(
         fonction=oublier_trame,
         description=(

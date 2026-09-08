@@ -396,14 +396,17 @@ if charge:
             refuse = True
         verifier(f"refusé : {pourquoi}", refuse)
 
-    verifier("les quatre gestes sont déclarés EN UN SEUL endroit (le registre)",
-             set(sk.SKILLS) == {"enregistrer_trame", "mes_trames",
-                                "utiliser_trame", "oublier_trame"},
+    # 08/09 : `reproduire_document` rejoint la famille — reprendre la
+    # présentation d'un document SANS l'enregistrer comme trame.
+    verifier("les cinq gestes sont déclarés EN UN SEUL endroit (le registre)",
+             set(sk.SKILLS) == {"enregistrer_trame", "mes_trames", "utiliser_trame",
+                                "oublier_trame", "reproduire_document"},
              str(sorted(sk.SKILLS)))
     verifier("lister est une LECTURE, le reste écrit dans l'app seulement",
              sk.SKILLS["mes_trames"].effet == "lecture"
              and all(sk.SKILLS[n].effet == "ecriture_interne"
-                     for n in ("enregistrer_trame", "utiliser_trame", "oublier_trame")))
+                     for n in ("enregistrer_trame", "utiliser_trame", "oublier_trame",
+                               "reproduire_document")))
     verifier("chacun porte son libellé « je … » pour l'écran",
              all(d.libelle.startswith("je ") for d in sk.SKILLS.values()))
     # LE MODÈLE NE DÉSIGNE QUE CE QU'UN GESTE LUI A RENDU : la règle de

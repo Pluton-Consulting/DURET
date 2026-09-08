@@ -17,8 +17,9 @@ Les tâches planifiées ne sont PAS promues : une tâche de 7 h 30 bloquée sur
 « approuver la lecture des mails » ne servirait à personne ; leurs effets
 externes, eux, attendent toujours l'accord (tableau de bord → À valider).
 
-Le défaut est « active » : c'est la demande. Un clic dans Paramètres rend
-l'ancien régime (lectures immédiates, accord sur les seuls effets externes).
+Le DÉFAUT est propre à chaque client (`config.py`) : « active » chez Duret
+(la demande), « desactivee » chez Symbiose (Noa : « laisser l'accord humain
+comme avant »). Un clic dans Paramètres change de régime.
 """
 from __future__ import annotations
 
@@ -35,8 +36,10 @@ def active() -> bool:
     except Exception:  # noqa: BLE001 — jamais une panne
         brut = getattr(settings, "validation_totale", None)
     if brut is None:
-        brut = getattr(settings, "validation_totale", "active")
-    return (str(brut or "").strip().lower() or "active") == "active"
+        brut = getattr(settings, "validation_totale", "desactivee")
+    # Sans réglage lisible : l'ancien régime. Le défaut de chaque client vit
+    # dans SON config.py (Duret : active ; Symbiose : desactivee).
+    return str(brut or "").strip().lower() == "active"
 
 
 def effet_effectif(effet_declare: str, trigger_kind: str | None) -> str:

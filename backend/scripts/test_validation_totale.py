@@ -62,7 +62,10 @@ if not src.exists():
     sys.exit(1)
 vt = types.ModuleType("vt_double")
 exec(compile(src.read_text(encoding="utf-8"), str(src), "exec"), vt.__dict__)
-verifier("sans surcharge en base, le défaut (config) « active » fait foi", vt.active() is True)
+verifier("sans surcharge en base, le défaut du config fait foi (ici doublé à « active »)", vt.active() is True)
+cfg.settings.validation_totale = "desactivee"
+verifier("…et « desactivee » dans le config coupe le régime", vt.active() is False)
+cfg.settings.validation_totale = "active"
 VALEUR["validation_totale"] = "desactivee"
 verifier("« desactivee » en base coupe le réglage", vt.active() is False)
 VALEUR["validation_totale"] = "active"
@@ -81,8 +84,11 @@ verifier("la carte dit de quoi il s'agit (« Accord demandé avant chaque action
 verifier("le prompt dit : une action à la fois, une phrase qui dit pourquoi, ne redemande jamais",
          "UNE action à la fois" in vt.consigne() and "ne redemande" in vt.consigne())
 cfgs = (BACKEND / "config.py").read_text(encoding="utf-8")
-verifier("config : défaut « active », et le catalogue des réglages le connaît",
-         'validation_totale: str = "active"' in cfgs
+# LE DÉFAUT SUIT LE CLIENT (08/09, Noa) : « active » chez Duret, « desactivee »
+# chez Symbiose (reconnu par la présence du Drive).
+attendu = "desactivee" if (BACKEND / "outils" / "drive.py").exists() else "active"
+verifier(f"config : le défaut de CE client est « {attendu} », et le catalogue des réglages le connaît",
+         f'validation_totale: str = "{attendu}"' in cfgs
          and '"validation_totale",' in (BACKEND / "llm" / "reglages.py").read_text(encoding="utf-8"))
 
 # ── 2. La reprise du tour après l'accord ──

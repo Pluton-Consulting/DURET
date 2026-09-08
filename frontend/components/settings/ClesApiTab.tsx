@@ -590,7 +590,7 @@ function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendTok
 // d'accord, puis le tour reprend avec le résultat. Désactivé : l'ancien
 // régime — lectures immédiates, accord sur les seuls effets externes.
 function ReglageValidationTotale({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
-  const [actif, setActif] = useState(true)   // le défaut est « active » (08/09)
+  const [actif, setActif] = useState(false)  // l'état vrai vient de l'API (le défaut est propre au client)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState("")
   const [erreur, setErreur] = useState("")
@@ -603,9 +603,10 @@ function ReglageValidationTotale({ apiUrl, backendToken }: { apiUrl: string; bac
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const lignes = await res.json()
       const r = (lignes || []).find((l: any) => l.cle === "validation_totale")
-      // Sans surcharge en base, le défaut (config.py) est « active ».
+      // L'API rend la valeur EN VIGUEUR (surcharge, sinon le défaut du client) :
+      // seul « active » allume — Duret l'a par défaut, Symbiose non.
       const v = (r?.valeur || "").trim().toLowerCase()
-      setActif(v === "" || v === "active")
+      setActif(v === "active")
       setErreur("")
     } catch (e: any) {
       setErreur(e?.message || "chargement impossible")

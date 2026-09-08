@@ -37,8 +37,12 @@ verifier("routeur : la voie RAPIDE juge une suite courte sans appel LLM",
          and routeur.index("question_meta(") < routeur.index("get_llm("))
 verifier("routeur : la voie rapide ne coupe pas les vraies questions (le prédicat est celui du banc de cohérence)",
          "from agents.memoire_conversation import question_meta" in routeur)
-verifier("mémoire : résumé glissant et rappel vectoriel en PARALLÈLE, plus en série",
-         re.search(r"gather\(\s*fondre_dans_le_resume\(.*?rappeler_echanges\(", agent1, re.S) is not None)
+# 08/09 : le résumé glissant ne retient plus le tour du tout — il se fond en
+# FOND pour le tour suivant (9 s mesurées sur le chemin critique le 08/09).
+verifier("mémoire : le résumé glissant se calcule EN FOND, le tour ne l'attend plus",
+         "fondre_en_fond(_tid, {**state, **maj_memoire}, _tous, _anciens)" in agent1
+         and "maj_memoire = resume_pret(_tid)" in agent1
+         and "await fondre_dans_le_resume(" not in agent1)
 
 routeur_llm = (BACKEND / "llm" / "router.py").read_text(encoding="utf-8")
 verifier("LLM : les instances sont mises en CACHE (connexion réutilisée entre les appels)",

@@ -684,7 +684,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
     # glissant de ce qui en est sorti, et le rappel vectoriel des échanges
     # anciens proches de la question. `compact_messages` ne donnait que la
     # première, et petite : huit messages, quatre mille caractères.
-    from agents.memoire_conversation import (fenetre_recente, fondre_dans_le_resume,
+    from agents.memoire_conversation import (fenetre_recente, fondre_en_fond, resume_pret,
                                              rappeler_echanges, bloc_memoire)
     _tous = state.get("messages") or []
     history, _anciens = fenetre_recente(_tous)
@@ -693,14 +693,16 @@ async def llm_node(state: AgentState, config=None) -> dict:
     if _anciens:
         _nb = len([m for m in _tous if getattr(m, "type", None) != "system"])
         _premier_rang_fenetre = (_nb - len(history)) // 2 + 1
-        # EN PARALLÈLE (31/08) : le résumé glissant est un appel LLM léger, le
-        # rappel vectoriel un embedding — indépendants, ils s'additionnaient en
-        # série sur le chemin critique du tour.
-        import asyncio as _aio_mem
-        maj_memoire, _rappels = await _aio_mem.gather(
-            fondre_dans_le_resume(state, _tous, _anciens),
-            rappeler_echanges(str(state.get("thread_id") or ""), query,
-                              _premier_rang_fenetre))
+        # LE RÉSUMÉ NE RETIENT PLUS LE TOUR (08/09). Le 31/08 l'avait mis en
+        # parallèle du rappel vectoriel ; mesuré le 08/09, il coûtait encore
+        # 9 s par tour, sur le chemin critique. Le tour part avec le résumé
+        # fondu EN FOND au tour précédent (`resume_pret`), le rappel vectoriel
+        # reste attendu (un embedding, pas un appel de modèle), et la fonte
+        # suivante part sans être attendue.
+        _tid = str(state.get("thread_id") or "")
+        maj_memoire = resume_pret(_tid)
+        _rappels = await rappeler_echanges(_tid, query, _premier_rang_fenetre)
+        fondre_en_fond(_tid, {**state, **maj_memoire}, _tous, _anciens)
         _resume = maj_memoire.get("resume_conversation") or state.get("resume_conversation")
         bloc_memoire_txt = bloc_memoire(_resume, _rappels)
     # L'AMNÉSIE DOIT SE VOIR DANS LES JOURNAUX.

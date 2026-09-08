@@ -217,6 +217,53 @@ async def memoriser_echange(thread_id: str, user_id: Optional[str], rang: int,
 # ramassée avant d'avoir fini. On les garde ici le temps qu'elles s'achèvent.
 _TACHES_MEMOIRE: set = set()
 
+# LE RÉSUMÉ GLISSANT SE CALCULE EN FOND, POUR LE TOUR SUIVANT (08/09).
+#
+# Mesuré sur l'export de 11:33 (Duret) : la fonte des messages sortis de la
+# fenêtre est un appel au modèle léger, et il coûtait 9 secondes AVANT que le
+# tour ne commence — sur le chemin critique, à chaque tour, pour un texte qui
+# ne décrit que le passé. Le rappel vectoriel tournait déjà en parallèle ; ça
+# ne suffisait pas. Désormais le tour PART avec le résumé tel qu'il est, et
+# lance la fonte sans l'attendre : son résultat est repris au tour suivant,
+# et entre-temps la fenêtre récente porte encore ce qui n'est pas fondu. Un
+# redémarrage perd une fonte en cours : elle se refait au tour d'après.
+_RESUMES_EN_FOND: dict[str, dict] = {}
+_FONTES_EN_COURS: set = set()
+
+
+def resume_pret(thread_id: str) -> dict:
+    """Les champs d'état d'un résumé fondu en fond depuis le tour précédent,
+    ou {} — une fois repris, il n'est plus rendu."""
+    return _RESUMES_EN_FOND.pop(str(thread_id or ""), None) or {}
+
+
+def fondre_en_fond(thread_id: str, state: dict, messages: list, anciens: int) -> None:
+    """Lance `fondre_dans_le_resume` sans attendre. Une seule fonte par fil à
+    la fois ; le résultat attend dans `_RESUMES_EN_FOND`. Ne lève jamais."""
+    import asyncio
+    tid = str(thread_id or "")
+    if not tid or tid in _FONTES_EN_COURS:
+        return
+    instantane = dict(state)
+
+    async def _fondre():
+        try:
+            maj = await fondre_dans_le_resume(instantane, messages, anciens)
+            if maj:
+                _RESUMES_EN_FOND[tid] = maj
+        except Exception as e:  # noqa: BLE001 — la mémoire longue ne fait pas tomber un tour
+            logger.warning("Fonte du résumé en fond échouée (%s)", type(e).__name__)
+        finally:
+            _FONTES_EN_COURS.discard(tid)
+
+    try:
+        tache = asyncio.get_running_loop().create_task(_fondre())
+    except RuntimeError:
+        return
+    _FONTES_EN_COURS.add(tid)
+    _TACHES_MEMOIRE.add(tache)
+    tache.add_done_callback(_TACHES_MEMOIRE.discard)
+
 
 def memoriser_echange_en_fond(thread_id: str, user_id: Optional[str], rang: int,
                               question: str, reponse: str) -> None:

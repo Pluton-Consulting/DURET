@@ -7,6 +7,12 @@
 // ajuste, on envoie soi-même. 31/08 : les entrées clients et CA ont été
 // retirées à la demande de Noa.
 export const RACCOURCIS: { libelle: string; prompt: string }[] = [
+  // 08/09 : les relances de facturation suivent une CHAÎNE (public : maître
+  // d'œuvre, puis architecte, puis l'architecte encore ; privé : le client)
+  // portée par les skills `relancer_factures` / `enregistrer_relance`. Le
+  // raccourci fait passer par eux, jamais par une rédaction libre.
+  { libelle: "Relancer les factures impayées",
+    prompt: "Prépare les relances des factures impayées suivies (relancer_factures) : pour chacune, la carte au bon destinataire selon la chaîne (public : maître d'œuvre, puis architecte ; privé : le client). Dis-moi lesquelles sont dues et à qui, puis attends mon accord pour chaque envoi ; note chaque relance envoyée (enregistrer_relance)." },
   { libelle: "Synthèse des mails (7 jours)",
     prompt: "Fais le point sur tous mes mails des 7 derniers jours : une synthèse message par message, et propose une réponse pour chacun de ceux qui en appellent une." },
   { libelle: "Dossiers en attente",

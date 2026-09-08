@@ -11,6 +11,9 @@ export const RACCOURCIS: { libelle: string; prompt: string }[] = [
   // d'œuvre, puis architecte, puis l'architecte encore ; privé : le client)
   // portée par les skills `relancer_factures` / `enregistrer_relance`. Le
   // raccourci fait passer par eux, jamais par une rédaction libre.
+  // 08/09 : l'inventaire d'un dossier, fichier par fichier (`inventaire_dossier`).
+  { libelle: "Inventaire d'un dossier (fichier par fichier)",
+    prompt: "Fais l'inventaire de ce dossier en ouvrant chaque fichier un par un (inventaire_dossier) : une ligne par fichier avec sa description, le classeur Excel, et la démarche suivie. Le dossier : " },
   { libelle: "Relancer les factures impayées",
     prompt: "Prépare les relances des factures impayées suivies (relancer_factures) : pour chacune, la carte au bon destinataire selon la chaîne (public : maître d'œuvre, puis architecte ; privé : le client). Dis-moi lesquelles sont dues et à qui, puis attends mon accord pour chaque envoi ; note chaque relance envoyée (enregistrer_relance)." },
   { libelle: "Synthèse des mails (7 jours)",

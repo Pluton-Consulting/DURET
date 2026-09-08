@@ -56,11 +56,17 @@ async def chercher_web(data: dict, user) -> dict:
 
     r = await web_search(query=requete, user_id=str(getattr(user, "id", "")),
                          agent_id="agent1", max_results=nombre)
+    sources = [s for s in (r.get("sources") or []) if s]
     return {
         "requete": requete,
         "trouve": bool(r.get("success")),
         "contenu": r.get("content"),
-        "sources": r.get("sources") or [],
+        "sources": sources,
+        # LES SOURCES SONT GARANTIES À L'ÉCRAN (08/09) : le tableau des adresses
+        # lues se pose mécaniquement, la personne voit d'où vient la réponse.
+        **({"bloc_ui": {"type": "table", "titre": f"Recherche web — {requete}",
+                        "columns": ["Adresse consultée"], "rows": [[s] for s in sources]},
+            "bloc_garanti": True} if sources else {}),
         # LE MODÈLE DOIT SAVOIR D'OÙ ÇA VIENT. Une page web n'a pas l'autorité
         # d'un document de l'entreprise : elle se cite, elle ne fait pas foi.
         "a_savoir": ("Information EXTERNE, trouvée sur le web. Cite les adresses "
@@ -101,10 +107,16 @@ async def ouvrir_page(data: dict, user) -> dict:
     if r.get("apercu"):
         sortie["apercu"] = r["apercu"]
         sortie["titre"] = r.get("title")
-        sortie["a_savoir"] += (
-            " Montre la page : insère un bloc ```ui {\"type\":\"site\",\"url\":\"" + url
-            + "\",\"titre\":\"" + str(r.get("title") or url).replace('"', "'")[:120]
-            + "\",\"apercu\":\"" + str(r["apercu"]) + "\"} — l'écran y affiche la capture.")
+        # L'APERÇU EST GARANTI (08/09, demande de Noa : « confirme que la
+        # recherche sur Internet fonctionne, avec la prévisualisation »). Le
+        # bloc `site` était laissé au modèle, qui l'écrivait ou non ; il est
+        # posé ici, mécaniquement, comme les autres blocs garantis.
+        sortie["bloc_ui"] = {"type": "site", "url": url,
+                             "titre": str(r.get("title") or url)[:120], "apercu": str(r["apercu"])}
+        sortie["bloc_garanti"] = True
+        sortie["a_faire"] = ("La capture de la page est DÉJÀ affichée par un bloc mécanique : "
+                             "n'écris aucun bloc `site`, ne recopie pas l'adresse en carte. "
+                             "Rédige la réponse à partir du contenu, en citant l'adresse.")
     return sortie
 
 async def naviguer(data: dict, user) -> dict:

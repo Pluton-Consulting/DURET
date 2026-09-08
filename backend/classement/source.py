@@ -59,3 +59,28 @@ def niveau_de(chemin: str) -> str:
         return (getattr(settings, "synology_access_level", None) or "all").strip() or "all"
     except Exception:  # noqa: BLE001
         return "all"
+
+# ── L'inventaire (08/09) : lister un dossier, lire un fichier. Le périmètre du
+# serveur s'applique en dessous (`verifier`), le rôle est contrôlé ici.
+
+async def fichiers_du_dossier(dossier: str, user) -> tuple[str, list]:
+    """(chemin réel, fichiers directs du dossier) — chaque fichier porte `ref`
+    (son chemin), `nom`, `octets`."""
+    from nas.acces import verifier_role
+    from outils import nas
+
+    verifier_role(user)
+    r = await nas.lister(dossier)
+    entrees = [e for e in (r.get("entrees") or []) if not e.get("dossier")]
+    return str(r.get("chemin") or dossier), [
+        {"nom": e.get("nom") or "?", "ref": e.get("chemin"), "octets": int(e.get("octets") or 0), "type": ""}
+        for e in entrees if e.get("chemin")]
+
+
+async def lire_fichier(ref, user) -> str:
+    """Le texte d'un fichier du serveur, ou une chaîne vide. Sans propriétaire :
+    rien n'est déposé à l'atelier (quarante cartes seraient du bruit)."""
+    from outils import nas
+
+    lu = await nas.ouvrir(str(ref))
+    return str(lu.get("texte") or lu.get("contenu") or "")

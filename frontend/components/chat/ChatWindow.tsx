@@ -339,6 +339,22 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     setMessages((prev) => prev.map((m) =>
       (m.tacheId === tacheId && m.placeholder) ? { ...m, content: contenu } : m))
 
+  // UNE CHAÎNE D'ACCORDS GARDE UNE SEULE BULLE (08/09 soir). Avec l'accord
+  // avant chaque action, un tour s'arrête plusieurs fois de suite : la bulle
+  // du premier accord passait à « Résultat en cours… » au clic, puis une
+  // NOUVELLE bulle se posait pour le geste suivant — la première restait là,
+  // orpheline, pour toujours. Relevé de Noa : neuf « Résultat en cours… »
+  // empilés au-dessus d'une réponse. La bulle change de propriétaire : elle
+  // suit l'accord suivant, question comprise, sans qu'une autre naisse.
+  const rebaptiserBulle = (ancienne: string, nouvelle: string, contenu: string) => {
+    tachesSuiviesRef.current.delete(ancienne)
+    tachesSuiviesRef.current.add(nouvelle)
+    setMessages((prev) => prev.map((m) =>
+      m.tacheId === ancienne
+        ? { ...m, tacheId: nouvelle, ...(m.placeholder ? { content: contenu } : {}) }
+        : m))
+  }
+
   // La reponse arrive : elle REMPLACE la bulle d'attente, et la question
   // reprend son aspect normal. Si le placeholder a disparu (fil recharge),
   // on ajoute a la suite plutot que de perdre la reponse.
@@ -610,7 +626,14 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         filSuspenduRef.current = suivant
         principalOccupeRef.current = true
         setPrincipalOccupe(true)
-        bulleAccord(suivant)
+        // La bulle qui vient de passer à « Résultat en cours… » DEVIENT celle
+        // du geste suivant : pas de seconde bulle, pas d'orpheline.
+        const porteuse = liee ? liee.id : cle
+        if (tachesSuiviesRef.current.has(porteuse)) {
+          rebaptiserBulle(porteuse, cleAccord(suivant)!, TEXTE_ATTENTE_ACCORD)
+        } else {
+          bulleAccord(suivant)
+        }
         await rafraichirEtat()
         return
       }

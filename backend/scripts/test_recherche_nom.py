@@ -102,7 +102,7 @@ if not nas_cote:
         "_MIME_DOSSIER": "application/vnd.google-apps.folder",
         "MAX_DOSSIERS_ARBRE": 3000,
     }
-    extraire(drive_py, {"chercher", "_nu", "_echappe", "_ACCENTS",
+    extraire(drive_py, {"chercher", "_paginer_mixte", "_nu", "_echappe", "_ACCENTS",
                         "MAX_TROUVAILLES", "MAX_PROFONDEUR", "asyncio"}, espace_d)
     chercher = espace_d["chercher"]
     peri = [(None, "all")]
@@ -152,8 +152,9 @@ verifier("garantir_recherche → tableau mécanique Nom / Type / Emplacement",
          and ["devis.pdf", "Fichier", "A/B/Dossier X"] in bloc.get("rows", []))
 verifier("le résultat est garanti à l'écran et compté dans le message",
          r.get("bloc_garanti") is True and "1 dossier(s) et 1 fichier(s)" in str(r.get("message_final")))
-verifier("a_faire : PROPOSER la suite, c'est l'utilisateur qui décide de pousser",
-         "PROPOSE la suite" in str(r.get("a_faire")) and "utilisateur" in str(r.get("a_faire")))
+verifier("a_faire : OUVRIR d'office si la demande est d'ouvrir, sinon PROPOSER la suite (08/09 soir)",
+         "PROPOSE la suite" in str(r.get("a_faire"))
+         and "SI LA DEMANDE DE CE TOUR EST D'OUVRIR" in str(r.get("a_faire")))
 vide = aff.garantir_recherche({"motif": "zzz", "nombre": 0, "resultats": []}, "zzz")
 verifier("zéro résultat : pas de bloc, et « ne prouve pas l'absence »",
          "bloc_ui" not in vide and "ne prouve pas l'absence" in str(vide.get("a_faire")))
@@ -162,14 +163,14 @@ verifier("zéro résultat : pas de bloc, et « ne prouve pas l'absence »",
 if nas_cote:
     skills_src = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
     verifier("nas_chercher passe par garantir_recherche",
-             "garantir_recherche(resultat, motif)" in skills_src)
+             "garantir_recherche(resultat, motif, ouvreur=" in skills_src)
     verifier("le catalogue dit D'INSTINCT et rend les CHEMINS",
              "D'INSTINCT" in skills_src and "CHEMINS" in skills_src)
 else:
     skills_src = (BACKEND / "skills" / "outils.py").read_text(encoding="utf-8")
     verifier("le skill drive_chercher existe, effet lecture, via garantir_recherche",
              '"drive_chercher": Declaration(' in skills_src
-             and "garantir_recherche(resultat, motif)" in skills_src)
+             and "garantir_recherche(resultat, motif, ouvreur=" in skills_src)
     verifier("le catalogue dit D'INSTINCT et rend les CHEMINS",
              "D'INSTINCT" in skills_src and "CHEMINS" in skills_src)
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")

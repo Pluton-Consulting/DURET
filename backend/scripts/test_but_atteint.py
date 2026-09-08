@@ -17,6 +17,7 @@ sur le source, la mécanique `_sortir` est celle des autres gardes) ; un chemin
 encodé se décode avant de toucher le serveur (exécuté). Tombe sur l'avant.
 """
 import pathlib
+import re
 import sys
 import types
 
@@ -55,8 +56,10 @@ if callable(getattr(ann, "demande_d_ouvrir_un_seul", None)):
              not p("liste moi les dossier du drive") and not p("il y a quoi comme document dans 03-Appel d'offres etudes"))
 
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
-verifier("agent1 connaît les gestes qui LISENT un fichier (nas et drive, ouvrir et lire)",
-         'SKILLS_LECTURE_FICHIER = frozenset({"nas_ouvrir", "nas_lire", "drive_ouvrir", "drive_lire"})' in agent1)
+_lecture = re.search(r"SKILLS_LECTURE_FICHIER = frozenset\(\{([^}]*)\}\)", agent1, re.S)
+verifier("agent1 connaît les gestes qui LISENT un fichier (nas et drive, ouvrir et lire, pièce jointe)",
+         _lecture and all(f'"{g}"' in _lecture.group(1) for g in
+                          ("nas_ouvrir", "nas_lire", "drive_ouvrir", "drive_lire", "lire_piece_jointe")))
 noeud = agent1[agent1.find("async def tools_node"):agent1.find("_CLES_TECHNIQUES = ")]
 verifier("tools_node ferme le tour (`_sortir`) après une lecture RÉUSSIE avec contenu, si la demande visait UN document",
          'action["skill"] in SKILLS_LECTURE_FICHIER' in noeud

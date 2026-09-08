@@ -147,8 +147,15 @@ def garantir_apercu(resultat: dict, quoi: str) -> dict:
     return resultat
 
 
-def garantir_recherche(resultat: dict, motif: str) -> dict:
+def garantir_recherche(resultat: dict, motif: str, ouvreur: str | None = None) -> dict:
     """La recherche par NOM en tableau mécanique : nom, type, emplacement.
+
+    08/09 soir (Symbiose) : « trouve un devis que nous avons fait et ouvre-le »
+    → cinq gestes, 993 correspondances, et RIEN d'ouvert : la consigne disait
+    « propose la suite, c'est à l'utilisateur de dire s'il veut aller plus
+    loin ». Quand la demande EST d'ouvrir, la suite ne se propose pas, elle
+    s'enchaîne — sur un FICHIER, choisi par le modèle (« au hasard », « le
+    plus récent »), avec `ouvreur` (`drive_ouvrir` / `nas_ouvrir`).
 
     Demande de Noa du 01/09 : quand une information sur un client manque en
     mémoire, l'assistant cherche « instinctivement » les dossiers et fichiers
@@ -182,18 +189,35 @@ def garantir_recherche(resultat: dict, motif: str) -> dict:
     resultat.pop("resultats", None)
     resultat["bloc_garanti"] = True
     pages = int(resultat.get("pages") or 1)
-    resultat["message_final"] = (
-        f"« {motif} » : {dossiers} dossier(s) et {fichiers} fichier(s) trouvés "
-        "par leur nom"
-        + (f" (page {resultat.get('page', 1)} sur {pages})" if pages > 1 else "")
-        + ".")
+    # Les totaux (toutes pages) quand la recherche les donne : « 993
+    # correspondances » sans dire combien de FICHIERS laissait croire qu'il n'y
+    # avait que des dossiers nommés « Devis ».
+    total_d = resultat.get("dossiers_total")
+    total_f = resultat.get("fichiers_total")
+    if total_d is not None and total_f is not None and pages > 1:
+        compte = (f"« {motif} » : {total_d} dossier(s) et {total_f} fichier(s) portent "
+                  f"ce nom (page {resultat.get('page', 1)} sur {pages} : {dossiers} "
+                  f"dossier(s), {fichiers} fichier(s) affichés).")
+    else:
+        compte = (f"« {motif} » : {dossiers} dossier(s) et {fichiers} fichier(s) trouvés "
+                  "par leur nom"
+                  + (f" (page {resultat.get('page', 1)} sur {pages})" if pages > 1 else "")
+                  + ".")
+    resultat["message_final"] = compte
+    geste = f"`{ouvreur}`" if ouvreur else "le geste d'ouverture"
     resultat["a_faire"] = (
         "Les résultats sont DÉJÀ affichés à l'écran par un bloc mécanique : ne "
-        "les recopie pas, n'écris aucun bloc doc ou fichier pour eux. Rédige "
-        "une ou deux phrases sur ce qui a été trouvé, puis PROPOSE la suite : "
-        "ouvrir un fichier trouvé, explorer un dossier trouvé, ou pousser la "
-        "recherche plus loin (contenu des documents, autre orthographe) — "
-        "c'est à l'utilisateur de dire s'il veut aller plus loin."
+        "les recopie pas, n'écris aucun bloc doc ou fichier pour eux. "
+        "SI LA DEMANDE DE CE TOUR EST D'OUVRIR OU DE LIRE UN DOCUMENT (« ouvre un "
+        "devis », « un au hasard », « le plus récent », « trouve X et ouvre-le ») : "
+        f"enchaîne MAINTENANT avec {geste} sur le NOM EXACT d'une ligne de type "
+        "« Fichier » — jamais un dossier —, en choisissant toi-même ; "
+        + ("aucun fichier sur cette page : rappelle la recherche avec `type: "
+           "\"fichiers\"` ou liste un dossier trouvé ; "
+           if (not fichiers and resultat.get("fichiers_total")) else "")
+        + "n'ouvre pas de dossier, ne demande pas lequel. Sinon : rédige une ou "
+        "deux phrases sur ce qui a été trouvé, puis PROPOSE la suite (ouvrir un "
+        "fichier, explorer un dossier, chercher dans le contenu des documents)."
         + (" Le résultat est PAGINÉ : si la demande porte sur tout, enchaîne "
            "les pages (`page` suivante) — rien ne te limite en nombre de pages."
            if pages > 1 else ""))

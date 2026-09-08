@@ -128,7 +128,11 @@ SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
 # que l'un d'eux a rendu un contenu, le but est atteint : le tour passe à la
 # rédaction au lieu de repartir lister (08/09, 11:09 : neuf listages et une
 # réouverture APRÈS le fichier déjà ouvert, deux minutes pour rien).
-SKILLS_LECTURE_FICHIER = frozenset({"nas_ouvrir", "nas_lire", "drive_ouvrir", "drive_lire"})
+# 08/09 soir : « ouvre un devis… sur le Drive ou envoyé par mail, peu importe »
+# — un devis reçu en pièce jointe s'ouvre par `lire_piece_jointe` : c'est le
+# même but atteint qu'un fichier du classement.
+SKILLS_LECTURE_FICHIER = frozenset({"nas_ouvrir", "nas_lire", "drive_ouvrir", "drive_lire",
+                                    "lire_piece_jointe"})
 
 # LA PAGINATION N'EST PAS DE L'ACHARNEMENT (01/09, règle de Noa : une recherche
 # ne se bloque jamais en quantité). « Les 60 suivants », « page 4 », « avant » :
@@ -303,7 +307,7 @@ def _est_jeton_tableau(valeur) -> bool:
     return isinstance(valeur, str) and valeur.strip().lower() in JETONS_TABLEAU
 
 
-RESULTATS_GENEREUX = {"drive_chercher", "nas_chercher", "drive_apercu",
+RESULTATS_GENEREUX = {"drive_chercher", "nas_chercher", "drive_apercu", "drive_lister",
                       # 08/09 : les cartes de relance et la liste des factures suivies.
                       "relancer_factures", "factures_suivies", "inventaire_dossier",
                       "courrier_entrant",

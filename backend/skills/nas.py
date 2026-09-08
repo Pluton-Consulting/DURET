@@ -152,7 +152,7 @@ async def nas_chercher(data: dict, user) -> dict:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001
         _echec(_detail("La recherche a échoué", e))
-    return garantir_recherche(resultat, motif)
+    return garantir_recherche(resultat, motif, ouvreur="nas_ouvrir")
 
 
 async def nas_deposer(data: dict, user) -> dict:

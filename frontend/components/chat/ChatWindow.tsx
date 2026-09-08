@@ -842,6 +842,40 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       .finally(() => { if (monteRef.current) adopterTourDetache(tid) })
   }, [initialThreadId, token, userKey])
 
+  // LES MESSAGES QUI ARRIVENT SANS QU'ON AIT RIEN DEMANDÉ (08/09). Une tâche
+  // planifiée rend son compte rendu DANS la conversation qui l'a créée : le
+  // serveur l'écrit dans `messages`, mais un fil ouvert ne relisait son
+  // historique qu'au montage. Toutes les 45 s, fil au repos et onglet
+  // visible, on relit et on AJOUTE ce qui est nouveau — uniquement les
+  // messages d'une tâche planifiée (métadonnée `tache_planifiee`), pour ne
+  // jamais toucher à un tour en vol ni aux bulles d'accord.
+  useEffect(() => {
+    if (!token) return
+    const relire = () => {
+      const tid = threadIdRef.current
+      if (!tid || loading || principalOccupeRef.current || document.visibilityState !== "visible") return
+      apiRequest<any[]>(`/api/chat/threads/${tid}/messages`, { token })
+        .then((rows) => {
+          const planifies = (rows || []).filter((m) => {
+            if (m.role !== "assistant") return false
+            const meta = typeof m.metadata === "string" ? m.metadata : JSON.stringify(m.metadata || {})
+            return meta.includes("tache_planifiee")
+          })
+          if (!planifies.length) return
+          setMessages((prev) => {
+            const vus = new Set(prev.map((x) => x.id))
+            const ajouts = planifies
+              .filter((m) => !vus.has(String(m.id)))
+              .map((m) => ({ id: String(m.id), role: "assistant" as const, content: m.content ?? "" }))
+            return ajouts.length ? [...prev, ...ajouts] : prev
+          })
+        })
+        .catch(() => {})
+    }
+    const minuterie = window.setInterval(relire, 45000)
+    return () => window.clearInterval(minuterie)
+  }, [token, loading])
+
   useEffect(() => () => {
     // LA NAVIGATION NE TUE PLUS LE TOUR. Fermer la socket ici faisait annuler
     // le tour par le serveur (il lit la fermeture comme un abandon) — et le

@@ -18,7 +18,7 @@ import logging
 from fastapi import HTTPException, status
 
 from database.connection import get_db
-from tasks.scheduler import heure_du_jour, prochaine_echeance, valider_planification
+from tasks.scheduler import heure_du_jour, prochaine_echeance, valider_planification, rythme_lisible
 
 logger = logging.getLogger("duret.tasks.skills")
 
@@ -40,7 +40,14 @@ async def creer_tache_agent(data: dict, user) -> dict:
         "interval_minutes": data.get("interval_minutes"),
         "time_of_day": data.get("heure") or data.get("time_of_day"),
         "days_of_week": data.get("jours") or data.get("days_of_week"),
+        # 08/09 : « tous les X jours », « le X du mois ».
+        "interval_days": data.get("tous_les_jours") or data.get("interval_days"),
+        "day_of_month": data.get("jour_du_mois") or data.get("day_of_month"),
     }
+    # « tous les 3 jours » écrit en `interval` avec des jours : on comprend.
+    if planification["schedule_kind"] == "interval" and planification["interval_days"] \
+            and not planification["interval_minutes"]:
+        planification["schedule_kind"] = "every_days"
     erreur = valider_planification(planification)
     if erreur:
         raise TacheInvalide(erreur)
@@ -52,8 +59,9 @@ async def creer_tache_agent(data: dict, user) -> dict:
         ligne = await conn.fetchrow(
             """INSERT INTO agent_tasks
                    (user_id, title, task_prompt, params, trigger_kind, schedule_kind,
-                    interval_minutes, time_of_day, days_of_week, next_run_at)
-               VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7, $8::time, $9, $10)
+                    interval_minutes, time_of_day, days_of_week, next_run_at,
+                    interval_days, day_of_month, origin_thread_id)
+               VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7, $8::time, $9, $10, $11, $12, $13)
                RETURNING id, title, next_run_at""",
             str(user.id), titre[:255], consigne, json.dumps({}),
             "schedule" if planifiee else "manual",
@@ -62,6 +70,12 @@ async def creer_tache_agent(data: dict, user) -> dict:
             # quoi toute tâche quotidienne échouait à la création.
             heure_du_jour(planification["time_of_day"]),
             planification["days_of_week"], premiere,
+            int(planification["interval_days"]) if planification["interval_days"] else None,
+            int(planification["day_of_month"]) if planification["day_of_month"] else None,
+            # LA TÂCHE SE SOUVIENT DE SA CONVERSATION (08/09) : le fil est posé
+            # par la boucle d'actions (`_fil`), jamais par le modèle. Chaque
+            # exécution y reviendra comme un nouveau message.
+            (str(data.get("_fil") or "")[:255] or None),
         )
 
     logger.info("Tâche « %s » créée par %s (planifiée=%s)", titre, user.id, planifiee)
@@ -70,10 +84,13 @@ async def creer_tache_agent(data: dict, user) -> dict:
         "titre": ligne["title"],
         "planifiee": planifiee,
         "prochaine_execution": ligne["next_run_at"].isoformat() if ligne["next_run_at"] else None,
+        "rythme": rythme_lisible({**planification, "time_of_day": heure_du_jour(planification["time_of_day"])}),
         "message": (f"Tâche « {titre} » enregistrée."
                     + (f" Première exécution : {ligne['next_run_at']:%d/%m/%Y à %Hh%M}."
                        if ligne["next_run_at"] else
-                       " Elle ne se déclenchera que sur demande.")),
+                       " Elle ne se déclenchera que sur demande.")
+                    + (" Son compte rendu reviendra dans cette conversation et dans le tableau de bord."
+                       if data.get("_fil") and planifiee else "")),
     }
 
 
@@ -108,7 +125,7 @@ def _resume(ligne) -> dict:
         "id": str(ligne["id"]),
         "titre": ligne["title"],
         "active": bool(ligne["enabled"]),
-        "rythme": ligne["schedule_kind"],
+        "rythme": rythme_lisible(dict(ligne)) if ligne.get("schedule_kind") else None,
         "prochaine": (ligne["next_run_at"].isoformat()
                       if ligne.get("next_run_at") else None),
     }
@@ -118,7 +135,8 @@ async def mes_taches(data: dict, user) -> dict:
     """Les tâches de la personne connectée, actives ou suspendues."""
     async with get_db() as conn:
         lignes = await conn.fetch(
-            "SELECT id, title, enabled, schedule_kind, next_run_at "
+            "SELECT id, title, enabled, schedule_kind, next_run_at, interval_minutes, "
+            "time_of_day, days_of_week, interval_days, day_of_month "
             "FROM agent_tasks WHERE user_id = $1::uuid "
             "ORDER BY enabled DESC, next_run_at NULLS LAST LIMIT $2",
             str(user.id), MAX_TACHES_LISTEES)
@@ -226,7 +244,8 @@ async def suspendre_tache(data: dict, user) -> dict:
         prochaine = None
         if reprendre:
             complete = await conn.fetchrow(
-                "SELECT schedule_kind, interval_minutes, time_of_day, days_of_week "
+                "SELECT schedule_kind, interval_minutes, time_of_day, days_of_week, "
+                "interval_days, day_of_month, next_run_at "
                 "FROM agent_tasks WHERE id = $1", cible["id"])
             prochaine = prochaine_echeance(dict(complete)) if complete else None
         await conn.execute(

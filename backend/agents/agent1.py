@@ -1373,6 +1373,11 @@ async def tools_node(state: AgentState, config=None) -> dict:
                     "avant/après) : un essai depuis un brief texte réinventerait "
                     "une AUTRE maison. Appelle `modifier_visuel` avec "
                     f'image="{cles[-1]}" et la liste des changements demandés.')
+        if action["skill"] == "creer_tache_agent":
+            # LA TÂCHE SE SOUVIENT DE SA CONVERSATION (08/09) : le fil est posé
+            # ici, par le serveur — le modèle ne le connaît pas, et ne doit pas
+            # pouvoir en désigner un autre.
+            args = {**args, "_fil": state.get("thread_id")}
         brut = await execute_skill(
             action["skill"], args, user=utilisateur,
             trigger={"type": state.get("trigger_kind") or "chat",

@@ -94,6 +94,7 @@ faux_sched = types.ModuleType("tasks.scheduler")
 faux_sched.heure_du_jour = lambda x: x
 faux_sched.prochaine_echeance = lambda t, apres=None: None
 faux_sched.valider_planification = lambda d: None
+faux_sched.rythme_lisible = lambda t: "sur demande"   # 08/09
 paquet_t = types.ModuleType("tasks")
 paquet_t.__path__ = []
 sys.modules.setdefault("tasks", paquet_t)

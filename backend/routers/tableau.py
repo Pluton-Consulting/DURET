@@ -213,17 +213,25 @@ async def tableau(current_user: User = Depends(get_current_user)):
 
         # ── Actions planifiées (réveils automatiques) ──
         planifiees = await _sur(conn, f"""
-            SELECT id, agent, title, schedule_kind, interval_minutes, time_of_day, days_of_week,
-                   next_run_at, enabled
-            FROM agent_tasks
+            SELECT t.id, t.agent, t.title, t.schedule_kind, t.interval_minutes, t.time_of_day,
+                   t.days_of_week, t.interval_days, t.day_of_month, t.next_run_at, t.enabled,
+                   -- LE DERNIER COMPTE RENDU (08/09) : ce que l'exécution a rendu,
+                   -- ou son erreur — c'est l'indicateur que Noa demande.
+                   d.status AS derniere_statut, d.updated_at AS derniere_le,
+                   LEFT(COALESCE(d.result->>'reponse', d.error, ''), 240) AS compte_rendu
+            FROM agent_tasks t
+            LEFT JOIN LATERAL (
+                SELECT status, updated_at, result, error FROM agent_task_runs r
+                WHERE r.task_id = t.id ORDER BY r.created_at DESC LIMIT 1
+            ) d ON TRUE
             -- UNE TÂCHE SANS ÉCHÉANCE N'EST PAS PLANIFIÉE (01/09). Le filtre ne
             -- portait que sur `enabled` : une tâche créée sans récurrence
             -- (`manual`, `next_run_at` NULL) s'affichait ici avec un rythme
             -- vide et « — » à la place de la date. L'écran annonçait comme
             -- programmé ce qui ne partira jamais tout seul.
-            WHERE enabled AND next_run_at IS NOT NULL
-              AND {perim.format(col='user_id')}
-            ORDER BY next_run_at NULLS LAST LIMIT 8
+            WHERE t.enabled AND t.next_run_at IS NOT NULL
+              AND {perim.format(col='t.user_id')}
+            ORDER BY t.next_run_at NULLS LAST LIMIT 8
         """, uid, global_)
 
         # ── Mémoire d'entreprise : ce que l'outil connaît ──

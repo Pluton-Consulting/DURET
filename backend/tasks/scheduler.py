@@ -42,7 +42,42 @@ def _fuseau_paris():
 PARIS = _fuseau_paris()
 
 INTERVALLE_MINIMAL = 5      # garde-fou : en dessous, une tâche s'emballe
-FORMES = ("interval", "daily", "weekly")
+# « every_days » (tous les N jours à H) et « monthly » (le N de chaque mois à
+# H) : demande de Noa du 08/09 — « tous les X jours ou tous les X du mois, à
+# telle heure ».
+FORMES = ("interval", "daily", "weekly", "every_days", "monthly")
+
+
+def _jour_du_mois_borne(annee: int, mois: int, jour: int) -> int:
+    """Le 31 d'un mois de 30 jours est son dernier jour : on ne saute pas le mois."""
+    import calendar
+    return min(max(int(jour), 1), calendar.monthrange(annee, mois)[1])
+
+
+def rythme_lisible(tache: dict) -> str:
+    """« tous les 3 jours à 09:00 », « le 5 de chaque mois à 09:00 »… ce que
+    l'écran et le chat disent d'une planification. Fonction pure."""
+    forme = (tache.get("schedule_kind") or "").strip().lower()
+    heure = tache.get("time_of_day")
+    if isinstance(heure, time):
+        h = f"{heure.hour:02d}:{heure.minute:02d}"
+    else:
+        h = str(heure or "")[:5]
+    if forme == "interval":
+        return f"toutes les {int(tache.get('interval_minutes') or 0)} min"
+    if forme == "daily":
+        return f"tous les jours à {h}"
+    if forme == "weekly":
+        noms = {1: "lundi", 2: "mardi", 3: "mercredi", 4: "jeudi", 5: "vendredi", 6: "samedi", 7: "dimanche"}
+        jours = [noms[int(j)] for j in (tache.get("days_of_week") or []) if int(j) in noms]
+        return ("chaque " + ", ".join(jours) if jours else "chaque semaine") + f" à {h}"
+    if forme == "every_days":
+        n = int(tache.get("interval_days") or 1)
+        return (f"tous les {n} jours" if n > 1 else "tous les jours") + f" à {h}"
+    if forme == "monthly":
+        j = int(tache.get("day_of_month") or 1)
+        return f"le {j} de chaque mois à {h}"
+    return "sur demande"
 
 
 def _paris(moment: Optional[datetime] = None) -> datetime:
@@ -81,6 +116,33 @@ def prochaine_echeance(tache: dict, apres: Optional[datetime] = None) -> Optiona
 
     if forme == "daily":
         return candidat
+
+    if forme == "every_days":
+        # Tous les N jours : on compte depuis la DERNIÈRE échéance quand on la
+        # connaît (celle qui vient d'être consommée), sinon depuis aujourd'hui.
+        n = max(int(tache.get("interval_days") or 1), 1)
+        base = tache.get("next_run_at")
+        if base:
+            suivant = _paris(base).replace(hour=heure.hour, minute=heure.minute,
+                                           second=0, microsecond=0)
+            for _ in range(3660):
+                suivant += timedelta(days=n)
+                if suivant > depart:
+                    return suivant
+        return candidat
+
+    if forme == "monthly":
+        jour = int(tache.get("day_of_month") or 1)
+        annee, mois = depart.year, depart.month
+        for _ in range(14):
+            cand = depart.replace(year=annee, month=mois, day=_jour_du_mois_borne(annee, mois, jour),
+                                  hour=heure.hour, minute=heure.minute, second=0, microsecond=0)
+            if cand > depart:
+                return cand
+            mois += 1
+            if mois > 12:
+                mois, annee = 1, annee + 1
+        return None
 
     # weekly : jours ISO (1 = lundi … 7 = dimanche). Sans jour précisé, on se
     # rabat sur un rythme quotidien plutôt que de ne jamais déclencher.
@@ -136,8 +198,16 @@ def valider_planification(donnees: dict) -> Optional[str]:
         if not minutes or int(minutes) < INTERVALLE_MINIMAL:
             return (f"L'intervalle doit valoir au moins {INTERVALLE_MINIMAL} minutes "
                     "(en deçà, la tâche s'emballe).")
-    if forme in ("daily", "weekly") and not donnees.get("time_of_day"):
+    if forme in ("daily", "weekly", "every_days", "monthly") and not donnees.get("time_of_day"):
         return "Précisez l'heure d'exécution (time_of_day)."
+    if forme == "every_days":
+        n = donnees.get("interval_days")
+        if not n or int(n) < 1:
+            return "Précisez tous les combien de jours (interval_days, 1 au moins)."
+    if forme == "monthly":
+        j = donnees.get("day_of_month")
+        if not j or not (1 <= int(j) <= 31):
+            return "Précisez le jour du mois (day_of_month, de 1 à 31)."
     if forme == "weekly":
         jours = donnees.get("days_of_week") or []
         if not jours or any(not (1 <= int(j) <= 7) for j in jours):

@@ -105,6 +105,60 @@ async def _terminer(run_id, statut: str, resultat=None, erreur: Optional[str] = 
             statut, json.dumps(resultat) if resultat is not None else None, erreur, run_id)
 
 
+def texte_annonce(titre: str, statut: str, reponse: str, quand: str) -> str:
+    """Le message qui revient dans la conversation d'origine. Fonction pure.
+
+    Il porte le compte rendu TEL QUE la tâche l'a rédigé (c'est la prose du
+    modèle), sous un en-tête qui dit ce que c'est et quand ça a tourné : la
+    personne qui rouvre la conversation ne doit pas confondre ce message
+    avec une réponse à ce qu'elle vient d'écrire.
+    """
+    if statut == "attente_accord":
+        tete = (f"⏰ Tâche planifiée « {titre} » — exécutée le {quand} : une action à effet "
+                "externe attend votre accord (tableau de bord → À valider).")
+    elif statut == "echec":
+        tete = f"⏰ Tâche planifiée « {titre} » — exécutée le {quand}, en ÉCHEC."
+    else:
+        tete = f"⏰ Tâche planifiée « {titre} » — exécutée le {quand}."
+    corps = (reponse or "").strip()
+    return tete + ("\n\n" + corps if corps else "")
+
+
+async def _annoncer_dans_la_conversation(tache: dict, utilisateur, statut: str, reponse: str) -> None:
+    """Écrit le compte rendu comme un nouveau message de l'assistant dans la
+    conversation qui a créé la tâche (08/09). Ne lève jamais.
+
+    RLS : on écrit AU NOM du créateur, avec son rôle — même chemin que le chat.
+    Le fil est retrouvé par `langgraph_thread_id` ET par le propriétaire : une
+    tâche ne peut pas écrire dans la conversation de quelqu'un d'autre.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    fil = (tache.get("origin_thread_id") or "") if isinstance(tache, dict) else ""
+    if not fil:
+        return
+    try:
+        from database.connection import get_rls_db
+        quand = _dt.now(ZoneInfo("Europe/Paris")).strftime("%d/%m/%Y à %Hh%M")
+        texte = texte_annonce(str(tache.get("title") or ""), statut, reponse, quand)
+        async with get_rls_db(str(utilisateur.id), utilisateur.role) as conn:
+            pk = await conn.fetchval(
+                "SELECT id FROM threads WHERE langgraph_thread_id = $1 AND user_id = $2::uuid",
+                fil, str(utilisateur.id))
+            if not pk:
+                return
+            await conn.execute(
+                "INSERT INTO messages (thread_id, role, content, metadata) "
+                "VALUES ($1, 'assistant', $2, $3::jsonb)",
+                pk, texte, _json.dumps({"tache_planifiee": str(tache.get("id")), "statut": statut}))
+            await conn.execute("UPDATE threads SET updated_at = NOW() WHERE id = $1", pk)
+    except Exception as e:  # noqa: BLE001 — l'annonce est un confort, pas la tâche
+        logger.warning("Compte rendu de la tâche %s non écrit dans sa conversation : %s",
+                       tache.get("id"), str(e)[:160])
+
+
 async def _executer(run: dict) -> None:
     """Exécute une tâche, au nom de son créateur, dans le graphe habituel."""
     from agents import runtime
@@ -157,6 +211,7 @@ async def _executer(run: dict) -> None:
         await log_action(action="task_failed", user_id=str(utilisateur.id),
                          on_behalf_of=str(utilisateur.id), success=False,
                          trigger_type=run["trigger_kind"], trigger_id=str(run["id"]))
+        await _annoncer_dans_la_conversation(dict(tache), utilisateur, "echec", str(e)[:300])
         return
 
     if resultat.get("status") == "pending_validation":
@@ -167,9 +222,13 @@ async def _executer(run: dict) -> None:
                         resultat={"validation_id": resultat.get("validation_id"),
                                   "reponse": resultat.get("response")})
         logger.info("Exécution %s en attente de validation", run["id"])
+        await _annoncer_dans_la_conversation(dict(tache), utilisateur, "attente_accord",
+                                             str(resultat.get("response") or ""))
         return
 
     await _terminer(run["id"], "completed", resultat={"reponse": resultat.get("response")})
+    await _annoncer_dans_la_conversation(dict(tache), utilisateur, "terminee",
+                                         str(resultat.get("response") or ""))
     await log_action(action="task_completed", user_id=str(utilisateur.id),
                      on_behalf_of=str(utilisateur.id),
                      trigger_type=run["trigger_kind"], trigger_id=str(run["id"]))

@@ -88,7 +88,24 @@ const STATUTS: Record<string, { libelle: string; ton: string }> = {
   en_cours: { libelle: "En cours", ton: "attente" }, attente_validation: { libelle: "Attend votre accord", ton: "attente" },
   echec: { libelle: "Échouée", ton: "erreur" }, interrompue: { libelle: "Interrompue", ton: "neutre" },
 }
-const SCHEDULE: Record<string, string> = { interval: "toutes les", daily: "chaque jour à", weekly: "chaque semaine" }
+const SCHEDULE: Record<string, string> = { interval: "toutes les", daily: "chaque jour à", weekly: "chaque semaine", every_days: "tous les", monthly: "le" }
+const JOURS = ["", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+/** « tous les 3 jours à 09:00 », « le 5 de chaque mois à 09:00 » : le rythme tel qu'on le lit (08/09). */
+function rythme(p: any): string {
+  const h = p.time_of_day ? String(p.time_of_day).slice(0, 5) : ""
+  switch (p.schedule_kind) {
+    case "interval": return `toutes les ${p.interval_minutes} min`
+    case "daily": return `tous les jours à ${h}`
+    case "weekly": {
+      const jours = (p.days_of_week || []).map((j: number) => JOURS[j]).filter(Boolean)
+      return (jours.length ? `chaque ${jours.join(", ")}` : "chaque semaine") + ` à ${h}`
+    }
+    case "every_days": return (Number(p.interval_days) > 1 ? `tous les ${p.interval_days} jours` : "tous les jours") + ` à ${h}`
+    case "monthly": return `le ${p.day_of_month} de chaque mois à ${h}`
+    default: return SCHEDULE[p.schedule_kind] || "sur demande"
+  }
+}
 
 /** La courbe du ROI : une aire douce, un trait, un point sur aujourd'hui. */
 function CourbeRoi({ serie }: { serie: { jour: string; euros: number }[] }) {
@@ -409,8 +426,13 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ fontWeight: 600, display: "block" }}>{p.title}</span>
                 <span style={{ color: "var(--marque-text-muted)", fontSize: 12 }}>
-                  {EXPERT_PAR_AGENT[p.agent] || "Expert"} · {SCHEDULE[p.schedule_kind] || ""} {p.schedule_kind === "interval" ? `${p.interval_minutes} min` : p.time_of_day ? String(p.time_of_day).slice(0, 5) : ""}
+                  {EXPERT_PAR_AGENT[p.agent] || "Expert"} · {rythme(p)}
                 </span>
+                {p.compte_rendu && (
+                  <span style={{ display: "block", color: "var(--marque-text-muted)", fontSize: 12, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={p.compte_rendu}>
+                    {p.derniere_statut === "failed" ? "Dernière exécution en échec" : "Dernier compte rendu"}{p.derniere_le ? ` (${quand(p.derniere_le)})` : ""} : {p.compte_rendu}
+                  </span>
+                )}
               </span>
               <time>{p.next_run_at ? quand(p.next_run_at) : "—"}</time>
             </div>

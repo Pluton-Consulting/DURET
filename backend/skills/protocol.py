@@ -566,10 +566,16 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
     "creer_tache_agent": (
         "Enregistre une tâche que l'assistant exécutera plus tard, éventuellement de "
         "façon répétée. recurrence : interval (avec interval_minutes, minimum 5), "
-        "daily ou weekly (avec heure « 07:30 », et jours [1..7] pour weekly). "
-        "Sans recurrence, la tâche ne part que sur demande.",
+        "daily ou weekly (avec heure « 07:30 », et jours [1..7] pour weekly), "
+        "every_days (« tous les 3 jours à 9h » : tous_les_jours=3, heure), "
+        "monthly (« le 5 de chaque mois à 9h » : jour_du_mois=5, heure). "
+        "Sans recurrence, la tâche ne part que sur demande. `consigne` = ce que "
+        "l'assistant devra FAIRE à chaque fois, écrit comme une demande complète "
+        "(la tâche tourne sans cette conversation sous les yeux). Chaque "
+        "exécution rend son compte rendu DANS cette conversation et dans le "
+        "tableau de bord ; une action à effet externe y attend l'accord.",
         ["titre", "consigne"],
-        ["recurrence", "interval_minutes", "heure", "jours"]),
+        ["recurrence", "interval_minutes", "heure", "jours", "tous_les_jours", "jour_du_mois"]),
     "mes_taches": (
         "LISTE les taches enregistrees par la personne : leur titre, leur rythme, "
         "la prochaine execution et si elles sont actives. A appeler des qu'on parle "

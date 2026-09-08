@@ -164,7 +164,7 @@ verifier("et l'écran ne dessine pas la carte qu'on ne lui donne pas",
 
 # ── 4. LES TÂCHES : visibles, et vraiment planifiées ─────────────────────
 verifier("la carte « Actions planifiées » ne montre QUE ce qui a une échéance",
-         "WHERE enabled AND next_run_at IS NOT NULL" in tab)
+         "WHERE t.enabled AND t.next_run_at IS NOT NULL" in tab)   # 08/09 : alias `t` (jointure du dernier compte rendu)
 verifier("les RÉVEILS des tâches remontent enfin (table jamais lue jusqu'ici)",
          "FROM agent_task_runs r JOIN agent_tasks t" in tab
          and '"executions"' in tab)

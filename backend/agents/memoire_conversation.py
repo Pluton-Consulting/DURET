@@ -58,8 +58,53 @@ def _reglage(nom: str, defaut: Any) -> Any:
     return getattr(settings, nom, defaut)
 
 
+import re as _re_blocs
+
+# Les blocs d'écran qui portent une RÉFÉRENCE : une image (`cle`), un fichier
+# (`url`). C'est par eux que le modèle sait ce qui existe dans le fil.
+_BLOC_UI_RE = _re_blocs.compile(r"```ui\s*\n(.*?)\n```", _re_blocs.S)
+_REFERENCE_RE = _re_blocs.compile(r'"(?:cle|url)"\s*:\s*"')
+# Les blocs épargnés ne sont pas illimités non plus : au-delà, on garde les
+# premiers et on dit combien manquent.
+BLOCS_EPARGNES_MAX_CHARS = 3000
+
+
 def _tailler(texte: str, max_chars: int) -> str:
-    """Garde la tête et la queue d'un texte trop long, et le dit."""
+    """Garde la tête et la queue d'un texte trop long, et le dit.
+
+    LES BLOCS DE RÉFÉRENCE SONT ÉPARGNÉS (08/09). Export Symbiose du jour :
+    la vision avait rendu 3 718 caractères — l'analyse, le bloc `visuel` des
+    cinq photos reçues (leurs clés ET leurs noms), puis le relevé caché. Taillé
+    à 1 400, tête + queue, le bloc tombait au MILIEU : au tour suivant, le
+    modèle ne voyait plus aucune pièce jointe et a répondu « aucun fichier n'a
+    été joint à la conversation », avant d'aller les chercher dans les mails.
+    Un bloc qui porte une clé ou une URL est une RÉFÉRENCE, pas de la prose :
+    il est retiré avant la coupe et remis en entier après.
+    """
+    if len(texte) <= max_chars:
+        return texte
+    epargnes = [b for b in _BLOC_UI_RE.findall(texte) if _REFERENCE_RE.search(b)]
+    if epargnes:
+        reste = texte
+        for b in epargnes:
+            reste = reste.replace("```ui\n" + b + "\n```", "", 1)
+        reste = _re_blocs.sub(r"\n{3,}", "\n\n", reste).strip()
+        gardes, total, ecartes = [], 0, 0
+        for b in epargnes:
+            if total + len(b) > BLOCS_EPARGNES_MAX_CHARS and gardes:
+                ecartes += 1
+                continue
+            gardes.append("```ui\n" + b + "\n```")
+            total += len(b)
+        queue_blocs = "\n\n" + "\n\n".join(gardes)
+        if ecartes:
+            queue_blocs += f"\n[… {ecartes} bloc(s) de référence omis …]"
+        return _tailler_prose(reste, max_chars) + queue_blocs
+    return _tailler_prose(texte, max_chars)
+
+
+def _tailler_prose(texte: str, max_chars: int) -> str:
+    """La coupe tête + queue d'un texte sans bloc à épargner."""
     texte = str(texte or "")
     if len(texte) <= max_chars:
         return texte

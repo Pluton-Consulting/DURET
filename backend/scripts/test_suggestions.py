@@ -158,11 +158,14 @@ verifier("agent1 : le filet est dans la branche `else` d'options_proposees "
                    r".*?from agents\.suggestions import suggestions_du_tour", a1, re.S))
 verifier("agent1 : posé AVANT l'écriture de l'historique",
          avant(a1, "from agents.suggestions import suggestions_du_tour",
-               'sortie["messages"] = ['))
+               'sortie["messages"] = (['))
 verifier("agent1 : l'historique reste construit sur le texte MASQUÉ, jamais sur "
          "la réponse d'écran",
-         re.search(r'sortie\["messages"\] = \[\s*\n\s*HumanMessage\(content=question_masquee\)'
-                   r',\s*\n\s*AIMessage\(content=text\),', a1))
+         # 08/09 : la question n'entre qu'une fois (`_question_deja_au_fil`),
+         # la réponse archivée reste `text`, le texte masqué.
+         re.search(r'sortie\["messages"\] = \(\[\] if _question_deja_au_fil\(state\.get\("messages"\), '
+                   r'question_masquee\)\s*\n\s*else \[HumanMessage\(content=question_masquee\)\]\) '
+                   r'\+ \[AIMessage\(content=text\)\]', a1))
 verifier("agent1 : le cul-de-sac rouvre trois portes au lieu de s'arrêter",
          "suites_d_echec" in (a1.split("Reformulez la demande") + [""])[1][:600])
 verifier("agent1 : deux rangées de pastilles ne survivent pas dans un message",

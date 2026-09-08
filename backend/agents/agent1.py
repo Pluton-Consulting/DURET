@@ -2616,10 +2616,13 @@ async def rehydrate_node(state: AgentState) -> dict:
     # stocke QUE du texte masqué : aucune PII ne dort dans le checkpoint ni ne
     # repart vers le LLM.
     question_masquee = state.get("anonymized_query") or state.get("query", "")
-    sortie["messages"] = [
-        HumanMessage(content=question_masquee),
-        AIMessage(content=text),
-    ]
+    # UNE FOIS, PAS TROIS (08/09). Quand l'expert vision rend la main
+    # (`passer_la_main`) ou qu'un plan approuvé rouvre le tour, la question a
+    # DÉJÀ été archivée par le nœud précédent : `add_messages` l'ajoutait de
+    # nouveau. L'export du jour la montre trois fois de suite dans ce que lit
+    # le modèle — du bruit, et un budget de fenêtre gaspillé.
+    sortie["messages"] = ([] if _question_deja_au_fil(state.get("messages"), question_masquee)
+                          else [HumanMessage(content=question_masquee)]) + [AIMessage(content=text)]
 
     # TROISIÈME ÉTAGE DE LA MÉMOIRE : l'échange clos est vectorisé pour être
     # rappelé plus tard, quand une question s'y rapportera alors qu'il sera
@@ -2710,6 +2713,59 @@ def should_validate(state: AgentState) -> str:
 
 import re as _re_images
 _CLE_IMAGE_RE = _re_images.compile(r'"cle"\s*:\s*"([0-9a-f]{16,64})"')
+
+
+def _question_deja_au_fil(messages, question: str) -> bool:
+    """La question de ce tour est-elle déjà le DERNIER message humain du fil ?
+
+    Vrai après `passer_la_main` (la vision l'a archivée) et après la reprise
+    d'un plan approuvé (l'assistant l'avait archivée avec le plan) : on
+    n'ajoute alors que la réponse. Une question identique posée plus tôt puis
+    séparée par une réponse n'est pas ce cas — elle reste ajoutée.
+    """
+    q = (question or "").strip()
+    if not q:
+        return False
+    for m in reversed(list(messages or [])):
+        if getattr(m, "type", None) == "human":
+            contenu = getattr(m, "content", "")
+            return (contenu if isinstance(contenu, str) else str(contenu)).strip() == q
+    return False
+
+
+def images_du_fil_nommees(state: AgentState) -> list[tuple[str, str]]:
+    """Les images du fil AVEC leur nom : (clé, légende), la plus récente en dernier.
+
+    08/09 : la consigne ne listait que douze clés hexadécimales. Devant « tu
+    disposes du plan et de quatre photos », le modèle — qui ne voyait plus le
+    bloc des fichiers reçus, taillé dans la fenêtre — a conclu qu'aucun
+    fichier n'avait été joint. La légende d'un bloc `visuel` EST le nom du
+    fichier reçu (« plan avec mesures.jpeg ») : c'est elle qui relie la
+    demande à la clé.
+    """
+    import json as _json
+    noms: dict[str, str] = {}
+    textes = [getattr(m, "content", "") for m in (state.get("messages") or [])]
+    textes += [str(r.get("resultat_masque") or "") for r in (state.get("tool_results") or [])]
+    for t in textes:
+        t = t if isinstance(t, str) else str(t)
+        for brut in _re_images.findall(r"```ui\s*\n(\{.*?\})\n```", t, _re_images.S):
+            try:
+                bloc = _json.loads(brut)
+            except Exception:  # noqa: BLE001 — un bloc abîmé n'a pas de légende
+                continue
+            if not isinstance(bloc, dict) or bloc.get("type") != "visuel":
+                continue
+            for img in (bloc.get("images") or []):
+                if isinstance(img, dict) and img.get("cle") and img.get("legende"):
+                    noms.setdefault(str(img["cle"]), str(img["legende"]))
+    # Les photos jointes à CE tour, nommées par leur fichier.
+    for p in (state.get("attachments") or []):
+        if isinstance(p, dict) and p.get("cle") and p.get("nom"):
+            noms.setdefault(str(p["cle"]), str(p["nom"]))
+    if state.get("attachment_visuel_cle") and state.get("attachment_name"):
+        noms.setdefault(str(state["attachment_visuel_cle"]), str(state["attachment_name"]))
+    return [(c, noms.get(c, "")) for c in cles_images_du_fil(state)]
 
 
 def cles_images_du_fil(state: AgentState) -> list[str]:
@@ -2875,9 +2931,19 @@ def _retouche_disponible() -> bool:
 
 
 def _consigne_images(state: AgentState) -> str:
-    cles = cles_images_du_fil(state)
-    if not cles:
+    nommees = images_du_fil_nommees(state)
+    if not nommees:
         return ""
+    # « clé (nom du fichier) » : le nom est ce qui permet de désigner « le
+    # plan » ou « la photo de la terrasse » sans deviner.
+    cles = [f"{c} ({n})" if n else c for c, n in nommees]
+    # CES IMAGES SONT LES PIÈCES JOINTES (08/09). Sans cette phrase, le modèle
+    # lisait « tu disposes du plan en pièce jointe », ne voyait pas de fichier
+    # dans l'historique taillé, et allait chercher les pièces dans les mails.
+    pieces = ("\nCe sont les fichiers REÇUS dans cette conversation (photos, plans joints "
+              "par la personne) ou produits ici : quand on te parle des pièces jointes, "
+              "c'est d'elles qu'il s'agit — ne dis jamais qu'aucun fichier n'a été joint, "
+              "ne va pas les chercher dans les mails ni sur le stockage.")
     if not _retouche_disponible():
         # Sans moteur d'images : les références servent à REMONTRER une photo
         # (bloc `visuel`) ou à la joindre, jamais à la modifier — et la
@@ -2886,9 +2952,9 @@ def _consigne_images(state: AgentState) -> str:
                 + ", ".join(cles) + ". Sans autre précision, « cette image » désigne la "
                 "dernière. Pour la remontrer, écris un bloc ```ui `visuel` avec cette "
                 "référence recopiée telle quelle. Aucune retouche ni génération d'image "
-                "n'est possible ici : ne le propose jamais.")
+                "n'est possible ici : ne le propose jamais." + pieces)
     return ("\n\nIMAGES DE CETTE CONVERSATION (références, la plus récente en dernier) : "
-            + ", ".join(cles) + ". Pour en RETOUCHER une (changer un détail, une couleur, "
+            + ", ".join(cles) + "." + pieces + " Pour en RETOUCHER une (changer un détail, une couleur, "
             "ajouter ou retirer un élément en gardant tout le reste identique), appelle "
             "`modifier_visuel` avec `image` = cette référence recopiée telle quelle et "
             "`changements` en anglais simple. Sans autre précision, « cette image » "

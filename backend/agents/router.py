@@ -272,6 +272,7 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
             # celle-ci n'est qu'un accusé, elle ne doit pas rester en travers.
             sortie["final_response"] = None
             sortie["llm_response"] = None
+            sortie.update(_reouverture_du_tour())
     # LA RÉFÉRENCE DE L'IMAGE VALIDÉE ENTRE DANS L'HISTORIQUE DU MODÈLE.
     # L'historique (`messages`) n'est écrit que par la réhydratation, AVANT la
     # décision humaine : le résultat d'une action validée n'y figurait jamais.
@@ -300,6 +301,36 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     except Exception:  # noqa: BLE001 - l'historique n'est pas vital
         pass
     return sortie
+
+
+def _reouverture_du_tour() -> dict:
+    """Les champs de la boucle d'actions remis à neuf quand un plan approuvé
+    rend la main à l'assistant.
+
+    08/09, export Symbiose : plan approuvé à 06:46 → « La demande n'a pas pu
+    être traitée : aucune action n'a abouti ». L'assistant repartait avec
+    l'état du tour qui avait PROPOSÉ le plan : `tools_finished` levé (la boucle
+    s'était close sur la demande d'accord), `tour_debut` vieux de dix minutes.
+    Le prompt disait donc à la fois « PLAN APPROUVÉ, enchaîne les actions » et
+    « la phase d'actions est TERMINÉE, n'émets aucun bloc » ; le modèle a
+    émis l'action, le routeur l'a jetée, et le rédacteur de secours a constaté
+    l'échec. Un plan approuvé est un tour qui COMMENCE : mêmes remises à zéro
+    que `runtime` en ouvre un.
+    """
+    import time as _time
+    return {
+        "tools_finished": False,
+        "tool_iterations": 0,
+        "tool_results": [],
+        "tool_repair_used": False,
+        "versements": 0,
+        "redaction_forcee": False,
+        "relance_annonce": False,
+        "forcages": 0,
+        "note_sortie": None,
+        "pending_action": None,
+        "tour_debut": _time.time(),
+    }
 
 
 async def _reponse_apres_action(state: AgentState, skill: str, resultat: dict) -> str:

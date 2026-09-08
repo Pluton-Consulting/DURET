@@ -62,7 +62,8 @@ verifier("agent1 porte `_retouche_disponible` puis `_consigne_images` (le regist
 if code:
     for avec in (True, False):
         _registre(avec)
-        esp = {"cles_images_du_fil": lambda state: ["abc123", "def456"], "AgentState": dict}
+        esp = {"cles_images_du_fil": lambda state: ["abc123", "def456"],
+               "images_du_fil_nommees": lambda state: [("abc123", "photo.jpg"), ("def456", "")], "AgentState": dict}
         exec(compile(code, "agent1_extrait", "exec"), esp)
         consigne = esp["_consigne_images"]({})
         if avec:
@@ -81,7 +82,8 @@ if code:
     # Sans registre du tout (import qui échoue) : on n'en parle pas.
     sys.modules.pop("skills.registre", None)
     sys.modules["skills"] = types.ModuleType("skills")
-    esp = {"cles_images_du_fil": lambda state: ["abc123"], "AgentState": dict}
+    esp = {"cles_images_du_fil": lambda state: ["abc123"],
+           "images_du_fil_nommees": lambda state: [("abc123", "")], "AgentState": dict}
     exec(compile(code, "agent1_extrait", "exec"), esp)
     verifier("registre indisponible : traité comme « pas de retouche », sans exception",
              "modifier_visuel" not in esp["_consigne_images"]({}))

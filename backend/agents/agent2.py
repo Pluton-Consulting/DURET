@@ -1049,7 +1049,6 @@ async def prechiffrage_node(state: AgentState) -> dict:
     # même si ce bloc ne s'affiche plus.
     summary_ecran = _poser_suites(
         summary, suggestions_du_tour(summary + bloc_visuel, [], expert="agent2"))
-    summary += bloc_visuel
 
     # LE RELEVÉ CACHÉ ENTRE DANS L'HISTORIQUE, PAS À L'ÉCRAN. Si le modèle a
     # fait son brouillon avant de répondre, c'est là que l'assistant le relira
@@ -1058,6 +1057,11 @@ async def prechiffrage_node(state: AgentState) -> dict:
     if mode_reponse and state.get("vision_releve"):
         summary += ("\n\n[Relevé technique fait pendant ce tour, non montré à l'écran]\n"
                     + state["vision_releve"])
+    # LE BLOC DES PHOTOS REÇUES FERME LE MESSAGE (08/09). Placé avant le relevé,
+    # il tombait au milieu d'un message long, là où la mémoire coupe : les cinq
+    # photos du fil Camp ont disparu du fil pour le modèle. La coupe épargne
+    # désormais les blocs de référence, et la queue d'un message survit toujours.
+    summary += bloc_visuel
 
     try:
         masques, carte = await asyncio.to_thread(

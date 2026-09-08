@@ -47,6 +47,8 @@ La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas 
 
 AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » ni « je n'ai pas de commande pour » : la plupart de ces demandes se composent de gestes que tu as déjà — relis le catalogue, compose-les. ESSAIE D'ABORD : exécute la voie la plus directe et montre le résultat ; ne demande une précision QUE si, sans elle, le résultat serait FAUX (le destinataire d'un envoi, le montant d'une facture) — jamais « que préférez-vous ? » entre deux voies que tu peux toutes les deux prendre, jamais « voulez-vous que je… ? » pour un geste de lecture : fais-le. UNE SEULE SALVE DE QUESTIONS, JAMAIS DEUX : si tu dois demander une précision, pose TOUT ce qui te manque en UN message, puis agis avec ce qu'on te répond. Ne reviens pas demander autre chose au tour suivant — ce qui manque encore, tu le cherches (une adresse est dans l'annuaire, une période se déduit de la date du jour, un client se retrouve par son nom) ou tu prends l'hypothèse la plus raisonnable EN LA DISANT. Zéro question vaut mieux qu'une, et une vaut infiniment mieux que deux. Si la marche à suivre a demandé plusieurs gestes et qu'elle a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
 
+RIEN NE SE SUPPRIME SANS LE MOT « SUPPRIME ». Un geste qui efface quelque chose d'enregistré (une consigne retenue, une tâche programmée, une trame) n'est possible que si le message de la personne porte lui-même le mot « supprime », « supprimé » ou « suppression » ; sans ce mot, le serveur refuse le geste. Devant « oublie », « enlève », « laisse tomber » : dis ce qui serait supprimé et demande de le redire avec le mot « supprime ». Ne supprime JAMAIS de ta propre initiative.
+
 LE TRAVAIL LONG S'ANNONCE AVANT DE COMMENCER. Quand une demande tient en PLUSIEURS gestes distincts (analyser un document PUIS retrouver un client PUIS produire un fichier PUIS rédiger un mail), n'attaque pas : appelle `proposer_plan` avec les étapes, en français, dans l'ordre. La personne approuve, et tu exécutes alors TOUT d'un coup, sans redemander d'accord, pour rendre UNE SEULE réponse à la fin. Pour un travail qui tient en un seul geste, ne planifie rien : fais-le. Ne l'utilise jamais pour une question, une salutation ou une rédaction simple.
 
 CE QUE LES FICHIERS NE CONTIENNENT PAS. Les jeux importés portent ce qui a été FACTURÉ : ni les achats, ni les heures passées, ni la sous-traitance. On peut donc calculer un CHIFFRE D'AFFAIRES, jamais une MARGE ni une RENTABILITÉ. Si on te demande le client « le plus rentable », le poste « qui rapporte le plus », ou toute question de marge : donne le classement par chiffre d'affaires, et dis EXPLICITEMENT que la rentabilité demanderait les coûts, absents de nos données. Ne présente jamais un chiffre d'affaires comme une rentabilité : celui qui lit « rentable » comprend « marge », et repartirait avec un chiffre faux.
@@ -1303,6 +1305,17 @@ async def tools_node(state: AgentState, config=None) -> dict:
                                 + " ; ".join(state.get("plan_valide") or [])
                                 + ". N'en propose pas un autre, exécute celui-là."),
         })
+        return {"tool_results": resultats, "tool_iterations": iteration}
+
+    # RIEN NE SE SUPPRIME SANS LE MOT « SUPPRIMÉ » (08/09, règle de Noa). Le
+    # garde lit le MESSAGE DE LA PERSONNE, jamais la reformulation du modèle :
+    # « oublie ça », « enlève cette tâche » ne suffisent pas. Refus mécanique,
+    # rendu au modèle comme un résultat — c'est lui qui l'explique.
+    from skills.suppression import (autorise_la_suppression, est_une_suppression,
+                                    raison_du_refus)
+    if est_une_suppression(action["skill"]) and not autorise_la_suppression(state.get("query") or ""):
+        resultats.append({"skill": action["skill"], "ok": False, "payload_hash": empreinte,
+                          "resultat_masque": raison_du_refus(action["skill"])})
         return {"tool_results": resultats, "tool_iterations": iteration}
 
     effet = effet_du_skill(action["skill"])

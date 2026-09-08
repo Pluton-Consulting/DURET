@@ -306,6 +306,7 @@ def _est_jeton_tableau(valeur) -> bool:
 RESULTATS_GENEREUX = {"drive_chercher", "nas_chercher", "drive_apercu",
                       # 08/09 : les cartes de relance et la liste des factures suivies.
                       "relancer_factures", "factures_suivies", "inventaire_dossier",
+                      "courrier_entrant",
                       "nas_apercu", "preparer_envois",
                       "drive_arborescence", "nas_arborescence",
                       "lire_mails", "lire_mail", "check_mails",

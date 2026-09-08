@@ -862,6 +862,12 @@ async def check_mails(data: dict, user) -> dict:
             "cartes cochables avec envoi groupé. N’écris pas ces réponses en prose "
             "en plus du bloc, et n’envoie rien : chaque envoi repassera par "
             "`envoyer_email` et sa validation. "
+            # 08/09, Noa : « ça propose des réponses uniquement à ceux qui
+            # nécessitent des réponses, ça explique pourquoi certains ne
+            # nécessitent pas de réponse ».
+            "Pour chaque message SANS réponse proposée, dis en quelques mots POURQUOI "
+            "(automatique, information, copie, remerciement, déjà traité…) : la personne "
+            "doit voir que rien n'a été oublié. "
             "Si un extrait est vide, dis que le contenu n'a pas pu être lu au lieu "
             "d'inventer un résumé. Un `extrait` n'est que le DÉBUT du message : "
             "s'il ne suffit pas pour proposer une réponse juste, ouvre le message "

@@ -387,6 +387,21 @@ async def _persist_validation(thread_id: str, user_id: str, state: dict, intr: O
     # permettra à `execute_action` de vérifier que l'action exécutée est bien
     # celle qui a été montrée à l'humain, et pas une autre.
     empreinte = payload.get("payload_hash") if isinstance(payload, dict) else None
+    raison = intr.get("reason") or state.get("validation_reason")
+    # LA CARTE D'ACCORD D'UNE TÂCHE PLANIFIÉE DIT DE QUELLE TÂCHE ELLE VIENT
+    # (08/09, demande de Noa : « une tâche en attente de validation dont la
+    # carte montre le nom de la tâche et ce qui a été fait »). Le fil d'une
+    # exécution s'appelle `task:<run>` : on retrouve son titre.
+    if str(thread_id or "").startswith("task:"):
+        try:
+            async with get_db() as conn:
+                titre = await conn.fetchval(
+                    """SELECT t.title FROM agent_task_runs r JOIN agent_tasks t ON t.id = r.task_id
+                       WHERE r.id = $1::uuid""", thread_id.split(":", 1)[1])
+            if titre:
+                raison = f"Tâche « {titre} » — {raison or 'action en attente'}"
+        except Exception:  # noqa: BLE001 — le titre est un confort
+            pass
 
     async with get_db() as conn:
         vid = await conn.fetchval(
@@ -397,7 +412,7 @@ async def _persist_validation(thread_id: str, user_id: str, state: dict, intr: O
             thread_id,
             user_id,
             intr.get("agent") or state.get("target_agent"),
-            intr.get("reason") or state.get("validation_reason"),
+            raison,
             json.dumps(payload),
             intr.get("draft") or _response_from_state(state),
             empreinte,

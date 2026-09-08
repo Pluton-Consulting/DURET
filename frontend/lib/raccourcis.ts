@@ -11,6 +11,12 @@ export const RACCOURCIS: { libelle: string; prompt: string }[] = [
   // d'œuvre, puis architecte, puis l'architecte encore ; privé : le client)
   // portée par les skills `relancer_factures` / `enregistrer_relance`. Le
   // raccourci fait passer par eux, jamais par une rédaction libre.
+  // 08/09 : le courrier entrant lu dès son arrivée — une tâche planifiée qui
+  // appelle `courrier_entrant` (repère par boîte : chaque mail traité une fois).
+  { libelle: "Courrier entrant automatique (toutes les 10 min)",
+    prompt: "Crée une tâche planifiée toutes les 10 minutes, titre « Courrier entrant », consigne : « Appelle courrier_entrant pour lire les nouveaux mails avec leurs pièces jointes ; fais le point message par message ; propose une réponse uniquement à ceux qui en appellent une (bloc reponses_mail) et dis pourquoi les autres n'en appellent pas ; n'envoie rien sans accord. »" },
+  { libelle: "Courrier entrant (maintenant)",
+    prompt: "Lis le courrier entrant (courrier_entrant) : les nouveaux mails depuis la dernière fois, avec leurs pièces jointes. Fais le point message par message, propose une réponse seulement à ceux qui en appellent une et explique pourquoi les autres n'en appellent pas." },
   // 08/09 : l'inventaire d'un dossier, fichier par fichier (`inventaire_dossier`).
   { libelle: "Inventaire d'un dossier (fichier par fichier)",
     prompt: "Fais l'inventaire de ce dossier en ouvrant chaque fichier un par un (inventaire_dossier) : une ligne par fichier avec sa description, le classeur Excel, et la démarche suivie. Le dossier : " },

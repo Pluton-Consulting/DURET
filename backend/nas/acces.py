@@ -71,9 +71,24 @@ def dossiers_autorises() -> list[str]:
     return [r for r in racines if r != "/"]
 
 
+def decoder(chemin: str) -> str:
+    """Un chemin que le modèle a ENCODÉ à la façon d'une URL redevient lisible.
+
+    08/09, 11:15 : « ouvre le dce de ikos village » → `nas_ouvrir` sur
+    `…/AOS - ikos-village-du-r%C3%A9emploi-%C3%A0-bordeaux - DCE.zip`. Le
+    modèle avait encodé les accents ; le serveur ne connaît pas ce fichier-là.
+    On ne décode que s'il y a bien des séquences %XX : un « % » isolé dans un
+    vrai nom reste un « % ».
+    """
+    import re as _re
+    from urllib.parse import unquote
+    c = chemin or ""
+    return unquote(c) if _re.search(r"%[0-9A-Fa-f]{2}", c) else c
+
+
 def normaliser(chemin: str) -> str:
     """Chemin absolu POSIX, sans `..` ni segment vide."""
-    c = (chemin or "").strip().replace("\\", "/")
+    c = decoder(chemin or "").strip().replace("\\", "/")
     if not c.startswith("/"):
         c = "/" + c
     # `normpath` résout `..` et `.` : c'est LUI qui empêche de remonter.
@@ -627,7 +642,7 @@ async def _chercher_ouvert(client, base, sid, motif: str,
     """Cherche par nom dans une session DÉJÀ ouverte."""
     from ingestion.connectors import synology as c
 
-    motif = (motif or "").strip()
+    motif = decoder((motif or "").strip())
     if not motif:
         # Un refus, pas un résultat : rendu comme un dictionnaire ordinaire, il
         # passait pour une recherche réussie et sans correspondance.

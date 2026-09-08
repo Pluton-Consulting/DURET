@@ -122,6 +122,11 @@ TOUR_DUREE_MAX_S = 8 * 60
 # rapport de douze sections, c'est douze `ajouter_document` légitimes.
 MAX_APPELS_MEME_SKILL = 10
 SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
+# LES GESTES QUI LISENT UN FICHIER. Quand la demande visait UN document et
+# que l'un d'eux a rendu un contenu, le but est atteint : le tour passe à la
+# rédaction au lieu de repartir lister (08/09, 11:09 : neuf listages et une
+# réouverture APRÈS le fichier déjà ouvert, deux minutes pour rien).
+SKILLS_LECTURE_FICHIER = frozenset({"nas_ouvrir", "nas_lire", "drive_ouvrir", "drive_lire"})
 
 # LA PAGINATION N'EST PAS DE L'ACHARNEMENT (01/09, règle de Noa : une recherche
 # ne se bloque jamais en quantité). « Les 60 suivants », « page 4 », « avant » :
@@ -325,7 +330,7 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
                             propose_au_lieu_d_agir, renvoie_au_deja_fait,
                             demande_sur_le_passe, demande_un_visuel,
                             suite_qui_retouche, demande_de_montrer,
-                            decrit_un_contenu_lu,
+                            decrit_un_contenu_lu, demande_d_ouvrir_un_seul,
                             deuxieme_salve_de_questions)
 
 
@@ -1226,6 +1231,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
         args = _completer_depuis_tableau(args, tableau["lignes"], state.get("query") or "")
 
     empreinte = hash_payload(action["skill"], args)
+    sortie = None
     # Une page de plus ne compte pas : enchaîner les pages est le comportement
     # DEMANDÉ (TOUT SIGNIFIE TOUT), pas une boucle.
     memes = sum(1 for r in resultats
@@ -1513,6 +1519,19 @@ async def tools_node(state: AgentState, config=None) -> dict:
         exp = expert_du_skill(action["skill"])
         if exp:
             maj["target_agent"] = exp
+    # LE BUT ATTEINT FERME LE TOUR. La demande visait UN document, un geste de
+    # lecture vient d'en rendre le contenu : tout listage de plus est du temps
+    # perdu et de la prose en trop. On passe à la rédaction, en le disant.
+    if (ok and action["skill"] in SKILLS_LECTURE_FICHIER
+            and isinstance(sortie, dict)
+            and (sortie.get("texte") or sortie.get("contenu") or sortie.get("apercu"))
+            and demande_d_ouvrir_un_seul(state.get("query") or "")):
+        logger.info("But atteint : « %s » a rendu un contenu pour une demande d'UN document — rédaction",
+                    action["skill"])
+        return {**maj, **_sortir(
+            "le document demandé est OUVERT et son contenu est dans le dernier "
+            "résultat. N'en ouvre pas d'autre, ne liste rien de plus : réponds "
+            "avec ce qu'il contient, en quelques lignes.")}
     return maj
 
 

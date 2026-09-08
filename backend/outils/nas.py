@@ -556,9 +556,9 @@ async def ouvrir(nom_ou_chemin: str, proprietaire: str | None = None) -> dict:
 
     Un chemin complet est accepté directement : on ne cherche que s'il le faut.
     """
-    from nas.acces import connexion, _lire_ouvert, _chercher_ouvert, NasRefuse
+    from nas.acces import connexion, _lire_ouvert, _chercher_ouvert, NasRefuse, decoder
 
-    demande = (nom_ou_chemin or "").strip()
+    demande = decoder((nom_ou_chemin or "").strip())
     if not demande:
         raise NasRefuse("Donne le nom ou le chemin du fichier à ouvrir.")
 

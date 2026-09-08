@@ -386,6 +386,32 @@ def pretend_avoir_livre(texte: str) -> bool:
     return bool(_PRETEND_LIVRE.search(_sans_accent(texte)))
 
 
+# LA DEMANDE VISE UN SEUL DOCUMENT (08/09, 11:09). « ouvre un appel d'offre au
+# hasard » → le règlement de consultation est ouvert au DEUXIÈME geste, puis le
+# modèle repart lister neuf autres dossiers pendant deux minutes, rouvre le
+# même fichier, et la boucle ne se ferme que sur un rejeu à l'identique. Rien
+# ne lui disait que le but était atteint. Ce prédicat le dit à la mécanique :
+# une demande d'ouvrir UN document (un, le, au hasard, le plus lourd) est
+# satisfaite par UNE lecture réussie. Le pluriel (« tous les PDF », « chaque »)
+# n'est pas visé : là, on continue.
+_OUVRIR_UN_SEUL = re.compile(
+    r"\b(?:ouvre|ouvrir|affiche|afficher|montre|montrer|lis|lire|consulte|consulter)"
+    r"[^.!?\n]{0,40}?\b(?:un|une|le|la|l['’]|au hasard|n['’]importe|le plus|la plus"
+    r"|le premier|la premiere|le dernier|la derniere)\b",
+    re.IGNORECASE)
+_PLUSIEURS = re.compile(
+    r"\b(?:tous|toutes|tout les|chaque|chacun|l['’]ensemble|plusieurs|les|des|\d+ (?:pdf|fichiers|documents))\b",
+    re.IGNORECASE)
+
+
+def demande_d_ouvrir_un_seul(texte: str) -> bool:
+    """La demande réclame-t-elle d'ouvrir ou lire UN document, et un seul ?"""
+    if not isinstance(texte, str) or not texte:
+        return False
+    t = _sans_accent(texte)
+    return bool(_OUVRIR_UN_SEUL.search(t)) and not _PLUSIEURS.search(t)
+
+
 def demande_une_production(texte: str) -> bool:
     """La demande réclame-t-elle la CRÉATION d'un fichier ?
 

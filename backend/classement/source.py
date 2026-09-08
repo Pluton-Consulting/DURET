@@ -1,0 +1,61 @@
+"""
+La SOURCE de la carte du classement chez ce client : le serveur de fichiers
+Synology (NAS).
+
+Module propre au client (déclaré dans la dérive) : le socle `classement.carte`
+ne sait pas d'où viennent les entrées. Ici, elles viennent du CATALOGUE du NAS
+(`nas.acces`, balayage de fond depuis le 08/09 midi) : chaque fichier est une
+entrée avec sa taille, et le socle en déduit les comptes par dossier.
+
+Le niveau d'accès est celui du NAS tout entier (`SYNOLOGY_ACCESS_LEVEL`) :
+c'est le même droit qui ouvre le serveur dans le chat et range ses fichiers
+à l'ingestion — la carte ne dit rien de plus que ce que ce droit permet de
+lister.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+
+logger = logging.getLogger("symbiose.classement")
+
+NOM_STOCKAGE = "serveur de fichiers (NAS)"
+GESTE_LISTER = "nas_lister"
+GESTE_CHERCHER = "nas_chercher"
+ATTENTE_CATALOGUE_S = 900
+
+
+async def entrees_du_classement() -> tuple[list, bool]:
+    """Toutes les entrées (dossiers et fichiers) et si le relevé est complet.
+
+    Le catalogue se construit au démarrage en tâche de fond : on l'attend
+    plutôt que de lancer un second balayage du même serveur.
+    """
+    from nas import acces
+
+    cat = acces.catalogue_pret()
+    attendu = 0
+    while (cat is None or acces._CATALOGUE.get("en_cours")) and attendu < ATTENTE_CATALOGUE_S:
+        await asyncio.sleep(10)
+        attendu += 10
+        if not acces._CATALOGUE.get("en_cours") and acces._CATALOGUE.get("etat") in ("pret", "partiel"):
+            cat = acces._CATALOGUE["entrees"]
+            break
+    if cat is None:
+        cat = (await acces.construire_catalogue()).get("entrees") or []
+    entrees = []
+    for e in cat:
+        if not e.get("chemin"):
+            continue
+        entrees.append({"chemin": e["chemin"], "dossier": bool(e.get("dossier")),
+                        "octets": e.get("octets") or e.get("taille") or 0})
+    return entrees, bool(acces._CATALOGUE.get("complet"))
+
+
+def niveau_de(chemin: str) -> str:
+    """Le niveau d'accès du morceau qui décrit ce dossier : celui du serveur."""
+    try:
+        from config import settings
+        return (getattr(settings, "synology_access_level", None) or "all").strip() or "all"
+    except Exception:  # noqa: BLE001
+        return "all"

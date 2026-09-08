@@ -66,6 +66,7 @@ frontend/app/(app)/navigateur/NavigateurClient.tsx  # domaines metier proposes e
 # reglages du meme code, ce sont deux implementations.
 backend/outils/drive.py                 # lecture du Drive d'entreprise (cote @MARQUE@ vert seulement)
 backend/outils/nas.py                   # lecture du @STOCKAGE@ (cote @MARQUE@ bleu seulement)
+backend/classement/source.py            # d'ou vient la carte du classement : catalogue Drive chez l'un, catalogue @STOCKAGE@ chez l'autre
 backend/nas/                            # acces bas niveau au @STOCKAGE@
 backend/skills/nas.py                   # skills exposant le @STOCKAGE@ a l'assistant
 backend/skills/visuels.py               # skills de rendu d'amenagement (offre @METIER@)

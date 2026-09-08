@@ -161,6 +161,14 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(demarrer_catalogue())
     except Exception:
         pass
+    # LA CARTE DU CLASSEMENT (08/09 soir) : l'architecture du stockage relevée
+    # en fond, gardée en mémoire (prompt, `ou_chercher`) et écrite dans la base
+    # vectorisée (recherche documentaire). Six heures entre deux relevés.
+    try:
+        from classement.carte import demarrer_carte
+        asyncio.create_task(demarrer_carte())
+    except Exception:
+        pass
     yield
     try:
         from vectorstore.worker import stop_embedding_worker

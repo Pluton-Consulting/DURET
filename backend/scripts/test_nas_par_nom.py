@@ -137,6 +137,7 @@ def _sans_accent_nas(texte):
 _poser("nas.acces", _lister_ouvert=_lister_ouvert, _chercher_ouvert=_chercher_ouvert,
        _lire_ouvert=_lire_ouvert, connexion=lambda: _Connexion(),
        dossiers_autorises=lambda: list(RACINES), _balayer=_balayer,
+       catalogue_pret=lambda: None, _CATALOGUE={},
        _sans_accent_nas=_sans_accent_nas,
        normaliser=lambda c: "/" + (c or "").strip("/"), NasRefuse=NasRefuse,
        verifier=_verifier, lire=None)

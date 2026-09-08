@@ -381,10 +381,28 @@ CACHE_DUREE_S = 300
 CACHE_MAX = 4000
 _CACHE_LISTAGE: dict = {}
 
+# CE QU'ON NE DESCEND JAMAIS. « #recycle » est la corbeille de Synology : des
+# milliers de dossiers supprimés, que personne ne cherche, et qui mangeaient
+# le budget du balayage avant qu'il n'atteigne le classement (08/09, 10:45 :
+# « parcours interrompu » sans avoir vu l'appel d'offres). « @eaDir » porte
+# les vignettes, « #snapshot » les instantanés. Tout ce qui commence par « # »
+# ou « @ » est du serveur, pas de l'entreprise.
+DOSSIERS_IGNORES = ("#recycle", "@eaDir", "#snapshot", "@tmp", "@SynoResource", ".SynologyWorkingDirectory")
+
+
+def _dossier_ignore(nom: str) -> bool:
+    n = (nom or "").strip()
+    return n in DOSSIERS_IGNORES or n.startswith(("#", "@"))
+
+
 BALAYAGE_DE_FRONT = 8
 BALAYAGE_PROFONDEUR = 8
-BALAYAGE_DOSSIERS_MAX = 1500
-BALAYAGE_DELAI_S = 45
+BALAYAGE_DOSSIERS_MAX = 3000
+# 08/09 après-midi, Noa : « il dit "je réfléchis" pendant très très longtemps ».
+# Un tour lançait huit recherches, chacune pouvant balayer 45 s. Le balayage
+# n'est plus qu'un SECOURS (le catalogue répond en mémoire dès qu'il est
+# construit) : il est court, et un parcours coupé le dit.
+BALAYAGE_DELAI_S = 15
 
 
 async def _balayer(client, base, sid, racines: list[str],
@@ -443,7 +461,7 @@ async def _balayer(client, base, sid, racines: list[str],
                 continue
             for e in paquet:
                 chemin = e.get("chemin")
-                if not chemin or chemin in vus:
+                if not chemin or chemin in vus or _dossier_ignore(e.get("nom") or ""):
                     continue
                 vus.add(chemin)
                 if correspond(e):
@@ -458,6 +476,83 @@ async def _balayer(client, base, sid, racines: list[str],
         if niveau:
             complet = False
     return trouves, complet
+
+
+# ── LE CATALOGUE : l'arborescence entière, en mémoire ─────────────────────
+#
+# 08/09, 10:45 : même avec le balayage, « 2029 AIRBORNE SONOVISION » (niveau 4
+# sous /home) n'a pas été atteint dans le budget d'UNE recherche — le Drive de
+# l'entreprise porte des milliers de dossiers, et une recherche ne peut pas
+# tous les parcourir à chaque fois. Le jumeau sur Google Drive a réglé la
+# même question le 01/09 avec un CATALOGUE (balayage global, filtré chez
+# nous). Même réponse ici : l'arborescence se construit UNE fois, en tâche de
+# fond dès le démarrage, se rafraîchit toutes les heures, et la recherche
+# devient un filtre en mémoire — instantané, complet, et honnête sur son âge.
+#
+# Tant que le catalogue n'est pas prêt (première minute après un
+# redéploiement), la recherche retombe sur le balayage borné, et le DIT.
+CATALOGUE_DUREE_S = 3600
+CATALOGUE_DELAI_S = 900
+CATALOGUE_DOSSIERS_MAX = 60000
+CATALOGUE_PROFONDEUR = 40
+_CATALOGUE: dict = {"etat": "vide", "entrees": [], "construit_le": 0.0,
+                    "complet": False, "en_cours": False}
+
+
+async def construire_catalogue() -> dict:
+    """Balaye tout le périmètre et garde le résultat en mémoire. Une seule
+    construction à la fois : un second appel pendant la première n'en lance
+    pas une autre, il rend l'état."""
+    import time as _t
+
+    if _CATALOGUE["en_cours"]:
+        return _CATALOGUE
+    racines = dossiers_autorises()
+    if not racines:
+        return _CATALOGUE
+    _CATALOGUE["en_cours"] = True
+    debut = _t.monotonic()
+    try:
+        async with connexion() as (client, base, sid):
+            entrees, complet = await _balayer(
+                client, base, sid, racines, lambda e: True,
+                delai_s=CATALOGUE_DELAI_S, dossiers_max=CATALOGUE_DOSSIERS_MAX,
+                profondeur=CATALOGUE_PROFONDEUR)
+        _CATALOGUE.update({"etat": "pret" if complet else "partiel",
+                           "entrees": entrees, "complet": complet,
+                           "construit_le": _t.monotonic()})
+        logger.info("NAS : catalogue %s — %d entrées en %.0f s",
+                    _CATALOGUE["etat"], len(entrees), _t.monotonic() - debut)
+    except Exception as e:  # noqa: BLE001 — un NAS injoignable ne casse pas le démarrage
+        logger.warning("NAS : catalogue non construit : %s", str(e)[:160])
+    finally:
+        _CATALOGUE["en_cours"] = False
+    return _CATALOGUE
+
+
+def catalogue_pret() -> Optional[list]:
+    """Les entrées du catalogue s'il est utilisable, sinon None — et dans ce
+    cas la construction part en tâche de fond si rien ne tourne déjà."""
+    import time as _t
+
+    frais = (_CATALOGUE["etat"] in ("pret", "partiel")
+             and _t.monotonic() - _CATALOGUE["construit_le"] < CATALOGUE_DUREE_S)
+    if frais:
+        return _CATALOGUE["entrees"]
+    if not _CATALOGUE["en_cours"]:
+        try:
+            asyncio.get_running_loop().create_task(construire_catalogue())
+        except RuntimeError:
+            pass
+    # Un catalogue PÉRIMÉ vaut mieux qu'aucun le temps de la reconstruction.
+    return _CATALOGUE["entrees"] or None
+
+
+async def demarrer_catalogue() -> None:
+    """La tâche de fond : construire, puis reconstruire à chaque heure."""
+    while True:
+        await construire_catalogue()
+        await asyncio.sleep(CATALOGUE_DUREE_S)
 
 
 def _sans_accent_nas(texte: str) -> str:
@@ -553,12 +648,24 @@ async def _chercher_ouvert(client, base, sid, motif: str,
         def _correspond(e):
             return cible in _sans_accent_nas(e.get("nom") or "")
 
-        balayes, complet = await _balayer(client, base, sid, racines, _correspond)
+        cat = catalogue_pret()
+        if cat is not None:
+            # LE CATALOGUE : instantané et complet. `racines` peut être un
+            # dossier précis : on ne rend que ce qui vit dessous.
+            balayes = [e for e in cat
+                       if any(str(e.get("chemin") or "").startswith(r.rstrip("/") + "/")
+                              for r in racines)
+                       and _correspond(e)]
+            complet = bool(_CATALOGUE.get("complet"))
+            methode_repli = "catalogue"
+        else:
+            balayes, complet = await _balayer(client, base, sid, racines, _correspond)
+            methode_repli = "parcours des dossiers"
         if balayes or not pannes:
             trouves = [{"nom": e.get("nom"), "chemin": e.get("chemin"),
                         "dossier": bool(e.get("dossier")),
                         "octets": e.get("octets")} for e in balayes]
-            methode = "parcours des dossiers"
+            methode = methode_repli
             inacheve = not complet
         elif pannes and len(pannes) == len(groupes):
             raise NasRefuse(
@@ -573,6 +680,10 @@ async def _chercher_ouvert(client, base, sid, motif: str,
                           "nombre de dossiers) : résultats partiels, une absence "
                           "n'est PAS prouvée — dis-le tel quel, et propose de "
                           "chercher dans un dossier précis.")
+    if methode == "parcours des dossiers" and _CATALOGUE.get("etat") == "vide":
+        sortie["note"] = ((sortie.get("note") or "") + " Le catalogue du serveur "
+                          "se construit encore (redémarrage récent) : dans quelques "
+                          "minutes la recherche sera complète et instantanée.").strip()
     return sortie
 
 

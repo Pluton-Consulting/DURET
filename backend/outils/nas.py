@@ -146,7 +146,13 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
                                 for e in await _enfants_dossiers(client, base, sid, r)]
             except Exception:  # noqa: BLE001 - une racine fantôme ne bloque pas
                 continue
-        candidats, complet = await _balayer(client, base, sid, racines, _correspond)
+        from nas.acces import catalogue_pret, _CATALOGUE
+        cat = catalogue_pret()
+        if cat is not None:
+            candidats = [e for e in cat if _correspond(e)]
+            complet = bool(_CATALOGUE.get("complet"))
+        else:
+            candidats, complet = await _balayer(client, base, sid, racines, _correspond)
         exacts = [e for e in candidats if _sans_accent_nas(e.get("nom") or "") == cible]
         if exacts or candidats:
             # Le plus HAUT dans l'arborescence l'emporte à égalité : un dossier

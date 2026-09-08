@@ -176,6 +176,10 @@ verifier("`_balayer` existe dans nas/acces.py (le parcours qui remplace l'index)
          callable(getattr(acces, "_balayer", None)))
 
 # ── 2. La recherche trouve ce que l'index ne voit pas ──
+# D'abord SANS catalogue : c'est le régime de la première minute après un
+# redémarrage, et celui du 08/09 à 10:45. Le catalogue est éprouvé plus bas.
+_vrai_catalogue_pret = acces.catalogue_pret
+acces.catalogue_pret = lambda: None
 APPELS_SEARCH.clear()
 r = asyncio.run(acces._chercher_ouvert(None, "http://nas", "sid", "AIRBORNE"))
 verifier("« AIRBORNE » est TROUVÉ alors que l'index du serveur rend zéro",
@@ -195,8 +199,10 @@ r = asyncio.run(acces._chercher_ouvert(None, "http://nas", "sid", "IKOS"))
 verifier("la recherche est indulgente aux accents (« réemploi »)", r.get("nombre") == 1, r.get("nombre"))
 
 r = asyncio.run(acces._chercher_ouvert(None, "http://nas", "sid", "zzz-introuvable"))
+# Sans catalogue, la seule note admise dit qu'il se construit — jamais une
+# interruption : le parcours est allé au bout, l'absence est prouvée.
 verifier("ce qui n'existe VRAIMENT pas rend zéro, sans note d'interruption",
-         r.get("nombre") == 0 and not r.get("note"), r)
+         r.get("nombre") == 0 and "INTERROMPU" not in (r.get("note") or ""), r)
 
 # Un parcours interrompu le DIT.
 vrai_balayer = acces._balayer
@@ -274,7 +280,40 @@ verifier("le cache ne sert QU'au balayage : le listage demandé lit toujours le 
          "_CACHE_LISTAGE" not in corps_lister)
 acces._lister_ouvert = _vrai_lister
 
-# ── 6. Le catalogue dit ce que coûte un parcours complet ──
+# ── 6. LE CATALOGUE : l'arborescence entière en mémoire, la recherche instantanée ──
+acces.catalogue_pret = _vrai_catalogue_pret
+acces._CACHE_LISTAGE.clear()
+verifier("`construire_catalogue`, `catalogue_pret` et `demarrer_catalogue` existent",
+         all(callable(getattr(acces, n, None)) for n in ("construire_catalogue", "catalogue_pret", "demarrer_catalogue")))
+etat = asyncio.run(acces.construire_catalogue())
+noms_cat = {e.get("nom") for e in etat.get("entrees") or []}
+verifier("le catalogue est construit et COMPLET sur l'arborescence de production",
+         etat.get("etat") == "pret" and etat.get("complet") is True and len(etat.get("entrees") or []) > 20,
+         (etat.get("etat"), len(etat.get("entrees") or [])))
+verifier("il porte les niveaux profonds (le DCE, ses PDF)",
+         "2029 RC VF.pdf" in noms_cat and "2029 PLAN RDC.pdf" in noms_cat and "ETUDES EN COURS" in noms_cat)
+verifier("la corbeille et les dossiers système du NAS n'y sont PAS (« #recycle » mangeait le budget)",
+         "#recycle" not in noms_cat and not any(str(n).startswith(("#", "@")) for n in noms_cat if n))
+LISTAGES.clear()
+acces._lister_ouvert = _compte
+r = asyncio.run(acces._chercher_ouvert(None, "http://nas", "sid", "2029 AIRBORNE SONOVISION"))
+verifier("« 2029 AIRBORNE SONOVISION » (le cas de 10:45) est trouvé PAR LE CATALOGUE, sans un seul listage",
+         r.get("nombre") == 1 and r.get("methode") == "catalogue" and len(LISTAGES) == 0
+         and not r.get("note"), (r.get("nombre"), r.get("methode"), len(LISTAGES), r.get("note")))
+r = asyncio.run(acces._chercher_ouvert(None, "http://nas", "sid", "pdf", DCE))
+verifier("une recherche dans un dossier précis ne rend que ce qui vit DESSOUS",
+         r.get("nombre") == 4 and all(x["chemin"].startswith(DCE + "/") for x in r["resultats"]), r.get("nombre"))
+LISTAGES.clear()
+r = _lister("2029 AIRBORNE SONOVISION EXTENSION 18-09-2026 AOS")
+verifier("la résolution d'un nom profond passe par le catalogue (au plus les racines listées)",
+         str(r.get("chemin", "")).endswith("18-09-2026 AOS") and len(LISTAGES) <= 4, (r.get("chemin"), LISTAGES))
+acces._lister_ouvert = _vrai_lister
+for c in (BACKEND / "main.py", BACKEND.parent.parent / "SYMBIOSE-git" / "symbiose-noa" / "backend" / "main.py"):
+    if c.exists():
+        verifier(f"le démarrage lance le catalogue en tâche de fond ({c.parent.parent.name})",
+                 "demarrer_catalogue" in c.read_text(encoding="utf-8"))
+
+# ── 7. Le catalogue dit ce que coûte un parcours complet ──
 skills = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
 verifier("le catalogue de `nas_chercher` conseille de donner le dossier, et dit que sans lui c'est long",
          "BEAUCOUP plus rapide" in skills and "ne le relance pas a" in skills)

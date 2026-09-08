@@ -152,6 +152,15 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(prechauffer())
     except Exception:
         pass
+    # LE CATALOGUE DU SERVEUR DE FICHIERS (08/09) : là où un NAS est branché,
+    # son arborescence se construit en tâche de fond dès le démarrage et se
+    # rafraîchit seule — la recherche par nom devient un filtre en mémoire.
+    # Sans module `nas` (le jumeau sur Drive), l'import échoue et rien ne part.
+    try:
+        from nas.acces import demarrer_catalogue
+        asyncio.create_task(demarrer_catalogue())
+    except Exception:
+        pass
     yield
     try:
         from vectorstore.worker import stop_embedding_worker

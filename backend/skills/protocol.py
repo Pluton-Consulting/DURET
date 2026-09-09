@@ -288,10 +288,13 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "texte redige) : au-dela, verse par `ajouter_document` successifs, "
         "autant qu il faut, puis `terminer_document`. `entete` et `pied` "
         "s'ecrivent sur CHAQUE page (coordonnees, mentions legales) : ce ne "
-        "sont pas des blocs, ce sont des parametres d'ici. Ne produit aucun "
-        "fichier",
+        "sont pas des blocs, ce sont des parametres d'ici. `entete_image` / "
+        "`pied_image` : une IMAGE (logo, photo) sur chaque page — la reference "
+        "d'une image de la conversation ou le NOM d'un fichier image du "
+        "stockage. Ne produit aucun fichier",
 
-        ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter"]),
+        ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter",
+                    "entete_image", "pied_image"]),
     "ajouter_document": (
         # LA TAILLE PAR APPEL MANQUAIT ICI. Le catalogue disait « autant de
         # fois qu'il le faut » sans jamais dire COMBIEN par fois : le modele a
@@ -299,9 +302,11 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         # plein JSON. Le plafond n'est pas negociable, la consigne doit donc
         # etre a l'interieur.
         "VERSE du contenu dans un document ouvert. Meme vocabulaire de blocs que "
-        "`produire_document`. MAXIMUM 12 blocs rediges par appel : au-dela ta "
-        "sortie est COUPEE en plein milieu et l'appel est perdu. Rappelle-la "
-        "autant de fois qu'il le faut, le contenu s'accumule",
+        "`produire_document` ; {bloc:image, image:<reference>, legende} insere "
+        "une image de la conversation ou du stockage dans le corps. MAXIMUM 12 "
+        "blocs rediges par appel : au-dela ta sortie est COUPEE en plein milieu "
+        "et l'appel est perdu. Rappelle-la autant de fois qu'il le faut, le "
+        "contenu s'accumule",
         ["document_id", "elements"], []),
     "terminer_document": (
         "FERME le document et rend le lien. Tant qu'il n'est pas appele, "

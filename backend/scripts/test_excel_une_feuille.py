@@ -138,7 +138,9 @@ sys.modules.update(_fabrique_modules())
 arbre = ast.parse((BACKEND / "bureautique" / "rendu.py").read_text(encoding="utf-8"))
 noeud = next(n for n in arbre.body
              if isinstance(n, ast.FunctionDef) and n.name == "_xlsx")
-espace = {}
+# `_xlsx` lit aussi `_image` (les logos d'en-tête/pied, 09/09) : sans image
+# rangée, rien à poser — le banc juge les feuilles, pas les images.
+espace = {"_image": lambda nom: None, "_absente": lambda e: "[image indisponible]"}
 exec(compile(ast.Module(body=[noeud], type_ignores=[]), "rendu", "exec"), espace)
 _xlsx = espace["_xlsx"]
 

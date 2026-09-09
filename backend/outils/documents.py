@@ -29,7 +29,8 @@ def _meme_titre(a: str, b: str) -> bool:
 
 async def produire(titre: str, blocs: list, proprietaire: str,
                    format: str = "pdf", entete: str = "", pied: str = "",
-                   numeroter: bool = True) -> dict:
+                   numeroter: bool = True, entete_image: str = "",
+                   pied_image: str = "", user=None) -> dict:
     """Crée, remplit et finalise un document. Rend le lien de téléchargement.
 
     Le contenu est DÉCRIT, jamais programmé : une liste de blocs du vocabulaire
@@ -79,8 +80,11 @@ async def produire(titre: str, blocs: list, proprietaire: str,
 
     en_tete = normaliser_entete({"titre": titre, "format": format,
                                  "entete": entete, "pied": pied,
-                                 "numeroter": numeroter})
+                                 "numeroter": numeroter,
+                                 "entete_image": entete_image,
+                                 "pied_image": pied_image})
     jeton = ouvrir(en_tete, proprietaire)
+    refus_images: list = []
 
     # UN PRODUIRE QUI ÉCHOUE NE LAISSE PAS DE FANTÔME. `ouvrir` a déjà créé la
     # fiche : lever sans nettoyer laissait un document ouvert par échec — et au
@@ -89,6 +93,13 @@ async def produire(titre: str, blocs: list, proprietaire: str,
     # inconnu ». Depuis que les documents ouverts sont montrés au modèle d'un
     # tour à l'autre, un fantôme serait en plus une fausse piste offerte.
     try:
+        # Les images (blocs `image`, logo d'en-tête ou de pied) se résolvent
+        # et se rangent sous le jeton avant le versement (09/09).
+        from bureautique.atelier import mettre_a_jour_entete
+        from bureautique.images import preparer
+        blocs, en_tete, refus_images = await preparer(jeton, proprietaire, blocs, en_tete, user)
+        if en_tete.get("entete_image_fichier") or en_tete.get("pied_image_fichier"):
+            mettre_a_jour_entete(jeton, proprietaire, en_tete)
         retenus = ajouter(jeton, blocs, proprietaire)
         if not retenus:
             # `terminer` refuserait un document vide ; le dire ici est plus
@@ -143,5 +154,12 @@ async def produire(titre: str, blocs: list, proprietaire: str,
                  "pas un second DOCUMENT : s'il est plus court que demandé, "
                  "dis-le franchement plutôt que de recommencer. "
                  + (f"{ignores} bloc(s) écarté(s) : type inconnu ou vide."
-                    if ignores else "")),
+                    if ignores else "")
+                 + _note_refus(refus_images)),
+        "images_refusees": refus_images,
     }
+
+
+def _note_refus(refus: list) -> str:
+    from bureautique.images import note_refus
+    return note_refus(refus)

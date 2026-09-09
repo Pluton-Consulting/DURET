@@ -51,7 +51,23 @@ BLOCS = {
     "feuille":     "nom, entetes[], lignes[[]] (.xlsx : nouvel onglet ; "
                    "ailleurs : un tableau précédé de son nom)",
     "separateur":  "(aucun champ)",
+    # 09/09 : « mettre une image du Drive ou une pièce jointe en pied de page
+    # d'un Word ». La référence est celle qu'un geste a rendue (clé d'image
+    # de la conversation, jeton, nom d'un fichier image du stockage) : le
+    # skill la résout et range les octets sous le jeton du document.
+    "image":       "image (référence : clé d'une image de la conversation, ou NOM "
+                   "d'un fichier image du stockage), legende, largeur_cm (2 à 17), "
+                   "centre (bool)",
 }
+
+# Les noms de champ sous lesquels le modèle écrit la référence d'une image.
+CLES_IMAGE = ("image", "ref", "reference", "cle", "fichier", "source", "url", "nom", "photo")
+# Une image DÉJÀ rangée à l'atelier : `<jeton>.img<n>.png|jpg`. C'est la seule
+# forme que le rendu lit ; tout autre `fichier` est une référence à résoudre.
+import re as _re
+RE_IMAGE_RANGEE = _re.compile(r"^[A-Za-z0-9_-]{20,64}\.img\d+\.(?:png|jpg)$")
+MAX_LARGEUR_CM = 17.0
+MIN_LARGEUR_CM = 2.0
 
 # Bornes. Un document sans limite finirait par épuiser le disque ou produire un
 # fichier qu'aucun traitement de texte n'ouvre.
@@ -92,6 +108,8 @@ _TYPES = {
     "feuille": "feuille", "sheet": "feuille", "onglet": "feuille",
     "separateur": "separateur", "separator": "separateur", "hr": "separateur",
     "ligne_horizontale": "separateur",
+    "image": "image", "img": "image", "photo": "image", "picture": "image",
+    "figure": "image", "illustration": "image", "visuel": "image",
 }
 
 
@@ -134,6 +152,32 @@ def normaliser_element(brut) -> dict | None:
 
     if bloc in ("saut_page", "separateur"):
         return {"bloc": bloc}
+
+    if bloc == "image":
+        # Une image RANGÉE garde son `fichier` ; sinon la référence est gardée
+        # telle quelle (`ref`), à résoudre par `bureautique/images.preparer`
+        # avant le versement. Une image sans rien n'est pas un bloc.
+        fichier = str(brut.get("fichier") or "").strip()
+        sortie = {"bloc": "image", "legende": _texte(brut.get("legende") or brut.get("caption"), 300),
+                  "centre": brut.get("centre", brut.get("center")) is not False}
+        try:
+            largeur = float(brut.get("largeur_cm", brut.get("largeur", brut.get("width_cm", 12))))
+        except (TypeError, ValueError):
+            largeur = 12.0
+        sortie["largeur_cm"] = round(min(max(largeur, MIN_LARGEUR_CM), MAX_LARGEUR_CM), 1)
+        if RE_IMAGE_RANGEE.match(fichier):
+            sortie["fichier"] = fichier
+            return sortie
+        ref = ""
+        for cle in CLES_IMAGE:
+            v = brut.get(cle)
+            if isinstance(v, str) and v.strip():
+                ref = v.strip()[:500]
+                break
+        if not ref:
+            return None
+        sortie["ref"] = ref
+        return sortie
 
     if bloc == "titre":
         texte = _champ_texte(brut, 500)
@@ -205,6 +249,17 @@ def normaliser_entete(brut: dict) -> dict:
         "sous_titre": _texte(brut.get("sous_titre"), 300),
         "entete": _texte(brut.get("entete"), 200),
         "pied": _texte(brut.get("pied"), 200),
+        # Une image (un logo) sur CHAQUE page, en en-tête ou en pied : la
+        # référence est résolue et rangée par le skill (`_fichier`), le rendu
+        # ne lit que le fichier rangé.
+        "entete_image": _texte(brut.get("entete_image") or brut.get("logo_entete")
+                               or brut.get("image_entete") or brut.get("logo"), 500),
+        "pied_image": _texte(brut.get("pied_image") or brut.get("logo_pied")
+                             or brut.get("image_pied"), 500),
+        "entete_image_fichier": (str(brut.get("entete_image_fichier") or "")
+                                 if RE_IMAGE_RANGEE.match(str(brut.get("entete_image_fichier") or "")) else ""),
+        "pied_image_fichier": (str(brut.get("pied_image_fichier") or "")
+                               if RE_IMAGE_RANGEE.match(str(brut.get("pied_image_fichier") or "")) else ""),
         # La numérotation est produite par le rendu, jamais écrite par le
         # modèle : lui demander « page 3 sur 47 » supposerait qu'il sache
         # combien de pages sortiront, ce qu'il ne peut pas savoir.

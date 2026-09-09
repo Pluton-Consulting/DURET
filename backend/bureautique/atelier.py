@@ -244,6 +244,50 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str) -> int:
     return len(retenus)
 
 
+def ranger_image(jeton: str, proprietaire: str, octets: bytes, extension: str) -> str:
+    """Range les octets d'une image SOUS LE JETON du document (`<jeton>.img<n>.<ext>`)
+    et rend ce nom de fichier — la seule forme que le rendu lit. L'image suit
+    la durée de vie du document (purge, abandon). Réservé au propriétaire d'un
+    document encore ouvert."""
+    f = fiche(jeton, proprietaire)
+    if f is None:
+        raise KeyError("document inconnu")
+    if f.get("fini"):
+        raise ValueError("document déjà terminé")
+    extension = "jpg" if str(extension).lower() in ("jpg", "jpeg") else "png"
+    prefixe = f"{jeton}.img"
+    try:
+        existants = [n for n in os.listdir(DOSSIER) if n.startswith(prefixe)]
+    except OSError:
+        existants = []
+    nom = f"{prefixe}{len(existants) + 1}.{extension}"
+    with open(os.path.join(DOSSIER, nom), "wb") as sortie:
+        sortie.write(octets)
+    logger.info("Image %s rangée pour le document %s (%d octets)", nom.split(".img")[-1], jeton[:8], len(octets))
+    return nom
+
+
+def chemin_image(fichier: str) -> str | None:
+    """Le chemin d'une image rangée, si elle existe — un nom nu, jamais un chemin."""
+    from bureautique.modele import RE_IMAGE_RANGEE
+    fichier = os.path.basename(str(fichier or ""))
+    if not RE_IMAGE_RANGEE.match(fichier):
+        return None
+    chemin = os.path.join(DOSSIER, fichier)
+    return chemin if os.path.exists(chemin) else None
+
+
+def mettre_a_jour_entete(jeton: str, proprietaire: str, entete: dict) -> None:
+    """Remplace l'en-tête d'un document ouvert (images d'en-tête/pied rangées)."""
+    f = fiche(jeton, proprietaire)
+    if f is None:
+        raise KeyError("document inconnu")
+    if f.get("fini"):
+        raise ValueError("document déjà terminé")
+    f["entete"] = dict(entete or {})
+    _ecrire_fiche(jeton, f)
+
+
 def elements(jeton: str):
     """Parcourt les éléments un par un — jamais tout en mémoire."""
     try:
@@ -278,6 +322,8 @@ def _extrait(jeton: str, limite: int = 900) -> str:
             t = "\n".join(f"- {i}" for i in (e.get("items") or [])[:6])
         elif bloc in ("tableau", "feuille"):
             t = f"[{bloc} : {len(e.get('lignes') or [])} ligne(s)]"
+        elif bloc == "image":
+            t = f"[image{' : ' + str(e.get('legende')) if e.get('legende') else ''}]"
         elif bloc in ("saut_page", "separateur"):
             continue
         if not t:
@@ -351,6 +397,13 @@ def abandonner(jeton: str, proprietaire: str) -> bool:
             os.remove(_chemin(jeton, suffixe))
         except OSError:
             pass
+    # Les images rangées sous ce jeton partent avec lui.
+    try:
+        for nom in os.listdir(DOSSIER):
+            if nom.startswith(f"{jeton}.img"):
+                os.remove(os.path.join(DOSSIER, nom))
+    except OSError:
+        pass
     return True
 
 

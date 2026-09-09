@@ -133,7 +133,11 @@ async def produire_document(data: dict, user) -> dict:
             format=(data.get("format") or "pdf").strip().lower(),
             entete=(data.get("entete") or "").strip(),
             pied=(data.get("pied") or "").strip(),
-            numeroter=data.get("numeroter", True))
+            numeroter=data.get("numeroter", True),
+            entete_image=str(data.get("entete_image") or data.get("logo_entete")
+                             or data.get("logo") or "").strip(),
+            pied_image=str(data.get("pied_image") or data.get("logo_pied") or "").strip(),
+            user=user)
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
 
@@ -236,14 +240,14 @@ SKILLS = {
             # 395 caracteres : le catalogue est injecte a CHAQUE tour, le
             # plafond de 400 par description n'est pas negociable.
             "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois. "
-            "`blocs` : {bloc:titre|paragraphe|liste|tableau|saut_page|feuille}. "
-            "UNIQUEMENT si COURT : 2-3 pages, environ 30 blocs. AU-DELA "
-            "(5 pages, 10 pages, rapport, guide) ce geste FINALISE et rien ne "
-            "se rallonge apres : passe par `creer_document` + "
-            "`ajouter_document` repetes + `terminer_document`. "
-            "Mise en forme : `mode_emploi` documents"),
+            "`blocs` : "
+            "{bloc:titre|paragraphe|liste|tableau|image|saut_page|feuille} ; "
+            "{bloc:image, image:<reference d'une image du fil ou nom d'un fichier "
+            "du stockage>}. `entete_image`/`pied_image` : logo sur chaque page. Si "
+            "COURT (~30 blocs) : ce geste FINALISE ; au-dela, "
+            "creer/ajouter/terminer_document. `mode_emploi` documents"),
         requis=["titre", "blocs"],
-        optionnels=["format", "entete", "pied", "numeroter"],
+        optionnels=["format", "entete", "pied", "numeroter", "entete_image", "pied_image"],
         effet="ecriture_interne",
         libelle="je produis le document"),
     "mode_emploi": Declaration(

@@ -16,6 +16,16 @@ rendu (écrit une fois, éprouvé) s'en charge pour les trois formats.
 | `tableau` | `entetes[]`, `lignes[[]]`, `legende` |
 | `saut_page` | aucun champ |
 | `feuille` | `nom`, `entetes[]`, `lignes[[]]` |
+| `image` | `image` (la référence), `legende`, `largeur_cm` (2 à 17), `centre` |
+
+**Images.** La référence d'un bloc `image` est ce qu'un geste a déjà rendu :
+la clé d'une image de la conversation (photo jointe, image ouverte, tirage),
+le jeton d'un document, la `ref` d'une pièce d'un mail ouvert, ou le NOM d'un
+fichier image du stockage — jamais un chemin. `entete_image` et `pied_image`
+(paramètres de `creer_document` / `produire_document`) posent une image (un
+logo) sur chaque page ; en Excel, qui n'a pas d'image d'en-tête, elle est
+posée en haut de chaque onglet et en bas du dernier. Une image qui ne se
+résout pas est ÉCARTÉE avec sa raison, jamais insérée vide.
 
 **Tailles** : `petit`, `normal`, `grand`, `tres_grand`.
 **Couleurs** : `rouge`, `vert`, `bleu`, `orange`, `gris`, `noir`.

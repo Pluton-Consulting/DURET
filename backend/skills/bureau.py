@@ -105,17 +105,36 @@ async def creer_document(data: dict, user) -> dict:
             }
 
     jeton = ouvrir(entete, proprio)
+    # Les images d'en-tête et de pied (un logo) se résolvent et se rangent
+    # MAINTENANT, sous le jeton : le rendu ne lit que des fichiers rangés.
+    refus: list = []
+    if entete.get("entete_image") or entete.get("pied_image"):
+        from bureautique.atelier import mettre_a_jour_entete
+        from bureautique.images import preparer
+        _, entete, refus = await preparer(jeton, proprio, [], entete, user)
+        mettre_a_jour_entete(jeton, proprio, entete)
+    images_posees = [n for n, c in (("en-tête", "entete_image_fichier"), ("pied de page", "pied_image_fichier"))
+                     if entete.get(c)]
     return {
         "document_id": jeton,
         "format": entete["format"],
         "titre": entete["titre"],
         "formats_possibles": list(FORMATS),
         "blocs_possibles": BLOCS,
+        "images_refusees": refus,
         "note": ("Document OUVERT, encore vide et sans fichier. Verse le contenu "
                  "avec `ajouter_document` (en plusieurs appels si le document est "
                  "long, il n'y a pas de limite au nombre d'appels), puis appelle "
-                 "`terminer_document` pour obtenir le lien de téléchargement."),
+                 "`terminer_document` pour obtenir le lien de téléchargement."
+                 + (f" Image posée en {' et en '.join(images_posees)} de chaque page."
+                    if images_posees else "")
+                 + _note_refus(refus)),
     }
+
+
+def _note_refus(refus: list) -> str:
+    from bureautique.images import note_refus
+    return note_refus(refus)
 
 
 async def abandonner_document(data: dict, user) -> dict:
@@ -171,8 +190,13 @@ async def ajouter_document(data: dict, user) -> dict:
     if not isinstance(elements, list):
         _echec("`elements` doit être une liste de blocs.")
 
+    # Les blocs image désignent une référence (clé d'image de la conversation,
+    # nom d'un fichier du stockage…) : résolue et rangée sous le jeton AVANT
+    # le versement, avec sa raison quand elle ne se résout pas.
+    from bureautique.images import preparer
+    elements, _, refus = await preparer(jeton, _proprietaire(user), elements[:MAX_PAR_APPEL], {}, user)
     try:
-        retenus = ajouter(jeton, elements[:MAX_PAR_APPEL], _proprietaire(user))
+        retenus = ajouter(jeton, elements, _proprietaire(user))
     except KeyError:
         # Le `document_id` reçu ne correspond à aucun document ouvert. Le plus
         # souvent il a été INVENTÉ : les vrais jetons sont imprévisibles, un
@@ -192,9 +216,11 @@ async def ajouter_document(data: dict, user) -> dict:
         # Un bloc écarté doit se voir : un trou silencieux se découvre une fois
         # le document envoyé, c'est-à-dire trop tard.
         "ignores": ignores,
+        "images_refusees": refus,
         "note": (f"{retenus} élément(s) ajouté(s)."
                  + (f" {ignores} écarté(s) : type de bloc inconnu ou contenu vide."
                     if ignores > 0 else "")
+                 + _note_refus(refus)
                  + " Continue d'ajouter, ou appelle `terminer_document`."),
     }
 

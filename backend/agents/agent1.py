@@ -3118,7 +3118,12 @@ def _consigne_images(state: AgentState) -> str:
     pieces = ("\nCe sont les fichiers REÇUS dans cette conversation (photos, plans joints "
               "par la personne) ou produits ici : quand on te parle des pièces jointes, "
               "c'est d'elles qu'il s'agit — ne dis jamais qu'aucun fichier n'a été joint, "
-              "ne va pas les chercher dans les mails ni sur le stockage.")
+              "ne va pas les chercher dans les mails ni sur le stockage. Pour mettre une "
+              "de ces images DANS un document (corps, en-tête ou pied de page) : un bloc "
+              "{\"bloc\": \"image\", \"image\": <référence>} dans les blocs, ou "
+              "`entete_image` / `pied_image` = la référence (creer_document, "
+              "produire_document) ; une image du stockage se désigne par son NOM de "
+              "fichier. Ne dis jamais que c'est impossible.")
     if not _retouche_disponible():
         # Sans moteur d'images : les références servent à REMONTRER une photo
         # (bloc `visuel`) ou à la joindre, jamais à la modifier — et la

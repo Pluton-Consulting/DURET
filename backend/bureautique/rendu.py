@@ -25,6 +25,28 @@ import logging
 logger = logging.getLogger("duret.bureautique.rendu")
 
 
+def _image(e_ou_nom) -> str | None:
+    """Le chemin de l'image rangée d'un bloc (ou d'un nom), ou None."""
+    from bureautique.atelier import chemin_image
+    nom = e_ou_nom.get("fichier") if isinstance(e_ou_nom, dict) else e_ou_nom
+    return chemin_image(nom) if nom else None
+
+
+def _dimensions(chemin: str) -> tuple[int, int]:
+    """(largeur, hauteur) en pixels — Pillow, ou un carré si elle manque."""
+    try:
+        from PIL import Image
+        with Image.open(chemin) as img:
+            return img.size
+    except Exception:  # noqa: BLE001
+        return 100, 100
+
+
+def _absente(e: dict) -> str:
+    """Le texte qui tient la place d'une image introuvable : un trou se voit."""
+    return "[image indisponible" + (f" : {e['legende']}" if e.get("legende") else "") + "]"
+
+
 def rendre(entete: dict, elements, sortie: str) -> str:
     fmt = entete.get("format", "docx")
     if fmt == "xlsx":
@@ -51,14 +73,23 @@ def _docx(entete: dict, elements, sortie: str) -> str:
     for marge in ("top_margin", "bottom_margin", "left_margin", "right_margin"):
         setattr(section, marge, Cm(2))
 
-    if entete.get("entete"):
+    logo_haut, logo_bas = _image(entete.get("entete_image_fichier")), _image(entete.get("pied_image_fichier"))
+    if entete.get("entete") or logo_haut:
         p = section.header.paragraphs[0]
-        p.text = entete["entete"]
+        # L'image d'en-tête (un logo) à 1,5 cm de haut, le texte à sa suite.
+        if logo_haut:
+            p.add_run().add_picture(logo_haut, height=Cm(1.5))
+        if entete.get("entete"):
+            p.add_run(("   " if logo_haut else "") + entete["entete"])
         p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    if entete.get("pied") or entete.get("numeroter"):
+    if entete.get("pied") or entete.get("numeroter") or logo_bas:
         p = section.footer.paragraphs[0]
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if logo_bas:
+            p.add_run().add_picture(logo_bas, height=Cm(1.2))
+            if entete.get("pied") or entete.get("numeroter"):
+                p.add_run("   ")
         if entete.get("pied"):
             p.add_run(entete["pied"] + ("   ·   " if entete.get("numeroter") else ""))
         if entete.get("numeroter"):
@@ -98,6 +129,22 @@ def _docx(entete: dict, elements, sortie: str) -> str:
                 p = doc.add_paragraph(e["legende"])
                 p.runs[0].font.size = Pt(9)
                 p.runs[0].font.italic = True
+        elif bloc == "image":
+            chemin = _image(e)
+            if chemin:
+                doc.add_picture(chemin, width=Cm(float(e.get("largeur_cm") or 12)))
+                if e.get("centre", True):
+                    doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                if e.get("legende"):
+                    p = doc.add_paragraph(e["legende"])
+                    p.runs[0].font.size = Pt(9)
+                    p.runs[0].font.italic = True
+                    if e.get("centre", True):
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            else:
+                p = doc.add_paragraph(_absente(e))
+                p.runs[0].font.italic = True
+                p.runs[0].font.color.rgb = RGBColor.from_string(COULEURS["gris"])
         elif bloc == "saut_page":
             doc.add_page_break()
         elif bloc == "separateur":
@@ -154,7 +201,8 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
     from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                    Table, TableStyle, PageBreak, HRFlowable)
+                                    Table, TableStyle, PageBreak, HRFlowable,
+                                    Image as ImageFlowable)
 
     format_page = landscape(A4) if entete.get("paysage") else A4
     styles = getSampleStyleSheet()
@@ -162,12 +210,27 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
                            textColor=colors.grey)
     legende = ParagraphStyle("legende", parent=petit, alignment=TA_CENTER)
 
+    logo_haut, logo_bas = _image(entete.get("entete_image_fichier")), _image(entete.get("pied_image_fichier"))
+
+    def _dessiner(canvas, chemin, x, y, hauteur_cible):
+        """Une image à hauteur fixe, proportions gardées, en bas à gauche de (x, y)."""
+        w, h = _dimensions(chemin)
+        largeur_cible = hauteur_cible * (w / h if h else 1)
+        canvas.drawImage(chemin, x, y, width=largeur_cible, height=hauteur_cible,
+                         preserveAspectRatio=True, mask="auto")
+
     def decor(canvas, doc):
-        """En-tête et pied DESSINÉS sur chaque page, numérotation au tirage."""
+        """En-tête et pied DESSINÉS sur chaque page, numérotation au tirage.
+        Le logo d'en-tête en haut à gauche, celui du pied en bas à gauche : le
+        texte garde ses places (à droite en haut, centré en bas)."""
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.grey)
         largeur, hauteur = format_page
+        if logo_haut:
+            _dessiner(canvas, logo_haut, 2 * cm, hauteur - 1.9 * cm, 1.2 * cm)
+        if logo_bas:
+            _dessiner(canvas, logo_bas, 2 * cm, 0.7 * cm, 1.0 * cm)
         if entete.get("entete"):
             canvas.drawRightString(largeur - 2 * cm, hauteur - 1.2 * cm, entete["entete"])
         bas = []
@@ -212,6 +275,21 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
             if e.get("legende"):
                 flux.append(Paragraph(_echapper(e["legende"]), legende))
             flux.append(Spacer(1, 0.35 * cm))
+        elif bloc == "image":
+            chemin = _image(e)
+            if chemin:
+                w, h = _dimensions(chemin)
+                largeur_img = min(float(e.get("largeur_cm") or 12), 17) * cm
+                hauteur_img = largeur_img * (h / w if w else 1)
+                img = ImageFlowable(chemin, width=largeur_img, height=hauteur_img)
+                img.hAlign = "CENTER" if e.get("centre", True) else "LEFT"
+                flux.append(Spacer(1, 0.2 * cm))
+                flux.append(img)
+                if e.get("legende"):
+                    flux.append(Paragraph(_echapper(e["legende"]), legende))
+                flux.append(Spacer(1, 0.3 * cm))
+            else:
+                flux.append(Paragraph(_echapper(_absente(e)), petit))
         elif bloc == "saut_page":
             flux.append(PageBreak())
         elif bloc == "separateur":
@@ -318,6 +396,27 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
     feuille = None
     ligne_courante = 1
     noms = set()
+    logo_haut, logo_bas = _image(entete.get("entete_image_fichier")), _image(entete.get("pied_image_fichier"))
+
+    def poser_image(chemin, hauteur_cm=None, largeur_cm=None):
+        """Une image ancrée à la ligne courante, qui avance d'autant. Excel n'a pas
+        d'image d'en-tête ou de pied : un logo demandé y est posé en haut de
+        chaque onglet, ou en bas du dernier — dégradé, jamais ignoré."""
+        nonlocal ligne_courante
+        try:
+            from openpyxl.drawing.image import Image as XLImage
+            img = XLImage(chemin)
+        except Exception as e:  # noqa: BLE001 — Pillow absent : la cellule le dit
+            ecrire(["[image indisponible : " + str(e)[:60] + "]"])
+            return
+        w, h = float(img.width or 100), float(img.height or 100)
+        px_cm = 37.8
+        if hauteur_cm:
+            img.height, img.width = hauteur_cm * px_cm, hauteur_cm * px_cm * (w / h if h else 1)
+        elif largeur_cm:
+            img.width, img.height = largeur_cm * px_cm, largeur_cm * px_cm * (h / w if w else 1)
+        feuille.add_image(img, f"A{ligne_courante}")
+        ligne_courante += int(img.height / 20) + 2
 
     def nouvelle(nom: str):
         nonlocal feuille, ligne_courante
@@ -339,6 +438,8 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
                 bas.append("page &P / &N")
             feuille.oddFooter.center.text = "   ·   ".join(x for x in bas if x)
         ligne_courante = 1
+        if logo_haut:
+            poser_image(logo_haut, hauteur_cm=1.5)
         return feuille
 
     def ecrire(valeurs, gras=False):
@@ -368,8 +469,8 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
             return
         nouvelle(entete["titre"])
         ecrire([entete["titre"]], gras=False)
-        feuille.cell(row=1, column=1).font = Font(bold=True, size=14)
-        ligne_courante = 3
+        feuille.cell(row=ligne_courante - 1, column=1).font = Font(bold=True, size=14)
+        ligne_courante += 1
 
     for e in elements:
         bloc = e["bloc"]
@@ -405,12 +506,23 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
         elif bloc == "liste":
             for i, item in enumerate(e["items"], 1):
                 ecrire([f"{i}." if e["ordonnee"] else "•", item])
+        elif bloc == "image":
+            chemin = _image(e)
+            if chemin:
+                if e.get("legende"):
+                    ecrire([e["legende"]])
+                poser_image(chemin, largeur_cm=min(float(e.get("largeur_cm") or 12), 17))
+            else:
+                ecrire([_absente(e)])
         elif bloc in ("saut_page", "separateur"):
             ligne_courante += 1
 
     # Un classeur SANS AUCUNE feuille est un fichier qu'Excel refuse d'ouvrir :
     # si le document était vide, on ouvre la feuille d'accueil pour de bon.
     garantir()
+    if logo_bas:
+        ligne_courante = max(ligne_courante, feuille.max_row + 2)
+        poser_image(logo_bas, hauteur_cm=1.2)
 
     # Largeurs : un classeur dont tout est tronqué à l'écran passe pour cassé.
     for ws in classeur.worksheets:

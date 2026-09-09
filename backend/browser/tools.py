@@ -63,9 +63,21 @@ async def web_search(
         "success": result.success,
         "content": combined or result.error or "Aucun résultat.",
         "sources": [r["url"] for r in successful],
+        # Par page : l'adresse, son titre et les premiers mots lus — ce qui
+        # permet à l'écran de dire CE QUI a été consulté, pas seulement où
+        # (09/09 : un tableau d'une adresse nue sous la réponse, « on ne sait
+        # pas à quoi ça a servi »).
+        "resultats": [{"url": r["url"], "titre": str(r.get("title") or "").strip(),
+                       "extrait": _extrait(r.get("content"))} for r in successful],
         "results_count": len(successful),
         "source_type": "web_external",
     }
+
+
+def _extrait(texte, longueur: int = 160) -> str:
+    """Les premiers mots d'une page, sur une ligne."""
+    mots = " ".join(str(texte or "").split())
+    return (mots[:longueur].rstrip() + "…") if len(mots) > longueur else mots
 
 
 async def fetch_url(

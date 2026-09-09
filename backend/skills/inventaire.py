@@ -111,7 +111,7 @@ async def inventaire_dossier(data: dict, user) -> dict:
     async def _un(f: dict) -> dict:
         async with sem:
             try:
-                texte = await lire_fichier(f["ref"], user)
+                lu = await lire_fichier(f["ref"], user)
             except Exception as e:  # noqa: BLE001 — un fichier illisible n'arrête pas les autres
                 # La RAISON est pour la personne : un refus ou une limite du
                 # stockage se dit tel quel ; une faute de PROGRAMME se journalise
@@ -124,14 +124,24 @@ async def inventaire_dossier(data: dict, user) -> dict:
                 else:
                     raison = str(e)[:120]
                 return {**f, "etat": "illisible", "raison": raison, "texte": ""}
-            if not (texte or "").strip():
-                return {**f, "etat": "sans texte lisible", "texte": ""}
-            return {**f, "etat": "lu", "texte": texte[:EXTRAIT]}
+            # La source rend {texte, methode} depuis le 09/09 (lecture par
+            # type, images décrites par la vision) ; une chaîne nue reste
+            # acceptée. La MÉTHODE est dite : « lu — description par la
+            # vision » n'est pas « lu — texte du PDF ».
+            if isinstance(lu, dict):
+                texte, methode = str(lu.get("texte") or ""), str(lu.get("methode") or "")
+            else:
+                texte, methode = str(lu or ""), ""
+            if not texte.strip():
+                return {**f, "etat": "sans texte lisible", "methode": methode, "texte": ""}
+            return {**f, "etat": "lu", "methode": methode, "texte": texte[:EXTRAIT]}
 
     lus = await asyncio.gather(*[_un(f) for f in cibles])
     for l in lus:
         demarche.append(f"Ouvert « {l['nom']} » : {l['etat']}"
-                        + (f" ({len(l['texte'])} caractères)" if l["etat"] == "lu" else "")
+                        + (f" ({len(l['texte'])} caractères"
+                           + (f", {l['methode']}" if l.get("methode") else "") + ")"
+                           if l["etat"] == "lu" else "")
                         + (f" — {l['raison']}" if l.get("raison") else "") + ".")
     if decrire_chaque:
         descriptions = await asyncio.gather(*[decrire(l["texte"]) for l in lus])
@@ -141,8 +151,9 @@ async def inventaire_dossier(data: dict, user) -> dict:
 
     lignes = []
     for l, d in zip(lus, descriptions):
+        lecture = l["etat"] + (f" — {l['methode']}" if l["etat"] == "lu" and l.get("methode") else "")
         lignes.append([l["nom"], _extension(l["nom"] or "", l.get("type") or ""),
-                       _taille(int(l.get("octets") or 0)), l["etat"], d or ""])
+                       _taille(int(l.get("octets") or 0)), lecture, d or ""])
 
     blocs: list = []
     bloc_fichier = None
@@ -185,7 +196,10 @@ async def inventaire_dossier(data: dict, user) -> dict:
         "a_faire": ("L'inventaire (fichier) et la démarche sont DÉJÀ affichés : ne recopie ni la "
                     "liste ni les étapes. Dis en deux phrases ce que le dossier contient d'après les "
                     "descriptions, et ce qui n'a pas pu être lu. S'il reste des fichiers non "
-                    "ouverts, propose de continuer."),
+                    "ouverts, propose de continuer. Ce classeur est la LISTE DES FICHIERS du "
+                    "dossier (une ligne par fichier, avec sa description) et rien d'autre : ne le "
+                    "présente jamais comme un quantitatif, un chiffrage ou un devis, et ne le "
+                    "compte pas parmi les livrables d'une demande qui ne le réclamait pas."),
     }
 
 

@@ -166,11 +166,12 @@ s = (BACKEND / "classement" / "source.py").read_text(encoding="utf-8")
 verifier("`fichiers_du_dossier` et `lire_fichier` existent dans la source du client",
          "async def fichiers_du_dossier(" in s and "async def lire_fichier(" in s)
 if (BACKEND / "outils" / "drive.py").exists():
-    verifier("Drive : le compte de la PERSONNE et ses périmètres, jamais de dépôt",
-             "_identite(user)" in s and "_garde_perimetre(vise, perimetres)" in s and "_download_text" in s)
+    verifier("Drive : le compte de la PERSONNE et ses périmètres, lecture par type (images comprises), jamais de dépôt",
+             "_identite(user)" in s and "_garde_perimetre(vise, perimetres)" in s
+             and "d._binaire(" in s and "lire_sans_deposer(" in s)
 else:
-    verifier("NAS : le rôle est contrôlé, la lecture ne dépose rien (pas de propriétaire)",
-             "verifier_role(user)" in s and "nas.ouvrir(str(ref))" in s)
+    verifier("NAS : le rôle est contrôlé, lecture par type (images comprises), rien n'est déposé",
+             "verifier_role(user)" in s and "nas.octets(str(ref))" in s and "lire_sans_deposer(" in s)
 ag1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("l'inventaire est un résultat généreux (la liste ne passe pas par la coupe courte)",
          '"inventaire_dossier"' in ag1.split("RESULTATS_GENEREUX = {")[1].split("}")[0])
@@ -198,7 +199,9 @@ verifier("`ouvrir_page` pose la capture en bloc `site` GARANTI (url, titre, aper
          and "n'écris aucun bloc `site`" in p["a_faire"])
 w = asyncio.run(bsk.chercher_web({"requete": "panneaux Tokyo"}, U))
 verifier("`chercher_web` pose le tableau des adresses consultées, garanti",
-         w.get("bloc_garanti") is True and w["bloc_ui"]["type"] == "table" and w["bloc_ui"]["rows"] == [["https://a.fr/x"], ["https://b.fr/y"]])
+         w.get("bloc_garanti") is True and w["bloc_ui"]["type"] == "table"
+         and [l[0] for l in w["bloc_ui"]["rows"]] == ["https://a.fr/x", "https://b.fr/y"]
+         and w["bloc_ui"]["columns"] == ["Adresse consultée", "Ce qu'on y a lu"])
 
 
 async def _fetch_sans(url, user_id, agent_id, reason=""):

@@ -77,10 +77,17 @@ async def fichiers_du_dossier(dossier: str, user) -> tuple[str, list]:
         for e in entrees if e.get("chemin")]
 
 
-async def lire_fichier(ref, user) -> str:
-    """Le texte d'un fichier du serveur, ou une chaîne vide. Sans propriétaire :
-    rien n'est déposé à l'atelier (quarante cartes seraient du bruit)."""
+async def lire_fichier(ref, user) -> dict:
+    """{texte, methode} d'un fichier du serveur — lu PAR TYPE comme une pièce
+    jointe (`mail/pieces.lire_sans_deposer`, 09/09) : PDF avec OCR si scanné,
+    Word, Excel, DXF, DWG par sa vignette, et les IMAGES décrites par la
+    vision (une photo de chantier ne rendait aucun texte : « sans texte
+    lisible », l'inventaire ne disait rien). Le binaire vient de
+    `nas.octets` (périmètre vérifié) ; rien n'est déposé à l'atelier
+    (quarante cartes seraient du bruit). Un refus du serveur lève une raison
+    lisible, rendue telle quelle."""
+    from mail.pieces import CONSIGNE_FICHIER, lire_sans_deposer
     from outils import nas
 
-    lu = await nas.ouvrir(str(ref))
-    return str(lu.get("texte") or lu.get("contenu") or "")
+    brut, nom, mime = await nas.octets(str(ref))
+    return await lire_sans_deposer(nom, mime, brut, consigne_vision=CONSIGNE_FICHIER)

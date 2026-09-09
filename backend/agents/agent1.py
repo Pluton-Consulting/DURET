@@ -67,6 +67,7 @@ Certaines valeurs peuvent apparaître masquées sous forme de balises [PER_1], [
 TOUT SIGNIFIE TOUT. Quand la demande porte sur l'ENSEMBLE (« tous mes clients », « tous les mails », « toute la base ») : les COMPTES et TOTAUX rendus par les gestes portent déjà sur tout — cite-les. Quand un résultat dit « tronqué », « page x sur y » ou rend `pour_continuer`, ENCHAÎNE les pages jusqu'à couvrir la demande, ou produis le FICHIER complet quand le geste le propose (`liste_clients`/`liste_fournisseurs` avec fichier: true). Ne conclus JAMAIS à partir d'un échantillon présenté comme le tout : si tu t'arrêtes avant la fin, dis exactement ce qui est couvert et comment obtenir le reste.
 UN CHIFFRE SE LIT, IL NE S'ESTIME JAMAIS. Tout nombre que tu donnes (compte de mails, de dossiers, montant) se recopie À L'UNITÉ depuis un résultat d'action de CE tour : jamais « environ », « à peu près », « une soixantaine » quand un geste rend le compte exact. Un chiffre cité plus tôt dans la conversation est PÉRIMÉ (la boîte, la base, les dossiers ont changé depuis) : pour redonner un compte, refais le geste qui le rend et cite le résultat du tour, pas ton souvenir.
 UNE DEMANDE RÉPÉTÉE SE REFAIT. Quand on te redemande un travail déjà fait (« fais le point sur les mails » alors que le point a été fait tout à l'heure) : REFAIS les gestes et livre le résultat À JOUR. Ne réponds JAMAIS « cela a déjà été fait », ne renvoie jamais vers une réponse précédente et ne la ressers pas de mémoire : elle date de son moment, la personne veut l'état ACTUEL. Seule une question qui porte sur le passé lui-même (« as-tu envoyé le mail ? ») se répond par ce qui a été fait.
+CHAQUE LIVRABLE SE PRÉSENTE PAR CE QU'IL CONTIENT. Quand tu rends compte d'un travail à plusieurs pièces (fin d'un plan, dossier complet) : ne montre QUE les fichiers et images produits POUR CETTE demande, et décris chacun en une phrase d'après ce que le geste a rendu ou le `contenu` de l'atelier (les titres du Word, les colonnes du classeur, ce que montre l'image) — jamais d'après ce que son titre te laisse supposer. Un inventaire de fichiers n'est pas un quantitatif ; un document de l'atelier sans rapport avec la demande n'est pas un livrable, ne le cite pas. Une recherche web faite en chemin se dit en une phrase : ce qu'elle a servi à établir, le fait retenu et son adresse. Une pièce demandée qui n'a pas été produite (un photomontage sur quatre, un chiffrage) se dit telle quelle, elle ne se remplace pas par autre chose.
 PLUSIEURS DEMANDES DANS UN MESSAGE (« affiche le mail complet et dis-moi combien j'en ai reçu ») : traite-les TOUTES, chacune avec son geste, avant de rédiger ; la réponse répond à chacune, dans l'ordre, et dit celle que tu n'as pas pu faire.
 UNE QUESTION COURTE SANS OBJET (« es-tu sûr ? », « vraiment ? », « et alors ? ») porte sur TA DERNIÈRE réponse, jamais sur un échange plus ancien : vérifie-la (refais le geste s'il le faut) et réponds sur elle. La date du jour t'est donnée à chaque message : une période (« cette semaine », « les 7 derniers jours ») se demande en DURÉE (« 7j »), jamais en date que tu calcules.
 
@@ -874,7 +875,12 @@ async def llm_node(state: AgentState, config=None) -> dict:
                 + "\n  Ces documents ne se trouvent PAS en cherchant sur le "
                   "serveur : ils vivent ici, avec leur `document_id`. Titre, "
                   "taille, éléments et pages_estimees ci-dessus répondent "
-                  "directement aux questions dessus.\n")
+                  "directement aux questions dessus. `contenu` est le DÉBUT "
+                  "RÉEL de chaque document : décris un document d'après lui, "
+                  "jamais d'après son titre. Ce sont les documents de la "
+                  "personne, toutes conversations confondues : n'en présente "
+                  "un comme livrable de la demande en cours que s'il a été "
+                  "produit pour elle.\n")
         bloc_resultats += etat_docs + "\n"
 
     # Aucun préambule sur l'absence de documents : c'est le modèle qui décide
@@ -2269,16 +2275,22 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
     # suffit : l'union des adresses, dans l'ordre où elles ont été consultées.
     web = [g for g in garantis if g.get("type") == "table"
            and str(g.get("titre") or "").startswith("Recherche web")]
+    # Le tableau fondu garde la RECHERCHE de chaque ligne (le titre de
+    # chaque tableau la porte) et ce qui a été lu (09/09) : sept adresses
+    # sans dire ce qu'on y cherchait ne renseignaient personne.
     if len(web) > 1:
         lignes, vues = [], set()
         for g in web:
+            recherche = str(g.get("titre") or "").split("—", 1)[-1].strip()
             for ligne in g.get("rows") or []:
-                cle = _j.dumps(ligne, ensure_ascii=False)
-                if cle not in vues:
-                    vues.add(cle)
-                    lignes.append(ligne)
+                cellules = [str(c or "") for c in (ligne if isinstance(ligne, list) else [ligne])]
+                adresse = cellules[0] if cellules else ""
+                if not adresse or adresse in vues:
+                    continue
+                vues.add(adresse)
+                lignes.append([recherche, adresse, cellules[1] if len(cellules) > 1 else ""])
         fusion = {"type": "table", "titre": "Recherche web — adresses consultées",
-                  "columns": web[0].get("columns") or ["Adresse consultée"], "rows": lignes}
+                  "columns": ["Recherche", "Adresse consultée", "Ce qu'on y a lu"], "rows": lignes}
         garantis = [g for g in garantis if g not in web] + [fusion]
     uniques = ("reponses_mail",)
     for genre in uniques:

@@ -64,15 +64,35 @@ async def chercher_web(data: dict, user) -> dict:
         "sources": sources,
         # LES SOURCES SONT GARANTIES À L'ÉCRAN (08/09) : le tableau des adresses
         # lues se pose mécaniquement, la personne voit d'où vient la réponse.
-        **({"bloc_ui": {"type": "table", "titre": f"Recherche web — {requete}",
-                        "columns": ["Adresse consultée"], "rows": [[s] for s in sources]},
+        # Et il dit CE QUI a été lu à chaque adresse (09/09 : une adresse nue
+        # sous le dossier Camp, « on ne sait pas à quoi ça a servi »).
+        **({"bloc_ui": tableau_sources(requete, sources, r.get("resultats")),
             "bloc_garanti": True} if sources else {}),
         # LE MODÈLE DOIT SAVOIR D'OÙ ÇA VIENT. Une page web n'a pas l'autorité
         # d'un document de l'entreprise : elle se cite, elle ne fait pas foi.
         "a_savoir": ("Information EXTERNE, trouvée sur le web. Cite les adresses "
                      "dans ta réponse et ne la présente jamais comme une donnée "
                      "interne de l'entreprise."),
+        "a_faire": ("Le tableau des adresses consultées est DÉJÀ affiché : ne le "
+                    "recopie pas. Dans ta réponse, dis en UNE phrase à quoi cette "
+                    "recherche a servi et ce que tu en retiens (le fait, sa valeur, "
+                    "l'adresse) — une recherche dont le résultat n'est pas dit ne "
+                    "sert à personne. Si elle n'a rien donné d'utile, dis-le aussi."),
     }
+
+
+def tableau_sources(requete: str, sources: list, resultats=None) -> dict:
+    """Le tableau garanti d'une recherche : l'adresse ET ce qu'on y a lu
+    (titre — premiers mots). Sans détail par page (ancien conteneur), la
+    seconde colonne reste vide plutôt que d'inventer."""
+    lus = {}
+    for x in (resultats or []):
+        if isinstance(x, dict) and x.get("url"):
+            lus[x["url"]] = " — ".join(p for p in (str(x.get("titre") or "").strip(),
+                                                    str(x.get("extrait") or "").strip()) if p)[:220]
+    return {"type": "table", "titre": f"Recherche web — {requete}",
+            "columns": ["Adresse consultée", "Ce qu'on y a lu"],
+            "rows": [[s, lus.get(s, "")] for s in sources]}
 
 
 async def ouvrir_page(data: dict, user) -> dict:

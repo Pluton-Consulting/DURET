@@ -250,7 +250,8 @@ verifier("catalogue : lire_mail accepte pieces ; lire_piece_jointe existe avec r
 verifier("journal : « je lis la pièce jointe »", '"lire_piece_jointe"' in lire("agents/journal.py"))
 atelier = lire("bureautique/atelier.py")
 verifier("atelier : deposer_fichier (n'importe quelle extension), et les pièces jointes ne comptent pas comme documents produits",
-         "def deposer_fichier(" in atelier and 'origine") == "piece_jointe"' in atelier)
+         "def deposer_fichier(" in atelier and "if not produit(f):" in atelier
+         and '"piece_jointe"' not in atelier.split("ORIGINES_PRODUITES = frozenset(")[1].split(")")[0])
 verifier("téléchargement : le type MIME suit l'extension (png, dwg, zip…), pas seulement docx/xlsx/pdf", "mimetypes" in lire("routers/documents_produits.py"))
 agent1 = lire("agents/agent1.py")
 verifier("agent1 : plusieurs blocs par résultat (`_blocs_de`) dans le rendu de secours et les livrables",

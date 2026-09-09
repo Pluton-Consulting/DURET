@@ -312,6 +312,16 @@ async def decrire_image(octets: bytes, mime: str, consigne: str) -> str:
     return ""
 
 
+# Un fichier du CLASSEMENT (inventaire d'un dossier, 09/09) : une photo de
+# chantier, un plan coté, un schéma — ce qu'il montre, en quelques phrases,
+# et tout texte lisible. C'est la description qui entre dans l'inventaire.
+CONSIGNE_FICHIER = (
+    "Tu lis un fichier d'un dossier de l'entreprise (paysage / bâtiment) : une photo, "
+    "un plan, un schéma ou un document scanné. Dis en deux ou trois phrases ce que "
+    "l'image montre (lieu, éléments présents, état, point de vue) et TRANSCRIS tout "
+    "texte lisible (cotes, légendes, cartouche, noms, montants). Réponds en français, "
+    "sans introduction. N'invente rien : ce qui est illisible est dit illisible.")
+
 CONSIGNE_VISION = (
     "Tu lis une pièce jointe d'un mail professionnel (paysage / bâtiment). Décris "
     "précisément ce que l'image montre, et TRANSCRIS tout texte lisible (cotes, "
@@ -366,23 +376,58 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
         fiche["methode"] = f"trop lourde pour être lue ({taille // (1024 * 1024)} Mo) — téléchargeable"
         return fiche
 
-    # 2. La lecture.
+    # 2. La lecture — la même que celle d'un fichier du classement.
+    lu = await lire_sans_deposer(nom, mime, brut)
+    # La vignette d'un DWG devient une image déposée, montrée à côté.
+    if lu.get("vignette_png"):
+        try:
+            from visuels.depot import deposer_octets
+            cle = deposer_octets(lu["vignette_png"], "image/png")
+            if cle:
+                fiche["vignette"] = {"cle": cle, "legende": f"Vignette de {nom}"}
+        except Exception as e:  # noqa: BLE001
+            logger.info("Vignette DWG non déposée : %s", e)
+    fiche.update({"texte": lu.get("texte") or "", "methode": lu.get("methode") or "",
+                  "tronque": bool(lu.get("tronque")), "lisible": bool(lu.get("texte"))})
+    return fiche
+
+
+async def lire_sans_deposer(nom: str, mime: Optional[str], brut: bytes,
+                            consigne_vision: Optional[str] = None,
+                            consigne_ocr: Optional[str] = None) -> dict:
+    """UN fichier → LU, sans rien déposer : {texte, methode, tronque, vignette_png?}.
+
+    Le cœur de `analyser` (les pièces d'un mail), partagé depuis le 09/09 avec
+    l'inventaire d'un dossier du classement : PDF (OCR si scanné), Word,
+    Excel, texte, DXF, archive, et les IMAGES décrites par la vision. Avant,
+    l'inventaire lisait par l'extracteur de l'ingestion, qui rend None pour
+    toute photo — les quatre photos et le plan du dossier Camp étaient « sans
+    texte lisible », et l'inventaire ne disait rien du dossier. La consigne de
+    vision se choisit selon d'où vient le fichier (une pièce de mail, un
+    fichier du classement). Ne lève jamais pour un contenu illisible.
+    """
+    consigne_vision = consigne_vision or CONSIGNE_VISION
+    consigne_ocr = consigne_ocr or CONSIGNE_OCR
+    sortie = {"texte": "", "methode": "", "tronque": False}
+    if not brut:
+        sortie["methode"] = "fichier vide"
+        return sortie
+    if len(brut) > MAX_OCTETS_PIECE:
+        sortie["methode"] = f"trop lourd pour être lu ({len(brut) // (1024 * 1024)} Mo)"
+        return sortie
     lu = await asyncio.to_thread(texte_de, nom, mime, brut)
     texte, methode = (lu.get("texte") or "").strip(), lu.get("methode") or ""
     complement = lu.get("complement") or ""
 
-    # La vignette d'un DWG devient une image déposée, montrée et décrite.
+    # La vignette d'un DWG est décrite par la vision ; l'appelant la dépose.
     if lu.get("vignette"):
         try:
-            from visuels.depot import deposer_octets
             png = lu["vignette"] if lu.get("vignette_mime") == "image/png" else _en_png(lu["vignette"])
-            cle = deposer_octets(png, "image/png")
-            if cle:
-                fiche["vignette"] = {"cle": cle, "legende": f"Vignette de {nom}"}
-                description = await decrire_image(png, "image/png", CONSIGNE_VISION)
-                if description:
-                    texte = description
-                    methode = "vignette du DWG décrite par la vision"
+            sortie["vignette_png"] = png
+            description = await decrire_image(png, "image/png", consigne_vision)
+            if description:
+                texte = description
+                methode = "vignette du DWG décrite par la vision"
         except Exception as e:  # noqa: BLE001
             logger.info("Vignette DWG non exploitable : %s", e)
 
@@ -393,8 +438,8 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
     # le texte tesseract reste, comme avant — le secours ne disparaît pas.
     if est_image(nom, mime):
         ocr_suffisant = len(texte) >= OCR_MINIMUM
-        consigne = (CONSIGNE_OCR.format(ebauche=texte[:1500]) if ocr_suffisant
-                    else CONSIGNE_VISION)
+        consigne = (consigne_ocr.format(ebauche=texte[:1500]) if ocr_suffisant
+                    else consigne_vision)
         description = await decrire_image(brut, (mime or "image/png").split(";")[0], consigne)
         if description:
             if ocr_suffisant:
@@ -408,7 +453,7 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
     if complement:
         texte = (complement + ("\n\n" + texte if texte else "")).strip()
     if len(texte) > MAX_TEXTE_PIECE:
-        fiche["tronque"] = True
+        sortie["tronque"] = True
         texte = texte[:MAX_TEXTE_PIECE]
-    fiche.update({"texte": texte, "methode": methode, "lisible": bool(texte)})
-    return fiche
+    sortie.update({"texte": texte, "methode": methode})
+    return sortie

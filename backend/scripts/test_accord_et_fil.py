@@ -386,8 +386,8 @@ source = BACKEND / "classement" / "source.py"
 if source.exists() and "google_drive" in source.read_text(encoding="utf-8"):
     print("\n── 6. Symbiose : l'inventaire lit le Drive, le 503 patiente")
     src = source.read_text(encoding="utf-8")
-    verifier("l'inventaire importe `_download_text` du connecteur, pas d'`outils.drive`",
-             "from ingestion.connectors.google_drive import _download_text" in src
+    verifier("l'inventaire lit le Drive par le binaire et le lecteur par type, plus par `d._download_text`",
+             "d._binaire(" in src and "lire_sans_deposer(" in src
              and "to_thread(d._download_text" not in src)
 nano = BACKEND / "visuels" / "nano_banana.py"
 if nano.exists():

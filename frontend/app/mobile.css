@@ -132,6 +132,8 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .sym-zone-saisie { background: transparent !important; }
   .sym-barre-saisie { box-shadow: none !important; }
   .v2-contexte { margin: 0 0 6px !important; }
+  .v2-fils { margin: 0 0 4px !important; }
+  .v2-fils-choix { max-width: 70% !important; }
   .sym-page { padding: 12px 12px 20px !important; }
   .sym-bulle { max-width: 94% !important; }
   /* iOS ZOOME sur tout champ dont la police fait moins de 16 px, et ne

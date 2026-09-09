@@ -186,6 +186,15 @@
   border: 1px solid var(--marque-primary-light); font-size: 12.5px; color: var(--marque-text-primary);
   animation: v2Apparait .45s var(--v2-courbe) both; }
 .v2-contexte b { font-weight: 700; white-space: nowrap; }
+/* Le choix de la conversation (09/09) : une ligne discrète au-dessus de la
+   saisie — le titre du fil courant en menu, « + Nouvelle » à côté. */
+.v2-fils { display: flex; align-items: center; gap: 6px; margin: 0 24px 4px; min-width: 0; }
+.v2-fils-choix { max-width: min(60%, 420px); justify-content: flex-start; gap: 6px; color: var(--marque-text-muted); }
+.v2-fils-titre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-fils-chevron { flex-shrink: 0; opacity: .7; }
+.v2-fils-menu { min-width: 280px; max-width: min(92vw, 460px); }
+.v2-fils-item-titre { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-fils-item-date { flex-shrink: 0; margin-left: 12px; font-size: 12px; color: var(--marque-text-muted); }
 .v2-contexte span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--marque-text-body); }
 .v2-contexte button { border: none; background: transparent; cursor: pointer; color: var(--marque-text-muted); font-size: 15px; line-height: 1; padding: 2px 5px; border-radius: 6px; font-family: inherit; }
 .v2-contexte button:hover { background: var(--marque-surface); color: var(--marque-text-primary); }

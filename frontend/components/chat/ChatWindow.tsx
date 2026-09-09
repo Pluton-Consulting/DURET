@@ -5,6 +5,7 @@ import { CLE_CONTEXTE, EVENEMENT_CONTEXTE, type ContextePrealable } from "@/comp
 import { EXPERTS } from "@/lib/permissions"
 import MessageList from "./MessageList"
 import InputBar, { PieceJointe } from "./InputBar"
+import Conversations, { type FilConversation } from "./Conversations"
 import type { PieceAffichee } from "./PiecesJointes"
 import ReasoningPath from "./ReasoningPath"
 import { ReflexionEnCours } from "./ReflexionEnCours"
@@ -162,6 +163,12 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const { data: session } = useSession()
   const token = tokenProp || (session as any)?.backendToken
   const [messages, setMessages] = useState<Message[]>([])
+  // Les conversations de la personne, telles que le serveur les connaît : les
+  // mêmes sur tous ses appareils (09/09).
+  const [conversations, setConversations] = useState<FilConversation[]>([])
+  // Le fil lisible hors du cycle de rendu (le sondage compare ce qu'il a).
+  const messagesRef = useRef<Message[]>([])
+  useEffect(() => { messagesRef.current = messages }, [messages])
   // LE CONTEXTE PRÉ-INSCRIT depuis le tableau de bord : une tâche ou une
   // conversation passée d'un expert, posée comme une pièce jointe au-dessus de
   // la saisie. Le prochain message part avec ce contexte en tête, puis la
@@ -908,16 +915,64 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
     }
   }
 
+  const chargerConversations = () =>
+    apiRequest<FilConversation[]>("/api/chat/threads?limite=30", { token })
+      .then((liste) => { if (monteRef.current) setConversations(Array.isArray(liste) ? liste : []) })
+      .catch(() => {})
+
+  // LA CONVERSATION SUIT LA PERSONNE, PAS L'APPAREIL (09/09). Avant, le fil
+  // à rouvrir ne venait que du stockage local du navigateur : un téléphone
+  // ouvrait donc une conversation neuve à côté de celle du PC. Désormais le
+  // SERVEUR dit la dernière conversation de la personne, et c'est elle qu'on
+  // reprend — sauf un fil passé en prop, ou un tour encore en vol sur le fil
+  // local (on ne change pas de conversation sous lui). Le stockage local
+  // reste le repli quand le serveur ne répond pas.
   useEffect(() => {
     if (!token) return
-    const tid = initialThreadId || lireThreadMemorise()
-    if (!tid) return
-    setThreadId(tid)
-    threadIdRef.current = tid
+    let annule = false
+    const ouvrir = (tid: string) => {
+      if (annule) return
+      rememberThread(tid)
+      chargerHistorique(tid)
+        .catch(() => {})
+        .finally(() => { if (monteRef.current && !annule) adopterTourDetache(tid) })
+    }
+    const local = initialThreadId || lireThreadMemorise()
+    chargerConversations()
+    if (initialThreadId) { ouvrir(initialThreadId); return () => { annule = true } }
+    if (local && reprendreTour(local)) { ouvrir(local); return () => { annule = true } }
+    apiRequest<{ thread_id?: string | null }>("/api/chat/threads/dernier", { token })
+      .then((r) => {
+        const distant = r?.thread_id || null
+        if (distant) ouvrir(distant)
+        else if (local) ouvrir(local)
+      })
+      .catch(() => { if (local) ouvrir(local) })
+    return () => { annule = true }
+  }, [initialThreadId, token, userKey])
+
+  // La liste se rafraîchit quand un tour se termine (un titre neuf, une date
+  // qui bouge) — sans dépendre du rendu.
+  useEffect(() => { if (token && !loading) chargerConversations() }, [token, loading, threadId])
+
+  // ── Changer de conversation, en commencer une nouvelle ───────────────
+  const nouvelleConversation = () => {
+    if (loading || principalOccupeRef.current) return
+    forgetThread()
+    setMessages([])
+    setTraceReflexion([]); setThinkingSteps([]); setThinkingNode(null); setActivite("")
+    oublierContexte()
+  }
+
+  const reprendreConversation = (tid: string) => {
+    if (loading || principalOccupeRef.current || !tid || tid === threadIdRef.current) return
+    rememberThread(tid)
+    setMessages([])
+    setTraceReflexion([]); setThinkingSteps([]); setThinkingNode(null); setActivite("")
     chargerHistorique(tid)
       .catch(() => {})
       .finally(() => { if (monteRef.current) adopterTourDetache(tid) })
-  }, [initialThreadId, token, userKey])
+  }
 
   // LES MESSAGES QUI ARRIVENT SANS QU'ON AIT RIEN DEMANDÉ (08/09). Une tâche
   // planifiée rend son compte rendu DANS la conversation qui l'a créée : le
@@ -933,6 +988,16 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       if (!tid || loading || principalOccupeRef.current || document.visibilityState !== "visible") return
       apiRequest<any[]>(`/api/chat/threads/${tid}/messages`, { token })
         .then((rows) => {
+          // L'AUTRE APPAREIL A ÉCRIT (09/09). Le fil est au repos ici, mais
+          // le serveur porte plus de messages que l'écran : la personne a
+          // continué sur son téléphone. On relit le fil entier — jamais
+          // pendant un tour en vol ni tant qu'une bulle attend un accord.
+          const affiches = messagesRef.current
+          const bulleEnAttente = affiches.some((m) => m.placeholder || m.tacheId)
+          if (!bulleEnAttente && (rows || []).length > affiches.length) {
+            chargerHistorique(tid).catch(() => {})
+            return
+          }
           const planifies = (rows || []).filter((m) => {
             if (m.role !== "assistant") return false
             const meta = typeof m.metadata === "string" ? m.metadata : JSON.stringify(m.metadata || {})
@@ -1515,6 +1580,10 @@ ${texteAffiche}`)
             <button type="button" onClick={oublierContexte} aria-label="Retirer ce contexte">×</button>
           </div>
         )}
+        <Conversations fils={conversations} courant={threadId}
+                       occupe={loading || principalOccupe}
+                       onNouvelle={nouvelleConversation}
+                       onReprendre={reprendreConversation} />
         <InputBar onSend={sendMessage} disabled={false} token={token}
                   modeFile={loading || principalOccupe}
                   enCours={loading} onStop={stopper} />

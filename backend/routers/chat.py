@@ -512,14 +512,45 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
     }
 
 
+# LA CONVERSATION SUIT LA PERSONNE, PAS L'APPAREIL (09/09). Les fils vivent
+# ici, par personne (RLS + filtre user_id) ; l'écran ne retenait pourtant le
+# fil courant que dans le stockage local du navigateur, donc un téléphone
+# ouvrait une conversation neuve à côté de celle du PC. Ces deux routes
+# rendent ce que tout appareil doit voir : la liste des conversations de la
+# personne, et la DERNIÈRE — celle à reprendre à l'ouverture. Les fils de
+# la file d'attente (`file:…`, sans mémoire) n'en font pas partie.
+_SQL_FILS = """SELECT langgraph_thread_id, title, agent_type, updated_at
+               FROM threads
+               WHERE user_id = $1
+                 AND langgraph_thread_id IS NOT NULL
+                 AND langgraph_thread_id NOT LIKE 'file:%'
+               ORDER BY updated_at DESC
+               LIMIT $2"""
+
+
+def _fil_public(row) -> dict:
+    return {"thread_id": row["langgraph_thread_id"],
+            "titre": (row["title"] or "").strip() or "Conversation",
+            "agent_type": row["agent_type"], "updated_at": row["updated_at"]}
+
+
 @router.get("/threads")
-async def list_threads(current_user: User = Depends(get_current_user)):
+async def list_threads(limite: int = 30, current_user: User = Depends(get_current_user)):
+    """Les conversations de la personne, la plus récente en tête — les mêmes sur
+    tous ses appareils."""
+    limite = max(1, min(int(limite or 30), 200))
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM threads WHERE user_id = $1 ORDER BY updated_at DESC",
-            current_user.id,
-        )
-        return [dict(row) for row in rows]
+        rows = await conn.fetch(_SQL_FILS, current_user.id, limite)
+        return [_fil_public(row) for row in rows]
+
+
+@router.get("/threads/dernier")
+async def dernier_fil(current_user: User = Depends(get_current_user)):
+    """La conversation à reprendre à l'ouverture : la dernière où la personne a
+    écrit, quel que soit l'appareil. `thread_id` vaut null sans conversation."""
+    async with get_rls_db(str(current_user.id), current_user.role) as conn:
+        rows = await conn.fetch(_SQL_FILS, current_user.id, 1)
+        return _fil_public(rows[0]) if rows else {"thread_id": None}
 
 
 @router.get("/threads/{thread_id}/messages")

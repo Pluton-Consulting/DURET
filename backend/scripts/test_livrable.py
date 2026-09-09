@@ -92,7 +92,8 @@ espace = {"logger": _Journal(), "AgentState": dict,
 extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
           "_blocs_livrables", "_blocs_de", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
-          "_meme_livrable", "_livrables_a_l_ecran", "_redaction_dement_le_livrable",
+          "_meme_livrable", "_livrables_a_l_ecran", "_cartes_de_l_atelier",
+          "_redaction_dement_le_livrable",
           # 07/09 soir : la branche « suite qui retouche » du routage lit les
           # images du fil ; sans elles dans l'espace, le tour exact de prod lève.
           "cles_images_du_fil", "_CLE_IMAGE_RE", "_re_images",

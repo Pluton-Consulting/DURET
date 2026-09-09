@@ -281,6 +281,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "plan_valide": None,
         "reprise_apres_accord": False,
         "forcages": 0,
+        "forcage_refuse": False,
         "redaction_forcee": False,
         # LA PROVENANCE AUSSI. Ces trois champs survivaient au tour via le
         # checkpointer : un « Hello » affichait « 3 sources » — les pages web

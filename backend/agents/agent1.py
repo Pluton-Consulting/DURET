@@ -1504,7 +1504,15 @@ async def tools_node(state: AgentState, config=None) -> dict:
     #
     # Le seuil ne porte QUE sur les tours déjà longs : produire un document
     # court en trois actions reste un seul tour, comme avant.
-    if jalon and iteration >= POINT_ETAPE_ACTIONS:
+    # SAUF QUAND UN PLAN APPROUVÉ EST EN COURS (09/09) : l'accord porte sur
+    # TOUTES les étapes, et le point d'étape coupait le tour après le premier
+    # document — le plan de M. et Mme Camp s'est arrêté au dossier Word, les
+    # photomontages de l'étape 5 n'ont jamais été tentés, et le modèle a
+    # demandé « voulez-vous que je lance cette étape ? » à qui venait de
+    # l'approuver. Le plan ne survit pas au tour : ce qui n'est pas fait ici
+    # ne se fera pas. Les livrables produits s'affichent de toute façon en
+    # fin de tour (`_livrables_a_l_ecran`), et le temps imparti borne le reste.
+    if jalon and iteration >= POINT_ETAPE_ACTIONS and not state.get("plan_valide"):
         logger.info("Point d'étape : document terminé à l'action %d, on présente", iteration)
         # `llm_response` VIDÉ À DESSEIN : sans cela la note serait recopiée
         # telle quelle sous le texte du modèle, et l'utilisateur lirait une
@@ -2057,6 +2065,37 @@ def _meme_livrable(a: dict, b: dict) -> bool:
     return len(nom_a) >= 5 and len(nom_b) >= 5 and (nom_a in nom_b or nom_b in nom_a)
 
 
+def _cartes_de_l_atelier(state) -> list[dict]:
+    """Les documents TERMINÉS de la personne, en cartes `fichier` prêtes à l'écran.
+
+    09/09 : trois messages partis en file d'attente (fil `file:` neuf, sans
+    historique) ; le modèle ne voyait les documents que par la liste de
+    l'atelier du prompt, et a écrit trois vignettes `doc` sans adresse — ni
+    aperçu, ni téléchargement. `fichiers_du_fil` ne pouvait rien : le fil
+    était vide. L'atelier, lui, est par PERSONNE, pas par fil : ses documents
+    finis sont de vraies cartes, et la vignette qui en nomme un est remplacée
+    par la carte réelle. Même forme que celle de `terminer_document`.
+    """
+    try:
+        from bureautique.atelier import termines
+        finis = termines(str(state.get("user_id") or ""))
+    except Exception:  # noqa: BLE001 — sans atelier, rien à résoudre
+        return []
+    cartes: list[dict] = []
+    for d in (finis or [])[:20]:
+        if not isinstance(d, dict):
+            continue
+        titre = str(d.get("titre") or "").strip()
+        fmt = str(d.get("format") or "").strip().lstrip(".")
+        jeton = str(d.get("document_id") or "").strip()
+        if not (titre and fmt and jeton):
+            continue
+        cartes.append({"type": "fichier", "url": f"/api/documents/{jeton}",
+                       "nom": f"{titre}.{fmt}", "titre": titre, "format": fmt,
+                       "octets": int(d.get("octets") or 0)})
+    return cartes
+
+
 def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     """Le texte final, débarrassé des faux fichiers et des doublons, complété des vrais."""
     import json as _j
@@ -2075,8 +2114,13 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     du_fil = [b for b in fichiers_du_fil(state)
               if not any(_meme_livrable(b, p) and _reference_bloc(b) != _reference_bloc(p)
                          for p in produits)]
+    # Et les documents finis de l'ATELIER (par personne, pas par fil) : une
+    # vignette `doc` qui en nomme un devient sa vraie carte, même sur un fil
+    # sans historique (09/09). Du plus ancien au plus récent, comme le fil.
+    atelier = [b for b in reversed(_cartes_de_l_atelier(state))
+               if not any(_reference_bloc(x) == _reference_bloc(b) for x in produits + du_fil)]
     connus = produits + [b for b in du_fil
-                         if not any(_reference_bloc(x) == _reference_bloc(b) for x in produits)]
+                         if not any(_reference_bloc(x) == _reference_bloc(b) for x in produits)] + atelier
     if not connus:
         return texte
     references = {_reference_bloc(b) for b in connus}
@@ -2131,11 +2175,19 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     # aucun rapport. Corroborer une invention avec le mauvais fichier est
     # pire que ne rien montrer.
     a_montrer = list(produits)
-    if inventes and not a_montrer and du_fil:
-        correspondants = [b for b in du_fil
-                          if any(_meme_livrable(b, inv) for inv in inventes)]
+    if inventes and not a_montrer and (du_fil or atelier):
+        # UNE carte par invention (09/09 : trois vignettes, trois documents —
+        # ne restituer que la dernière en aurait perdu deux), la version la
+        # plus récente de chacun — le fil, qui est de CETTE conversation,
+        # prime sur l'atelier.
+        correspondants: list[dict] = []
+        for inv in inventes:
+            reels = [b for b in atelier + du_fil if _meme_livrable(b, inv)]
+            if reels and not any(_reference_bloc(c) == _reference_bloc(reels[-1])
+                                 for c in correspondants):
+                correspondants.append(reels[-1])
         if correspondants:
-            a_montrer = [correspondants[-1]]
+            a_montrer = correspondants
         else:
             # L'invention ne désigne RIEN qu'on tienne : le fichier annoncé
             # n'existe pas, le bloc s'efface, et RIEN ne le remplace. Une
@@ -2212,6 +2264,22 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
     # tour sont UN objet : sa dernière version, et elle seule. Vaut pour tout
     # bloc « unique » par nature — la liste des cartes, pas un tableau parmi
     # d'autres.
+    # Sept recherches web dans un tour donnaient sept tableaux « Recherche
+    # web — … » quasi identiques sous la réponse (09/09, plan Camp). Un seul
+    # suffit : l'union des adresses, dans l'ordre où elles ont été consultées.
+    web = [g for g in garantis if g.get("type") == "table"
+           and str(g.get("titre") or "").startswith("Recherche web")]
+    if len(web) > 1:
+        lignes, vues = [], set()
+        for g in web:
+            for ligne in g.get("rows") or []:
+                cle = _j.dumps(ligne, ensure_ascii=False)
+                if cle not in vues:
+                    vues.add(cle)
+                    lignes.append(ligne)
+        fusion = {"type": "table", "titre": "Recherche web — adresses consultées",
+                  "columns": web[0].get("columns") or ["Adresse consultée"], "rows": lignes}
+        garantis = [g for g in garantis if g not in web] + [fusion]
     uniques = ("reponses_mail",)
     for genre in uniques:
         du_genre = [g for g in garantis if g.get("type") == genre]
@@ -2462,6 +2530,19 @@ async def rehydrate_node(state: AgentState) -> dict:
         # et absent du texte. La question est périmée — souvent recopiée de
         # l'historique.
         besoin = "la_redaction_dement_le_livrable"
+    # UNE ACTION QUI ATTEND L'ACCORD N'EST PAS UNE PROMESSE NON TENUE (09/09).
+    # « Je vais repartir de votre création visuelle… » + la photo de départ,
+    # puis la carte d'accord : c'est exactement ce que le tour doit montrer.
+    # Le filet y voyait une annonce sans acte, appelait le rédacteur de secours
+    # SANS résultat (l'action n'a pas encore tourné), et l'écran lisait
+    # « aucune action n'a abouti » au-dessus d'une carte qui attendait un clic
+    # (export du 09/09 : 05:58 le dépôt, 07:10 la retouche). Même chose quand
+    # le sélecteur d'actions a répondu RIEN (`forcage_refuse`) : le texte
+    # répondait déjà, la liste de verbes s'était trompée.
+    if (besoin == "redaction_absente_ou_promesse" and text
+            and (state.get("pending_action") or state.get("requires_validation")
+                 or state.get("forcage_refuse"))):
+        besoin = None
     if besoin:
         # RÈGLE DE NOA DU 30/08 : la prose de remplacement vient du MODÈLE
         # (`_rediger_par_le_modele`, contexte réduit, résultats masqués) — la
@@ -2624,7 +2705,9 @@ async def rehydrate_node(state: AgentState) -> dict:
     resultats = state.get("tool_results") or []
     rien_fait = not any(r.get("ok") for r in resultats)
     if state.get("relance_annonce") and rien_fait and "?" not in text \
-            and est_une_annonce(text):
+            and est_une_annonce(text) \
+            and not state.get("pending_action") and not state.get("requires_validation") \
+            and not state.get("forcage_refuse"):
         logger.info("Tour sans effet — annonce ni affichée ni enregistrée")
         # ET LA PROMESSE NE S'AFFICHE PAS NON PLUS. Laisser « je vais créer le
         # PDF » en réponse d'un tour qui n'a rien fait rend l'échec indiscernable
@@ -3172,7 +3255,18 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         # Le drapeau reste levé : le tour est reconnu sans effet, la promesse ne
         # sera ni affichée comme une réponse ni rangée dans l'historique.
         logger.info("Forçage sans résultat (%s)", erreur or "aucun bloc produit")
-        return {"relance_annonce": True, "forcages": (state.get("forcages") or 0) + 1}
+        # LE SÉLECTEUR TRANCHE LE FAUX POSITIF (09/09). « Oui, je lis le visuel
+        # que vous venez d'envoyer… » et « dès que vous me donnez la photo, je
+        # m'en occupe » ont été pris pour des annonces par la liste de verbes,
+        # envoyés ici, et le sélecteur — qui a TOUT le catalogue sous les yeux —
+        # a répondu RIEN : aucune action ne pouvait avancer, parce que le texte
+        # RÉPONDAIT déjà. Jeter ce texte pour « aucune action n'a abouti »
+        # détruisait une réponse juste (export du 09/09, 07:05 et 07:10). Le
+        # RIEN explicite est donc retenu : `rehydrate_node` garde alors la
+        # réponse du modèle au lieu de la remplacer.
+        refuse = texte.strip().strip(".!… ").upper() == "RIEN"
+        return {"relance_annonce": True, "forcages": (state.get("forcages") or 0) + 1,
+                "forcage_refuse": refuse}
 
     logger.info("Action forcée : %s", action.get("skill"))
     return {"relance_annonce": True, "forcages": (state.get("forcages") or 0) + 1,

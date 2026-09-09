@@ -82,6 +82,9 @@ class AgentState(TypedDict):
     note_sortie: Optional[str]           # pourquoi la boucle s'est arrêtée sans aboutir
     relance_annonce: bool                # le modèle a annoncé une action sans l'émettre
     forcages: int                        # combien de fois le forceur a agi ce tour (borné)
+    # Le sélecteur d'actions (catalogue sous les yeux) a répondu RIEN : le
+    # texte pris pour une annonce RÉPONDAIT déjà. `rehydrate_node` le garde.
+    forcage_refuse: bool
     # La dernière passe a rendu une PROMESSE au lieu d'une réponse, et on lui a
     # redemandé une fois. Le drapeau borne la reprise : sans lui, un modèle qui
     # annonce en boucle ferait tourner le tour indéfiniment.

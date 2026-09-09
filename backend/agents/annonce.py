@@ -132,7 +132,12 @@ _PAS_UNE_PROMESSE = re.compile(
     r"|est-ce que|pouvez-vous|pourriez-vous|lequel|laquelle|lesquels)\b"
     r"|j['’]ai besoin|je vais avoir besoin|il me faut|il me manque"
     r"|je vais devoir|precisez|indiquez-moi|de quel"
-    r"|\bci-dessous\b|\bci-joint|\bvoici\b|\bvoila\b",
+    r"|\bci-dessous\b|\bci-joint|\bvoici\b|\bvoila\b"
+    # 09/09 : une réponse qui ATTEND quelque chose de la personne n'est pas
+    # une promesse non tenue — « dès que vous me donnez la photo, je m'en
+    # occupe » a été forcée, puis remplacée par « le traitement n'a pas abouti ».
+    r"|\bdes que vous\b|\bquand vous\b|\blorsque vous\b|\bune fois que vous\b"
+    r"|\bsi vous me\b|\benvoyez[- ]|\brenvoyez[- ]|\btransmettez[- ]",
     re.IGNORECASE,
 )
 

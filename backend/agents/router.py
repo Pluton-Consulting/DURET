@@ -379,6 +379,7 @@ def _reouverture_du_tour() -> dict:
         "redaction_forcee": False,
         "relance_annonce": False,
         "forcages": 0,
+        "forcage_refuse": False,
         "note_sortie": None,
         "pending_action": None,
         "tour_debut": _time.time(),

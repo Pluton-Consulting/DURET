@@ -113,7 +113,17 @@ async def inventaire_dossier(data: dict, user) -> dict:
             try:
                 texte = await lire_fichier(f["ref"], user)
             except Exception as e:  # noqa: BLE001 — un fichier illisible n'arrête pas les autres
-                return {**f, "etat": "illisible", "raison": str(e)[:120], "texte": ""}
+                # La RAISON est pour la personne : un refus ou une limite du
+                # stockage se dit tel quel ; une faute de PROGRAMME se journalise
+                # (09/09 : « module 'outils.drive' has no attribute … » lu dans le
+                # chat, onze fois de suite).
+                if isinstance(e, (AttributeError, TypeError, KeyError, NameError,
+                                  IndexError, ImportError, AssertionError)):
+                    logger.warning("Inventaire : lecture de « %s » impossible : %s", f.get("nom"), e)
+                    raison = "lecture impossible (incident technique, journalisé)"
+                else:
+                    raison = str(e)[:120]
+                return {**f, "etat": "illisible", "raison": raison, "texte": ""}
             if not (texte or "").strip():
                 return {**f, "etat": "sans texte lisible", "texte": ""}
             return {**f, "etat": "lu", "texte": texte[:EXTRAIT]}

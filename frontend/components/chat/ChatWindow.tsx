@@ -557,6 +557,41 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // Le tour est suspendu au `human_gate`, son etat vit dans le checkpointer
   // Postgres : la reprise fonctionne apres n'importe quel delai. La reponse de
   // cet appel est la SUITE du tour — elle se pousse comme un message.
+  /** Après un délai du mandataire sur « Approuver » (09/09) : la reprise
+   * tourne ENCORE côté serveur — un plan approuvé a duré 8 min 43, nginx a
+   * coupé le POST à 300 s. L'écran remettait la bulle « en attente »,
+   * gardait le fil principal OCCUPÉ, et chaque message suivant partait en
+   * file d'attente sur un fil neuf, sans mémoire (d'où trois vignettes de
+   * documents sans adresse). On sonde donc jusqu'à ce que plus rien ne
+   * tourne (deux lectures vides d'affilée : la première peut tomber entre
+   * deux nœuds), on relit le fil — la réponse y est écrite — et on libère
+   * le fil principal. Borné à une heure, le plafond d'un tour. */
+  const attendreFinDeReprise = (id: string, cle: string) => {
+    if (tachesSuiviesRef.current.has(cle)) majBulle(cle, TEXTE_RESULTAT_EN_COURS)
+    setActivite("j'exécute ce que vous venez d'approuver")
+    let vides = 0
+    const debut = Date.now()
+    const sonde = setInterval(async () => {
+      if (!monteRef.current || Date.now() - debut > 60 * 60 * 1000) { clearInterval(sonde); return }
+      try {
+        const p = await apiRequest<{ node?: string | null; libelle?: string }>(
+          `/api/validations/${id}/reprise`, { token })
+        if (p?.node) { vides = 0; if (p.libelle) setActivite(p.libelle); return }
+      } catch { return }
+      if (++vides < 2) return
+      clearInterval(sonde)
+      setActivite("")
+      setThinkingNode(null)
+      const tid = threadIdRef.current
+      if (tid) { try { await chargerHistorique(tid) } catch { /* le fil se relira au prochain chargement */ } }
+      setTachesLocales((prev) => prev.filter((t) => t.validationId !== id))
+      if (filSuspenduRef.current === id) filSuspenduRef.current = null
+      principalOccupeRef.current = false
+      setPrincipalOccupe(false)
+      rafraichirEtat()
+    }, 3000)
+  }
+
   const resoudreAccord = async (id: string, accorde: boolean) => {
     // GARDE SYNCHRONE. `accordEnCours` est un etat React : entre le clic et le
     // rendu suivant, il vaut encore null — deux clics rapproches passaient donc
@@ -673,6 +708,11 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
         }
         // La bulle ne peut plus attendre une reponse qui est allee ailleurs.
         if (tachesSuiviesRef.current.has(cle)) poserReponse(cle, "Cette action a déjà été tranchée.")
+      } else if (accorde && !liee
+                 && (e?.status === 502 || e?.status === 504 || e?.status === 408 || !e?.status)) {
+        // Le MANDATAIRE a lâché, pas le serveur : la reprise continue, on
+        // l'attend au lieu de figer le fil (voir attendreFinDeReprise).
+        attendreFinDeReprise(id, cle)
       } else {
         // La decision n'est pas passee : la bulle redit qu'elle attend, au lieu
         // de rester sur « Résultat en cours… » pour un resultat qui ne viendra pas.

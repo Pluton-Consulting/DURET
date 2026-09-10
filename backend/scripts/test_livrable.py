@@ -311,7 +311,15 @@ faux_proto = _types.ModuleType("skills.protocol")
 faux_proto.BLOC_ACTION_RE = _re.compile(r"```action\s*\{.*?\}\s*```", _re.S)
 faux_proto.BLOC_NATIF_RE = _re.compile(r"(?!x)x")
 faux_proto.BLOC_ACTION_TRONQUE_RE = _re.compile(r"(?!x)x")
+# 10/09 : la balise XML (« <action>{…}</action> ») est un appel d'outil comme
+# un autre — la doublure doit la connaître, sinon elle est plus INDULGENTE que
+# le code livré et le banc validerait un routage que la production refuse.
+faux_proto.BLOC_BALISE_RE = _re.compile(
+    r"<([a-z][a-z0-9_]*)\s*>[ \t\r\n]*(\{[\s\S]*?\})?[ \t\r\n]*</\1\s*>", _re.S)
 faux_proto.BALISAGE_OUTIL_RE = _re.compile(r"(?!x)x")
+faux_proto.demande_une_action = (
+    lambda texte, role=None: bool(faux_proto.BLOC_ACTION_RE.search(texte or "")
+                                  or faux_proto.BLOC_BALISE_RE.search(texte or "")))
 sys.modules.setdefault("skills", _types.ModuleType("skills"))
 sys.modules["skills.protocol"] = faux_proto
 

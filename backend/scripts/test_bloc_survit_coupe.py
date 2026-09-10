@@ -179,5 +179,51 @@ rm = (FRONT / "components" / "blocks" / "business" / "ReponsesMail.tsx").read_te
 verifier("ReponsesMail accepte et affiche `titre`",
          "titre?: string" in rm and "{titre}" in rm)
 
+# ── 6. La CONSIGNE survit à la coupe, et la coupe se DIT (10/09) ─────────
+#    Tour BTF du 10/09 : deux résultats d'`interroger_donnees` tranchés à
+#    12 000 caractères pile, JSON invalide, et privés de leur `note` — celle
+#    qui dit « Rappelle avec `filtres` pour un compte exact ». Le modèle a
+#    exploré le schéma trois fois sans jamais filtrer : il n'avait pas lu le
+#    mode d'emploi de l'outil qu'il tenait.
+import json as _js
+espace_coupe = {"_json": _js}
+extraire(BACKEND / "agents" / "agent1.py", {"_tailler_resultat", "_CLES_CONSIGNE"},
+         espace_coupe)
+tailler = espace_coupe["_tailler_resultat"]
+
+SORTIE_PROD = {
+    "source_type": "facture",
+    "enregistrements": 1875,
+    "champs_communs": [{"nom": f"champ_{i}", "sens": ""} for i in range(37)],
+    "colonnes": [{"nom": f"{m:02d}/2026",
+                  "valeurs_frequentes": [{"valeur": f"{i * 137.5:.2f}", "n": 1}
+                                         for i in range(12)]}
+                 for m in range(1, 31)],
+    "note": "Filtre de preference sur `champs_communs`. Rappelle avec `filtres` "
+            "pour un compte exact.",
+}
+entier = _js.dumps(SORTIE_PROD, ensure_ascii=False)
+verifier("le résultat de production dépasse bien le plafond généreux",
+         len(entier) > 12000, len(entier))
+coupe = tailler(SORTIE_PROD, 12000)
+try:
+    relu = _js.loads(coupe)
+except Exception as e:                      # noqa: BLE001
+    relu, erreur = None, e
+    verifier("un résultat coupé reste du JSON VALIDE", False, str(e))
+else:
+    verifier("un résultat coupé reste du JSON VALIDE", True)
+verifier("la NOTE (le mode d'emploi du geste) survit à la coupe",
+         bool(relu) and "filtres" in str(relu.get("note", "")))
+verifier("les champs du jeu survivent (c'est eux qui disent ce qu'on peut demander)",
+         bool(relu) and len(relu.get("champs_communs") or []) == 37)
+verifier("la coupe SE DIT, et nomme ce qui manque",
+         bool(relu) and "colonnes" in str(relu.get("_tronque", "")))
+verifier("un résultat qui tient n'est pas touché",
+         tailler({"note": "court", "n": 3}, 12000) == _js.dumps({"note": "court", "n": 3},
+                                                                ensure_ascii=False))
+verifier("une chaîne (message d'erreur) passe toujours",
+         tailler("ERREUR : introuvable", 12000) == '"ERREUR : introuvable"')
+
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

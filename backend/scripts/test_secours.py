@@ -128,7 +128,8 @@ def espace_redaction(reponse):
 
     import re as _re
     faux_proto = types.ModuleType("skills.protocol")
-    for nom in ("BLOC_ACTION_RE", "BLOC_ACTION_TRONQUE_RE", "BLOC_NATIF_RE", "BALISAGE_OUTIL_RE"):
+    for nom in ("BLOC_ACTION_RE", "BLOC_ACTION_TRONQUE_RE", "BLOC_NATIF_RE",
+                "BLOC_BALISE_RE", "BALISAGE_OUTIL_RE"):
         setattr(faux_proto, nom, _re.compile(r"```action\s*\{.*?\}\s*```", _re.S)
                 if nom == "BLOC_ACTION_RE" else _re.compile(r"(?!x)x"))
     sys.modules.setdefault("skills", types.ModuleType("skills"))

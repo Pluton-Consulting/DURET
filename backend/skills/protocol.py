@@ -67,7 +67,7 @@ _ARG_NATIF_RE = re.compile(
 # rester visible. Filet de sécurité appliqué juste avant l'affichage.
 BALISAGE_OUTIL_RE = re.compile(
     r"<\/?(?:longcat_tool_call|longcat_arg_key|longcat_arg_value|tool_call|"
-    r"function_call|tool_use|invoke|antml:[a-z_]+)[^>]*>", re.I)
+    r"function_call|tool_use|invoke|action|antml:[a-z_]+)[^>]*>", re.I)
 
 
 # Autre forme rencontrée : le modèle rend un objet JSON nu, sans balise, dans la
@@ -172,10 +172,99 @@ def _action_json_nu(texte: str, role: str | None = None):
     return None, texte, None
 
 
+# TROISIÈME FORME, RELEVÉE LE 10/09 EN PRODUCTION : LA BALISE XML.
+#
+# Sur DeepSeek v4 (Ollama Cloud), les deux modèles de l'assistant enveloppent
+# parfois leur JSON dans une balise, soit générique, soit PORTANT LE NOM DU
+# SKILL :
+#
+#   <action>
+#   {"skill":"rechercher_documents","args":{"requete":"Fiat Doblo"}}
+#   </action>
+#
+#   <interroger_donnees>
+#   {"source_type": "fournisseur"}
+#   </interroger_donnees>
+#
+# Quatre tours sont morts là-dessus dans la seule matinée du 10/09 (les
+# factures du fournisseur BTF, la puissance d'un utilitaire) : aucune action
+# n'était exécutée, et le balisage partait TEL QUEL à l'écran en guise de
+# réponse. La dérive est rare — 4 appels sur 131 ce jour-là — mais chacune
+# coûte un tour entier : le modèle a fait le bon choix d'outil, seule la forme
+# diffère. On la lit donc, comme on lit déjà celle de LongCat.
+BLOC_BALISE_RE = re.compile(
+    r"<([a-z][a-z0-9_]*)\s*>[ \t\r\n]*(\{[\s\S]*?\})?[ \t\r\n]*</\1\s*>", re.S)
+
+# Les balises qui ENVELOPPENT un appel (le nom du skill est alors DANS le JSON).
+_ENVELOPPES_ACTION = ("action", "outil", "appel", "tool_call", "function_call",
+                      "tool_use", "invoke")
+_CLES_NOM = ("skill", "name", "tool", "function", "action", "nom")
+_CLES_ARGS = ("args", "arguments", "parameters", "parametres", "paramètres")
+
+
+def _action_balisee(texte: str, role: str | None = None):
+    """Reconnaît un appel d'outil enveloppé dans une balise XML."""
+    catalogue_role = catalogue(role)
+    for trouve in BLOC_BALISE_RE.finditer(texte or ""):
+        nom_balise = trouve.group(1).lower()
+        enveloppe = nom_balise in _ENVELOPPES_ACTION
+        if not enveloppe and nom_balise not in catalogue_role:
+            # Une balise qui n'enveloppe rien et ne nomme aucun skill n'est pas
+            # un appel d'outil : on ne touche pas au texte de l'utilisateur.
+            continue
+        try:
+            data = _charger_json((trouve.group(2) or "{}").strip())
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if enveloppe:
+            nom = next((data[c] for c in _CLES_NOM if isinstance(data.get(c), str)), None)
+            args = next((data[c] for c in _CLES_ARGS if data.get(c) is not None), {})
+        else:
+            nom, args = nom_balise, data
+            # La même convention recopiée à l'intérieur de la balise :
+            # <lire_mails>{"args":{"depuis":"7j"}}</lire_mails>. On déplie.
+            if len(args) == 1 and next(iter(args)).strip().lower() in _CLES_ARGS:
+                interieur = next(iter(args.values()))
+                if isinstance(interieur, dict):
+                    args = interieur
+        if isinstance(args, str):
+            try:
+                args = _charger_json(args)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(args, dict):
+            continue
+        # LA BALISE ENTIÈRE QUITTE LE TEXTE, ouvrante et fermante comprises.
+        # Le JSON nu, lui, laissait « <action></action> » derrière lui : de la
+        # mécanique interne, à l'écran.
+        reste = (texte[:trouve.start()] + texte[trouve.end():]).strip()
+        if nom not in catalogue_role:
+            return None, reste, (
+                f"ton appel d'outil balisé nomme « {nom or '?'} », qui n'existe pas. "
+                "Ré-émets l'action dans un bloc ```action contenant "
+                '{"skill":"<nom exact de la liste>","args":{...}}.')
+        manquants = [p for p in catalogue_role[nom][1]
+                     if not str(args.get(p) or "").strip()]
+        if manquants:
+            return None, reste, (
+                f"ton appel balisé de « {nom} » omet le(s) paramètre(s) obligatoire(s) "
+                f"{', '.join(manquants)}. Ré-émets l'action dans un bloc ```action "
+                "complet.")
+        return {"skill": nom, "args": args}, reste, None
+    return None, texte, None
+
+
 def _action_native(texte: str, role: str | None = None):
     """Convertit un appel natif en `{skill, args}`, ou None si illisible."""
     trouve = BLOC_NATIF_RE.search(texte or "")
     if not trouve:
+        # La balise d'abord : elle retire l'enveloppe, là où le JSON nu
+        # laisserait « <action></action> » à l'écran.
+        action, reste, erreur = _action_balisee(texte or "", role)
+        if action or erreur:
+            return action, reste, erreur
         return _action_json_nu(texte or "", role)
 
     reste = ((texte[:trouve.start()] + texte[trouve.end():]) or "").strip()
@@ -527,10 +616,15 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "CHERCHE SUR INTERNET et rend le texte des premieres pages. UNIQUEMENT pour "
         "une information PUBLIQUE qui n'existe pas dans l'entreprise : un prix "
         "public, une norme, une reglementation, les coordonnees d'un fournisseur, "
-        "l'actualite d'un site — ou quand l'utilisateur le demande. JAMAIS pour ses "
+        "l'actualite d'un site — ou quand l'utilisateur le demande. UN OBJET QUI "
+        "APPARTIENT A L'ENTREPRISE N'EST PAS UNE DONNEE DE L'ENTREPRISE : la "
+        "puissance du vehicule qu'on vient d'acheter, les dimensions d'une machine, "
+        "la fiche technique d'un produit ou d'un materiau sont PUBLIQUES et se "
+        "cherchent ici, meme quand la phrase dit « notre » ou « nous avons achete ». "
+        "JAMAIS, en revanche, pour ses "
         "clients, ses devis, ses factures, ses chantiers ni ses mails : ces donnees "
         "sont internes, le web ne les connait pas et ne peut rendre que du bruit. "
-        "`nombre` : 1 a 5 pages, 3 par defaut. L'information obtenue est EXTERNE : "
+        "`nombre` : 1 a 10 pages, 3 par defaut. L'information obtenue est EXTERNE : "
         "cite les adresses, ne la presente jamais comme une donnee interne",
         ["requete"], ["nombre"]),
     "ouvrir_page": (
@@ -742,6 +836,9 @@ def instruction_actions(role: str | None = None) -> str:
         "toujours faux.\n"
         "Règles : UNE seule action par réponse ; uniquement un skill de la liste ; "
         "si aucune action n'est nécessaire, réponds normalement SANS bloc. "
+        "ÉCRIS TOUJOURS LE BLOC ```action, jamais une balise XML "
+        "(<action>…</action>, <nom_du_skill>…</nom_du_skill>) : le serveur rattrape "
+        "ces formes, mais le bloc est la seule qui fasse foi. "
         "Les balises masquées ([PER_1], [MONTANT_2]...) sont acceptées dans les paramètres. "
         "Quand une boîte mail est demandée et que l'utilisateur n'en précise pas, "
         "omets le paramètre : la sienne sera utilisée.\n"
@@ -845,3 +942,23 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
                              f"{', '.join(manquants)}")
 
     return {"skill": skill, "args": args}, reste, None
+
+
+def demande_une_action(texte: str, role: str | None = None) -> bool:
+    """Ce texte porte-t-il un appel d'outil, quelle qu'en soit la forme ?
+
+    UN SEUL DÉTECTEUR POUR TOUT LE MONDE, ET C'EST TOUT LE POINT. Le routeur
+    du graphe cherchait le bloc ```action et la syntaxe LongCat ; l'exécuteur,
+    lui, appelle `extraire_action`, qui en connaît deux de plus (le JSON nu, la
+    balise XML). Le routeur étant le plus ÉTROIT des deux, toute forme que seul
+    le parseur savait lire mourait AVANT d'atteindre l'exécuteur : rien ne
+    tournait, et l'appel d'outil s'affichait en guise de réponse.
+
+    Relevé le 10/09 sur quatre tours d'affilée. Deux détecteurs pour une même
+    question ne peuvent que diverger ; il n'y en a plus qu'un.
+
+    Une action MAL FORMÉE compte aussi : c'est le nœud d'exécution qui sait
+    renvoyer l'erreur au modèle pour qu'il se corrige (une fois, deux au plus).
+    """
+    action, _, erreur = extraire_action(texte or "", role)
+    return bool(action or erreur)

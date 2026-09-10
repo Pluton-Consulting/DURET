@@ -175,7 +175,9 @@ def garantir_recherche(resultat: dict, motif: str, ouvreur: str | None = None) -
             "Rien ne SORT de cette recherche, ce qui ne prouve pas l'absence : "
             "dis ce que tu as cherché et retente avec UN seul mot du nom ou une "
             "autre orthographe avant de conclure ; propose aussi la recherche "
-            "dans le CONTENU des documents.")
+            "dans le CONTENU des documents. Si ce qui est cherché est un fait "
+            "PUBLIC (fiche technique, norme, tarif public), dis que le classement "
+            "ne le porte pas et enchaîne `chercher_web`.")
         return resultat
     lignes = [[str(r.get("nom") or ""),
                "Dossier" if r.get("dossier") else "Fichier",

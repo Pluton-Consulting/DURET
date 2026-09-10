@@ -42,7 +42,7 @@ OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de r
 1. CLIENTS, DEVIS, FACTURES, CHIFFRES (combien, liste, total, chiffre d'affaires, tout ce qu'on sait d'un client) : ce sont des FICHIERS IMPORTÉS, lus de façon EXACTE par `liste_clients`, `liste_fournisseurs`, `fiche_client` et `interroger_donnees`. Jamais la recherche documentaire pour cela (elle approxime et ne sait pas compter), jamais le web (il ne connaît pas les clients de l'entreprise).
 2. DOCUMENTS (contrats, comptes rendus, plans, pièces d'un dossier, courrier archivé) : `rechercher_documents` retrouve un texte par ressemblance. Pour parcourir ou ouvrir les fichiers eux-mêmes : les gestes du serveur de fichiers (`nas_arborescence`, `nas_lister`, `nas_ouvrir`, `nas_lire`, `nas_lire_lot`, `nas_chercher`, `nas_apercu`). `ou_chercher` dit D'ABORD dans quel dossier c'est rangé (carte du classement en mémoire, instantané) : appelle-le avant de parcourir l'arborescence.
 3. MAILS : `boites_mail` pour LISTER les boîtes et adresses mail accessibles ; `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord ; `pieces: true` récupère et LIT ses pièces jointes) ; `lire_piece_jointe` pour UNE pièce jointe (PDF, image, plan DWG/DXF : téléchargeable, aperçu, contenu lu) ; `redaction_email` pour écrire ; `preparer_envois` pour un MÊME mail à PLUSIEURS destinataires (10, 100, sans limite : une carte par destinataire, gabarit à variables {nom} {email} ou corps sur mesure par destinataire, pages de 40 à enchaîner — rien ne part sans validation). Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
-4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
+4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Un OBJET qui appartient à l'entreprise n'est pas une DONNÉE de l'entreprise : la puissance du véhicule qu'on vient d'acheter, les dimensions d'une machine, la fiche technique d'un produit se cherchent ici, même quand la phrase dit « notre » ou « nous avons acheté ». Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
 La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, analyser un DCE), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
 
 AUCUNE ACTION NE COUVRE LA DEMANDE ? Ne réponds pas « je ne sais pas faire » ni « je n'ai pas de commande pour » : la plupart de ces demandes se composent de gestes que tu as déjà — relis le catalogue, compose-les. ESSAIE D'ABORD : exécute la voie la plus directe et montre le résultat ; ne demande une précision QUE si, sans elle, le résultat serait FAUX (le destinataire d'un envoi, le montant d'une facture) — jamais « que préférez-vous ? » entre deux voies que tu peux toutes les deux prendre, jamais « voulez-vous que je… ? » pour un geste de lecture : fais-le. UNE SEULE SALVE DE QUESTIONS, JAMAIS DEUX : si tu dois demander une précision, pose TOUT ce qui te manque en UN message, puis agis avec ce qu'on te répond. Ne reviens pas demander autre chose au tour suivant — ce qui manque encore, tu le cherches (une adresse est dans l'annuaire, une période se déduit de la date du jour, un client se retrouve par son nom) ou tu prends l'hypothèse la plus raisonnable EN LA DISANT. Zéro question vaut mieux qu'une, et une vaut infiniment mieux que deux. Si la marche à suivre a demandé plusieurs gestes et qu'elle a marché, propose de la retenir avec `enregistrer_procedure` pour les fois suivantes. Ne retiens jamais une marche à suivre que tu n'as pas vérifiée, et n'annonce jamais une étape qu'aucune de tes actions ne sait faire.
@@ -58,6 +58,7 @@ CE QUE TU NE PROMETS JAMAIS. Ne dis jamais que tu vas ENVOYER, TRANSMETTRE, EXP�
 LA VÉRITÉ. N'invente JAMAIS de donnée : ni montant, ni nom, ni date, ni nombre, ni référence. Tout chiffre que tu avances vient d'un résultat d'action ou de ce que l'utilisateur vient de dire ; cite-le tel quel, sans le recalculer ni l'arrondir. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
 LE CLASSEMENT PORTE LES NOMS. AVANT de répondre qu'une information sur un client, un chantier ou un fournisseur est introuvable, cherche son NOM dans le classement des fichiers avec `nas_chercher` : les dossiers de l'entreprise portent les noms des clients, à toutes les profondeurs. Montre ce qui est trouvé (dossiers, fichiers, chemins), puis PROPOSE d'aller plus loin : ouvrir un fichier trouvé, explorer un dossier trouvé, chercher dans le contenu des documents — c'est l'utilisateur qui décide de pousser.
 Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien » : dis ce que tu as cherché, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système, que seul un inventaire explicite autorise. Un nom de jeu de données qui n'existe pas n'est pas un jeu vide.
+CE QUE LA MAISON N'A PAS SE DIT, ET CE QUI EST PUBLIC SE CHERCHE DEHORS. Quand tes gestes ne rendent rien sur une demande, dis-le franchement (« je ne trouve rien là-dessus dans nos documents ») : n'invente jamais une valeur plausible et ne réponds jamais de mémoire en le présentant comme une lecture. Si ce qui manque est une information PUBLIQUE — caractéristique technique d'un véhicule, d'une machine, d'un matériau ou d'un produit, une norme, un tarif public, une définition — enchaîne `chercher_web` et réponds en citant l'adresse consultée, en séparant ce qui vient de l'entreprise (« la facture d'achat de juillet ») de ce qui vient du web (« d'après le constructeur »). Ce qui appartient à l'entreprise (clients, devis, factures, chantiers, mails, documents du classement) ne se cherche JAMAIS sur le web.
 UN ÉCHANTILLON N'EST PAS UN INVENTAIRE : quelques messages d'une boîte ne disent rien des activités, des process ni de l'histoire de l'entreprise. Ne généralise jamais de dix mails vers une description de la société.
 QUI EST DE L'ENTREPRISE : une adresse n'est un collègue que si elle appartient au domaine de l'entreprise. Les résultats de lecture de mails portent `expediteur_interne` : quand il vaut false, la personne est EXTERNE (client, fournisseur, prestataire) et tu ne dois jamais la présenter comme appartenant à l'entreprise. `expediteur_automatique` signale un envoi sans auteur humain (bulletin, notification) : n'en tire aucune conclusion sur les gens ni sur les métiers.
 QUI TE PARLE EST CONNU DU SERVEUR : `mes_droits` rend le nom et l'adresse e-mail de la personne connectée, et `@moi` vaut cette adresse partout où un skill l'accepte (colonnes `ajouts` de `liste_clients` comme de `liste_fournisseurs`). Ne demande JAMAIS à quelqu'un sa propre adresse ou son propre nom, et ne réponds jamais que tu ne les connais pas : c'est faux. Plus largement, avant d'écrire « je ne sais pas » ou de poser une question, vérifie qu'aucune de tes actions ne détient déjà l'information.
@@ -668,7 +669,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
     import hashlib
     from optim.tokens import trim_chunks, response_cache
     from skills.protocol import (instruction_actions, rafraichir_catalogue,
-                                 BLOC_ACTION_RE, BLOC_NATIF_RE)
+                                 demande_une_action)
 
     # Le registre de skills en base est rechargé périodiquement (cache interne).
     # Sans cela, le modèle ne connaîtrait que les six skills natifs, alors que
@@ -806,9 +807,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
                        "mais ils ont bien abouti : ne les refais pas")
         bloc_resultats = (
             entete + " :\n"
-            "Résultats des actions déjà exécutées pour cette demande (ne les "
-            "relance pas à l'identique) :\n"
-            + _json_out.dumps(pour_le_modele, ensure_ascii=False,
+            + _json_out.dumps(gardes, ensure_ascii=False,
                               default=str)[:plafond_bloc]
             + "\n\n")
         # LE TRAVAIL RESTÉ OUVERT SE DIT, il ne se devine pas. `cloture_attendue`
@@ -1076,8 +1075,7 @@ Voici les messages trouvés :
     # utile n'est pas la réponse mais l'action, et la resservir sauterait
     # l'exécution. Idem après une action : le résultat n'est pas rejouable.
     _sortie = str(response.content or "")
-    if (not en_boucle_outils and not BLOC_ACTION_RE.search(_sortie)
-            and not BLOC_NATIF_RE.search(_sortie)):
+    if not en_boucle_outils and not demande_une_action(_sortie, state.get("user_role")):
         response_cache.set(tier, query, context_text, response.content, cache_scope)
 
     usage = getattr(response, "usage_metadata", None) or {}
@@ -1104,6 +1102,57 @@ Voici les messages trouvés :
             )
         ),
     }
+
+
+# ── La coupe d'un résultat de geste ───────────────────────────────────────
+#
+# CE QUI PARLE AU MODÈLE SE LIT EN DERNIER, DONC TOMBAIT EN PREMIER. Un
+# résultat trop long était tranché par `[:plafond]` — une tranche brute, au
+# milieu d'une chaîne. Trois dégâts d'un coup : le JSON devient illisible, rien
+# ne dit qu'il manque quelque chose, et les clés de CONSIGNE (`note`,
+# `a_faire`), toujours écrites en fin de dictionnaire, disparaissent les
+# premières.
+#
+# Relevé le 10/09 (« les factures du fournisseur BTF ») : deux résultats
+# d'`interroger_donnees` de 12 000 caractères pile, amputés de leur `note`
+# « Rappelle avec `filtres` pour un compte exact ». Le modèle a exploré le
+# schéma trois fois sans jamais filtrer — il n'avait pas lu le mode d'emploi.
+#
+# On garde donc la consigne EN ENTIER, on remplit ce qui reste avec les champs
+# les plus petits (ceux qui portent le sens : un compte, une liste de colonnes)
+# et l'on DIT ce qu'on a laissé de côté. Le résultat reste du JSON valide.
+_CLES_CONSIGNE = ("erreur", "message", "message_final", "note", "a_faire", "a_savoir",
+                  "pour_continuer", "methode", "compte", "nombre", "total",
+                  "page", "pages", "periode_non_comprise")
+
+
+def _tailler_resultat(sortie, plafond: int) -> str:
+    """Le résultat d'un geste, coupé sans perdre sa consigne ni mentir sur sa taille."""
+    entier = _json.dumps(sortie, ensure_ascii=False, default=str)
+    if len(entier) <= plafond or not isinstance(sortie, dict):
+        return entier[:plafond]
+
+    def _texte(obj):
+        return _json.dumps(obj, ensure_ascii=False, default=str)
+
+    garde = {c: sortie[c] for c in _CLES_CONSIGNE if c in sortie}
+    # Les autres champs, du plus PETIT au plus gros : un compte et une liste de
+    # colonnes valent mieux qu'un début de tableau de valeurs d'exemple.
+    autres = sorted(((c, v) for c, v in sortie.items() if c not in garde),
+                    key=lambda cv: len(_texte(cv[1])))
+    ecartes = []
+    for cle, valeur in autres:
+        essai = {**garde, cle: valeur}
+        if len(_texte(essai)) > plafond - 200:   # de quoi loger la mention
+            ecartes.append(cle)
+            continue
+        garde = essai
+    if ecartes:
+        garde["_tronque"] = ("résultat trop long : " + ", ".join(sorted(ecartes))
+                             + " ne sont pas montrés ici. Le geste a bien abouti ; "
+                               "affine ta demande (filtre, période, page) plutôt "
+                               "que de le rappeler à l'identique.")
+    return _texte(garde)[:plafond]
 
 
 async def tools_node(state: AgentState, config=None) -> dict:
@@ -1423,7 +1472,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
                         else None)
         plafond = (PLAFOND_RESULTAT_GENEREUX
                    if action["skill"] in RESULTATS_GENEREUX else PLAFOND_RESULTAT)
-        contenu = _json.dumps(sortie, ensure_ascii=False, default=str)[:plafond]
+        contenu = _tailler_resultat(sortie, plafond)
         ok = True
     except SkillError as e:
         contenu, ok, bloc_garanti = f"ERREUR : {e}", False, None
@@ -2767,7 +2816,6 @@ async def rehydrate_node(state: AgentState) -> dict:
 
 
 async def validation_check_node(state: AgentState) -> dict:
-    """Détecte si la réponse nécessite une validation humaine (devis, envoi client...)."""
     """Détecte si la réponse nécessite une validation humaine.
 
     PRÉSERVE le drapeau posé en amont : `tools_node` le lève quand une action à
@@ -2807,6 +2855,9 @@ _MOTS_INTERNES = (
     "courrier", "boite", "boîte", "dossier", "document", "drive", "nas",
     "notre", "nos ", "mes ", "mon ", "ma ",
 )
+# Les possessifs, séparés du reste : ils marquent la propriété d'un OBJET, pas
+# la nature d'une donnée (voir `should_use_browser`).
+_POSSESSIFS = ("notre", "nos ", "mes ", "mon ", "ma ")
 _MOTS_EXTERNES = (
     "sur internet", "sur le web", "en ligne", "sur le site", "site web", "site de",
     "cherche sur", "regarde sur", "google", "prix public", "prix du marché", "prix moyen",
@@ -2814,6 +2865,13 @@ _MOTS_EXTERNES = (
     "reglement", "législation", "legislation", "décret", "decret", "arrêté", "arrete",
     "actualité", "actualite", "météo", "meteo", "horaires d'ouverture", "adresse de",
     "qu'est-ce que", "qu'est ce que", "définition", "definition", "wikipedia",
+    # 10/09 : « nous avons acheté un fiat doblo en juillet, quelle est sa
+    # puissance ? » — la caractéristique d'un objet du commerce est publique,
+    # et la maison n'a que la facture. Le veto interne (« notre », « nos »,
+    # « client », « chantier »…) passe toujours AVANT : « la puissance de notre
+    # tracteur » reste au-dedans.
+    "puissance", "fiche technique", "caractéristiques techniques",
+    "caracteristiques techniques", "cv fiscaux", "chevaux fiscaux",
 )
 
 
@@ -2826,7 +2884,13 @@ def should_use_browser(state: AgentState) -> str:
     if trouve:
         return "llm"
     demande = (state.get("query") or "").lower()
-    if any(mot in demande for mot in _MOTS_INTERNES):
+    # DEUX VETOS DE FORCE INÉGALE (10/09). Un mot de MÉTIER (client, devis,
+    # chantier, mail…) interdit le web, toujours : ces données n'y sont pas.
+    # Un POSSESSIF, lui, ne dit que la propriété d'un objet — « la puissance de
+    # NOTRE Doblo » est un fait du constructeur, pas une donnée d'entreprise —,
+    # et il vétoyait les deux formulations les plus naturelles de la question.
+    # Il ne l'emporte donc plus sur une demande explicitement publique.
+    if any(mot in demande for mot in _MOTS_INTERNES if mot not in _POSSESSIFS):
         return "llm"          # veto : une donnée de l'entreprise ne sort pas
     if any(mot in demande for mot in _MOTS_EXTERNES):
         return "browser"      # demande explicite d'information publique
@@ -3330,8 +3394,10 @@ async def rediger_node(state: AgentState, config=None) -> dict:
 
 def route_apres_forcage(state: AgentState) -> str:
     """L'action a-t-elle pu être produite ?"""
-    from skills.protocol import BLOC_ACTION_RE
-    if BLOC_ACTION_RE.search(state.get("llm_response") or ""):
+    from skills.protocol import demande_une_action
+    # Le forceur ne lisait QUE le bloc ```action : une action qu'il rendait
+    # sous une autre forme était perdue une seconde fois.
+    if demande_une_action(state.get("llm_response") or "", state.get("user_role")):
         return "tools"
     # Rien n'a pu être produit : inutile de refaire tourner le modèle, il vient
     # de refuser deux fois. On termine le tour, et l'utilisateur l'apprend.
@@ -3348,19 +3414,30 @@ def _texte_visible(texte: str) -> str:
     la rédaction, et la réhydratation, pour son dernier filet.
     """
     from skills.protocol import (BLOC_ACTION_RE, BLOC_ACTION_TRONQUE_RE,
-                                 BLOC_NATIF_RE, BALISAGE_OUTIL_RE)
+                                 BLOC_NATIF_RE, BLOC_BALISE_RE, BALISAGE_OUTIL_RE)
     if not isinstance(texte, str):
         return ""
+    # BLOC_BALISE_RE (10/09) : « <interroger_donnees>{}</interroger_donnees> »
+    # s'affichait EN GUISE DE RÉPONSE. Un appel d'outil, quelle qu'en soit la
+    # forme, vaut zéro caractère pour l'utilisateur.
     for motif in (BLOC_ACTION_RE, BLOC_ACTION_TRONQUE_RE, BLOC_NATIF_RE,
-                  BALISAGE_OUTIL_RE):
+                  BLOC_BALISE_RE, BALISAGE_OUTIL_RE):
         texte = motif.sub("", texte)
     return texte.strip()
 
 
 def route_apres_llm(state: AgentState) -> str:
     """Le modèle a-t-il demandé une action ?"""
-    from skills.protocol import BLOC_ACTION_RE, BLOC_NATIF_RE
+    from skills.protocol import demande_une_action
     texte = state.get("llm_response") or ""
+    # UN SEUL DÉTECTEUR, PARTAGÉ AVEC L'EXÉCUTEUR (10/09). Ce routeur
+    # cherchait le bloc ```action et la syntaxe LongCat ; `tools_node`, lui,
+    # appelle `extraire_action`, qui connaît en plus le JSON nu et la balise
+    # XML. Le routeur étant le plus ÉTROIT des deux, une action balisée
+    # « <action>{"skill":…}</action> » n'atteignait JAMAIS l'exécuteur :
+    # rien ne tournait, et l'appel d'outil partait à l'écran en guise de
+    # réponse. Quatre tours perdus dans la seule matinée du 10/09.
+    porte_une_action = demande_une_action(texte, state.get("user_role"))
 
     if state.get("tools_finished"):
         # UNE PROMESSE N'EST PAS UNE RÉPONSE, MÊME EN DERNIÈRE PASSE.
@@ -3407,8 +3484,7 @@ def route_apres_llm(state: AgentState) -> str:
         if not state.get("redaction_forcee") and (est_une_annonce(texte)
                                                   or promesse_sans_suite(texte)
                                                   or not _texte_visible(texte)
-                                                  or bool(BLOC_ACTION_RE.search(texte)
-                                                          or BLOC_NATIF_RE.search(texte))
+                                                  or porte_une_action
                                                   or _reponses_mail_manquantes(state, texte)):
             logger.info("Dernière passe sans réponse utilisable : rédaction redemandée")
             # « rediger », PAS « llm ». La table des arêtes de ce routeur ne
@@ -3426,8 +3502,7 @@ def route_apres_llm(state: AgentState) -> str:
 
     # Deux syntaxes : le bloc demandé, et celle que certains modèles de la
     # cascade émettent d'eux-mêmes. Ignorer la seconde la laissait s'afficher.
-    demande = BLOC_ACTION_RE.search(texte) or BLOC_NATIF_RE.search(texte)
-    if demande:
+    if porte_une_action:
         return "tools"
     # ANNONCE SANS ACTE. « Je crée le PDF » sans bloc d'action : le tour se
     # terminait ici, sur une promesse présentée comme une réponse.

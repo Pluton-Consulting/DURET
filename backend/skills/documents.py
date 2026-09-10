@@ -130,7 +130,10 @@ async def rechercher_documents(data: dict, user) -> dict:
                    "une campagne d'enrichissement, elle a déjà tourné."
                    if appris else
                    "Propose des termes plus concrets (un nom de client, un numéro "
-                   "de dossier, une période).")),
+                   "de dossier, une période). Si ce qui manque est un fait PUBLIC "
+                   "(caractéristique d'un véhicule, d'une machine ou d'un produit, "
+                   "norme, tarif public), dis que la maison ne l'a pas et enchaîne "
+                   "`chercher_web` dans le même tour.")),
         }
 
     # Les extraits d'une page se partagent un budget : longs quand ils sont

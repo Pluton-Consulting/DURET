@@ -13,7 +13,7 @@ arbre = ast.parse(source)
 
 espace = {"AgentState": dict}
 for noeud in arbre.body:
-    garde = isinstance(noeud, ast.Assign) and getattr(noeud.targets[0], "id", "") in ("_MOTS_INTERNES", "_MOTS_EXTERNES")
+    garde = isinstance(noeud, ast.Assign) and getattr(noeud.targets[0], "id", "") in ("_MOTS_INTERNES", "_MOTS_EXTERNES", "_POSSESSIFS")
     fonction = isinstance(noeud, ast.FunctionDef) and noeud.name == "should_use_browser"
     if garde or fonction:
         exec(compile(ast.Module(body=[noeud], type_ignores=[]), "agent1", "exec"), espace)
@@ -87,6 +87,33 @@ _Reglages.browser_enabled = False
 verifier("navigateur désactivé → pas de web",
          decider({"query": "prix du ipé", "raw_chunks": []}) == "llm")
 _Reglages.browser_enabled = True
+
+# ── 4. Le POSSESSIF n'est pas un métier (10/09) ──────────────────────────
+#    « nous avons acheté un fiat doblo au mois de juillet, quel est sa
+#    puissance ? » : la maison n'a que la facture, la puissance est au
+#    constructeur. La question est morte en interne, et les deux formulations
+#    les plus naturelles (« notre Doblo », « ma camionnette ») étaient vétoyées
+#    plus durement encore que la formule neutre.
+print("\n4. Un objet à nous, une caractéristique publique")
+PUBLIQUES = [
+    "nous avons acheté un fiat doblo au mois de juillet, quel est sa puissance ?",
+    "quelle est la puissance de notre fiat doblo ?",
+    "la fiche technique de ma tondeuse autoportée",
+]
+for q in PUBLIQUES:
+    verifier(f"« {q[:46]}… » peut aller sur le web",
+             decider({"query": q, "raw_chunks": [], "anonymized_chunks": []}) == "browser")
+
+#    Le veto de MÉTIER, lui, ne bouge pas d'un pouce.
+METIER = [
+    "quelle est la puissance de la pompe du chantier Martin ?",
+    "la fiche technique du matériel facturé au client Dupont",
+    "quel est le chiffre d'affaires de notre client Dupont ?",
+    "les caractéristiques techniques citées dans le devis 2026-114",
+]
+for q in METIER:
+    verifier(f"« {q[:46]}… » reste en interne",
+             decider({"query": q, "raw_chunks": [], "anonymized_chunks": []}) == "llm")
 
 print(f"\n═══ {len(echecs)} échec(s)" + (f" : {', '.join(echecs)}" if echecs else " — tout passe"))
 sys.exit(1 if echecs else 0)

@@ -1016,6 +1016,19 @@ def demande_une_action(texte: str, role: str | None = None) -> bool:
 
     Une action MAL FORMÉE compte aussi : c'est le nœud d'exécution qui sait
     renvoyer l'erreur au modèle pour qu'il se corrige (une fois, deux au plus).
+
+    ⚠️ SAUF LE BLOC COUPÉ PAR LE PLAFOND DE SORTIE, et c'est délibéré. Vérifié
+    en rejouant 169 sorties de modèle de production : un `​```action` ouvert et
+    jamais refermé partait jusqu'ici au FORCEUR — le texte qui l'accompagne est
+    une promesse (« Je lance la préparation du photomontage… »), et le forceur
+    repart d'un contexte neuf. Ça marche, et ça a produit le photomontage le
+    07/09. Le faire entrer dans la boucle d'exécution changerait ce chemin sans
+    qu'on l'ait demandé : le seul objet de ce détecteur est la forme de
+    l'appel, pas la reprise d'une sortie tronquée.
     """
-    action, _, erreur = extraire_action(texte or "", role)
+    if not isinstance(texte, str):
+        texte = "" if texte is None else str(texte)
+    if not BLOC_ACTION_RE.search(texte) and BLOC_ACTION_TRONQUE_RE.search(texte):
+        return False
+    action, _, erreur = extraire_action(texte, role)
     return bool(action or erreur)

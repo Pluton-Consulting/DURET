@@ -225,8 +225,8 @@ QUESTIONS = {
 }
 
 
-def etat(texte, **extra):
-    base = {"llm_response": texte, "query": QUESTIONS.get(texte, ""),
+def etat(texte, query=None, **extra):
+    base = {"llm_response": texte, "query": query or QUESTIONS.get(texte, ""),
             "user_role": "direction", "tool_results": [], "forcages": 0,
             "messages": []}
     base.update(extra)
@@ -278,6 +278,22 @@ verifier("et elle survit intacte à l'écran", visible(HTML) == HTML, repr(visib
 INCONNUE = 'La configuration <reglage>{"a":1}</reglage> reste inchangée.'
 verifier("idem pour une balise métier inventée", visible(INCONNUE) == INCONNUE,
          repr(visible(INCONNUE)))
+
+print("\n9. NON-RÉGRESSION : le bloc COUPÉ garde le chemin qui marchait")
+#    Vérifié en rejouant 365 sorties de modèle de production : un ```action
+#    ouvert et jamais refermé (le plafond de sortie atteint en plein JSON)
+#    partait au FORCEUR, qui repart d'un contexte neuf — et le photomontage du
+#    07/09 est sorti par là. Le faire entrer dans la boucle d'exécution aurait
+#    changé ce chemin sans qu'on l'ait demandé.
+COUPE = ('Je lance la préparation du photomontage réaliste.\n\n```action\n'
+         '{"skill":"preparer_visuel","args":{"scene":"jardin arrière"}}')
+verifier("un bloc coupé n'est PAS vu comme une demande d'action",
+         protocol.demande_une_action(COUPE, "direction") is False)
+verifier("et il part toujours au forceur, comme avant",
+         route(etat(COUPE, query="oui")) == "forcer", route(etat(COUPE, query="oui")))
+verifier("le parseur, lui, sait toujours dire au modèle que son bloc a été coupé",
+         (protocol.extraire_action(COUPE, "direction")[2] or "").find("COUPÉ") >= 0,
+         protocol.extraire_action(COUPE, "direction")[2])
 
 print(f"\n═══ {len(echecs)} échec(s)" + (f" : {', '.join(echecs)}" if echecs else " — tout passe"))
 sys.exit(1 if echecs else 0)

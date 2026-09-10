@@ -120,7 +120,10 @@ _module("skills.protocol",
         BLOC_BALISE_RE=re.compile(
             r"<([a-z][a-z0-9_]*)\s*>[ \t\r\n]*(\{[\s\S]*?\})?[ \t\r\n]*</\1\s*>", re.S),
         demande_une_action=lambda texte, role=None: bool(
-            re.search(r"```action", texte or "")))
+            re.search(r"```action", texte or "")),
+        retirer_appels_outil=lambda texte, role=None: re.sub(
+            r"<([a-z][a-z0-9_]*)\s*>\s*(\{[\s\S]*?\})?\s*</\1\s*>", "",
+            texte or ""))
 _module("agents")
 _module("agents.suggestions", poser=lambda texte, suites: texte,
         suggestions_du_tour=lambda *a, **k: [], suites_d_echec=lambda: [])

@@ -320,6 +320,8 @@ faux_proto.BALISAGE_OUTIL_RE = _re.compile(r"(?!x)x")
 faux_proto.demande_une_action = (
     lambda texte, role=None: bool(faux_proto.BLOC_ACTION_RE.search(texte or "")
                                   or faux_proto.BLOC_BALISE_RE.search(texte or "")))
+faux_proto.retirer_appels_outil = (
+    lambda texte, role=None: faux_proto.BLOC_BALISE_RE.sub("", texte or ""))
 sys.modules.setdefault("skills", _types.ModuleType("skills"))
 sys.modules["skills.protocol"] = faux_proto
 

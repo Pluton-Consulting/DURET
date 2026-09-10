@@ -132,6 +132,11 @@ def espace_redaction(reponse):
                 "BLOC_BALISE_RE", "BALISAGE_OUTIL_RE"):
         setattr(faux_proto, nom, _re.compile(r"```action\s*\{.*?\}\s*```", _re.S)
                 if nom == "BLOC_ACTION_RE" else _re.compile(r"(?!x)x"))
+    faux_proto.retirer_appels_outil = lambda texte, role=None: _re.sub(
+        r"<([a-z][a-z0-9_]*)\s*>\s*(\{[\s\S]*?\})?\s*</\1\s*>", "", texte or "")
+    for nom in ():
+        setattr(faux_proto, nom, _re.compile(r"```action\s*\{.*?\}\s*```", _re.S)
+                if nom == "BLOC_ACTION_RE" else _re.compile(r"(?!x)x"))
     sys.modules.setdefault("skills", types.ModuleType("skills"))
     sys.modules["skills.protocol"] = faux_proto
 

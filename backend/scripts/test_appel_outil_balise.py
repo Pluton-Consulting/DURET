@@ -263,5 +263,21 @@ verifier("le texte utile autour d'une action est conservé",
 verifier("une vraie réponse n'est pas rabotée",
          visible("Le tarif est <de 3 €> la pièce.") == "Le tarif est <de 3 €> la pièce.")
 
+print("\n8. MONTRER N'EST PAS FAIRE, et nettoyer n'est pas mutiler")
+#    Trouvés par la revue adverse du 10/09, dans le correctif lui-même.
+CITATION = ("Voici comment je m'y prends :\n\n```xml\n"
+            "<lire_mails>{\"depuis\":\"7j\"}</lire_mails>\n```\n\nC'est tout.")
+a, _, _ = protocol.extraire_action(CITATION, "direction")
+verifier("un appel d'outil CITÉ dans un bloc de code n'est pas exécuté", a is None, a)
+verifier("et il n'est pas effacé de la réponse (c'est l'explication demandée)",
+         "lire_mails" in visible(CITATION), repr(visible(CITATION)[:80]))
+HTML = 'Le gabarit ressemble à ceci : <div>{"nom": "Martin"}</div> — à compléter.'
+verifier("une balise qui ne nomme aucun skill n'est pas un appel d'outil",
+         protocol.demande_une_action(HTML, "direction") is False)
+verifier("et elle survit intacte à l'écran", visible(HTML) == HTML, repr(visible(HTML)))
+INCONNUE = 'La configuration <reglage>{"a":1}</reglage> reste inchangée.'
+verifier("idem pour une balise métier inventée", visible(INCONNUE) == INCONNUE,
+         repr(visible(INCONNUE)))
+
 print(f"\n═══ {len(echecs)} échec(s)" + (f" : {', '.join(echecs)}" if echecs else " — tout passe"))
 sys.exit(1 if echecs else 0)

@@ -207,10 +207,27 @@ _CLES_NOM = ("skill", "name", "tool", "function", "action", "nom")
 _CLES_ARGS = ("args", "arguments", "parameters", "parametres", "paramètres")
 
 
+def _blocs_de_code(texte: str) -> list[tuple[int, int]]:
+    """Les intervalles occupés par les blocs ``` … ``` (citations, pas ordres)."""
+    bornes = [m.start() for m in re.finditer(r"```", texte or "")]
+    return [(bornes[i], bornes[i + 1] + 3) for i in range(0, len(bornes) - 1, 2)]
+
+
+def _cite(position: int, blocs: list[tuple[int, int]]) -> bool:
+    return any(debut <= position < fin for debut, fin in blocs)
+
+
 def _action_balisee(texte: str, role: str | None = None):
     """Reconnaît un appel d'outil enveloppé dans une balise XML."""
     catalogue_role = catalogue(role)
+    # MONTRER N'EST PAS FAIRE. Le prompt prévoit ce cas pour le bloc ```action
+    # (« PARLER D'UNE ACTION N'EST PAS L'EXÉCUTER ») ; il vaut tout autant ici :
+    # « pour lire tes mails j'écris <lire_mails>{…}</lire_mails> », dans un bloc
+    # de code, est une explication, pas un ordre.
+    cites = _blocs_de_code(texte or "")
     for trouve in BLOC_BALISE_RE.finditer(texte or ""):
+        if _cite(trouve.start(), cites):
+            continue
         nom_balise = trouve.group(1).lower()
         enveloppe = nom_balise in _ENVELOPPES_ACTION
         if not enveloppe and nom_balise not in catalogue_role:
@@ -259,6 +276,33 @@ def _action_balisee(texte: str, role: str | None = None):
                 "complet.")
         return {"skill": nom, "args": args}, reste, None
     return None, texte, None
+
+
+
+def retirer_appels_outil(texte: str, role: str | None = None) -> str:
+    """Retire les appels d'outil BALISÉS, et eux seuls.
+
+    LE NETTOYAGE DOIT SUIVRE LA LECTURE, SINON IL MENT. `_action_balisee`
+    refuse de toucher à une balise qui ne nomme aucun skill ; le filet
+    d'affichage, lui, effaçait toute paire `<mot>{…}</mot>` — donc l'exemple
+    XML ou HTML d'une vraie réponse, en silence. Même règle des deux côtés :
+    une enveloppe d'action ou un nom de skill, jamais autre chose, et jamais
+    dans un bloc de code (c'est une citation).
+    """
+    if not isinstance(texte, str) or "<" not in texte:
+        return texte or ""
+    connus = catalogue(role)
+    cites = _blocs_de_code(texte)
+
+    def _retirer(trouve):
+        nom = trouve.group(1).lower()
+        if _cite(trouve.start(), cites):
+            return trouve.group(0)
+        if nom in _ENVELOPPES_ACTION or nom in connus:
+            return ""
+        return trouve.group(0)
+
+    return BLOC_BALISE_RE.sub(_retirer, texte)
 
 
 def _action_native(texte: str, role: str | None = None):

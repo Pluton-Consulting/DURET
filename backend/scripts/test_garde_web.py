@@ -13,7 +13,7 @@ arbre = ast.parse(source)
 
 espace = {"AgentState": dict}
 for noeud in arbre.body:
-    garde = isinstance(noeud, ast.Assign) and getattr(noeud.targets[0], "id", "") in ("_MOTS_INTERNES", "_MOTS_EXTERNES", "_POSSESSIFS")
+    garde = isinstance(noeud, ast.Assign) and getattr(noeud.targets[0], "id", "") in ("_MOTS_INTERNES", "_MOTS_EXTERNES", "_POSSESSIFS", "_CARACTERISTIQUES_PUBLIQUES")
     fonction = isinstance(noeud, ast.FunctionDef) and noeud.name == "should_use_browser"
     if garde or fonction:
         exec(compile(ast.Module(body=[noeud], type_ignores=[]), "agent1", "exec"), espace)
@@ -103,6 +103,19 @@ PUBLIQUES = [
 for q in PUBLIQUES:
     verifier(f"« {q[:46]}… » peut aller sur le web",
              decider({"query": q, "raw_chunks": [], "anonymized_chunks": []}) == "browser")
+
+#    ⚠️ MAIS LE POSSESSIF NE TOMBE QUE DEVANT UNE CARACTÉRISTIQUE. La première
+#    version de ce correctif l'effaçait devant TOUTE la liste externe : « le
+#    prix moyen de nos prestations » partait sur le web, alors que c'est une
+#    donnée d'entreprise. Trouvé par la revue adverse du 10/09.
+POSSESSIF_MAIS_INTERNE = [
+    "quel est le prix moyen de nos prestations de tonte ?",
+    "combien coûte notre intervention type ?",
+    "quel est le tarif public de nos contrats d'entretien ?",
+]
+for q in POSSESSIF_MAIS_INTERNE:
+    verifier(f"« {q[:46]}… » reste en interne (possessif sans caractéristique)",
+             decider({"query": q, "raw_chunks": [], "anonymized_chunks": []}) == "llm")
 
 #    Le veto de MÉTIER, lui, ne bouge pas d'un pouce.
 METIER = [

@@ -1118,41 +1118,125 @@ Voici les messages trouvés :
 # « Rappelle avec `filtres` pour un compte exact ». Le modèle a exploré le
 # schéma trois fois sans jamais filtrer — il n'avait pas lu le mode d'emploi.
 #
-# On garde donc la consigne EN ENTIER, on remplit ce qui reste avec les champs
-# les plus petits (ceux qui portent le sens : un compte, une liste de colonnes)
-# et l'on DIT ce qu'on a laissé de côté. Le résultat reste du JSON valide.
+# ⚠️ LE PREMIER CORRECTIF ÉCARTAIT LE CHAMP TROP GROS, et c'était pire que le
+# mal : sur 40 lignes de facture, le résultat rendu faisait 313 caractères,
+# sans une seule donnée. Or le champ le plus gros est presque toujours celui
+# qui PORTE la réponse. On le réduit donc — les premiers éléments d'une liste,
+# le début d'un texte — et l'on DIT ce qui a été réduit et de combien. Le
+# résultat reste du JSON valide, et il remplit son budget.
 _CLES_CONSIGNE = ("erreur", "message", "message_final", "note", "a_faire", "a_savoir",
                   "pour_continuer", "methode", "compte", "nombre", "total",
                   "page", "pages", "periode_non_comprise")
 
 
+# De quoi loger la mention `_tronque` : son texte fixe (~200 caractères) plus
+# les noms des champs cités. Une réserve trop courte rendait un JSON coupé —
+# exactement le défaut que cette fonction existe pour fermer.
+_RESERVE_MENTION = 420
+
+
+def _reduire_valeur(valeur, place: int):
+    """La valeur ramenée à `place` caractères, ou None si elle ne s'y prête pas."""
+    if place < 40:
+        return None
+    if isinstance(valeur, str):
+        return valeur[:place - 12].rstrip() + " […]"
+    if isinstance(valeur, (list, tuple)):
+        gardes, taille = [], 2
+        for element in valeur:
+            morceau = len(_json.dumps(element, ensure_ascii=False, default=str)) + 1
+            if gardes and taille + morceau > place:
+                break
+            gardes.append(element)
+            taille += morceau
+        return gardes or None
+    if isinstance(valeur, dict):
+        gardes, taille = {}, 2
+        for cle, sous in valeur.items():
+            morceau = len(_json.dumps({cle: sous}, ensure_ascii=False, default=str))
+            if gardes and taille + morceau > place:
+                break
+            gardes[cle] = sous
+            taille += morceau
+        return gardes or None
+    return None
+
+
 def _tailler_resultat(sortie, plafond: int) -> str:
-    """Le résultat d'un geste, coupé sans perdre sa consigne ni mentir sur sa taille."""
-    entier = _json.dumps(sortie, ensure_ascii=False, default=str)
+    """Le résultat d'un geste, coupé sans perdre sa consigne, ses données, ni la vérité."""
+    def _t(objet):
+        return _json.dumps(objet, ensure_ascii=False, default=str)
+
+    entier = _t(sortie)
     if len(entier) <= plafond or not isinstance(sortie, dict):
         return entier[:plafond]
 
-    def _texte(obj):
-        return _json.dumps(obj, ensure_ascii=False, default=str)
+    ecartes, reduits = [], []
 
-    garde = {c: sortie[c] for c in _CLES_CONSIGNE if c in sortie}
-    # Les autres champs, du plus PETIT au plus gros : un compte et une liste de
-    # colonnes valent mieux qu'un début de tableau de valeurs d'exemple.
-    autres = sorted(((c, v) for c, v in sortie.items() if c not in garde),
-                    key=lambda cv: len(_texte(cv[1])))
-    ecartes = []
-    for cle, valeur in autres:
-        essai = {**garde, cle: valeur}
-        if len(_texte(essai)) > plafond - 200:   # de quoi loger la mention
+    def _loger(cible: dict, cle, valeur) -> bool:
+        """Ajoute le champ EN ENTIER s'il tient, sinon le réduit. Faux s'il ne tient pas du tout."""
+        essai = {**cible, cle: valeur}
+        if len(_t(essai)) <= plafond - _RESERVE_MENTION:
+            cible[cle] = valeur
+            return True
+        place = plafond - len(_t(cible)) - _RESERVE_MENTION - len(str(cle)) - 8
+        reduit = _reduire_valeur(valeur, place)
+        if reduit is None:
             ecartes.append(cle)
+            return False
+        cible[cle] = reduit
+        entiers = len(valeur) if isinstance(valeur, (list, tuple, dict)) else None
+        montres = len(reduit) if isinstance(reduit, (list, tuple, dict)) else None
+        reduits.append(f"{cle}" + (f" ({montres} sur {entiers})"
+                                   if entiers is not None else " (début seulement)"))
+        return False
+
+    # LA CONSIGNE D'ABORD, dans son ordre : elle dit au modèle quoi faire de ce
+    # résultat. Elle est réduite comme le reste si elle déborde à elle seule
+    # (un `message` de 20 000 caractères) — jamais tranchée au milieu.
+    garde = {}
+    for cle in _CLES_CONSIGNE:
+        if cle in sortie and not _loger(garde, cle, sortie[cle]):
+            break
+
+    autres = sorted(((c, v) for c, v in sortie.items()
+                     if c not in garde and c not in ecartes and c not in _CLES_CONSIGNE),
+                    key=lambda cv: len(_t(cv[1])))
+    for rang, (cle, valeur) in enumerate(autres):
+        if _loger(garde, cle, valeur):
             continue
-        garde = essai
+        # Les suivants sont plus gros encore : inutile de les essayer.
+        ecartes.extend(c for c, _ in autres[rang + 1:])
+        break
+
+    dits = []
+    if reduits:
+        dits.append("réduit : " + ", ".join(reduits))
     if ecartes:
-        garde["_tronque"] = ("résultat trop long : " + ", ".join(sorted(ecartes))
-                             + " ne sont pas montrés ici. Le geste a bien abouti ; "
-                               "affine ta demande (filtre, période, page) plutôt "
-                               "que de le rappeler à l'identique.")
-    return _texte(garde)[:plafond]
+        dits.append("non montré : " + ", ".join(sorted(ecartes)))
+    if dits:
+        garde["_tronque"] = ("résultat trop long — " + " ; ".join(dits)
+                             + ". Le geste a bien abouti : affine ta demande "
+                               "(filtre, période, page) plutôt que de le rappeler "
+                               "à l'identique.")
+    # DERNIER RECOURS, ET IL DOIT RESTER INUTILISÉ : si la mention a fait
+    # déborder malgré la réserve, on rogne encore le champ réduit plutôt que de
+    # rendre un JSON coupé au milieu.
+    for _ in range(8):
+        texte = _t(garde)
+        if len(texte) <= plafond:
+            return texte
+        if not reduits:
+            break
+        cle = reduits[0].split(" (")[0]
+        encore = _reduire_valeur(garde.get(cle), max(40, plafond - (len(texte) - len(
+            _t(garde.get(cle)))) - 200))
+        if encore is None:
+            garde.pop(cle, None)
+            reduits = []
+        else:
+            garde[cle] = encore
+    return _t(garde)[:plafond]
 
 
 async def tools_node(state: AgentState, config=None) -> dict:
@@ -2866,10 +2950,15 @@ _MOTS_EXTERNES = (
     "actualité", "actualite", "météo", "meteo", "horaires d'ouverture", "adresse de",
     "qu'est-ce que", "qu'est ce que", "définition", "definition", "wikipedia",
     # 10/09 : « nous avons acheté un fiat doblo en juillet, quelle est sa
-    # puissance ? » — la caractéristique d'un objet du commerce est publique,
-    # et la maison n'a que la facture. Le veto interne (« notre », « nos »,
-    # « client », « chantier »…) passe toujours AVANT : « la puissance de notre
-    # tracteur » reste au-dedans.
+    # puissance ? » — la caractéristique d'un objet du commerce est publique, et
+    # la maison n'a que la facture d'achat.
+    "puissance", "fiche technique", "caractéristiques techniques",
+    "caracteristiques techniques", "cv fiscaux", "chevaux fiscaux",
+)
+# Ces mots-là, et eux seuls, lèvent le veto du POSSESSIF : ce qu'on demande est
+# la caractéristique d'un objet, pas une donnée de l'entreprise. Un mot de
+# MÉTIER (client, chantier, devis…) l'emporte quand même.
+_CARACTERISTIQUES_PUBLIQUES = (
     "puissance", "fiche technique", "caractéristiques techniques",
     "caracteristiques techniques", "cv fiscaux", "chevaux fiscaux",
 )
@@ -2884,14 +2973,20 @@ def should_use_browser(state: AgentState) -> str:
     if trouve:
         return "llm"
     demande = (state.get("query") or "").lower()
-    # DEUX VETOS DE FORCE INÉGALE (10/09). Un mot de MÉTIER (client, devis,
+    # TROIS FORCES, ET L'ORDRE COMPTE (10/09). Un mot de MÉTIER (client, devis,
     # chantier, mail…) interdit le web, toujours : ces données n'y sont pas.
-    # Un POSSESSIF, lui, ne dit que la propriété d'un objet — « la puissance de
-    # NOTRE Doblo » est un fait du constructeur, pas une donnée d'entreprise —,
-    # et il vétoyait les deux formulations les plus naturelles de la question.
-    # Il ne l'emporte donc plus sur une demande explicitement publique.
+    # Un POSSESSIF ne dit que la propriété d'un OBJET — « la puissance de NOTRE
+    # Doblo » est un fait du constructeur —, et il vétoyait les deux
+    # formulations les plus naturelles de la question du 10/09. Il cesse donc de
+    # vétoyer, mais UNIQUEMENT devant une caractéristique publique : « le prix
+    # moyen de NOS prestations de tonte » reste une donnée d'entreprise, et
+    # c'est exactement ce que la première version de ce correctif envoyait
+    # sur le web.
     if any(mot in demande for mot in _MOTS_INTERNES if mot not in _POSSESSIFS):
         return "llm"          # veto : une donnée de l'entreprise ne sort pas
+    if (any(mot in demande for mot in _POSSESSIFS)
+            and not any(mot in demande for mot in _CARACTERISTIQUES_PUBLIQUES)):
+        return "llm"          # « nos prestations », « mes tarifs » : au-dedans
     if any(mot in demande for mot in _MOTS_EXTERNES):
         return "browser"      # demande explicite d'information publique
     return "llm"              # dans le doute, on reste au-dedans
@@ -3414,14 +3509,19 @@ def _texte_visible(texte: str) -> str:
     la rédaction, et la réhydratation, pour son dernier filet.
     """
     from skills.protocol import (BLOC_ACTION_RE, BLOC_ACTION_TRONQUE_RE,
-                                 BLOC_NATIF_RE, BLOC_BALISE_RE, BALISAGE_OUTIL_RE)
+                                 BLOC_NATIF_RE, BALISAGE_OUTIL_RE,
+                                 retirer_appels_outil)
     if not isinstance(texte, str):
         return ""
-    # BLOC_BALISE_RE (10/09) : « <interroger_donnees>{}</interroger_donnees> »
+    # LA BALISE (10/09) : « <interroger_donnees>{}</interroger_donnees> »
     # s'affichait EN GUISE DE RÉPONSE. Un appel d'outil, quelle qu'en soit la
-    # forme, vaut zéro caractère pour l'utilisateur.
+    # forme, vaut zéro caractère pour l'utilisateur. Le retrait passe par
+    # `retirer_appels_outil`, qui applique la MÊME règle que la lecture : une
+    # balise qui ne nomme aucun skill n'est pas un appel d'outil, et ce qui est
+    # dans un bloc de code est une citation.
+    texte = retirer_appels_outil(texte)
     for motif in (BLOC_ACTION_RE, BLOC_ACTION_TRONQUE_RE, BLOC_NATIF_RE,
-                  BLOC_BALISE_RE, BALISAGE_OUTIL_RE):
+                  BALISAGE_OUTIL_RE):
         texte = motif.sub("", texte)
     return texte.strip()
 

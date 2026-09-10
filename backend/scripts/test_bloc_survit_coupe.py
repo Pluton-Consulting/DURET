@@ -187,8 +187,9 @@ verifier("ReponsesMail accepte et affiche `titre`",
 #    mode d'emploi de l'outil qu'il tenait.
 import json as _js
 espace_coupe = {"_json": _js}
-extraire(BACKEND / "agents" / "agent1.py", {"_tailler_resultat", "_CLES_CONSIGNE"},
-         espace_coupe)
+extraire(BACKEND / "agents" / "agent1.py",
+         {"_tailler_resultat", "_reduire_valeur", "_CLES_CONSIGNE",
+          "_RESERVE_MENTION"}, espace_coupe)
 tailler = espace_coupe["_tailler_resultat"]
 
 SORTIE_PROD = {
@@ -217,8 +218,50 @@ verifier("la NOTE (le mode d'emploi du geste) survit à la coupe",
          bool(relu) and "filtres" in str(relu.get("note", "")))
 verifier("les champs du jeu survivent (c'est eux qui disent ce qu'on peut demander)",
          bool(relu) and len(relu.get("champs_communs") or []) == 37)
-verifier("la coupe SE DIT, et nomme ce qui manque",
+verifier("la coupe SE DIT, et nomme ce qui a été réduit",
          bool(relu) and "colonnes" in str(relu.get("_tronque", "")))
+# ⚠️ LE PREMIER CORRECTIF ÉCARTAIT le champ trop gros, et c'était pire que le
+#    mal : sur 40 lignes de facture (17 589 caractères), le résultat rendu
+#    faisait 313 caractères sans UNE SEULE donnée. Le champ le plus gros est
+#    presque toujours celui qui porte la réponse.
+def _ligne(i):
+    return {"reference": f"FA-2026-{i:04d}", "client": "MARTIN Jean-Baptiste",
+            "date": "2026-03-12", "montant_ht": "1 240,00", "statut": "payee",
+            "adresse_chantier": "12 avenue des Pins, 33380 MARCHEPRIME",
+            "commercial": "G. CAMBON",
+            "description": "Entretien annuel du jardin : taille des haies, tonte, "
+                           "desherbage des massifs, evacuation des dechets verts, "
+                           "traitement preventif des rosiers et remise en etat du paillage"}
+
+
+LOURD = {"source_type": "facture", "nombre": 40,
+         "enregistrements": [_ligne(i) for i in range(40)],
+         "pour_continuer": "page 2 sur 4",
+         "note": "Filtre de preference sur `champs_communs`."}
+gros = tailler(LOURD, 12000)
+try:
+    lu = _js.loads(gros)
+except Exception as e:                      # noqa: BLE001
+    lu = None
+    verifier("un résultat de 40 lignes reste du JSON valide", False, str(e))
+else:
+    verifier("un résultat de 40 lignes reste du JSON valide", True)
+verifier("les DONNÉES survivent : le champ le plus gros est réduit, jamais jeté",
+         bool(lu) and len(lu.get("enregistrements") or []) >= 10,
+         len((lu or {}).get("enregistrements") or []))
+verifier("et la réduction dit COMBIEN sur combien",
+         bool(lu) and "sur 40" in str(lu.get("_tronque", "")), (lu or {}).get("_tronque"))
+verifier("le budget est rempli, pas gâché (plus de la moitié du plafond)",
+         len(gros) > 6000, len(gros))
+verifier("le plafond n'est jamais dépassé", len(gros) <= 12000, len(gros))
+# Une consigne à elle seule plus grosse que le plafond : réduite elle aussi,
+# jamais tranchée au milieu d'une chaîne.
+enorme = tailler({"message": "M" * 20000, "n": 1}, 12000)
+try:
+    _js.loads(enorme)
+    verifier("une consigne géante est réduite, pas tranchée", len(enorme) <= 12000)
+except Exception as e:                      # noqa: BLE001
+    verifier("une consigne géante est réduite, pas tranchée", False, str(e))
 verifier("un résultat qui tient n'est pas touché",
          tailler({"note": "court", "n": 3}, 12000) == _js.dumps({"note": "court", "n": 3},
                                                                 ensure_ascii=False))

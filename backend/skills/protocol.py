@@ -130,8 +130,13 @@ def _charger_json(brut: str):
     try:
         from json_repair import loads as _reparer
     except ImportError:
-        # La dépendance manque : on se comporte exactement comme avant.
-        raise
+        # La dépendance manque : on se comporte exactement comme avant — c'est
+        # à dire comme un JSON illisible, PAS comme une panne. Un `raise` nu
+        # relançait l'ImportError, qui traversait `extraire_action` (dont le
+        # contrat est « ne lève jamais ») et tuait le tour. Sans conséquence
+        # tant que `json-repair` est dans l'image ; depuis que le ROUTEUR passe
+        # par ce chemin à chaque réponse, ce n'est plus un risque acceptable.
+        raise json.JSONDecodeError("réparation indisponible", brut, 0)
     repare = _reparer(brut)
     if repare in ({}, [], "", None):
         # Rien d'exploitable : on relance l'erreur d'origine, pour que le
@@ -889,7 +894,15 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
 
     Ne lève jamais : un bloc mal formé est une erreur de rédaction du modèle, pas
     une panne du service.
+
+    LE TEXTE N'EN EST PAS TOUJOURS UN. `llm_node` range `response.content` tel
+    que le fournisseur le rend ; certains rendent une LISTE de morceaux. Une
+    regex sur une liste lève, et depuis que le routeur passe par ici, elle
+    lèverait au milieu du graphe. On ramène donc à du texte, une fois pour
+    toutes, à l'entrée du seul point de parsing.
     """
+    if not isinstance(texte, str):
+        texte = "" if texte is None else str(texte)
     trouve = BLOC_ACTION_RE.search(texte or "")
     if not trouve:
         # UNE SORTIE COUPÉE SE DIT, elle ne se devine pas. Un bloc ouvert et

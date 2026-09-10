@@ -39,12 +39,36 @@ COULEURS = {
     "rouge": "C0272D", "vert": "2F5233", "bleu": "0A6FB4",
     "orange": "C2610A", "gris": "6B6B6B", "noir": "000000",
 }
+def _couleur_de_marque(cle: str, repli: str) -> str:
+    """Une couleur de la charte du client, en hexadécimal sans dièse.
+
+    LA CHARTE EST UNE DONNÉE, PAS DU CODE. Elle vit déjà dans `emails/marque.py`
+    — le seul fichier qui diverge entre les deux maisons — et sert les mails.
+    Un document produit « aux couleurs de la maison » doit puiser à la même
+    source, sinon les deux dériveront. Une valeur illisible retombe sur le
+    repli : un document sans couleur vaut mieux qu'un document illisible.
+    """
+    try:
+        from emails.marque import MARQUE
+        brut = str(MARQUE.get(cle) or "").lstrip("#").strip().upper()
+    except Exception:  # noqa: BLE001 — la marque ne doit jamais casser un rendu
+        brut = ""
+    return brut if len(brut) == 6 and all(c in "0123456789ABCDEF" for c in brut) else repli
+
+
+# `charte` = la couleur d'accent de la maison (titres, mises en avant) ;
+# `charte_fond` = le ton foncé de l'en-tête. Deux suffisent : au-delà, le
+# modèle choisirait au hasard.
+COULEURS["charte"] = _couleur_de_marque("couleur", COULEURS["noir"])
+COULEURS["charte_fond"] = _couleur_de_marque("fond", COULEURS["noir"])
 
 BLOCS = {
-    "titre":       "texte, niveau (1 à 4)",
+    "titre":       "texte, niveau (1 à 4), et au choix couleur "
+                   "(charte|charte_fond|rouge|vert|bleu|orange|gris|noir) — "
+                   "« charte » est la couleur de la maison",
     "paragraphe":  "texte, et au choix : gras, italique, centre (booléens), "
                    "taille (petit|normal|grand|tres_grand), "
-                   "couleur (rouge|vert|bleu|orange|gris|noir)",
+                   "couleur (charte|charte_fond|rouge|vert|bleu|orange|gris|noir)",
     "liste":       "items[], ordonnee (bool)",
     "tableau":     "entetes[], lignes[[]], legende",
     "saut_page":   "(aucun champ)",
@@ -185,7 +209,12 @@ def normaliser_element(brut) -> dict | None:
             return None
         niveau = brut.get("niveau", brut.get("level", niveau_implicite))
         niveau = niveau if isinstance(niveau, int) and 1 <= niveau <= 4 else 1
-        return {"bloc": "titre", "texte": texte, "niveau": niveau}
+        # UNE CHARTE SE VOIT DANS LES TITRES. Le champ est facultatif et le
+        # vocabulaire reste FERMÉ : un titre sans couleur rend exactement comme
+        # avant (le style Word d'origine).
+        couleur = _texte(brut.get("couleur"), 12).lower()
+        return {"bloc": "titre", "texte": texte, "niveau": niveau,
+                "couleur": couleur if couleur in COULEURS else ""}
 
     if bloc == "paragraphe":
         texte = _champ_texte(brut)

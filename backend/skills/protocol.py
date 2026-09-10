@@ -428,8 +428,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "s'ecrivent sur CHAQUE page (coordonnees, mentions legales) : ce ne "
         "sont pas des blocs, ce sont des parametres d'ici. `entete_image` / "
         "`pied_image` : une IMAGE (logo, photo) sur chaque page — la reference "
-        "d'une image de la conversation ou le NOM d'un fichier image du "
-        "stockage. Ne produit aucun fichier",
+        "d'une image de la conversation, le NOM d'un fichier image du "
+        "stockage, ou le NOM d'un PDF de la maison (devis type, plaquette) : "
+        "on en tire son logo. Pour les COULEURS de la maison, mets "
+        "couleur:'charte' sur un titre ou un paragraphe. Ne produit aucun fichier",
 
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter",
                     "entete_image", "pied_image"]),

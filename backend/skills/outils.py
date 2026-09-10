@@ -243,7 +243,9 @@ SKILLS = {
             "`blocs` : "
             "{bloc:titre|paragraphe|liste|tableau|image|saut_page|feuille} ; "
             "{bloc:image, image:<reference d'une image du fil ou nom d'un fichier "
-            "du stockage>}. `entete_image`/`pied_image` : logo sur chaque page. Si "
+            "du stockage>}. `entete_image`/`pied_image` : logo sur chaque page (une "
+            "image, ou un PDF de la maison dont on tire le logo) ; couleur:'charte' "
+            "pour les couleurs de la maison. Si "
             "COURT (~30 blocs) : ce geste FINALISE ; au-dela, "
             "creer/ajouter/terminer_document. `mode_emploi` documents"),
         requis=["titre", "blocs"],

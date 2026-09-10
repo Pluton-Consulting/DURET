@@ -27,6 +27,15 @@ logo) sur chaque page ; en Excel, qui n'a pas d'image d'en-tête, elle est
 posée en haut de chaque onglet et en bas du dernier. Une image qui ne se
 résout pas est ÉCARTÉE avec sa raison, jamais insérée vide.
 
+**Reprendre la charte d'un document existant.** Un devis type de la maison
+est souvent un PDF : `entete_image` accepte son NOM et en tire le logo (la
+plus grande image de la bande haute ou basse de la page). Une page scannée
+d'un seul tenant est refusée en le disant — mieux vaut pas de logo qu'un
+scan de devis collé en en-tête. Pour les COULEURS, la couleur `charte` est
+celle de la maison : `{"bloc": "titre", "texte": "…", "couleur": "charte"}`.
+`charte_fond` est son ton foncé. Elles viennent de la charte du client, pas
+du modèle : ne les invente pas en hexadécimal.
+
 **Tailles** : `petit`, `normal`, `grand`, `tres_grand`.
 **Couleurs** : `rouge`, `vert`, `bleu`, `orange`, `gris`, `noir`.
 

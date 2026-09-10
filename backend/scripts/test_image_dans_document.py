@@ -143,9 +143,18 @@ octets, ext, nom = asyncio.run(images.resoudre("logo-symbiose.png", U))
 verifier("un NOM de fichier du stockage aussi", octets == LOGO and nom == "logo-symbiose.png")
 try:
     asyncio.run(images.resoudre("devis.pdf", U))
-    verifier("un PDF est refusé : « n'est pas une image »", False)
+    verifier("un PDF SANS logo est refusé, avec sa raison", False,
+             "il a rendu une image alors que ce PDF doublé n'en porte aucune")
 except images.ImageRefusee as err:
-    verifier("un PDF est refusé : « n'est pas une image »", "n'est pas une image" in str(err), err)
+    # 10/09 : un PDF n'est plus refusé d'office — un devis type de la maison en
+    # est un, et c'est SON logo qu'on nous demande de reprendre. Celui du banc
+    # n'est pas un vrai PDF (huit octets) : le refus doit le NOMMER et dire
+    # pourquoi, jamais renvoyer « n'est pas une image » comme avant.
+    verifier("un PDF illisible est refusé, en le nommant et en disant pourquoi",
+             "devis.pdf" in str(err) and "n'est pas une image" not in str(err), err)
+verifier("un fichier qui n'est ni image ni PDF n'est toujours pas une image",
+         not images.est_image("note.txt", "text/plain")
+         and not images._est_un_pdf("note.txt", "text/plain"))
 try:
     asyncio.run(images.resoudre("inconnu.png", U))
     verifier("une référence inconnue est refusée AVEC la raison de la résolution", False)

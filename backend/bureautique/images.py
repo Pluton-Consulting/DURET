@@ -83,6 +83,94 @@ def normaliser_octets(octets: bytes, mime: str | None) -> tuple[bytes, str]:
     return sortie.getvalue(), "png"
 
 
+
+def _est_un_pdf(nom: str, mime: str | None) -> bool:
+    return (str(mime or "").lower().startswith("application/pdf")
+            or str(nom or "").lower().endswith(".pdf"))
+
+
+# Ce qui distingue un LOGO d'une page scannée : il vit dans la bande haute ou
+# basse de la page, et il est petit devant elle. Les seuils sont larges — on
+# cherche à écarter le scan pleine page, pas à faire de la mise en page.
+_BANDE = 0.28          # le quart haut ou bas de la page
+_PART_MAX = 0.35       # au-delà, ce n'est plus un logo mais une illustration
+
+
+def _aire(rect) -> float:
+    """L'aire d'un rectangle PyMuPDF, quelle que soit la version.
+
+    `Rect.get_area()` n'existe pas partout (elle s'appelait `getArea`, et la
+    propriété `.width`/`.height` est la seule constante) : on la calcule.
+    """
+    try:
+        return abs(float(rect.width) * float(rect.height))
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def logo_du_pdf(octets: bytes, nom: str) -> tuple[bytes, str, str]:
+    """(octets, mime, nom) du logo d'un PDF : la plus grande image d'en-tête ou de pied.
+
+    Lève `ImageRefusee` avec une raison lisible quand le PDF n'en porte pas —
+    un PDF de texte pur, ou une page scannée d'un seul tenant.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError as e:  # pragma: no cover — présent dans l'image
+        # LE REFUS NOMME TOUJOURS LE FICHIER : sans son nom, la personne ne sait
+        # pas lequel de ses trois documents a été écarté.
+        raise ImageRefusee(f"« {nom} » est un PDF, et sa lecture est indisponible "
+                           "sur ce serveur (PyMuPDF absent)") from e
+
+    candidats = []
+    try:
+        doc = fitz.open(stream=octets, filetype="pdf")
+    except Exception as e:  # noqa: BLE001
+        raise ImageRefusee(f"« {nom} » ne s'ouvre pas comme un PDF") from e
+    try:
+        # L'en-tête et le pied se répètent : la première page suffit, et deux
+        # pages au plus bornent le travail sur un dossier de cent pages.
+        for page in list(doc)[:2]:
+            hauteur = float(page.rect.height) or 1.0
+            aire_page = _aire(page.rect) or 1.0
+            for info in page.get_images(full=True):
+                xref = info[0]
+                try:
+                    rects = page.get_image_rects(xref)
+                except Exception:  # noqa: BLE001
+                    rects = []
+                if not rects:
+                    continue
+                r = rects[0]
+                haut = float(r.y1) <= hauteur * _BANDE
+                bas = float(r.y0) >= hauteur * (1 - _BANDE)
+                if not (haut or bas):
+                    continue
+                if _aire(r) > aire_page * _PART_MAX:
+                    continue
+                try:
+                    brut = doc.extract_image(xref)
+                except Exception:  # noqa: BLE001
+                    continue
+                donnees = brut.get("image") or b""
+                if len(donnees) < 256:      # une puce, une ligne de séparation
+                    continue
+                candidats.append((_aire(r), donnees,
+                                  f"image/{(brut.get('ext') or 'png').lower()}",
+                                  "en-tête" if haut else "pied de page"))
+    finally:
+        doc.close()
+
+    if not candidats:
+        raise ImageRefusee(
+            f"« {nom} » ne porte aucune image d'en-tête ou de pied de page "
+            "exploitable (PDF de texte, ou page scannée d'un seul tenant). "
+            "Reprends son en-tête en TEXTE, ou donne le fichier du logo.")
+    candidats.sort(key=lambda c: -c[0])
+    _, donnees, mime, place = candidats[0]
+    return donnees, mime, f"{nom} ({place})"
+
+
 async def resoudre(designation: str, user) -> tuple[bytes, str, str]:
     """(octets, extension, nom) d'une image désignée par le modèle.
 
@@ -102,8 +190,14 @@ async def resoudre(designation: str, user) -> tuple[bytes, str, str]:
     piece = pretes[0]
     nom, mime, octets = str(piece.get("nom") or ""), str(piece.get("mime") or ""), piece.get("octets") or b""
     if not est_image(nom, mime):
-        raise ImageRefusee(f"« {nom} » n'est pas une image ({mime or 'type inconnu'}) : "
-                           "seule une image (PNG, JPEG, WebP, GIF, BMP, TIFF) peut être insérée")
+        # UN DEVIS DE RÉFÉRENCE EST SOUVENT UN PDF, et c'est SON logo qu'on
+        # nous demande de reprendre. On l'en extrait plutôt que de renvoyer le
+        # modèle recopier l'en-tête à la main, en texte (09/09).
+        if _est_un_pdf(nom, mime):
+            octets, mime, nom = await asyncio.to_thread(logo_du_pdf, octets, nom)
+        else:
+            raise ImageRefusee(f"« {nom} » n'est pas une image ({mime or 'type inconnu'}) : "
+                               "seule une image (PNG, JPEG, WebP, GIF, BMP, TIFF) peut être insérée")
     if len(octets) > MAX_OCTETS_IMAGE:
         raise ImageRefusee(f"« {nom} » pèse {len(octets) // (1024 * 1024)} Mo : "
                            f"au-delà de {MAX_OCTETS_IMAGE // (1024 * 1024)} Mo, réduis-la d'abord")

@@ -18,14 +18,16 @@ class Settings(BaseSettings):
     # (Paramètres → Clés API) ou par ANONYMISATION=active ici ; la
     # RÉHYDRATATION des balises déjà posées ne se coupe jamais.
     anonymisation: str = "desactivee"
-    # L'ACCORD HUMAIN AVANT CHAQUE ACTION (08/09, demande de Noa : « une
-    # validation humaine à chaque fois, vraiment à chaque fois »). Le MÉCANISME
-    # est du socle (`security/validation_totale.py`) ; le DÉFAUT est propre au
-    # client : « active » ICI (Duret), « desactivee » chez le jumeau — Noa :
-    # « Symbiose, il faut laisser l'accord humain comme avant ». « active » :
-    # dans le chat, TOUT geste passe par la carte d'accord puis le tour
-    # reprend. Un clic dans Paramètres → Clés API le coupe.
-    validation_totale: str = "active"
+    # L'ACCORD HUMAIN AVANT CHAQUE ACTION. Le MÉCANISME est du socle
+    # (`security/validation_totale.py`) ; le DÉFAUT est un réglage de client.
+    # 08/09 : « active » ici, à la demande de Noa (« une validation humaine à
+    # chaque fois, vraiment à chaque fois »). 10/09, il revient dessus après
+    # l'avoir vécu : « remets la même fréquence de validation humaine que
+    # Symbiose » — un accord par geste fait de « fais le point sur mes mails »
+    # une file de cartes à cliquer. On repasse donc au régime commun :
+    # lectures immédiates, accord sur les seuls effets EXTERNES (envoi, dépôt,
+    # tirage). Un clic dans Paramètres → Clés API le rallume.
+    validation_totale: str = "desactivee"
     screenshot_ttl_minutes: int = 30               # purge des captures d'écran orphelines dans validations.payload
     screenshot_cleanup_interval_s: int = 300       # fréquence du balayage TTL
 

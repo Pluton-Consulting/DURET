@@ -106,7 +106,10 @@ def _docx(entete: dict, elements, sortie: str) -> str:
     for e in elements:
         bloc = e["bloc"]
         if bloc == "titre":
-            doc.add_heading(e["texte"], e["niveau"])
+            titre = doc.add_heading(e["texte"], e["niveau"])
+            if e.get("couleur"):
+                for run in titre.runs:
+                    run.font.color.rgb = RGBColor.from_string(COULEURS[e["couleur"]])
         elif bloc == "paragraphe":
             p = doc.add_paragraph()
             run = p.add_run(e["texte"])
@@ -257,7 +260,7 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
         if bloc == "titre":
             flux.append(Spacer(1, 0.35 * cm))
             flux.append(Paragraph(_echapper(e["texte"]),
-                                  styles[f"Heading{min(e['niveau'], 4)}"]))
+                                  _style_titre(e, styles)))
         elif bloc == "paragraphe":
             flux.append(Paragraph(_echapper(e["texte"]), _style_paragraphe(e, styles)))
         elif bloc == "liste":
@@ -299,6 +302,22 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
 
     doc.build(flux, onFirstPage=decor, onLaterPages=decor)
     return sortie
+
+
+
+def _style_titre(e: dict, styles):
+    """Style PDF d'un titre : celui d'origine, teinté si une couleur est demandée."""
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+
+    from bureautique.modele import COULEURS
+
+    base = styles[f"Heading{min(e['niveau'], 4)}"]
+    if not e.get("couleur"):
+        return base
+    style = ParagraphStyle(f"h{e['niveau']}{e['couleur']}", parent=base)
+    style.textColor = colors.HexColor("#" + COULEURS[e["couleur"]])
+    return style
 
 
 def _style_paragraphe(e: dict, styles):
@@ -494,7 +513,8 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
         elif bloc == "titre":
             ecrire([e["texte"]])
             feuille.cell(row=ligne_courante - 1, column=1).font = Font(
-                bold=True, size=max(14 - e["niveau"], 10))
+                bold=True, size=max(14 - e["niveau"], 10),
+                color=(COULEURS[e["couleur"]] if e.get("couleur") else None))
         elif bloc == "paragraphe":
             ecrire([e["texte"]])
             c = feuille.cell(row=ligne_courante - 1, column=1)

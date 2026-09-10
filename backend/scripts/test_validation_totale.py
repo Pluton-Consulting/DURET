@@ -84,9 +84,12 @@ verifier("la carte dit de quoi il s'agit (« Accord demandé avant chaque action
 verifier("le prompt dit : une action à la fois, une phrase qui dit pourquoi, ne redemande jamais",
          "UNE action à la fois" in vt.consigne() and "ne redemande" in vt.consigne())
 cfgs = (BACKEND / "config.py").read_text(encoding="utf-8")
-# LE DÉFAUT SUIT LE CLIENT (08/09, Noa) : « active » chez Duret, « desactivee »
-# chez Symbiose (reconnu par la présence du Drive).
-attendu = "desactivee" if (BACKEND / "outils" / "drive.py").exists() else "active"
+# LE DÉFAUT EST LE MÊME DES DEUX CÔTÉS DEPUIS LE 10/09. Il a divergé deux
+# jours (« active » chez Duret, à la demande de Noa) ; il revient dessus après
+# l'avoir vécu : « remets la même fréquence de validation humaine que
+# Symbiose ». Le régime commun est donc l'ancien — accord sur les seuls effets
+# externes —, et le mécanisme reste là, à un clic.
+attendu = "desactivee"
 verifier(f"config : le défaut de CE client est « {attendu} », et le catalogue des réglages le connaît",
          f'validation_totale: str = "{attendu}"' in cfgs
          and '"validation_totale",' in (BACKEND / "llm" / "reglages.py").read_text(encoding="utf-8"))

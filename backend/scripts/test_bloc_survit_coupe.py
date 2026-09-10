@@ -254,6 +254,30 @@ verifier("et la réduction dit COMBIEN sur combien",
 verifier("le budget est rempli, pas gâché (plus de la moitié du plafond)",
          len(gros) > 6000, len(gros))
 verifier("le plafond n'est jamais dépassé", len(gros) <= 12000, len(gros))
+# ⚠️ LE PREMIER ÉLÉMENT SE MESURE COMME LES AUTRES (trouvé par la revue
+#    adverse). `drive_lire_lot` / `nas_lire_lot` rendent des fichiers lus de
+#    6 000 caractères chacun, et ne sont PAS dans RESULTATS_GENEREUX : un seul
+#    élément dépasse déjà le plafond de 4 000. La garde « on garde toujours le
+#    premier » le laissait passer sans le mesurer, et le dernier recours
+#    tranchait au milieu d'une chaîne — le défaut que cette fonction ferme.
+LOT = {"motif": "devis",
+       "lus": [{"nom": f"DEVIS-2025-{i:04d}.pdf", "contenu": "D" * 6000} for i in range(3)],
+       "nombre_lu": 3, "correspondances_totales": 12,
+       "note": "12 fichiers correspondent, 5 lus au maximum par appel."}
+lot = tailler(LOT, 4000)
+try:
+    vu = _js.loads(lot)
+except Exception as e:                      # noqa: BLE001
+    vu = None
+    verifier("un lot de fichiers lus reste du JSON valide sous le plafond serré", False, str(e))
+else:
+    verifier("un lot de fichiers lus reste du JSON valide sous le plafond serré", True)
+verifier("le premier document est RACCOURCI, pas perdu",
+         bool(vu) and vu.get("lus") and len(str(vu["lus"][0].get("contenu", ""))) > 100,
+         str((vu or {}).get("lus"))[:120])
+verifier("et la mention avoue que le dernier élément est raccourci",
+         bool(vu) and "raccourci" in str(vu.get("_tronque", "")), (vu or {}).get("_tronque"))
+verifier("le plafond serré est tenu", len(lot) <= 4000, len(lot))
 # Une consigne à elle seule plus grosse que le plafond : réduite elle aussi,
 # jamais tranchée au milieu d'une chaîne.
 enorme = tailler({"message": "M" * 20000, "n": 1}, 12000)

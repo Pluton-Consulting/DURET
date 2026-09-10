@@ -1141,23 +1141,39 @@ def _reduire_valeur(valeur, place: int):
         return None
     if isinstance(valeur, str):
         return valeur[:place - 12].rstrip() + " […]"
+    # ⚠️ LE PREMIER ÉLÉMENT SE MESURE COMME LES AUTRES. Une garde en
+    # `if gardes and …` l'admettait SANS le mesurer, « pour ne pas rendre une
+    # liste vide » : un `drive_lire_lot` dont chaque fichier lu pèse 6 000
+    # caractères pour un plafond de 4 000 repartait donc en entier, et le
+    # dernier recours retranchait au milieu d'une chaîne — le défaut même que
+    # cette fonction existe pour fermer. On DESCEND dans l'élément qui ne tient
+    # pas plutôt que de tout perdre : le début du premier document vaut mieux
+    # que son seul nom, et infiniment mieux qu'un JSON illisible.
     if isinstance(valeur, (list, tuple)):
         gardes, taille = [], 2
         for element in valeur:
             morceau = len(_json.dumps(element, ensure_ascii=False, default=str)) + 1
-            if gardes and taille + morceau > place:
-                break
-            gardes.append(element)
-            taille += morceau
+            if taille + morceau <= place:
+                gardes.append(element)
+                taille += morceau
+                continue
+            reduit = _reduire_valeur(element, place - taille - 4)
+            if reduit is not None:
+                gardes.append(reduit)
+            break
         return gardes or None
     if isinstance(valeur, dict):
         gardes, taille = {}, 2
         for cle, sous in valeur.items():
             morceau = len(_json.dumps({cle: sous}, ensure_ascii=False, default=str))
-            if gardes and taille + morceau > place:
-                break
-            gardes[cle] = sous
-            taille += morceau
+            if taille + morceau <= place:
+                gardes[cle] = sous
+                taille += morceau
+                continue
+            reduit = _reduire_valeur(sous, place - taille - len(str(cle)) - 8)
+            if reduit is not None:
+                gardes[cle] = reduit
+            break
         return gardes or None
     return None
 
@@ -1187,8 +1203,17 @@ def _tailler_resultat(sortie, plafond: int) -> str:
         cible[cle] = reduit
         entiers = len(valeur) if isinstance(valeur, (list, tuple, dict)) else None
         montres = len(reduit) if isinstance(reduit, (list, tuple, dict)) else None
-        reduits.append(f"{cle}" + (f" ({montres} sur {entiers})"
-                                   if entiers is not None else " (début seulement)"))
+        if entiers is None:
+            dit = " (début seulement)"
+        else:
+            # LE COMPTE NE SUFFIT PAS : le dernier élément gardé peut avoir été
+            # raccourci lui-même (le début d'un document de 6 000 caractères).
+            # « 1 sur 3 » laisserait croire qu'on tient ce document en entier.
+            entier_garde = list(valeur)[:montres] if isinstance(valeur, (list, tuple)) else None
+            rogne = (entier_garde is not None
+                     and _t(reduit) != _t(entier_garde))
+            dit = f" ({montres} sur {entiers}" + (", le dernier raccourci)" if rogne else ")")
+        reduits.append(f"{cle}{dit}")
         return False
 
     # LA CONSIGNE D'ABORD, dans son ordre : elle dit au modèle quoi faire de ce

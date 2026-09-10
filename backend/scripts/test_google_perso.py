@@ -117,23 +117,23 @@ except Exception:  # noqa: BLE001
 
 # ── 3. Le cache des boîtes reliées ───────────────────────────────────
 print("\n3. Le cache des boîtes reliées")
-gp._CACHE = {"nathalie@duret-sols.fr": "refresh-n"}
+gp._CACHE = {"nathalie@exemple-sols.fr": "refresh-n"}
 verifier("une boîte non reliée rend None",
-         gp.credentials_pour_boite("eric@duret-sols.fr") is None)
+         gp.credentials_pour_boite("eric@exemple-sols.fr") is None)
 verifier("les boîtes reliées se listent (pour la synchronisation)",
-         gp.emails_connectes() == ["nathalie@duret-sols.fr"])
+         gp.emails_connectes() == ["nathalie@exemple-sols.fr"])
 verifier("la casse et les espaces ne comptent pas",
-         gp._normaliser("  Nathalie@Duret-Sols.FR ") == "nathalie@duret-sols.fr")
+         gp._normaliser("  Nathalie@Exemple-Sols.FR ") == "nathalie@exemple-sols.fr")
 try:
     import google.oauth2.credentials  # noqa: F401
-    creds = gp.credentials_pour_boite("Nathalie@duret-sols.fr")
+    creds = gp.credentials_pour_boite("Nathalie@exemple-sols.fr")
     verifier("une boîte reliée rend des identifiants OAuth",
              creds is not None and creds.refresh_token == "refresh-n")
 except ImportError:
     print("  (google-auth absent de ce poste : le chemin positif se joue dans le conteneur)")
 reglages.google_oauth_client_id = None
 verifier("client OAuth retiré : plus d'identifiants, même boîte reliée",
-         gp.credentials_pour_boite("nathalie@duret-sols.fr") is None)
+         gp.credentials_pour_boite("nathalie@exemple-sols.fr") is None)
 
 # ── 4. Les branchements livrés (contrôles statiques) ─────────────────
 print("\n4. Les branchements livrés")

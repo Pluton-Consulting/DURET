@@ -140,7 +140,7 @@ creer = espace["create_user"]
 import asyncio  # noqa: E402
 
 REQUETES.clear()
-asyncio.run(creer(_Corps(email="jean@symbiose-paysage.fr", name="Jean", role="terrain"),
+asyncio.run(creer(_Corps(email="jean@exemple-paysage.fr", name="Jean", role="terrain"),
                   _Moi()))
 inserts_joues = [r for r in REQUETES if r[0].startswith("INSERT INTO users")]
 verifier("EXÉCUTÉ — sans quota, un seul INSERT part", len(inserts_joues) == 1)
@@ -152,7 +152,7 @@ verifier("aucun None ne part vers la base",
          str(inserts_joues[0][1]) if inserts_joues else "")
 
 REQUETES.clear()
-asyncio.run(creer(_Corps(email="marie@symbiose-paysage.fr", name="Marie",
+asyncio.run(creer(_Corps(email="marie@exemple-paysage.fr", name="Marie",
                          role="commercial", quota_mensuel=200), _Moi()))
 inserts_joues = [r for r in REQUETES if r[0].startswith("INSERT INTO users")]
 verifier("EXÉCUTÉ — avec quota, la colonne est bien écrite",

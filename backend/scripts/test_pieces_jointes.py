@@ -62,11 +62,11 @@ if pieces:
              and pieces.extension("photo.jpeg") == ".jpeg")
     verifier("est_image : png/jpg/webp, ou MIME image", pieces.est_image("a.PNG") and pieces.est_image("x", "image/heic") and not pieces.est_image("devis.pdf"))
     corps = ("Bonjour, le devis est sur https://drive.google.com/file/d/abc. Voir aussi "
-             "http://www.symbiose-paysage.fr/realisations, et https://drive.google.com/file/d/abc/ "
+             "http://www.exemple-paysage.fr/realisations, et https://drive.google.com/file/d/abc/ "
              "Désinscription : https://news.x.fr/unsubscribe?u=1 — merci.")
     liens = pieces.liens_du_texte(corps)
     verifier("liens : dédoublonnés, ponctuation retirée, désinscription écartée",
-             liens == ["https://drive.google.com/file/d/abc", "http://www.symbiose-paysage.fr/realisations"], str(liens))
+             liens == ["https://drive.google.com/file/d/abc", "http://www.exemple-paysage.fr/realisations"], str(liens))
     dxf = "\n".join(["0", "SECTION", "2", "ENTITIES", "0", "TEXT", "8", "0", "1", "Terrasse bois 45 m2",
                       "0", "MTEXT", "1", "{\\fArial;Cote 12.50}\\PNiveau 0", "0", "LINE", "1", "pas un texte",
                       "0", "ATTRIB", "1", "CARTOUCHE : Villa Pereire", "0", "ENDSEC"])

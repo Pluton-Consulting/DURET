@@ -6,7 +6,7 @@ LES DEUX DEMANDES (Noa, en lisant le journal des échanges du 3 septembre) :
      que sur 30 lignes ? il doit être capable d'agir sur la totalité de l'excel
      en 1 seul coup » ;
   2. « pourquoi il n'a pas réussi à lire les mails ? le mail du compte qui a
-     demandé est bien en @symbiose-paysage.fr ».
+     demandé est bien en @exemple-paysage.fr ».
 
 CE QUE LES TRACES MONTRAIENT :
   · 03/09 08:57 et 10:33 — l'invite disait « Tableau : 95 lignes », donc le
@@ -17,7 +17,7 @@ CE QUE LES TRACES MONTRAIENT :
   · 03/09 15:18 et 15:24 — « votre compte n'appartient pas au domaine de
     messagerie ». Ces deux tours-là tournaient sur le compte SUPER-ADMIN (le
     compte développeur, hors messagerie de l'entreprise), pas sur celui de la
-    direction : `MS_DOMAIN` valait bien `symbiose-paysage.fr`, et le compte
+    direction : `MS_DOMAIN` valait bien `exemple-paysage.fr`, et le compte
     direction avait lu SA boîte sans difficulté à 10:30 le même jour. La
     bascule du super_admin vers la boîte d'un dirigeant existait déjà
     (03/09, `2d490df`) — elle n'était pas déployée. Restaient deux fragilités
@@ -146,7 +146,7 @@ verifier("le catalogue ordonne d'écrire `@tableau` avec un fichier joint",
 print("\n── 2. « Aucune boîte à lire » ne doit plus arriver à un dirigeant")
 
 REGLAGES = types.SimpleNamespace(ms_domain=None, gmail_domain=None)
-DIRIGEANT = {"email": "eric@symbiose-paysage.fr"}
+DIRIGEANT = {"email": "eric@exemple-paysage.fr"}
 
 
 class _Connexion:
@@ -180,23 +180,23 @@ def compte(email, role):
 
 
 # ── les domaines ─────────────────────────────────────────────────────────
-REGLAGES.ms_domain = "symbiose-paysage.fr"
+REGLAGES.ms_domain = "exemple-paysage.fr"
 verifier("l'ancienne valeur à UN domaine marche telle quelle",
-         authz.domaines_messagerie() == frozenset({"symbiose-paysage.fr"})
-         and authz.est_du_domaine("noa@symbiose-paysage.fr"))
+         authz.domaines_messagerie() == frozenset({"exemple-paysage.fr"})
+         and authz.est_du_domaine("noa@exemple-paysage.fr"))
 
-REGLAGES.ms_domain = "symbiose-paysage.fr, symbiosepaysage.onmicrosoft.com"
+REGLAGES.ms_domain = "exemple-paysage.fr, symbiosepaysage.onmicrosoft.com"
 verifier("PLUSIEURS domaines sont reconnus (le public ET l'onmicrosoft)",
-         authz.est_du_domaine("noa@symbiose-paysage.fr")
+         authz.est_du_domaine("noa@exemple-paysage.fr")
          and authz.est_du_domaine("noa@symbiosepaysage.onmicrosoft.com"))
 verifier("une adresse d'un autre domaine reste dehors",
          not authz.est_du_domaine("benitez.noapro@gmail.com"))
 verifier("la casse et les espaces ne décident de rien",
-         authz.est_du_domaine("  Noa@Symbiose-Paysage.FR  "))
+         authz.est_du_domaine("  Noa@Exemple-Paysage.FR  "))
 
-REGLAGES.ms_domain = "@symbiose-paysage.fr;autre.fr"
+REGLAGES.ms_domain = "@exemple-paysage.fr;autre.fr"
 verifier("les séparateurs et l'arobase de trop sont tolérés",
-         authz.domaines_messagerie() == frozenset({"symbiose-paysage.fr", "autre.fr"}))
+         authz.domaines_messagerie() == frozenset({"exemple-paysage.fr", "autre.fr"}))
 
 REGLAGES.ms_domain, REGLAGES.gmail_domain = None, None
 verifier("aucun domaine configuré n'exclut PERSONNE",
@@ -205,17 +205,17 @@ verifier("une valeur qui n'est pas une adresse n'est jamais du domaine",
          not authz.est_du_domaine("") and not authz.est_du_domaine("pas-une-adresse"))
 
 # ── la boîte par défaut ──────────────────────────────────────────────────
-REGLAGES.ms_domain = "symbiose-paysage.fr"
+REGLAGES.ms_domain = "exemple-paysage.fr"
 
 verifier("un compte du domaine lit SA boîte, quel que soit son rôle",
-         asyncio.run(authz.boite_par_defaut(compte("noa@symbiose-paysage.fr", "direction")))
-         == "noa@symbiose-paysage.fr")
+         asyncio.run(authz.boite_par_defaut(compte("noa@exemple-paysage.fr", "direction")))
+         == "noa@exemple-paysage.fr")
 verifier("une direction hors domaine reçoit la boîte d'un dirigeant (nouveau, 07/09)",
          asyncio.run(authz.boite_par_defaut(compte("benitez.noapro@gmail.com", "direction")))
-         == "eric@symbiose-paysage.fr")
+         == "eric@exemple-paysage.fr")
 verifier("LE CAS DES DEUX REFUS DU 03/09 : le super_admin lit la boîte d'un dirigeant",
          asyncio.run(authz.boite_par_defaut(compte("dev@pluton-consulting.fr", "super_admin")))
-         == "eric@symbiose-paysage.fr")
+         == "eric@exemple-paysage.fr")
 verifier("un rôle métier hors domaine ne reçoit PAS la boîte d'un dirigeant",
          asyncio.run(authz.boite_par_defaut(compte("perso@gmail.com", "collaborateur")))
          == "perso@gmail.com")
@@ -224,7 +224,7 @@ DIRIGEANT = None
 verifier("sans dirigeant en base, on retombe sur sa propre adresse",
          asyncio.run(authz.boite_par_defaut(compte("benitez.noapro@gmail.com", "direction")))
          == "benitez.noapro@gmail.com")
-DIRIGEANT = {"email": "eric@symbiose-paysage.fr"}
+DIRIGEANT = {"email": "eric@exemple-paysage.fr"}
 
 # ── ce que le refus dit, quand il arrive encore ──────────────────────────
 verifier("le refus NOMME les domaines reconnus et le geste à faire",

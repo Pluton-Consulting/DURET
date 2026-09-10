@@ -50,10 +50,10 @@ print(f"\n═══ LA BOÎTE UNIQUE, ET L'ACCÈS AU MAIL — {BACKEND.parent}\n
 
 # ── Doublures communes ──
 cfg = types.ModuleType("config")
-cfg.settings = types.SimpleNamespace(mail_imap_user="Contact@Duret-Sols.fr", mail_imap_password="abcd efgh ijkl mnop",
+cfg.settings = types.SimpleNamespace(mail_imap_user="Contact@Exemple-Sols.fr", mail_imap_password="abcd efgh ijkl mnop",
                                      mail_imap_host="imap.gmail.com", mail_imap_dossier_envoyes="[Gmail]/Sent Mail",
                                      mail_smtp_host="smtp.gmail.com", mail_smtp_port=587, mail_provider="auto",
-                                     ms_domain=None, gmail_domain="duret-sols.fr", ms_tenant_id=None,
+                                     ms_domain=None, gmail_domain="exemple-sols.fr", ms_tenant_id=None,
                                      ms_client_id=None, ms_client_secret=None)
 sys.modules["config"] = cfg
 # 08/09 soir : les identifiants se lisent dans Paramètres (table cles_api) d'abord.
@@ -74,7 +74,7 @@ lect = types.ModuleType("mail.lecture")
 REFS = {}
 lect._apercu = lambda t, n: " ".join((t or "").split())[:n]
 lect._memoriser = lambda ident, boite: REFS.setdefault(ident, f"ref{len(REFS) + 1}")
-lect._qualifier = lambda adresse: {"adresse": adresse, "interne": "duret-sols.fr" in adresse, "automatique": "no-reply" in adresse}
+lect._qualifier = lambda adresse: {"adresse": adresse, "interne": "exemple-sols.fr" in adresse, "automatique": "no-reply" in adresse}
 lect._texte_lisible = lambda c, html=None: " ".join(c.replace("<p>", " ").replace("</p>", " ").split()) if html else c
 lect.MAX_APERCU = 800
 sys.modules["mail"] = types.ModuleType("mail"); sys.modules["mail.lecture"] = lect
@@ -83,12 +83,12 @@ sys.modules["mail.pieces"] = pcs
 
 # Deux messages construits comme un vrai client les enverrait.
 m1 = EmailMessage()
-m1["From"] = "Client Martin <martin@client.fr>"; m1["To"] = "contact@duret-sols.fr"
+m1["From"] = "Client Martin <martin@client.fr>"; m1["To"] = "contact@exemple-sols.fr"
 m1["Subject"] = "Demande de devis carrelage"; m1["Date"] = "Tue, 08 Sep 2026 09:15:00 +0200"
 m1.set_content("Bonjour, pourriez-vous chiffrer 80 m² de grès cérame ? Cordialement")
 m1.add_attachment(b"%PDF-1.4 plan", maintype="application", subtype="pdf", filename="plan.pdf")
 m2 = EmailMessage()
-m2["From"] = "no-reply@sidv.fr"; m2["To"] = "contact@duret-sols.fr"; m2["Subject"] = "Votre commande"
+m2["From"] = "no-reply@sidv.fr"; m2["To"] = "contact@exemple-sols.fr"; m2["Subject"] = "Votre commande"
 m2["Date"] = "Tue, 08 Sep 2026 10:00:00 +0200"
 m2.add_alternative("<p>Commande confirmée</p>", subtype="html")
 BOITE = {b"101": (m1, b"(UID 101 FLAGS () BODY[] {0}"), b"102": (m2, b"(UID 102 FLAGS (\\Seen) BODY[] {0}")}
@@ -155,13 +155,13 @@ if not src.exists():
     sys.exit(1)
 imap = charger(src, "imap_double")
 verifier("configuré dès que l'adresse et le mot de passe d'application sont là ; l'adresse est normalisée",
-         imap.configure() is True and imap.boite_unique() == "contact@duret-sols.fr")
+         imap.configure() is True and imap.boite_unique() == "contact@exemple-sols.fr")
 verifier("les critères IMAP : depuis / avant à la journée, recherche dans objet et corps",
          imap._criteres(datetime(2026, 9, 1), "devis carrelage", datetime(2026, 9, 8)) == 'SINCE 01-Sep-2026 BEFORE 08-Sep-2026 TEXT "devis carrelage"'
          and imap._criteres(None, None, None) == "ALL")
-fiches, total = imap.lister("contact@duret-sols.fr", "INBOX", 10, datetime(2026, 9, 1), None, None, 160)
+fiches, total = imap.lister("contact@exemple-sols.fr", "INBOX", 10, datetime(2026, 9, 1), None, None, 160)
 verifier("la connexion : l'hôte, l'identifiant, le dossier en lecture seule, la déconnexion",
-         JOURNAL["hote"] == ("imap.gmail.com", 993) and JOURNAL["login"][0] == "contact@duret-sols.fr"
+         JOURNAL["hote"] == ("imap.gmail.com", 993) and JOURNAL["login"][0] == "contact@exemple-sols.fr"
          and JOURNAL["select"][-1] == ('"INBOX"', True) and JOURNAL.get("logout"))
 verifier("les fiches ont la forme des voies Graph/Gmail, les plus récentes d'abord, le total exact",
          total == 2 and [f["objet"] for f in fiches] == ["Votre commande", "Demande de devis carrelage"]
@@ -172,19 +172,19 @@ verifier("pièce jointe détectée, non lu, date en ISO, aperçu du texte, expé
          and f1["apercu"].startswith("Bonjour, pourriez-vous chiffrer") and fiches[0]["expediteur_automatique"] is True
          and fiches[0]["lu"] is True)
 verifier("l'identifiant mémorisé porte le dossier (« INBOX|101 »)", "INBOX|101" in REFS)
-ouvert = imap.ouvrir("contact@duret-sols.fr", "101", "INBOX")
+ouvert = imap.ouvrir("contact@exemple-sols.fr", "101", "INBOX")
 verifier("un message ouvert : corps entier, HTML, pièces désignées par leur rang",
          "80 m²" in ouvert["corps"] and ouvert["pieces_jointes"] and ouvert["pieces_jointes"][0]["nom"] == "plan.pdf"
          and ouvert["pieces_jointes"][0]["type"] == "application/pdf" and ouvert["pieces_jointes"][0]["inline"] is False)
 rang = ouvert["pieces_jointes"][0]["id"]
 verifier("la pièce se télécharge par son rang", imap.piece("101", rang, "INBOX") == b"%PDF-1.4 plan")
-ouvert2 = imap.ouvrir("contact@duret-sols.fr", "102", "INBOX")
+ouvert2 = imap.ouvrir("contact@exemple-sols.fr", "102", "INBOX")
 verifier("un message HTML seul : le texte en est tiré", "Commande confirmée" in ouvert2["corps"] and "<p>" in ouvert2["corps_html"])
-imap.envoyer(b"Subject: x\r\n\r\ncorps", "contact@duret-sols.fr", ["martin@client.fr", ""])
+imap.envoyer(b"Subject: x\r\n\r\ncorps", "contact@exemple-sols.fr", ["martin@client.fr", ""])
 verifier("l'envoi : SMTP 587, STARTTLS, identifiant de la boîte, destinataires vides écartés",
          JOURNAL["smtp"][0] == ("connexion", "smtp.gmail.com", 587) and "starttls" in JOURNAL["smtp"]
-         and ("login", "contact@duret-sols.fr") in JOURNAL["smtp"]
-         and JOURNAL["smtp"][-1][:3] == ("sendmail", "contact@duret-sols.fr", ["martin@client.fr"]))
+         and ("login", "contact@exemple-sols.fr") in JOURNAL["smtp"]
+         and JOURNAL["smtp"][-1][:3] == ("sendmail", "contact@exemple-sols.fr", ["martin@client.fr"]))
 
 # ── Les droits ──
 print("— qui lit la boîte unique")
@@ -194,7 +194,7 @@ PERMS = {"direction": {"access_mail"}, "commercial": {"access_mail"}, "terrain":
 rb.has_permission = lambda role, f: role == "super_admin" or f in PERMS.get(role, set())
 sys.modules["security"] = types.ModuleType("security"); sys.modules["security.rbac"] = rb
 sys.modules["security.audit"] = types.SimpleNamespace(log_action=None)
-COMPTES = {"u-com": ("nathalie@duret-sols.fr", "commercial"), "u-ter": ("eric@duret-sols.fr", "terrain")}
+COMPTES = {"u-com": ("nathalie@exemple-sols.fr", "commercial"), "u-ter": ("eric@exemple-sols.fr", "terrain")}
 
 
 class _Conn:
@@ -215,20 +215,20 @@ class _Conn:
 db = types.ModuleType("database.connection"); db.get_db = lambda: _Conn()
 sys.modules["database"] = types.ModuleType("database"); sys.modules["database.connection"] = db
 aut = charger(BACKEND / "mail" / "authorization.py", "authz_double")
-COM = types.SimpleNamespace(id="u-com", email="nathalie@duret-sols.fr", role="commercial")
-TER = types.SimpleNamespace(id="u-ter", email="eric@duret-sols.fr", role="terrain")
+COM = types.SimpleNamespace(id="u-com", email="nathalie@exemple-sols.fr", role="commercial")
+TER = types.SimpleNamespace(id="u-ter", email="eric@exemple-sols.fr", role="terrain")
 verifier("un commercial avec l'accès au mail lit la boîte unique, et c'est sa boîte par défaut",
-         asyncio.run(aut.verifier_acces(COM, "contact@duret-sols.fr")) == "contact@duret-sols.fr"
-         and asyncio.run(aut.boite_par_defaut(COM)) == "contact@duret-sols.fr"
-         and asyncio.run(aut.boites_par_id("u-com")) == ["contact@duret-sols.fr"]
-         and asyncio.run(aut.boites_autorisees(COM))[0]["mailbox"] == "contact@duret-sols.fr")
+         asyncio.run(aut.verifier_acces(COM, "contact@exemple-sols.fr")) == "contact@exemple-sols.fr"
+         and asyncio.run(aut.boite_par_defaut(COM)) == "contact@exemple-sols.fr"
+         and asyncio.run(aut.boites_par_id("u-com")) == ["contact@exemple-sols.fr"]
+         and asyncio.run(aut.boites_autorisees(COM))[0]["mailbox"] == "contact@exemple-sols.fr")
 try:
-    asyncio.run(aut.verifier_acces(COM, "nathalie@duret-sols.fr"))
+    asyncio.run(aut.verifier_acces(COM, "nathalie@exemple-sols.fr"))
     verifier("une autre adresse (même la sienne) est refusée : la messagerie est UNE boîte", False)
 except aut.AccesBoiteRefuse as e:
     verifier("une autre adresse (même la sienne) est refusée : la messagerie est UNE boîte", "boîte unique" in e.detail)
 try:
-    asyncio.run(aut.verifier_acces(TER, "contact@duret-sols.fr"))
+    asyncio.run(aut.verifier_acces(TER, "contact@exemple-sols.fr"))
     verifier("un rôle SANS la colonne « Accès au mail » n'a rien, avec le geste à faire", False)
 except aut.AccesBoiteRefuse as e:
     verifier("un rôle SANS la colonne « Accès au mail » n'a rien, avec le geste à faire",
@@ -242,23 +242,23 @@ verifier("…et le voit bien pour un compte super_admin", asyncio.run(aut.boites
 # Sans boîte unique (l'autre client) : rien ne change.
 cfg.settings.mail_imap_user = None
 verifier("sans boîte unique : chacun lit SA boîte (règle du 01/09), la colonne s'applique quand même",
-         asyncio.run(aut.verifier_acces(COM, "nathalie@duret-sols.fr")) == "nathalie@duret-sols.fr"
-         and asyncio.run(aut.boite_par_defaut(COM)) == "nathalie@duret-sols.fr"
-         and asyncio.run(aut.boites_par_id("u-com")) == ["nathalie@duret-sols.fr"])
+         asyncio.run(aut.verifier_acces(COM, "nathalie@exemple-sols.fr")) == "nathalie@exemple-sols.fr"
+         and asyncio.run(aut.boite_par_defaut(COM)) == "nathalie@exemple-sols.fr"
+         and asyncio.run(aut.boites_par_id("u-com")) == ["nathalie@exemple-sols.fr"])
 try:
-    asyncio.run(aut.verifier_acces(TER, "eric@duret-sols.fr"))
+    asyncio.run(aut.verifier_acces(TER, "eric@exemple-sols.fr"))
     verifier("…et un rôle sans accès au mail est refusé même sur sa propre boîte", False)
 except aut.AccesBoiteRefuse:
     verifier("…et un rôle sans accès au mail est refusé même sur sa propre boîte", True)
-cfg.settings.mail_imap_user = "Contact@Duret-Sols.fr"
+cfg.settings.mail_imap_user = "Contact@Exemple-Sols.fr"
 
 print("— l'écran règle la boîte, tout est câblé")
-CLES_BASE["mail_imap_user"] = "Autre@Duret-Sols.fr"; CLES_BASE["mail_imap_password"] = "zzzz zzzz zzzz zzzz"
+CLES_BASE["mail_imap_user"] = "Autre@Exemple-Sols.fr"; CLES_BASE["mail_imap_password"] = "zzzz zzzz zzzz zzzz"
 verifier("l'adresse et le mot de passe posés dans Paramètres PRIMENT sur le .env",
-         imap.boite_unique() == "autre@duret-sols.fr" and imap._mot_de_passe() == "zzzz zzzz zzzz zzzz")
+         imap.boite_unique() == "autre@exemple-sols.fr" and imap._mot_de_passe() == "zzzz zzzz zzzz zzzz")
 JOURNAL["login"] = None
-imap.lister("autre@duret-sols.fr", "INBOX", 2)
-verifier("…et servent à la connexion", JOURNAL["login"] == ("autre@duret-sols.fr", "zzzz zzzz zzzz zzzz"))
+imap.lister("autre@exemple-sols.fr", "INBOX", 2)
+verifier("…et servent à la connexion", JOURNAL["login"] == ("autre@exemple-sols.fr", "zzzz zzzz zzzz zzzz"))
 CLES_BASE.clear()
 t_ok = imap.tester()
 verifier("« Tester la connexion » : IMAP puis SMTP, le compte des messages, jamais le mot de passe",
@@ -292,8 +292,8 @@ cfg.settings.gmail_access_level = "all"; cfg.settings.gmail_max_messages = 100
 con = charger(BACKEND / "ingestion" / "connectors" / "imap.py", "connecteur_imap_double")
 bilan = asyncio.run(con.sync(boites=["quelquun@ailleurs.fr"]))
 verifier("la synchronisation ingère la boîte unique : reçus (email:…) et envoyés (email_sent:…), profil de style recalculé",
-         bilan["boite"] == "contact@duret-sols.fr" and bilan["recus"] == 2 and bilan["envoyes"] == 2 and bilan["profils"] == 1
-         and any(s[0] == "email" and s[1].startswith("email:contact@duret-sols.fr:") for s in INGERES)
+         bilan["boite"] == "contact@exemple-sols.fr" and bilan["recus"] == 2 and bilan["envoyes"] == 2 and bilan["profils"] == 1
+         and any(s[0] == "email" and s[1].startswith("email:contact@exemple-sols.fr:") for s in INGERES)
          and any(s[0] == "email_sent" for s in INGERES) and all(s[4] is False for s in INGERES), bilan)
 verifier("le texte ingéré porte les en-têtes puis le corps, avec le niveau d'accès du réglage",
          INGERES[0][5].startswith("Objet : ") and INGERES[0][3] == "all")
@@ -303,7 +303,7 @@ try:
     verifier("sans boîte unique : la synchro dit où la régler", False)
 except NotImplementedError as e:
     verifier("sans boîte unique : la synchro dit où la régler", "Paramètres" in str(e))
-cfg.settings.mail_imap_user = "Contact@Duret-Sols.fr"
+cfg.settings.mail_imap_user = "Contact@Exemple-Sols.fr"
 cl = (BACKEND / "llm" / "cles.py").read_text(encoding="utf-8")
 verifier("les deux identifiants sont des clés de Paramètres, hors de la liste des clés de modèles",
          '"mail_imap_user",' in cl and '"mail_imap_password",' in cl and "CLES_HORS_ECRAN" in cl)

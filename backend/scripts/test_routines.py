@@ -127,7 +127,7 @@ sys.modules["skills.registre"] = m
 # C'est tout l'intérêt : le banc a révélé que le skill cherchait `non_lu`
 # quand la messagerie rend `lu`, et que `extrait` s'appelle en réalité
 # `apercu`. Un compteur de non-lus serait resté à zéro sans que rien ne le dise.
-MAILS = {"boite": "contact@duret-sols.fr", "dossier": "recus", "nombre": 3, "messages": [
+MAILS = {"boite": "contact@exemple-sols.fr", "dossier": "recus", "nombre": 3, "messages": [
     {"de": "marches@lateste.fr", "objet": "Re: Devis DEV-2025-041", "date": "2026-08-22T09:12:00Z",
      "apercu": "Bonjour, pouvez-vous confirmer le délai de pose ?", "lu": False,
      "expediteur_interne": False, "expediteur_automatique": False},
@@ -311,7 +311,7 @@ async def principal():
              [m.get("automatique") for m in r["messages"]])
     verifier("l'aperçu réel est repris", "délai de pose" in r["messages"][0]["extrait"],
              r["messages"][0]["extrait"])
-    verifier("la boîte lue est rendue", r.get("boite") == "contact@duret-sols.fr", r.get("boite"))
+    verifier("la boîte lue est rendue", r.get("boite") == "contact@exemple-sols.fr", r.get("boite"))
     verifier("la consigne interdit d'envoyer quoi que ce soit",
              # 31/08 : la consigne est passée à l'apostrophe typographique (« n’envoie rien »).
              "envoie rien" in (r.get("a_faire") or "").lower())

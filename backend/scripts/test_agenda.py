@@ -157,14 +157,14 @@ def _ev(debut, fin, titre="RDV", entiere=False):
     return {"subject": titre, "isAllDay": entiere,
             "start": {"dateTime": debut}, "end": {"dateTime": fin},
             "location": {"displayName": "La Teste"},
-            "organizer": {"emailAddress": {"address": "b@symbiose-paysage.fr"}},
+            "organizer": {"emailAddress": {"address": "b@exemple-paysage.fr"}},
             "attendees": [{"emailAddress": {"address": "client@exemple.fr"}}]}
 
 
 ETAT["requetes"].clear()
 ETAT["reponses"] = [_Reponse(200, {"value": [_ev("2026-09-08T09:00:00.0000000",
                                                  "2026-09-08T10:30:00.0000000")]})]
-evs = asyncio.run(agenda.lire("b@symbiose-paysage.fr", h(0, 0), h(7, 0)))
+evs = asyncio.run(agenda.lire("b@exemple-paysage.fr", h(0, 0), h(7, 0)))
 verifier("un rendez-vous se lit avec ce qu'un humain regarde",
          evs and evs[0]["titre"] == "RDV" and evs[0]["lieu"] == "La Teste"
          and evs[0]["participants"] == ["client@exemple.fr"], str(evs))
@@ -181,7 +181,7 @@ verifier("le jeton d'application voyage en en-tête, jamais dans l'URL",
 ETAT["reponses"] = [_Reponse(200, {"value": [_ev("2026-09-08T00:00:00.0000000",
                                                  "2026-09-08T00:00:00.0000000",
                                                  "Congé", entiere=True)]})]
-prises = asyncio.run(agenda.occupations("b@symbiose-paysage.fr", h(0, 0), h(7, 0)))
+prises = asyncio.run(agenda.occupations("b@exemple-paysage.fr", h(0, 0), h(7, 0)))
 verifier("UNE JOURNÉE ENTIÈRE OCCUPE LE JOUR ENTIER (un congé n'est pas un trou)",
          prises and (prises[0][1] - prises[0][0]) >= timedelta(days=1), str(prises))
 
@@ -189,7 +189,7 @@ verifier("UNE JOURNÉE ENTIÈRE OCCUPE LE JOUR ENTIER (un congé n'est pas un tr
 # ── 3. LES REFUS, qui disent quoi faire ──────────────────────────────────
 ETAT["reponses"] = [_Reponse(403, {}, "Insufficient privileges")]
 try:
-    asyncio.run(agenda.lire("b@symbiose-paysage.fr", h(0, 0), h(1, 0)))
+    asyncio.run(agenda.lire("b@exemple-paysage.fr", h(0, 0), h(1, 0)))
     verifier("un 403 en LECTURE nomme Calendars.Read", False)
 except agenda.AgendaIndisponible as e:
     verifier("un 403 en LECTURE nomme Calendars.Read",
@@ -197,14 +197,14 @@ except agenda.AgendaIndisponible as e:
 
 ETAT["reponses"] = [_Reponse(403, {}, "Insufficient privileges")]
 try:
-    asyncio.run(agenda.creer("b@symbiose-paysage.fr", "Visite", h(0, 9), h(0, 10)))
+    asyncio.run(agenda.creer("b@exemple-paysage.fr", "Visite", h(0, 9), h(0, 10)))
     verifier("un 403 en ÉCRITURE nomme Calendars.ReadWrite", False)
 except agenda.AgendaIndisponible as e:
     verifier("un 403 en ÉCRITURE nomme Calendars.ReadWrite", "Calendars.ReadWrite" in str(e))
 
 ETAT["fournisseur"] = "gmail"
 try:
-    asyncio.run(agenda.lire("x@duret-sols.fr", h(0, 0), h(1, 0)))
+    asyncio.run(agenda.lire("x@exemple-sols.fr", h(0, 0), h(1, 0)))
     verifier("sur une messagerie Google, le geste dit ce qui reste à connecter", False)
 except agenda.AgendaIndisponible as e:
     verifier("sur une messagerie Google, le geste dit ce qui reste à connecter",
@@ -212,7 +212,7 @@ except agenda.AgendaIndisponible as e:
 ETAT["fournisseur"] = "outlook"
 
 try:
-    asyncio.run(agenda.creer("b@symbiose-paysage.fr", "Visite", h(0, 10), h(0, 9)))
+    asyncio.run(agenda.creer("b@exemple-paysage.fr", "Visite", h(0, 10), h(0, 9)))
     verifier("une fin avant le début est refusée", False)
 except agenda.AgendaIndisponible as e:
     verifier("une fin avant le début est refusée", "doit suivre" in str(e))
@@ -222,11 +222,11 @@ except agenda.AgendaIndisponible as e:
 ETAT["requetes"].clear()
 ETAT["reponses"] = [_Reponse(201, _ev("2026-09-08T09:00:00.0000000",
                                       "2026-09-08T10:00:00.0000000", "Visite Duval"))]
-cree = asyncio.run(agenda.creer("b@symbiose-paysage.fr", "Visite Duval", h(1, 9), h(1, 10),
+cree = asyncio.run(agenda.creer("b@exemple-paysage.fr", "Visite Duval", h(1, 9), h(1, 10),
                                 ["client@exemple.fr", "pas-une-adresse"], "La Teste", "Devis terrasse"))
 envoi = ETAT["requetes"][0]
 verifier("la création POSTe un événement sur la boîte visée",
-         envoi["methode"] == "POST" and envoi["url"].endswith("/users/b@symbiose-paysage.fr/events"))
+         envoi["methode"] == "POST" and envoi["url"].endswith("/users/b@exemple-paysage.fr/events"))
 verifier("le titre, le lieu et la note partent",
          envoi["json"]["subject"] == "Visite Duval"
          and envoi["json"]["location"]["displayName"] == "La Teste"

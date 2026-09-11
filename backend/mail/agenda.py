@@ -7,10 +7,12 @@ va avec : « quand suis-je libre jeudi ? », « cale une visite chez M. Duval »
 n'avaient aucun geste, et le modèle répondait de mémoire ou refusait.
 
 CE MODULE EST DU SOCLE, l'aiguillage est celui de `mail/lecture.py` :
-`fournisseur()` décide, et chaque fournisseur a sa fonction. Aujourd'hui la voie
-MICROSOFT GRAPH est implémentée (Symbiose) ; la voie Google Calendar ne l'est
-pas, et le dit — un connecteur absent doit se lire comme une configuration à
-faire, jamais comme un `ModuleNotFoundError` (même choix que `mail/collecte.py`).
+`fournisseur()` décide, et chaque fournisseur a sa fonction : MICROSOFT GRAPH
+(Symbiose) et GOOGLE CALENDAR (Duret, 11/09 — par la connexion OAuth du compte,
+seule voie pour un Gmail personnel ; le compte de service en repli pour un
+domaine Workspace). Là où le connecteur Google n'existe pas, la voie le dit —
+un connecteur absent doit se lire comme une configuration à faire, jamais comme
+un `ModuleNotFoundError` (même choix que `mail/collecte.py`).
 
 TROIS GESTES, ET PAS UN DE PLUS :
   · LIRE une période — c'est 90 % des demandes (« mon planning de la semaine ») ;
@@ -242,22 +244,133 @@ async def _creer_outlook(boite: str, titre: str, debut: datetime, fin: datetime,
     return _fiche(cree, boite)
 
 
+# ── LA VOIE GOOGLE CALENDAR (11/09) ─────────────────────────────────────
+def _iso_google(d: datetime) -> str:
+    """Google veut une date RFC 3339 AVEC son fuseau."""
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.isoformat(timespec="seconds")
+
+
+def _fiche_google(ev: dict, boite: str) -> dict:
+    """Un événement Google Agenda, réduit aux mêmes champs que celui de Graph :
+    les gestes, l'écran et le calcul des créneaux ne voient pas la différence."""
+    debut, fin = ev.get("start") or {}, ev.get("end") or {}
+    journee = "date" in debut and "dateTime" not in debut
+    participants = [(p.get("email") or "") for p in (ev.get("attendees") or [])
+                    if not p.get("resource")]
+    return {
+        "titre": (ev.get("summary") or "(sans titre)").strip(),
+        # Une journée entière n'a qu'une DATE : minuit, pour que `_analyser`
+        # et le calcul des créneaux la lisent comme les autres.
+        "debut": debut.get("dateTime") or (f"{debut['date']}T00:00:00" if debut.get("date") else ""),
+        "fin": fin.get("dateTime") or (f"{fin['date']}T00:00:00" if fin.get("date") else ""),
+        "journee_entiere": journee,
+        "lieu": (ev.get("location") or "").strip(),
+        "organisateur": ((ev.get("organizer") or {}).get("email") or ""),
+        "participants": [p for p in participants if p][:12],
+        "boite": boite,
+        "en_ligne": ev.get("hangoutLink") or None,
+    }
+
+
+def _service_google(boite: str):
+    """Le client Google Agenda du connecteur. Une configuration absente se dit."""
+    try:
+        from ingestion.connectors.gmail import _service_agenda
+    except ImportError as e:
+        raise AgendaIndisponible(
+            "L'agenda Google n'est pas branché dans ce projet.") from e
+    try:
+        return _service_agenda(boite)
+    except NotImplementedError as e:
+        raise AgendaIndisponible(str(e)) from e
+
+
+def _refus_google(e: Exception) -> AgendaIndisponible:
+    """Le refus de Google, traduit en geste à faire (même table que le test de
+    la carte : API non activée, droit non accordé, compte à relier)."""
+    try:
+        from ingestion.connectors.gmail import _raison_google
+        raison = _raison_google(e)
+    except Exception:  # noqa: BLE001
+        raison = str(e)[:200]
+    logger.warning("Google Agenda : %s", str(e)[:300])
+    return AgendaIndisponible(f"L'agenda Google a refusé la demande : {raison}.")
+
+
+async def _lire_google(boite: str, depuis: datetime, jusqu_a: datetime,
+                       limite: int) -> list[dict]:
+    """`singleEvents` : la période DÉPLOYÉE, récurrences comprises — le pendant
+    de `calendarView` chez Graph."""
+    import asyncio
+
+    service = _service_google(boite)
+
+    def _appel():
+        return service.events().list(
+            calendarId="primary", timeMin=_iso_google(depuis), timeMax=_iso_google(jusqu_a),
+            singleEvents=True, orderBy="startTime", maxResults=limite,
+            timeZone="Europe/Paris").execute()
+    try:
+        corps = await asyncio.to_thread(_appel)
+    except Exception as e:  # noqa: BLE001
+        raise _refus_google(e) from e
+    # Un événement annulé d'une série reste listé avec `status: cancelled`.
+    return [_fiche_google(ev, boite) for ev in corps.get("items", [])
+            if ev.get("status") != "cancelled"]
+
+
+async def _creer_google(boite: str, titre: str, debut: datetime, fin: datetime,
+                        participants: list[str], lieu: str, note: str) -> dict:
+    import asyncio
+
+    service = _service_google(boite)
+    evenement = {"summary": titre,
+                 "start": {"dateTime": _iso_google(debut)},
+                 "end": {"dateTime": _iso_google(fin)}}
+    if lieu:
+        evenement["location"] = lieu
+    if note:
+        evenement["description"] = note
+    if participants:
+        evenement["attendees"] = [{"email": a} for a in participants]
+
+    def _appel():
+        # Les invités reçoivent l'invitation, comme chez Graph : c'est ce qui
+        # rend ce geste EXTERNE, et il n'arrive qu'après l'accord humain.
+        return service.events().insert(
+            calendarId="primary", body=evenement,
+            sendUpdates="all" if participants else "none").execute()
+    try:
+        cree = await asyncio.to_thread(_appel)
+    except Exception as e:  # noqa: BLE001
+        raise _refus_google(e) from e
+    return _fiche_google(cree, boite)
+
+
 # ── L'ENTRÉE, commune ────────────────────────────────────────────────────
 def _voie() -> str:
-    from mail.collecte import fournisseur
+    """« outlook » ou « google ». Une messagerie Google — boîte unique par mot
+    de passe d'application comprise — lit l'agenda du MÊME compte par OAuth."""
+    from mail.collecte import _module_present, fournisseur
     nom = fournisseur()
-    if nom != "outlook":
-        raise AgendaIndisponible(
-            "L'agenda n'est branché que sur Microsoft 365 pour l'instant. Sur une "
-            "messagerie Google, il reste à connecter (API Google Calendar).")
-    return nom
+    if nom == "outlook":
+        return "outlook"
+    if nom in ("gmail", "imap") and _module_present("ingestion.connectors.gmail"):
+        return "google"
+    raise AgendaIndisponible(
+        "L'agenda n'est pas branché pour cette messagerie : Microsoft 365 et "
+        "Google (par une connexion OAuth du compte) sont les deux voies prévues.")
 
 
 async def lire(boite: str, depuis: datetime, jusqu_a: datetime,
                limite: int = MAX_EVENEMENTS) -> list[dict]:
     """Les rendez-vous d'une boîte sur une période. L'appelant a vérifié l'accès."""
-    _voie()
+    voie = _voie()
     limite = max(1, min(int(limite or MAX_EVENEMENTS), MAX_EVENEMENTS))
+    if voie == "google":
+        return await _lire_google(boite, depuis, jusqu_a, limite)
     return await _lire_outlook(boite, depuis, jusqu_a, limite)
 
 
@@ -284,9 +397,10 @@ async def creer(boite: str, titre: str, debut: datetime, fin: datetime,
                 participants: Optional[list[str]] = None,
                 lieu: str = "", note: str = "") -> dict:
     """Pose un rendez-vous. À n'appeler qu'après l'accord humain (effet externe)."""
-    _voie()
+    voie = _voie()
     if fin <= debut:
         raise AgendaIndisponible("La fin du rendez-vous doit suivre son début.")
-    return await _creer_outlook(boite, titre.strip() or "Rendez-vous", debut, fin,
-                                [a for a in (participants or []) if a and "@" in a],
-                                lieu.strip(), note.strip())
+    creer_selon = _creer_google if voie == "google" else _creer_outlook
+    return await creer_selon(boite, titre.strip() or "Rendez-vous", debut, fin,
+                             [a for a in (participants or []) if a and "@" in a],
+                             lieu.strip(), note.strip())

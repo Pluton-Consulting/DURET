@@ -45,9 +45,21 @@ logger = logging.getLogger("duret.mail.google_perso")
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
+    # L'AGENDA (11/09, Noa : « il faut que ça ait accès aussi à Calendar »). Un
+    # compte Gmail PERSONNEL n'ouvre son agenda que par OAuth : le mot de passe
+    # d'application ne vaut que pour IMAP/SMTP, et Google a fermé CalDAV à tout
+    # sauf OAuth. `calendar.events` suffit aux trois gestes (lire une période,
+    # en déduire les créneaux, poser un rendez-vous) sans ouvrir les réglages
+    # de l'agenda lui-même.
+    "https://www.googleapis.com/auth/calendar.events",
     "openid",
     "email",
 ]
+
+# Les droits d'API qu'un compte relié AVANT l'agenda a forcément accordés
+# (voir `accorde`). Déduits de SCOPES pour ne pas tenir deux listes.
+SCOPES_HISTORIQUES = tuple(x for x in SCOPES
+                           if x.startswith("https://") and "/auth/calendar" not in x)
 
 URL_AUTORISATION = "https://accounts.google.com/o/oauth2/v2/auth"
 URL_JETON = "https://oauth2.googleapis.com/token"
@@ -76,10 +88,57 @@ def _normaliser(adresse: Optional[str]) -> str:
     return (adresse or "").strip().lower()
 
 
+# Les droits ACCORDÉS par compte, tels que Google les a rendus au consentement.
+# Un compte relié AVANT l'ajout d'un droit ne l'a pas : le demander au
+# rafraîchissement du jeton ferait échouer TOUT le reste (Google refuse un droit
+# jamais accordé) — on ne demande donc que ce qui a été accordé, et l'on sait
+# dire « reliez à nouveau » quand un geste réclame un droit absent.
+_SCOPES_PAR_EMAIL: dict[str, list[str]] = {}
+
+
+def _client() -> tuple[str, str]:
+    """L'identifiant et le secret du client OAuth : Paramètres (table
+    `cles_api`) d'abord, `.env` ensuite — même priorité que les clés (11/09)."""
+    try:
+        from llm.cles import valeur
+        ident, secret = valeur("google_oauth_client_id"), valeur("google_oauth_client_secret")
+    except Exception:  # noqa: BLE001 — sans cache de clés, le .env
+        ident = getattr(settings, "google_oauth_client_id", None)
+        secret = getattr(settings, "google_oauth_client_secret", None)
+    return str(ident or "").strip(), str(secret or "").strip()
+
+
 def configurable() -> bool:
     """Le client OAuth est-il renseigné ? Sans lui, l'écran explique quoi faire."""
-    return bool((settings.google_oauth_client_id or "").strip()
-                and (settings.google_oauth_client_secret or "").strip())
+    ident, secret = _client()
+    return bool(ident and secret)
+
+
+def _scopes_accordes(brut: Optional[str]) -> list[str]:
+    """« a b c » (la chaîne rendue par Google) → les droits d'API, sans openid."""
+    return [x for x in (brut or "").split() if x.startswith("https://")]
+
+
+def accorde(boite: str, scope: str) -> Optional[bool]:
+    """Ce compte a-t-il accordé ce droit ? None s'il n'est pas relié du tout.
+
+    Un compte relié dont on ne connaît pas les droits (ligne ancienne, colonne
+    vide) est présumé avoir accordé ce qui était demandé à l'époque — c'est-à-
+    dire pas les droits ajoutés depuis : on répond donc selon SCOPES_HISTORIQUES.
+    """
+    email = _normaliser(boite)
+    if email not in _CACHE:
+        return None
+    connus = _SCOPES_PAR_EMAIL.get(email)
+    if not connus:
+        return scope in SCOPES_HISTORIQUES
+    return scope in connus
+
+
+def _scopes_pour(email: str) -> list[str]:
+    """Les droits à demander au rafraîchissement : ceux accordés, sinon ceux
+    d'avant l'agenda (un compte relié sans trace de ses droits les avait)."""
+    return _SCOPES_PAR_EMAIL.get(_normaliser(email)) or list(SCOPES_HISTORIQUES)
 
 
 def _redirect_uri() -> str:
@@ -89,7 +148,7 @@ def _redirect_uri() -> str:
     return settings.app_url.rstrip("/") + "/api/google/retour"
 
 
-def lien_autorisation(user_id: str) -> str:
+def lien_autorisation(user_id: str, compte: Optional[str] = None) -> str:
     """L'URL de consentement Google pour CET utilisateur.
 
     `state` est un JWT court (10 min) portant l'identité : au retour, c'est LUI
@@ -103,12 +162,13 @@ def lien_autorisation(user_id: str) -> str:
     """
     if not configurable():
         raise RuntimeError("Client OAuth Google non configuré "
-                           "(GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET).")
+                           "(Paramètres → Clés API, ou GOOGLE_OAUTH_CLIENT_ID / "
+                           "GOOGLE_OAUTH_CLIENT_SECRET).")
     from auth.jwt_handler import create_access_token
     state = create_access_token({"sub": str(user_id), "usage": USAGE_STATE},
                                 expires_delta=timedelta(minutes=10))
     params = {
-        "client_id": settings.google_oauth_client_id,
+        "client_id": _client()[0],
         "redirect_uri": _redirect_uri(),
         "response_type": "code",
         "scope": " ".join(SCOPES),
@@ -116,6 +176,13 @@ def lien_autorisation(user_id: str) -> str:
         "prompt": "consent",
         "state": state,
     }
+    # LE COMPTE ATTENDU, PRÉSÉLECTIONNÉ (11/09). Pour relier la boîte de
+    # l'entreprise, l'administrateur a souvent plusieurs comptes Google ouverts
+    # dans son navigateur : choisir le mauvais relierait SA boîte à la place.
+    # C'est une suggestion à Google, pas une garantie — l'adresse retenue reste
+    # celle que Google confirme au retour.
+    if compte and "@" in compte:
+        params["login_hint"] = _normaliser(compte)
     return URL_AUTORISATION + "?" + urllib.parse.urlencode(params)
 
 
@@ -141,9 +208,10 @@ async def echanger_code(code: str) -> dict:
     import httpx
 
     async with httpx.AsyncClient(timeout=20) as client:
+        ident, secret = _client()
         rep = await client.post(URL_JETON, data={
-            "client_id": settings.google_oauth_client_id,
-            "client_secret": settings.google_oauth_client_secret,
+            "client_id": ident,
+            "client_secret": secret,
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": _redirect_uri(),
@@ -215,18 +283,19 @@ async def deconnecter(user_id: str) -> bool:
 
 async def rafraichir(force: bool = False) -> None:
     """Recharge le cache email -> refresh_token depuis la base."""
-    global _CACHE, _PAR_USER, _CACHE_QUAND
+    global _CACHE, _PAR_USER, _CACHE_QUAND, _SCOPES_PAR_EMAIL
     if not force and (time.monotonic() - _CACHE_QUAND) < _CACHE_TTL_S:
         return
     from database.connection import get_db
     try:
         async with get_db() as conn:
             lignes = await conn.fetch(
-                "SELECT user_id, email, refresh_token FROM connexions_google")
+                "SELECT user_id, email, refresh_token, scopes FROM connexions_google")
     except Exception as e:  # noqa: BLE001 - table absente (migration pas passée) : cache vide
         logger.info("Connexions Google non chargées : %s", e)
         return
     _CACHE = {_normaliser(l["email"]): l["refresh_token"] for l in lignes}
+    _SCOPES_PAR_EMAIL = {_normaliser(l["email"]): _scopes_accordes(l["scopes"]) for l in lignes}
     _PAR_USER = {str(l["user_id"]): {"email": _normaliser(l["email"]),
                                      "refresh_token": l["refresh_token"]}
                  for l in lignes}
@@ -250,13 +319,14 @@ def credentials_pour_boite(boite: str):
     if not jeton or not configurable():
         return None
     from google.oauth2.credentials import Credentials
+    ident, secret = _client()
     return Credentials(
         token=None,
         refresh_token=jeton,
         token_uri=URL_JETON,
-        client_id=settings.google_oauth_client_id,
-        client_secret=settings.google_oauth_client_secret,
-        scopes=[s for s in SCOPES if s.startswith("https://")],
+        client_id=ident,
+        client_secret=secret,
+        scopes=_scopes_pour(boite),
     )
 
 
@@ -281,11 +351,12 @@ def credentials_pour_utilisateur(user_id: str):
     if not entree or not entree.get("refresh_token") or not configurable():
         return None
     from google.oauth2.credentials import Credentials
+    ident, secret = _client()
     return Credentials(
         token=None,
         refresh_token=entree["refresh_token"],
         token_uri=URL_JETON,
-        client_id=settings.google_oauth_client_id,
-        client_secret=settings.google_oauth_client_secret,
-        scopes=[s for s in SCOPES if s.startswith("https://")],
+        client_id=ident,
+        client_secret=secret,
+        scopes=_scopes_pour(entree["email"]),
     )

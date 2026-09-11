@@ -218,6 +218,48 @@ def _service_envoi(boite: str):
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
+# L'AGENDA (11/09) : scope séparé, comme l'envoi et l'annuaire. Lire et poser
+# des rendez-vous — pas les réglages de l'agenda lui-même.
+SCOPES_AGENDA = ["https://www.googleapis.com/auth/calendar.events"]
+
+
+def _service_agenda(boite: str):
+    """Client Google Agenda pour cette boîte.
+
+    Même ordre que `_service` : la connexion OAuth du compte d'abord — c'est la
+    SEULE voie pour un compte Gmail personnel (le mot de passe d'application ne
+    vaut que pour IMAP/SMTP, et Google a fermé CalDAV à tout sauf OAuth) —,
+    l'emprunt d'identité ensuite, pour un domaine Google Workspace.
+
+    Un compte relié AVANT l'ajout de l'agenda n'a pas accordé ce droit : on le
+    dit (« reliez à nouveau ») au lieu de laisser Google répondre un 403 muet.
+    """
+    from googleapiclient.discovery import build
+
+    from mail import google_perso
+    accorde = google_perso.accorde(boite, SCOPES_AGENDA[0])
+    if accorde is False:
+        raise NotImplementedError(
+            f"Le compte Google {boite} est relié, mais sans l'agenda (il l'a été "
+            "avant que l'agenda soit demandé). Reliez-le à nouveau : Paramètres → "
+            "Clés API → carte de la boîte mail → « Relier l'agenda Google ».")
+    perso = google_perso.credentials_pour_boite(boite) if accorde else None
+    if perso is not None:
+        return build("calendar", "v3", credentials=perso, cache_discovery=False)
+
+    infos = _cle_compte_de_service()
+    if infos is None:
+        raise NotImplementedError(
+            f"L'agenda de {boite} n'est pas relié. Pour un compte Gmail, il faut "
+            "une connexion Google (OAuth) : Paramètres → Clés API → renseigner le "
+            "client OAuth, puis, sur la carte de la boîte mail, « Relier l'agenda "
+            "Google » avec ce compte.")
+    from google.oauth2 import service_account
+    creds = service_account.Credentials.from_service_account_info(
+        infos, scopes=SCOPES_AGENDA, subject=boite)
+    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+
 def _service_annuaire():
     """Client Admin SDK, empruntant l'identité d'un ADMINISTRATEUR du domaine.
 
@@ -537,7 +579,8 @@ def etat_compte_de_service() -> dict:
     etat = {
         "disponible": True, "configuree": False, "origine": _origine_cle(),
         "domaine": _domaine(), "administrateur": _reglage("google_admin_subject").lower(),
-        "scopes": {"lecture": SCOPES[0], "envoi": SCOPES_ENVOI[0], "annuaire": SCOPES_ANNUAIRE[0]},
+        "scopes": {"lecture": SCOPES[0], "envoi": SCOPES_ENVOI[0],
+                   "agenda": SCOPES_AGENDA[0], "annuaire": SCOPES_ANNUAIRE[0]},
         "erreur": "",
     }
     try:
@@ -553,8 +596,9 @@ def etat_compte_de_service() -> dict:
             projet=str(infos.get("project_id") or ""),
             empreinte=masquer(str(infos.get("private_key_id") or "")),
         )
-        # L'ordre de la console : lecture, envoi, annuaire, séparés par des virgules.
-        etat["a_coller"] = ",".join((SCOPES[0], SCOPES_ENVOI[0], SCOPES_ANNUAIRE[0]))
+        # L'ordre de la console : lecture, envoi, agenda, annuaire, séparés par des virgules.
+        etat["a_coller"] = ",".join((SCOPES[0], SCOPES_ENVOI[0], SCOPES_AGENDA[0],
+                                     SCOPES_ANNUAIRE[0]))
     return etat
 
 
@@ -568,9 +612,12 @@ def _raison_google(e: Exception) -> str:
     texte = str(e)
     bas = texte.lower()
     if "accessnotconfigured" in bas or "has not been used in project" in bas or "it is disabled" in bas:
-        return ("l'API n'est pas activée dans le projet Google Cloud du compte de "
-                "service (Bibliothèque → « Gmail API », et « Admin SDK API » pour "
-                "l'annuaire → Activer)")
+        return ("l'API n'est pas activée dans le projet Google Cloud (Bibliothèque "
+                "→ « Gmail API », « Google Calendar API » pour l'agenda, « Admin "
+                "SDK API » pour l'annuaire → Activer)")
+    if "insufficient authentication scopes" in bas or "insufficientpermissions" in bas:
+        return ("le compte a été relié sans ce droit : reliez-le à nouveau pour "
+                "accorder aussi l'agenda")
     if "unauthorized_client" in bas:
         return ("autorisation non accordée : ajoutez ce champ d'application à la "
                 "délégation du compte de service dans la console Admin (quelques "
@@ -621,14 +668,14 @@ async def boite_pour_le_test(email_courant: Optional[str] = None) -> Optional[st
 def tester_compte_de_service(boite: Optional[str]) -> dict:
     """Un jeton par autorisation, puis une lecture réelle : ok, ou la raison.
 
-    Trois contrôles indépendants, parce que la délégation s'accorde champ par
-    champ : lire peut marcher sans envoyer, et l'annuaire sans l'un ni
-    l'autre. RIEN n'est envoyé ni ouvert : l'envoi se juge à l'obtention de
+    Quatre contrôles indépendants, parce que la délégation s'accorde champ par
+    champ : lire peut marcher sans envoyer, l'agenda et l'annuaire sans l'un
+    ni l'autre. RIEN n'est envoyé ni ouvert : l'envoi se juge à l'obtention de
     son jeton, la lecture au nombre de messages de la boîte. Synchrone (le
     client Google l'est) : l'appelant le passe dans un thread.
     """
     resultat = {"ok": False, "boite": boite or "", "lecture": None, "envoi": None,
-                "annuaire": None, "erreur": ""}
+                "agenda": None, "annuaire": None, "erreur": ""}
     try:
         infos = _cle_compte_de_service()
     except NotImplementedError as e:
@@ -669,6 +716,12 @@ def tester_compte_de_service(boite: Optional[str]) -> dict:
     except Exception as e:  # noqa: BLE001
         resultat["envoi"] = {"ok": False, "raison": _raison_google(e)}
 
+    try:
+        _jeton(SCOPES_AGENDA, boite)
+        resultat["agenda"] = {"ok": True}
+    except Exception as e:  # noqa: BLE001
+        resultat["agenda"] = {"ok": False, "raison": _raison_google(e)}
+
     admin = _reglage("google_admin_subject").lower()
     if admin:
         try:
@@ -682,7 +735,8 @@ def tester_compte_de_service(boite: Optional[str]) -> dict:
         except Exception as e:  # noqa: BLE001
             resultat["annuaire"] = {"ok": False, "raison": _raison_google(e)}
 
-    # L'annuaire est un confort (sans lui, seuls les comptes de l'application
-    # sont lus) : il ne fait pas échouer le test, il s'affiche à part.
+    # L'annuaire et l'agenda sont des conforts (sans l'annuaire, seuls les
+    # comptes de l'application sont lus ; sans l'agenda, seul l'agenda manque) :
+    # ils ne font pas échouer le test, ils s'affichent à part.
     resultat["ok"] = bool(resultat["lecture"]["ok"] and resultat["envoi"]["ok"])
     return resultat

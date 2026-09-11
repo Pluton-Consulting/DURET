@@ -339,8 +339,11 @@ verifier("les lignes Vision et Embeddings ne proposent que leurs modèles",
 # LE FILTRE NE DOIT PAS ENFERMER. L'usage est déduit d'un NOM : l'heuristique
 # peut se tromper, et un menu vide empêcherait de choisir un modèle qu'on sait
 # bon. Un fournisseur sans correspondance garde donc sa liste entière.
+# (11/09) La liste est mémorisée, et une ligne qui doit RÉPONDRE écarte les
+# modèles d'embedding de ce repli ; la ligne des embeddings garde tout.
 verifier("un fournisseur sans modèle correspondant garde sa liste entière",
-         "gardes.length ? { ...f, modeles: gardes } : f" in ecran)
+         "if (gardes.length) return { ...f, modeles: gardes }" in ecran
+         and 'usage === "embedding" || !sansEmbedding.length ? f.modeles : sansEmbedding' in ecran)
 
 carte = (BACKEND.resolve().parent / "frontend" / "components" / "settings"
          / "RevectorisationCarte.tsx").read_text(encoding="utf-8")

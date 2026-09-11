@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import RevectorisationCarte from "./RevectorisationCarte"
 
 // Saisie des clés d'API des fournisseurs de modèles, réservée à
@@ -173,6 +173,10 @@ interface FicheFournisseur {
   fournisseur: string
   libelle: string
   cle_presente: boolean
+  // Ce que le fournisseur sait faire (« texte », « vision », « embedding ») —
+  // la liste que le serveur valide à l'écriture. Absent (serveur plus ancien) :
+  // tout est proposé, comme avant.
+  usages?: string[]
   // « embedding » | « vision » | « texte », déduit du nom par le serveur.
   // Proposer bge-m3 pour la vision ne produit pas une erreur claire, ça
   // produit du silence : chaque ligne ne montre donc que ce qui sait faire
@@ -197,12 +201,30 @@ function LigneModele({ titre, aide, actuel, fiches: toutesFiches, busy, onChoisi
   // du serveur déduit l'usage d'un NOM, elle peut se tromper sur un modèle
   // exotique, et un menu vide empêcherait de choisir ce qu'on sait bon. Le
   // champ libre à côté reste de toute façon ouvert.
-  const fiches = usage
-    ? toutesFiches.map((f) => {
-        const gardes = f.modeles.filter((m) => m.usage === usage)
-        return gardes.length ? { ...f, modeles: gardes } : f
-      })
-    : toutesFiches
+  //
+  // LA LISTE EST MÉMORISÉE (11/09, relevé de Noa : « je ne peux pas changer les
+  // modèles embeddings ou OCR, ça bug »). Recalculée à chaque rendu, elle
+  // changeait d'identité à chaque frappe, relançait l'effet ci-dessous, et
+  // celui-ci remettait fournisseur et modèle sur la valeur EN VIGUEUR : le menu
+  // revenait en arrière dès qu'on le touchait. Seules les lignes filtrées
+  // (vision, embeddings) en souffraient — les deux autres recevaient la liste
+  // du parent telle quelle, stable.
+  //
+  // Et un fournisseur qui ne sait pas faire le travail n'est plus proposé :
+  // LongCat sur la ligne des embeddings était refusé à l'écriture. Sur les
+  // lignes de texte, un modèle d'embedding n'est pas proposé non plus : il ne
+  // sait pas répondre.
+  const fiches = useMemo(() => {
+    const capables = toutesFiches.filter((f) => !f.usages || f.usages.includes(usage || "texte"))
+    return capables.map((f) => {
+      const sansEmbedding = f.modeles.filter((m) => m.usage !== "embedding")
+      const gardes = usage ? f.modeles.filter((m) => m.usage === usage) : sansEmbedding
+      if (gardes.length) return { ...f, modeles: gardes }
+      // Rien de reconnu : la liste entière (l'heuristique peut se tromper),
+      // mais jamais un modèle d'embedding sur une ligne qui doit répondre.
+      return { ...f, modeles: usage === "embedding" || !sansEmbedding.length ? f.modeles : sansEmbedding }
+    })
+  }, [toutesFiches, usage])
   const [fournisseur, setFournisseur] = useState("")
   const [modele, setModele] = useState("")
   const [autre, setAutre] = useState("")
@@ -480,6 +502,37 @@ function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendTok
 
   useEffect(() => { charger() }, [charger])
 
+  // L'issue du consentement Google revient dans l'URL (?google=…) quand on est
+  // parti d'ici pour relier l'agenda : on la dit, puis on la retire de l'URL.
+  useEffect(() => {
+    try {
+      const issue = new URLSearchParams(window.location.search).get("google")
+      if (!issue) return
+      if (issue === "connecte") setNote("Compte Google relié. Si l'agenda n'apparaît pas « relié » ci-dessous, c'est qu'un autre compte a été choisi chez Google.")
+      else setErreur(issue === "refuse" ? "Connexion annulée chez Google : rien n'a été relié." : "La connexion Google n'a pas abouti. Réessayez.")
+      window.history.replaceState(null, "", window.location.pathname)
+    } catch { /* rien */ }
+  }, [])
+
+  // RELIER L'AGENDA (11/09). Un compte Gmail personnel n'ouvre son agenda que
+  // par OAuth : on part chez Google avec l'adresse de la boîte présélectionnée,
+  // et l'on revient sur cet onglet (Paramètres s'ouvre sinon sur Utilisateurs).
+  const relierAgenda = async () => {
+    setBusy("agenda"); setNote("")
+    try {
+      const res = await fetch(`${apiUrl}/api/google/lien?compte=${encodeURIComponent(etat?.adresse || "")}`, {
+        headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j.url) throw new Error(j?.detail || `HTTP ${res.status}`)
+      try { sessionStorage.setItem("parametres_retour_google", "cles") } catch { /* rien */ }
+      window.location.href = j.url
+    } catch (e: any) {
+      setErreur(e?.message || "lien de connexion indisponible")
+      setBusy("")
+    }
+  }
+
   const enregistrer = async (retirer = false) => {
     setBusy("enregistrer"); setNote("")
     try {
@@ -575,6 +628,28 @@ function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendTok
       {etat?.fournisseur && etat.fournisseur !== "imap" && etat.adresse && (
         <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>
           Le fournisseur effectif est « {etat.fournisseur} » : MAIL_PROVIDER force une autre messagerie sur le serveur.
+        </div>
+      )}
+      {etat?.agenda && etat?.adresse && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--marque-border)",
+                      display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--marque-text-primary)" }}>
+              Agenda Google · {etat.agenda.accorde ? "relié" : etat.agenda.relie ? "relié sans l'agenda" : "non relié"}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
+              {!etat.agenda.oauth_configure
+                ? "Renseignez d'abord le client OAuth Google (carte plus bas) : le mot de passe d'application n'ouvre pas l'agenda."
+                : etat.agenda.accorde
+                  ? `L'assistant lit l'agenda de ${etat.adresse}, propose des créneaux et pose des rendez-vous (après votre accord).`
+                  : `Chez Google, choisissez le compte ${etat.adresse}. Google peut afficher « application non validée » : Paramètres avancés → Accéder.`}
+            </div>
+          </div>
+          <button onClick={relierAgenda} disabled={busy !== "" || !etat.agenda.oauth_configure} className="sym-tap" style={{
+            padding: "8px 14px", borderRadius: "var(--marque-radius-pill)", border: "1px solid var(--marque-border)",
+            background: "var(--marque-surface)", color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+            opacity: etat.agenda.oauth_configure ? 1 : 0.5,
+          }}>{busy === "agenda" ? "…" : etat.agenda.accorde ? "Relier à nouveau" : "Relier l'agenda Google"}</button>
         </div>
       )}
       {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
@@ -795,6 +870,159 @@ function ReglageCompteServiceGoogle({ apiUrl, backendToken }: { apiUrl: string; 
         </div>
       )}
       {etat?.erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {etat.erreur}</div>}
+      {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
+      {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
+// LE CLIENT OAUTH GOOGLE (11/09, Noa : « il faut que ça ait accès aussi à
+// Calendar »). Un compte Gmail PERSONNEL n'ouvre son agenda que par OAuth : ni
+// le mot de passe d'application ni un compte de service n'y donnent accès. Ce
+// client est aussi celui de « Mon compte Google ». L'ID s'affiche (ce n'est pas
+// un secret), le secret jamais ; l'adresse de redirection se copie telle quelle
+// dans la console. Le fichier .json téléchargé depuis la console se lit DANS le
+// navigateur pour remplir les deux champs, et l'on vérifie qu'il déclare bien
+// notre adresse de redirection — l'oubli le plus courant.
+function ReglageClientOAuth({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [etat, setEtat] = useState<any>(null)
+  const [ident, setIdent] = useState("")
+  const [secret, setSecret] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+  const [copie, setCopie] = useState(false)
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/client-oauth-google`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const j = await res.json()
+      setEtat(j); setIdent(j.client_id || ""); setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "chargement impossible")
+    }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  const lireFichier = (fichier?: File | null) => {
+    if (!fichier) return
+    const lecteur = new FileReader()
+    lecteur.onload = () => {
+      try {
+        const j = JSON.parse(String(lecteur.result || ""))
+        if (j.installed) { setErreur("Ce client est de type « Application de bureau » : il faut un client « Application Web ».") ; return }
+        const web = j.web
+        if (!web?.client_id) { setErreur("Ce fichier n'est pas celui d'un client OAuth (il manque « web.client_id »).") ; return }
+        setIdent(web.client_id); setSecret(web.client_secret || ""); setErreur("")
+        const uris: string[] = web.redirect_uris || []
+        setNote(etat?.redirection && !uris.includes(etat.redirection)
+          ? `Fichier lu, mais il ne déclare pas l'adresse de redirection ${etat.redirection} : ajoutez-la dans la console avant de relier un compte.`
+          : `Fichier « ${fichier.name} » lu : cliquez sur Enregistrer.`)
+      } catch {
+        setErreur("Ce fichier n'est pas du JSON lisible.")
+      }
+    }
+    lecteur.readAsText(fichier)
+  }
+
+  const envoyer = async (retirer = false) => {
+    setBusy(true); setNote("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/client-oauth-google`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(retirer ? { retirer: true } : { client_id: ident, secret }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j?.detail || `HTTP ${res.status}`)
+      setSecret("")
+      setNote(retirer ? "Client OAuth retiré des Paramètres." : "Client OAuth enregistré. Vous pouvez relier l'agenda depuis la carte de la boîte mail.")
+      setErreur("")
+      await charger()
+    } catch (e: any) {
+      setErreur(e?.message || "enregistrement impossible")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const champ = {
+    flex: 1, minWidth: 220, padding: "8px 12px", fontSize: 13,
+    border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)",
+    color: "var(--marque-text-body)", outline: "none",
+  }
+  const bouton = {
+    padding: "8px 14px", borderRadius: "var(--marque-radius-pill)", border: "1px solid var(--marque-border)",
+    background: "var(--marque-surface)", color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+  }
+  const pret = ident.trim() && (secret.trim() || etat?.secret_configure)
+
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>Le client OAuth Google</div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
+            Il permet de relier un compte Google à l'assistant : l'agenda de la boîte de l'entreprise, et « Mon compte Google ». Un compte Gmail personnel n'ouvre son agenda que par cette voie.
+          </div>
+        </div>
+        <span style={{
+          background: etat?.configure ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+          color: etat?.configure ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+          padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
+        }}>
+          {etat === null ? "…" : etat.configure
+            ? `configuré · secret ${etat.empreinte} · ${etat.origine === "parametres" ? "Paramètres" : "fichier serveur"}`
+            : "Non configuré"}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+        <input type="text" autoComplete="off" placeholder="ID client (…apps.googleusercontent.com)" value={ident}
+               onChange={(e) => setIdent(e.target.value)} style={{ ...champ, fontFamily: "monospace", fontSize: 12 }} />
+        <input type="password" autoComplete="new-password"
+               placeholder={etat?.secret_configure ? "secret enregistré (laisser vide pour le garder)" : "code secret du client"}
+               value={secret} onChange={(e) => setSecret(e.target.value)} style={{ ...champ, fontFamily: "monospace" }} />
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <label className="sym-tap" style={{ ...bouton, display: "inline-block" }}>
+          Choisir le fichier .json du client
+          <input type="file" accept=".json,application/json" style={{ display: "none" }}
+                 onChange={(e) => { lireFichier(e.target.files?.[0]); e.target.value = "" }} />
+        </label>
+        <button onClick={() => envoyer(false)} disabled={busy || !pret} className="sym-tap" style={{
+          padding: "8px 16px", borderRadius: "var(--marque-radius-pill)", border: "none",
+          background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+          color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+          opacity: pret ? 1 : 0.5,
+        }}>{busy ? "…" : "Enregistrer"}</button>
+        {etat?.origine === "parametres" && (
+          <button onClick={() => envoyer(true)} disabled={busy} className="sym-tap" style={bouton}>Retirer</button>
+        )}
+      </div>
+      {etat?.redirection && (
+        <div style={{ marginTop: 12, padding: "10px 12px", background: "var(--marque-canvas)", borderRadius: 10 }}>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>
+            console.cloud.google.com → API et services → Identifiants → Créer des identifiants → ID client OAuth → « Application Web », avec cette adresse dans « URI de redirection autorisés » :
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+            <code style={{ flex: 1, minWidth: 0, fontSize: 12, overflowWrap: "anywhere", color: "var(--marque-text-body)" }}>{etat.redirection}</code>
+            <button className="sym-tap" style={{ ...bouton, padding: "4px 10px", fontSize: 12 }}
+                    onClick={async () => { try { await navigator.clipboard.writeText(etat.redirection); setCopie(true); setTimeout(() => setCopie(false), 1800) } catch { setErreur("copie impossible : sélectionnez l'adresse à la main") } }}>
+              {copie ? "Copié" : "Copier"}
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>
+            Dans le même projet : activer « Google Calendar API » (et « Gmail API »), puis écran de consentement OAuth en « Externe » et « Publier l'application » — laissée « en test », Google coupe l'accès au bout de 7 jours.
+          </div>
+        </div>
+      )}
       {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
       {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
     </div>
@@ -1137,6 +1365,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
       <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} signal={clesModifiees} />
       <ReglageBoiteMail apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageCompteServiceGoogle apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageClientOAuth apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageValidationTotale apiUrl={apiUrl} backendToken={backendToken} />

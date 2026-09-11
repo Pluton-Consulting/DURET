@@ -568,13 +568,26 @@ def catalogue_modeles() -> list[dict]:
                                           s.model_ollama_cloud_vision_secours]
                                          + _modeles_ollama_cloud()),
         ("longcat", "LongCat", [s.model_longcat]),
-        ("google", "Google Gemini", [s.model_google_texte, s.model_google_texte_leger]),
+        # Les modèles de VISION et d'EMBEDDING de la configuration figurent
+        # aussi dans leur fiche (11/09) : sans eux, la ligne « Embeddings » ne
+        # proposait aucun modèle d'embedding Google — celui qui tourne —, et la
+        # ligne « Vision et OCR » taisait le modèle d'OCR en place.
+        ("google", "Google Gemini", [s.model_google_texte, s.model_google_texte_leger,
+                                     getattr(s, "model_google_vision", ""),
+                                     getattr(s, "gemini_embedding_model", "")]),
         ("deepseek", "DeepSeek", [s.model_deepseek_flash, s.model_deepseek]),
         ("anthropic", "Anthropic Claude", [s.model_anthropic_vision]),
         ("groq", "Groq", [s.model_groq_large, s.model_groq_light]),
         ("openrouter", "OpenRouter", [s.model_or_deepseek_flash, s.model_or_deepseek_pro,
-                                      s.model_primary, s.model_or_free_a, s.model_or_free_b]),
+                                      s.model_primary, s.model_or_free_a, s.model_or_free_b,
+                                      getattr(s, "model_openrouter_vision", "")]),
     ]
+    # CE QUE CHAQUE FOURNISSEUR SAIT FAIRE (11/09). La carte proposait les
+    # mêmes fournisseurs sur les quatre lignes : « LongCat » sur la ligne des
+    # embeddings, refusé ensuite par le serveur (« fournisseur parmi… »). Les
+    # listes sont celles que valide `llm/reglages.py` : l'écran ne propose que
+    # ce que l'écriture acceptera.
+    from llm.reglages import FOURNISSEURS_EMBEDDING, FOURNISSEURS_TEXTE, FOURNISSEURS_VISION
     maintenant = time.monotonic()
     sortie = []
     for provider, libelle, modeles in fiches:
@@ -583,6 +596,10 @@ def catalogue_modeles() -> list[dict]:
         sortie.append({
             "fournisseur": provider, "libelle": libelle,
             "cle_presente": _provider_available(provider),
+            "usages": [u for u, admis in (("texte", FOURNISSEURS_TEXTE),
+                                          ("vision", FOURNISSEURS_VISION),
+                                          ("embedding", FOURNISSEURS_EMBEDDING))
+                       if provider in admis],
             "modeles": [{"id": m, "ecarte": m in ecartes,
                           "raison": ecartes.get(m, ""),
                           # L'écran s'en sert pour ne proposer, sur chaque

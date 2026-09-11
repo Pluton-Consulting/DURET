@@ -81,6 +81,12 @@ FOURNISSEURS_EMBEDDING = ("ollama_cloud", "ollama", "gemini", "google", "openai"
 FOURNISSEURS_TEXTE = ("ollama_cloud", "longcat", "deepseek", "openrouter",
                       "google", "groq", "anthropic")
 
+# CEUX QUI VOIENT (11/09). `modele_vision` était validé contre les fournisseurs
+# de TEXTE : l'écran acceptait « deepseek:… » ou « longcat:… » pour lire les
+# plans, que la cascade de vision ne sait pas construire — le choix passait,
+# puis ne servait jamais. Même liste que `get_vision_candidates` (llm/router.py).
+FOURNISSEURS_VISION = ("anthropic", "openrouter", "ollama_cloud", "google", "groq")
+
 # Un réglage dont la valeur finit DANS du SQL doit être validé à l'écriture ET
 # à la lecture. On l'oblige à n'être qu'un instant ISO, ce qui le rend
 # inoffensif une fois inséré.
@@ -188,6 +194,7 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
                "modele_vision", "modele_embedding") and (brut or "").strip():
         f, _, m = (brut or "").strip().partition(":")
         admis = (FOURNISSEURS_EMBEDDING if nom == "modele_embedding"
+                 else FOURNISSEURS_VISION if nom == "modele_vision"
                  else FOURNISSEURS_TEXTE)
         if f.strip().lower() not in admis or not m.strip():
             raise ValueError("Forme attendue : « fournisseur:modele », fournisseur parmi "

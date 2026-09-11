@@ -78,8 +78,8 @@ def fournisseur() -> str:
     google_pret = bool(
         (fichier and os.path.exists(fichier))
         or str(_valeur("google_sa_json") or "").strip()
-        or ((getattr(settings, "google_oauth_client_id", None) or "").strip()
-            and (getattr(settings, "google_oauth_client_secret", None) or "").strip())
+        or (str(_valeur("google_oauth_client_id") or "").strip()
+            and str(_valeur("google_oauth_client_secret") or "").strip())
     )
     if google_pret and _module_present("ingestion.connectors.gmail"):
         return "gmail"

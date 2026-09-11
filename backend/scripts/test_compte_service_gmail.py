@@ -144,9 +144,11 @@ verifier("la clé est VÉRIFIÉE avant d'être enregistrée",
          and bloc_put.find("valider_cle") < bloc_put.find('enregistrer("google_sa_json"'))
 verifier("le journal d'audit ne recopie aucune valeur",
          '"cle_posee": bool(cle)' in bloc_put and "metadata={\"cle\": cle" not in bloc_put)
-verifier("les trois routes exigent l'administration système",
+# Cinq routes dans ce bloc : les trois du compte de service, les deux du
+# client OAuth (11/09), toutes réservées à l'administration système.
+verifier("les routes du compte de service et du client OAuth exigent l'administration système",
          src_settings.split("GMAIL PAR COMPTE DE SERVICE")[1].split("def _moteur_images_present")[0]
-         .count('has_permission(current_user.role, "manage_system")') == 3)
+         .count('has_permission(current_user.role, "manage_system")') == 5)
 src_tab = (FRONTEND / "components" / "settings" / "ClesApiTab.tsx").read_text(encoding="utf-8")
 verifier("la carte existe et s'affiche sous la boîte mail",
          "function ReglageCompteServiceGoogle" in src_tab
@@ -293,8 +295,9 @@ else:
              CLE["private_key_id"] not in dump and etat["empreinte"].startswith("0123"))
     verifier("l'ID client et l'adresse du compte sont donnés",
              etat["client_id"] == CLE["client_id"] and etat["compte"] == CLE["client_email"])
-    verifier("les champs à coller : lecture, envoi, annuaire, dans cet ordre",
-             etat["a_coller"] == ",".join([gmail.SCOPES[0], gmail.SCOPES_ENVOI[0], gmail.SCOPES_ANNUAIRE[0]]),
+    verifier("les champs à coller : lecture, envoi, agenda, annuaire, dans cet ordre",
+             etat["a_coller"] == ",".join([gmail.SCOPES[0], gmail.SCOPES_ENVOI[0],
+                                           gmail.SCOPES_AGENDA[0], gmail.SCOPES_ANNUAIRE[0]]),
              etat.get("a_coller"))
     verifier("le domaine et l'administrateur de Paramètres",
              etat["domaine"] == "exemple-sols.fr" and etat["administrateur"] == "admin@exemple-sols.fr")
@@ -313,10 +316,12 @@ else:
     JETONS.clear()
     r = gmail.tester_compte_de_service("admin@exemple-sols.fr")
     verifier("tout accordé : ok, avec le nombre de messages",
-             r["ok"] and r["lecture"] == {"ok": True, "messages": 1234} and r["envoi"]["ok"] and r["annuaire"]["ok"], r)
-    verifier("trois jetons, chacun sur son champ et la bonne identité",
+             r["ok"] and r["lecture"] == {"ok": True, "messages": 1234} and r["envoi"]["ok"]
+             and r["agenda"]["ok"] and r["annuaire"]["ok"], r)
+    verifier("quatre jetons, chacun sur son champ et la bonne identité",
              [(s[0], sujet) for s, sujet in JETONS] == [
                  (gmail.SCOPES[0], "admin@exemple-sols.fr"), (gmail.SCOPES_ENVOI[0], "admin@exemple-sols.fr"),
+                 (gmail.SCOPES_AGENDA[0], "admin@exemple-sols.fr"),
                  (gmail.SCOPES_ANNUAIRE[0], "admin@exemple-sols.fr")], JETONS)
     REFUS[(gmail.SCOPES_ENVOI[0], "admin@exemple-sols.fr")] = (
         "('unauthorized_client: Client is unauthorized to retrieve access tokens using this method', {})")

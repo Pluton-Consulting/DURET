@@ -39,6 +39,11 @@ CLES_CONNUES = (
     "google_sa_json",
     "gmail_domain",
     "google_admin_subject",
+    # LE CLIENT OAUTH GOOGLE (11/09) : sans lui, ni « Ma boîte Google » ni
+    # l'agenda d'un compte Gmail personnel ne se relient. Il vivait dans le
+    # `.env` seul ; il se saisit désormais dans Paramètres, comme le reste.
+    "google_oauth_client_id",
+    "google_oauth_client_secret",
     "ollama_cloud_api_key",
     "longcat_api_key",
     "deepseek_api_key",
@@ -49,7 +54,8 @@ CLES_CONNUES = (
 )
 
 CLES_HORS_ECRAN = frozenset({"mail_imap_user", "mail_imap_password",
-                             "google_sa_json", "gmail_domain", "google_admin_subject"})
+                             "google_sa_json", "gmail_domain", "google_admin_subject",
+                             "google_oauth_client_id", "google_oauth_client_secret"})
 DUREE_CACHE_S = 30
 
 _CACHE: dict[str, str] = {}

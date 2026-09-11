@@ -81,6 +81,9 @@ mod_config.settings = types.SimpleNamespace(
 sys.modules["config"] = mod_config
 mod_collecte = types.ModuleType("mail.collecte")
 mod_collecte.fournisseur = lambda: ETAT["fournisseur"]
+# La voie Google n'existe que là où le connecteur Gmail existe (11/09) : ici,
+# il est absent — la voie Google elle-même est éprouvée par test_agenda_google.
+mod_collecte._module_present = lambda chemin: False
 sys.modules["mail"] = types.ModuleType("mail")
 sys.modules["mail.collecte"] = mod_collecte
 mod_ing = types.ModuleType("ingestion")
@@ -208,7 +211,7 @@ try:
     verifier("sur une messagerie Google, le geste dit ce qui reste à connecter", False)
 except agenda.AgendaIndisponible as e:
     verifier("sur une messagerie Google, le geste dit ce qui reste à connecter",
-             "Google Calendar" in str(e))
+             "Google" in str(e) and "OAuth" in str(e))
 ETAT["fournisseur"] = "outlook"
 
 try:

@@ -31,14 +31,21 @@ def _retour_ecran(resultat: str) -> RedirectResponse:
 
 
 @router.get("/lien")
-async def lien(current_user: User = Depends(get_current_user)):
-    """L'URL de consentement Google pour l'utilisateur connecté."""
+async def lien(compte: str | None = None, current_user: User = Depends(get_current_user)):
+    """L'URL de consentement Google pour l'utilisateur connecté.
+
+    `compte` (facultatif) présélectionne l'adresse attendue chez Google — la
+    carte de la boîte de l'entreprise s'en sert pour relier SON agenda.
+    """
+    from llm.cles import rafraichir
+    await rafraichir()
     if not google_perso.configurable():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Connexion Google non configurée : renseignez "
-                   "GOOGLE_OAUTH_CLIENT_ID et GOOGLE_OAUTH_CLIENT_SECRET.")
-    return {"url": google_perso.lien_autorisation(str(current_user.id))}
+            detail="Connexion Google non configurée : renseignez le client OAuth "
+                   "dans Paramètres → Clés API (ou GOOGLE_OAUTH_CLIENT_ID et "
+                   "GOOGLE_OAUTH_CLIENT_SECRET).")
+    return {"url": google_perso.lien_autorisation(str(current_user.id), compte)}
 
 
 @router.get("/retour")

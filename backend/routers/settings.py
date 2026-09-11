@@ -328,7 +328,20 @@ async def lire_boite_mail(current_user: User = Depends(get_current_user)):
         effectif = fournisseur()
     except Exception:  # noqa: BLE001 — rien de configuré
         effectif = None
+    # L'AGENDA DE CETTE BOÎTE (11/09) : un compte Gmail personnel n'ouvre son
+    # agenda que par OAuth. La carte dit si le client OAuth est posé, si le
+    # compte est relié, et s'il a accordé l'agenda. Seulement là où la voie
+    # Google existe : ailleurs, l'agenda passe par Microsoft et rien ne s'affiche.
+    agenda = None
+    gmail = _connecteur_gmail()
+    if gmail is not None:
+        from mail import google_perso
+        await google_perso.rafraichir(force=True)
+        accorde = google_perso.accorde(adresse, gmail.SCOPES_AGENDA[0]) if adresse else None
+        agenda = {"oauth_configure": google_perso.configurable(),
+                  "relie": accorde is not None, "accorde": bool(accorde)}
     return {"adresse": adresse, "mot_de_passe_configure": bool(mdp),
+            "agenda": agenda,
             "empreinte": masquer(mdp),
             "origine": ("parametres" if _CACHE.get("mail_imap_user") else ("env" if adresse else None)),
             "fournisseur": effectif,
@@ -454,6 +467,58 @@ async def ecrire_compte_service(body: CompteServiceBody,
     await log_action(action="compte_service_google_modifie", user_id=uid,
                      metadata={"cle_posee": bool(cle), "domaine_pose": bool(domaine),
                                "administrateur_pose": bool(admin)})
+    return {"note": "Prise en compte immédiate, sans redéploiement."}
+
+
+# LE CLIENT OAUTH GOOGLE (11/09). Sans lui, aucun compte Google ne se relie :
+# ni « Ma boîte Google », ni l'agenda d'un compte Gmail personnel. Il vivait
+# dans le `.env` seul. L'identifiant n'est pas un secret (il s'affiche) ; le
+# secret ne ressort jamais. L'adresse de redirection est rendue pour être
+# collée telle quelle dans la console Google Cloud.
+
+class ClientOAuthBody(BaseModel):
+    client_id: Optional[str] = None
+    secret: Optional[str] = None            # vide = inchangé
+    retirer: bool = False
+
+
+@router.get("/client-oauth-google")
+async def lire_client_oauth(current_user: User = Depends(get_current_user)):
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.cles import rafraichir, _CACHE, masquer
+    await rafraichir(force=True)
+    from mail import google_perso
+    ident, secret = google_perso._client()
+    return {"configure": bool(ident and secret), "client_id": ident,
+            "secret_configure": bool(secret), "empreinte": masquer(secret),
+            "origine": ("parametres" if _CACHE.get("google_oauth_client_id") else ("env" if ident else None)),
+            "redirection": google_perso._redirect_uri()}
+
+
+@router.put("/client-oauth-google")
+async def ecrire_client_oauth(body: ClientOAuthBody, current_user: User = Depends(get_current_user)):
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    from llm.cles import enregistrer
+    uid = str(current_user.id)
+    if body.retirer:
+        await enregistrer("google_oauth_client_id", "", uid)
+        await enregistrer("google_oauth_client_secret", "", uid)
+        await log_action(action="client_oauth_google_modifie", user_id=uid, metadata={"retire": True})
+        return {"note": "Client OAuth retiré des Paramètres."}
+    ident = (body.client_id or "").strip()
+    if not ident.endswith(".apps.googleusercontent.com"):
+        raise HTTPException(
+            status_code=422,
+            detail="L'ID client attendu se termine par « .apps.googleusercontent.com » "
+                   "(console Google Cloud → API et services → Identifiants → ID clients OAuth 2.0).")
+    secret = (body.secret or "").strip()
+    await enregistrer("google_oauth_client_id", ident, uid)
+    if secret:
+        await enregistrer("google_oauth_client_secret", secret, uid)
+    await log_action(action="client_oauth_google_modifie", user_id=uid,
+                     metadata={"secret_pose": bool(secret)})
     return {"note": "Prise en compte immédiate, sans redéploiement."}
 
 

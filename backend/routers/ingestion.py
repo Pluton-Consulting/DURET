@@ -195,10 +195,13 @@ async def _avancement(sync_id: str):
     Postgres porterait la charge. Une écriture par seconde au plus suffit.
     """
     import time
-    dernier = {"t": 0.0}
+    # « Jamais écrit » n'est pas l'instant zéro : l'horloge monotone peut
+    # partir de zéro avec le processus, et la PREMIÈRE écriture — celle qui
+    # dit « je relève l'arborescence » — était alors sautée.
+    dernier = {"t": None}
 
     async def _poser(traites: int, total, etape: str) -> None:
-        if time.monotonic() - dernier["t"] < 1.0:
+        if dernier["t"] is not None and time.monotonic() - dernier["t"] < 1.0:
             return
         dernier["t"] = time.monotonic()
         async with get_db() as conn:
@@ -249,8 +252,11 @@ async def _executer_sync(source: str, module: str, user_id: str,
         # endroit (31/08). La raison est écrite dans `erreur`, l'écran l'affiche.
         anticipe = bool((resultat or {}).get("arret_anticipe"))
         statut = "partielle" if anticipe else "terminee"
-        raison = (f"arrêt anticipé : {(resultat or {}).get('non_examines', '?')} fichier(s) "
-                  "non examiné(s) — relancer pour continuer") if anticipe else None
+        # Un connecteur peut dire LUI-MÊME pourquoi il s'est arrêté (NAS : le
+        # relevé de l'arborescence a atteint son plafond) : sa phrase prime.
+        raison = ((resultat or {}).get("raison_partielle")
+                  or f"arrêt anticipé : {(resultat or {}).get('non_examines', '?')} fichier(s) "
+                     "non examiné(s) — relancer pour continuer") if anticipe else None
         etat.update({"etat": statut, "resultat": resultat or {}, "erreur": raison,
                      "fin": time.time()})
         await _conclure(sync_id, statut, resultat=resultat, erreur=raison)
@@ -347,6 +353,21 @@ async def demarrer_sync(source: str, current_user) -> dict:
                             detail=f"Connecteur inconnu : {source}")
 
     libelle, module = CONNECTEURS[source]
+    sync_id = await _ouvrir_sync(source, current_user.id, current_user.email)
+    if sync_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Une synchronisation {source} est déjà en cours.")
+
+    asyncio.create_task(_executer_sync(source, module, str(current_user.id), sync_id))
+    return {"source": source, "lance": True,
+            "note": "Synchronisation lancée en tâche de fond ; l'avancement s'affiche ici."}
+
+
+async def _ouvrir_sync(source: str, user_id, email: Optional[str]) -> Optional[str]:
+    """Pose la ligne « en cours » d'une synchronisation, ou None si une autre
+    tourne déjà pour cette source. Partagée par le bouton et par les campagnes :
+    un seul endroit où vivent le verrou et la libération des synchros pendues.
+    """
     async with get_db() as conn:
         # UNE SYNCHRO PENDUE NE DOIT PAS BLOQUER LA SOURCE POUR TOUJOURS. Si le
         # processus est mort sans écrire son état final, la ligne reste « en
@@ -365,17 +386,63 @@ async def demarrer_sync(source: str, current_user) -> dict:
             # au redémarrage et tiendrait à plusieurs workers, ce que le
             # dictionnaire en mémoire ne faisait ni l'un ni l'autre.
             "ON CONFLICT DO NOTHING RETURNING id",
-            source, current_user.id, current_user.email)
+            source, user_id, email)
     if ligne is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail=f"Une synchronisation {source} est déjà en cours.")
+        return None
+    _SYNCS[source] = {"etat": "en_cours", "libelle": CONNECTEURS[source][0],
+                      "debut": time.time(), "par": email,
+                      "resultat": None, "erreur": None}
+    return str(ligne["id"])
 
-    _SYNCS[source] = {"etat": "en_cours", "libelle": libelle, "debut": time.time(),
-                      "par": current_user.email, "resultat": None, "erreur": None}
-    asyncio.create_task(_executer_sync(source, module, str(current_user.id),
-                                       str(ligne["id"])))
-    return {"source": source, "lance": True,
-            "note": "Synchronisation lancée en tâche de fond ; l'avancement s'affiche ici."}
+
+ATTENTE_SYNC_VOISINE_S = 6 * 3600
+
+
+async def synchroniser_et_attendre(source: str, user_id=None, email: Optional[str] = None) -> dict:
+    """Synchronise une source et ATTEND la fin. Pour les campagnes de fond.
+
+    « Enrichir les documents » (11/09) doit OUVRIR les fichiers du stockage
+    avant d'en tirer le savoir : elle passe par ici, donc par la même ligne
+    `synchronisations`, le même verrou et le même avancement que le bouton —
+    la carte du connecteur montre la progression pendant la campagne. Si une
+    synchronisation de cette source tourne déjà (lancée à la main), on
+    attend la sienne au lieu d'en lancer une seconde.
+
+    Rend `{"etat", "resultat", "erreur"}`. Ne lève que pour une source
+    inconnue : une panne de connecteur est un ÉTAT, que la campagne rapporte.
+    """
+
+    if source not in CONNECTEURS:
+        raise ValueError(f"Connecteur inconnu : {source}")
+    _, module = CONNECTEURS[source]
+    sync_id = await _ouvrir_sync(source, user_id, email)
+    if sync_id is not None:
+        # Sans identité, None — jamais "" : le journal d'audit attend un UUID,
+        # et son refus, levé APRÈS la conclusion, réécrirait une synchro
+        # réussie en « échec ».
+        await _executer_sync(source, module, str(user_id) if user_id else None, sync_id)
+        e = _SYNCS.get(source) or {}
+        return {"etat": e.get("etat"), "resultat": e.get("resultat"), "erreur": e.get("erreur")}
+
+    debut = time.monotonic()
+    while time.monotonic() - debut < ATTENTE_SYNC_VOISINE_S:
+        await asyncio.sleep(15)
+        async with get_db() as conn:
+            l = await conn.fetchrow(
+                "SELECT statut, erreur, resultat FROM synchronisations WHERE source=$1 "
+                "ORDER BY demarre_a DESC LIMIT 1", source)
+        if l is None or l["statut"] != "en_cours":
+            resultat = l["resultat"] if l else None
+            if isinstance(resultat, str):          # le pool n'a pas de codec JSONB
+                import json as _json
+                try:
+                    resultat = _json.loads(resultat)
+                except ValueError:
+                    resultat = None
+            return {"etat": l["statut"] if l else None, "resultat": resultat,
+                    "erreur": l["erreur"] if l else None}
+    return {"etat": "en_cours", "resultat": None,
+            "erreur": "la synchronisation voisine dure encore après six heures"}
 
 
 @router.post("/sync/{source}")

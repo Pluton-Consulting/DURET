@@ -229,7 +229,7 @@ async def analyser(conversation: dict) -> dict:
 
 
 async def enregistrer(propositions: dict, entity_map: dict, prefixe_source: str,
-                      acces_force: str | None = None) -> dict:
+                      acces_force: str | None = None, sans_doublon: bool = False) -> dict:
     """Écrit en mémoire les connaissances et procédures retenues.
 
     Partagé par le débrief d'une conversation et par la campagne d'enrichissement
@@ -263,14 +263,31 @@ async def enregistrer(propositions: dict, entity_map: dict, prefixe_source: str,
             rendu = rendu.replace(jeton, "[À COMPLÉTER]")
         return rendu
 
-    chunks = memorise = 0
+    chunks = memorise = deja_connus = 0
     echecs: list[str] = []
     horodatage = int(_time.time())
+
+    async def _deja_en_memoire(source_type: str, titre: str) -> bool:
+        # UNE CAMPAGNE SE RELANCE (11/09 : « enrichir le NAS » doit pouvoir
+        # tourner chaque semaine). L'identifiant porte l'horodatage : sans ce
+        # contrôle, chaque passage réécrirait la même connaissance une fois de
+        # plus. Même type, même titre : c'est la même chose, on ne l'écrit pas.
+        try:
+            from database.connection import get_db
+            async with get_db() as conn:
+                return bool(await conn.fetchval(
+                    "SELECT 1 FROM documents WHERE source_type = $1 "
+                    "AND source_filename = $2 LIMIT 1", source_type, titre[:200]))
+        except Exception:  # noqa: BLE001 — dans le doute, on écrit
+            return False
 
     for cle, source_type in (("connaissances", "apprentissage"), ("procedures", "procedure")):
         for i, item in enumerate(propositions.get(cle) or []):
             titre = _vrai(item.get("titre") or "")
             texte = f"{titre}\n\n{_vrai(item.get('contenu') or '')}"
+            if sans_doublon and await _deja_en_memoire(source_type, titre):
+                deja_connus += 1
+                continue
             try:
                 chunks += await ingest_document(
                     text=texte, source_type=source_type,
@@ -282,7 +299,8 @@ async def enregistrer(propositions: dict, entity_map: dict, prefixe_source: str,
                 logger.warning("Mémorisation de « %s » échouée : %s", titre[:60], e)
                 echecs.append(titre[:80])
 
-    return {"memorise": memorise, "chunks": chunks, "echecs": echecs}
+    return {"memorise": memorise, "chunks": chunks, "echecs": echecs,
+            "deja_connus": deja_connus}
 
 
 async def generer_code_skill(competence: dict) -> str:

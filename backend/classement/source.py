@@ -22,6 +22,12 @@ logger = logging.getLogger("symbiose.classement")
 NOM_STOCKAGE = "serveur de fichiers (NAS)"
 GESTE_LISTER = "nas_lister"
 GESTE_CHERCHER = "nas_chercher"
+# Le connecteur de synchronisation de ce stockage (clé de
+# `routers.ingestion.CONNECTEURS`). La campagne « Enrichir les documents »
+# le lance d'abord : elle ouvre chaque fichier de le NAS AVANT d'en tirer le
+# savoir, au lieu de ne relire que ce qu'une synchronisation passée aurait
+# laissé en mémoire (11/09).
+CONNECTEUR = "synology"
 ATTENTE_CATALOGUE_S = 900
 
 

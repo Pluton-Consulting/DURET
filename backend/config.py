@@ -480,7 +480,7 @@ class Settings(BaseSettings):
     synology_source_type: str = "nas"                # type de source dans le RAG
     synology_access_level: str = "all"               # 'all', 'direction_only'...
     synology_max_file_mb: int = 25                   # au-delà, fichier ignoré
-    synology_max_depth: int = 6                      # profondeur de récursion des sous-dossiers
+    synology_max_depth: int = 6                      # PLUS LU depuis le 11/09 : la synchro part du catalogue du NAS
     synology_verify_tls: bool = False                # les NAS ont souvent un certificat auto-signé
 
     # Tâches d'agent (planification, webhook)

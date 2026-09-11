@@ -273,24 +273,55 @@ async def connexion():
                 _COURANTE = None
 
 
-async def _lister_ouvert(client, base, sid, chemin: str) -> dict:
-    """Liste un dossier dans une session DÉJÀ ouverte."""
+PAGE_LISTAGE_COMPLET = 1000
+
+
+async def _lister_ouvert(client, base, sid, chemin: str, tout: bool = False) -> dict:
+    """Liste un dossier dans une session DÉJÀ ouverte.
+
+    `tout=True` : TOUTES les entrées, page après page — c'est ce que demande le
+    balayage (donc le catalogue, donc l'ingestion). Sans pagination, un
+    dossier de plus de 200 entrées n'était vu qu'à moitié, et ce qui dépassait
+    n'existait pour personne : ni pour la recherche, ni pour la
+    synchronisation (11/09, « enrichir le NAS » qui n'ouvrait pas tout).
+    Sans `tout`, le listage montré dans le chat reste borné à `MAX_ENTREES`,
+    et le dit (`tronque`).
+    """
     from ingestion.connectors import synology as c
 
     vise = verifier(chemin)
-    data = await c._appel(client, base, "SYNO.FileStation.List", "list", 2,
-                          sid=sid, folder_path=vise, limit=MAX_ENTREES,
-                          additional='["size","time"]')
+    bruts: list[dict] = []
+    total = None
+    offset = 0
+    while True:
+        data = await c._appel(client, base, "SYNO.FileStation.List", "list", 2,
+                              sid=sid, folder_path=vise,
+                              limit=PAGE_LISTAGE_COMPLET if tout else MAX_ENTREES,
+                              offset=offset, additional='["size","time"]')
+        page = data.get("files") or []
+        total = int(data.get("total") or 0) or None
+        # Un serveur qui ignorerait `offset` rendrait la même page à l'infini :
+        # on n'ajoute que du NEUF, et une page sans rien de neuf arrête tout.
+        deja = {f.get("path") for f in bruts}
+        neuves = [f for f in page if f.get("path") not in deja]
+        bruts.extend(neuves)
+        offset += len(page)
+        if not tout or not neuves or total is None or len(bruts) >= total:
+            break
 
     entrees = []
-    for f in (data.get("files") or [])[:MAX_ENTREES]:
+    for f in (bruts if tout else bruts[:MAX_ENTREES]):
         add = f.get("additional") or {}
         entrees.append({
             "nom": f.get("name"), "chemin": f.get("path"),
             "dossier": bool(f.get("isdir")),
             "octets": (add.get("size") if not f.get("isdir") else None),
+            # La date de modification sert à la synchronisation : un fichier
+            # qui n'a pas bougé depuis son ingestion n'est pas retéléchargé.
+            "modifie": ((add.get("time") or {}).get("mtime")
+                        if not f.get("isdir") else None),
         })
-    total = int(data.get("total") or len(entrees))
+    total = int(total or len(entrees))
     return {
         "chemin": vise, "entrees": entrees, "total": total,
         "tronque": total > len(entrees),
@@ -591,7 +622,7 @@ async def _balayer(client, base, sid, racines: list[str],
             if garde and garde[0] > _t.monotonic():
                 return garde[1]
             try:
-                brut = await _lister_ouvert(client, base, sid, chemin)
+                brut = await _lister_ouvert(client, base, sid, chemin, tout=True)
             except Exception as e:  # noqa: BLE001 — un dossier illisible n'arrête pas le balayage
                 logger.info("NAS : dossier ignoré pendant le balayage (%s) : %s",
                             chemin, str(e)[:100])
@@ -705,6 +736,23 @@ def catalogue_pret() -> Optional[list]:
             pass
     # Un catalogue PÉRIMÉ vaut mieux qu'aucun le temps de la reconstruction.
     return _CATALOGUE["entrees"] or None
+
+
+async def catalogue_attendu(attente_max_s: float = CATALOGUE_DELAI_S + 60) -> tuple[list, bool]:
+    """(entrées, complet) d'un catalogue FRAIS — attendu s'il se construit,
+    construit s'il manque. Pour les traitements de fond (synchronisation) :
+    un second balayage du même serveur pendant que le premier tourne ne
+    ferait que doubler la charge."""
+    import time as _t
+
+    debut = _t.monotonic()
+    while _CATALOGUE["en_cours"] and _t.monotonic() - debut < attente_max_s:
+        await asyncio.sleep(5)
+    frais = (_CATALOGUE["etat"] in ("pret", "partiel")
+             and _t.monotonic() - _CATALOGUE["construit_le"] < CATALOGUE_DUREE_S)
+    if not frais and not _CATALOGUE["en_cours"]:
+        await construire_catalogue()
+    return list(_CATALOGUE["entrees"] or []), bool(_CATALOGUE.get("complet"))
 
 
 async def demarrer_catalogue() -> None:

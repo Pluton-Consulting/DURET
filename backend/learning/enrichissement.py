@@ -93,6 +93,9 @@ FOURNISSEUR_PRINCIPAL = "longcat"
 # de ces fournisseurs — et de rien d'autre.
 FOURNISSEURS_DE_CONFIANCE = ("ollama_cloud", "longcat", "google", "deepseek",
                              "anthropic")
+# Les FAMILLES de modèles capables de distiller, quel que soit l'agrégateur
+# qui les sert (OpenRouter chez Duret : toute la cascade y passe).
+FAMILLES_DE_CONFIANCE = ("deepseek", "gemini", "claude", "longcat", "gpt-5", "gpt-4.1")
 
 
 def modele_de_confiance(modele: str) -> bool:
@@ -103,8 +106,17 @@ def modele_de_confiance(modele: str) -> bool:
     direction qui les désigne « pour tout » les a choisis pour l'enrichissement
     aussi, c'est le sens même du réglage.
     """
-    fournisseur = str(modele or "").split(":", 1)[0].strip().lower()
+    fournisseur, _, nom = str(modele or "").partition(":")
+    fournisseur = fournisseur.strip().lower()
     if fournisseur in FOURNISSEURS_DE_CONFIANCE:
+        return True
+    # UN AGRÉGATEUR N'EST PAS UN MODÈLE. OpenRouter sert aussi bien DeepSeek
+    # que des modèles gratuits de quelques milliards de paramètres : c'est le
+    # MODÈLE servi qui décide, pas la porte par laquelle il passe. Un modèle
+    # d'une famille de confiance passe, sa variante gratuite (« :free ») non.
+    nom = nom.strip().lower()
+    if (nom and not nom.endswith(":free")
+            and any(f in nom for f in FAMILLES_DE_CONFIANCE)):
         return True
     try:
         from llm.reglages import valeur
@@ -354,6 +366,15 @@ async def _creer_skills(competences: list[dict],
     Le code est écrit par un modèle : la même exigence qu'à la lecture
     s'applique, sinon on livrerait du code de moindre qualité dans le
     catalogue.
+
+    AUCUN SKILL N'ÉTAIT JAMAIS CRÉÉ, et personne ne le voyait (11/09). La
+    requête portait quatre emplacements ($1 à $4) et recevait CINQ valeurs —
+    le niveau d'accès, prévu par la migration 017, avait été passé sans que
+    sa colonne soit nommée. asyncpg refuse (« the server expects 4
+    arguments… 5 were passed »), l'exception tombait dans le `except`
+    ci-dessous, une ligne au journal, et la campagne affichait « 0 skill »
+    comme si le corpus n'en avait proposé aucun. La colonne est nommée, et
+    un nom DÉJÀ au catalogue n'est plus compté comme une création.
     """
     from database.connection import get_db
     from learning.debrief import generer_code_skill
@@ -361,18 +382,25 @@ async def _creer_skills(competences: list[dict],
     crees = []
     for item in competences:
         try:
+            async with get_db() as conn:
+                existe = await conn.fetchval(
+                    "SELECT 1 FROM skills WHERE name = $1", item["nom"])
+            if existe:
+                continue          # pas de code écrit pour rien : il ne serait pas inséré
             code = await generer_code_skill(item)
             if not code:
                 continue
             async with get_db() as conn:
-                await conn.execute(
+                nouveau = await conn.fetchval(
                     """INSERT INTO skills (name, description, code, prompt_template,
-                                           status, created_by, enabled)
-                       VALUES ($1, $2, $3, $4, 'draft', 'enrichissement', false)
-                       ON CONFLICT (name) DO NOTHING""",
+                                           status, created_by, enabled, access_level)
+                       VALUES ($1, $2, $3, $4, 'draft', 'enrichissement', false, $5)
+                       ON CONFLICT (name) DO NOTHING
+                       RETURNING name""",
                     item["nom"], item["description"], code,
                     item.get("entrees") or "", acces)
-            crees.append(item["nom"])
+            if nouveau:
+                crees.append(item["nom"])
         except Exception as e:  # noqa: BLE001
             logger.warning("Skill %s non créé : %s", item.get("nom"), e)
     return crees
@@ -463,7 +491,8 @@ async def executer(lance_par: str, collecter: bool = True,
                 # ── 4. Écriture ───────────────────────────────────────
                 bilan = await enregistrer(propositions, carte,
                                           prefixe_source=f"mails:{boite}",
-                                          acces_force=ACCES_DEDUCTIONS)
+                                          acces_force=ACCES_DEDUCTIONS,
+                                          sans_doublon=True)
                 _ETAT["connaissances"] += len(propositions.get("connaissances") or [])
                 _ETAT["procedures"] += len(propositions.get("procedures") or [])
                 _ETAT["echecs"].extend(bilan["echecs"])

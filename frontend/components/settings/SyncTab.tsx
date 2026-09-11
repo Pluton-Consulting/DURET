@@ -179,7 +179,12 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
       const res = await fetch(`${apiUrl}/api/learning/enrichir-documents`, {
         method: "POST",
         headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ max_lots_par_niveau: 30, exiger_modele_principal: true }),
+        // 11/09 : la campagne OUVRE d'abord chaque fichier du stockage
+        // (`collecter`) et lit TOUT le corpus (0 = pas de plafond par niveau).
+        // Elle relisait seulement ce qu'une synchro passée avait laissé en
+        // base, et s'arrêtait à trente appels par niveau.
+        body: JSON.stringify({ collecter: true, max_lots_par_niveau: 0,
+                               exiger_modele_principal: true }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json?.detail || `HTTP ${res.status}`)
@@ -196,11 +201,11 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
   // toutes au repos, on s'arrête : inutile de solliciter le serveur pour rien.
   useEffect(() => {
     if (minuterie.current) clearTimeout(minuterie.current)
-    if (etats.some((e) => e.etat === "en_cours") || enrich?.en_cours) {
+    if (etats.some((e) => e.etat === "en_cours") || enrich?.en_cours || enrichDocs?.en_cours) {
       minuterie.current = setTimeout(() => { charger(); chargerEnrich() }, 4000)
     }
     return () => { if (minuterie.current) clearTimeout(minuterie.current) }
-  }, [etats, enrich, charger, chargerEnrich])
+  }, [etats, enrich, enrichDocs?.en_cours, charger, chargerEnrich])
 
   const lancer = async (source: string) => {
     setBusy(source)
@@ -313,9 +318,10 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
             </div>
             <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3,
                           lineHeight: 1.5 }}>
-              Relit tous les documents déjà ingérés du socle documentaire (lecture seule) et en tire
-              connaissances et manières de faire. Chaque connaissance hérite du niveau de
-              confidentialité réel de son fichier : qui peut ouvrir le fichier peut la
+              Ouvre chaque fichier du {enrichDocs?.stockage || "stockage documentaire"} (lecture
+              seule, les fichiers inchangés ne sont pas rouverts), puis en tire connaissances,
+              manières de faire et brouillons de skills. Chaque connaissance hérite du niveau
+              de confidentialité réel de son fichier : qui peut ouvrir le fichier peut la
               lire, personne d'autre. Plusieurs heures.
             </div>
           </div>
@@ -340,14 +346,43 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
             {enrichDocs?.en_cours ? "En cours…" : "Enrichir les documents"}
           </button>
         </div>
-        {enrichDocs && (enrichDocs.documents || enrichDocs.appels_analyse) ? (
+        {/* LA PHASE EN ENTIER. La pastille la coupe à 260 px : « interrompue :
+            aucun mod… » était tout ce qu'on voyait d'un arrêt (11/09, « ça
+            marche pas » sans autre indice). */}
+        {enrichDocs && enrichDocs.phase && enrichDocs.phase !== "jamais lancée" ? (
           <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 10,
-                        paddingTop: 10, borderTop: "1px solid var(--marque-border)" }}>
-            {enrichDocs.documents} document(s) ·
-            {" "}{Object.entries(enrichDocs.groupes || {}).map(([n, c]) => `${c} en ${n}`).join(", ") || "classement en cours"} ·
-            {" "}{enrichDocs.appels_analyse} appel(s) · {enrichDocs.connaissances} connaissance(s)
-            · {enrichDocs.procedures} manière(s) de faire
-            {(enrichDocs.echecs || []).length ? ` · ${enrichDocs.echecs.length} échec(s)` : ""}
+                        paddingTop: 10, borderTop: "1px solid var(--marque-border)",
+                        lineHeight: 1.55 }}>
+            <div><b>{enrichDocs.en_cours ? "En ce moment" : "Dernier passage"} :</b> {enrichDocs.phase}</div>
+            {enrichDocs.collecte ? (
+              <div>
+                <b>Ouverture des fichiers :</b>{" "}
+                {enrichDocs.collecte.etat === "terminee" || enrichDocs.collecte.etat === "partielle"
+                  ? enrichDocs.collecte.resume
+                  : (enrichDocs.collecte.erreur || enrichDocs.collecte.etat || "échec")}
+              </div>
+            ) : null}
+            {enrichDocs.documents || enrichDocs.appels_analyse ? (
+              <div>
+                {enrichDocs.documents} document(s) ·
+                {" "}{Object.entries(enrichDocs.groupes || {}).map(([n, c]) => `${c} en ${n}`).join(", ") || "classement en cours"} ·
+                {" "}{enrichDocs.appels_analyse}{enrichDocs.appels_prevus ? `/${enrichDocs.appels_prevus}` : ""} appel(s)
+                · {enrichDocs.connaissances} connaissance(s) · {enrichDocs.procedures} manière(s) de faire
+                {enrichDocs.deja_connues ? ` · ${enrichDocs.deja_connues} déjà connue(s)` : ""}
+              </div>
+            ) : null}
+            {(enrichDocs.skills || []).length ? (
+              <div>
+                <b>{enrichDocs.skills.length} brouillon(s) de skill</b> à relire dans{" "}
+                <a href="/skills" style={{ color: "var(--marque-primary)", fontWeight: 600 }}>Savoir-faire</a>
+                {" "}: {enrichDocs.skills.slice(0, 8).join(", ")}{enrichDocs.skills.length > 8 ? "…" : ""}
+              </div>
+            ) : null}
+            {(enrichDocs.echecs || []).length ? (
+              <div style={{ color: "var(--marque-error-text)" }}>
+                {enrichDocs.echecs.length} échec(s) — {enrichDocs.echecs.slice(-3).join(" · ")}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

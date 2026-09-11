@@ -221,6 +221,9 @@ class EnrichissementBody(BaseModel):
     # Par défaut la campagne EXIGE le modèle principal et s'arrête s'il
     # n'est pas disponible : ce qu'elle écrit reste en mémoire.
     exiger_modele_principal: bool = True
+    # Portée des skills créés : 'all' par défaut, ou restreinte à un
+    # profil (commercial_plus, bureau_etudes_plus, direction_only...).
+    acces_skills: str = "all"
 
 
 @router.post("/enrichir")
@@ -247,6 +250,11 @@ async def enrichir(body: EnrichissementBody, current_user: User = Depends(get_cu
         raise HTTPException(status_code=http.HTTP_409_CONFLICT,
                             detail="Une campagne est déjà en cours.")
 
+    from security.acces import NIVEAUX
+    if body.acces_skills not in NIVEAUX:
+        raise HTTPException(status_code=http.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"portée invalide. Attendu : {', '.join(NIVEAUX)}")
+
     await log_action(action="enrichissement_lance", user_id=str(current_user.id),
                      metadata={"collecter": body.collecter,
                                "max_lots_par_boite": body.max_lots_par_boite})
@@ -255,7 +263,8 @@ async def enrichir(body: EnrichissementBody, current_user: User = Depends(get_cu
         lance_par=current_user.email,
         collecter=body.collecter,
         max_lots_par_boite=max(1, min(body.max_lots_par_boite, 40)),
-        exiger_modele_principal=body.exiger_modele_principal))
+        exiger_modele_principal=body.exiger_modele_principal,
+        acces_skills=body.acces_skills))
 
     return {"lance": True,
             "note": ("La campagne tourne en tâche de fond. Les connaissances déduites "
@@ -272,9 +281,12 @@ async def statut_enrichissement(current_user: User = Depends(get_current_user)):
 
 
 class EnrichissementDocsBody(BaseModel):
-    # Nombre maximal d'appels au modèle PAR NIVEAU d'accès.
-    max_lots_par_niveau: int = 20
+    # Appels au modèle PAR NIVEAU d'accès : 0 = tout le corpus (le défaut,
+    # règle du 01/09 : jamais bloqué en quantité) ; un nombre = un échantillon.
+    max_lots_par_niveau: int = 0
     exiger_modele_principal: bool = True
+    # Ouvrir d'abord chaque fichier du stockage (synchronisation), puis lire.
+    collecter: bool = True
 
 
 @router.post("/enrichir-documents")
@@ -298,17 +310,21 @@ async def enrichir_documents(body: EnrichissementDocsBody,
 
     await log_action(action="enrichissement_documents_lance",
                      user_id=str(current_user.id),
-                     metadata={"max_lots_par_niveau": body.max_lots_par_niveau})
+                     metadata={"max_lots_par_niveau": body.max_lots_par_niveau,
+                               "collecter": body.collecter})
 
     asyncio.create_task(enrichissement_docs.executer(
         lance_par=current_user.email,
-        max_lots_par_niveau=max(1, min(body.max_lots_par_niveau, 60)),
-        exiger_modele_principal=body.exiger_modele_principal))
+        # 0 (ou moins) = tout ; la campagne garde elle-même contre l'emballement.
+        max_lots_par_niveau=max(0, min(body.max_lots_par_niveau, 2000)),
+        exiger_modele_principal=body.exiger_modele_principal,
+        collecter=body.collecter, lance_par_id=current_user.id))
 
     return {"lance": True,
-            "note": ("La campagne documentaire tourne en tâche de fond. Chaque "
-                     "connaissance héritera du niveau d'accès réel de son "
-                     "fichier d'origine.")}
+            "note": ("La campagne documentaire tourne en tâche de fond : elle ouvre "
+                     "d'abord chaque fichier du stockage, puis en tire connaissances, "
+                     "manières de faire et brouillons de skills. Chaque connaissance "
+                     "hérite du niveau d'accès réel de son fichier d'origine.")}
 
 
 @router.get("/enrichir-documents/statut")

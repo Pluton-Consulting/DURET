@@ -338,43 +338,6 @@ async def _logout(client, base: str, sid: str) -> None:
         pass          # une session non fermée expire d'elle-même
 
 
-async def _lister_recursif(client, base: str, sid: str, dossier: str,
-                           bilan: dict, profondeur: int = 0) -> list[dict]:
-    """Fichiers d'un dossier et de ses sous-dossiers (bornés par settings).
-
-    `bilan` accumule ce qui a été ÉCARTÉ pendant le parcours. Sans ça, un fichier
-    trop volumineux ou un dossier trop profond disparaîtrait du compte-rendu :
-    l'utilisateur croirait tout avoir synchronisé.
-    """
-    if profondeur > settings.synology_max_depth:
-        logger.info("Profondeur maximale atteinte, sous-dossiers de %s ignorés", dossier)
-        bilan["dossiers_trop_profonds"] = bilan.get("dossiers_trop_profonds", 0) + 1
-        return []
-
-    try:
-        data = await _appel(client, base, "SYNO.FileStation.List", "list", 2, sid=sid,
-                            folder_path=dossier, additional='["size"]', limit=1000)
-    except SynologyError as e:
-        logger.warning("Dossier %s illisible (%s)", dossier, e)
-        bilan["dossiers_illisibles"] = bilan.get("dossiers_illisibles", 0) + 1
-        return []
-
-    fichiers: list[dict] = []
-    for item in data.get("files", []):
-        if item.get("isdir"):
-            fichiers.extend(await _lister_recursif(client, base, sid, item["path"],
-                                                   bilan, profondeur + 1))
-            continue
-        taille = (item.get("additional") or {}).get("size", 0)
-        if taille and taille > settings.synology_max_file_mb * 1024 * 1024:
-            logger.info("Fichier ignoré (%.1f Mo > %d Mo) : %s",
-                        taille / 1024 / 1024, settings.synology_max_file_mb, item["path"])
-            bilan["trop_volumineux"] = bilan.get("trop_volumineux", 0) + 1
-            continue
-        fichiers.append({"path": item["path"], "name": item["name"], "size": taille})
-    return fichiers
-
-
 async def _telecharger_ou_raison(client, base: str, sid: str, chemin: str) -> tuple:
     """(octets, raison). Les octets, ou None ET la raison lisible du refus.
 
@@ -383,9 +346,13 @@ async def _telecharger_ou_raison(client, base: str, sid: str, chemin: str) -> tu
     408 inexistant, 407 non autorisé…) partait dans le journal et le chat ne
     recevait qu'une phrase passe-partout. La raison remonte désormais.
     """
+    # Le tableau JSON est formé HORS de la f-string : une barre oblique dans
+    # une expression de f-string n'est admise qu'à partir de Python 3.12, et
+    # les bancs tournent aussi sur un 3.9.
+    chemin_json = quote('["' + chemin + '"]')
     url = (f"{base}/webapi/entry.cgi?api=SYNO.FileStation.Download&version=2"
            f"&method=download&mode=download&_sid={sid}"
-           f"&path={quote('[\"' + chemin + '\"]')}")
+           f"&path={chemin_json}")
     try:
         r = await client.get(url, timeout=180)
         r.raise_for_status()
@@ -413,85 +380,252 @@ async def _telecharger(client, base: str, sid: str, chemin: str) -> Optional[byt
     return octets
 
 
-async def sync(dossiers: Optional[list[str]] = None) -> dict:
-    """Parcourt les dossiers configurés et ingère les fichiers exploitables.
+# ── LA SYNCHRONISATION : ouvrir chaque fichier du NAS, une fois ─────────────
+#
+# CE QUI ÉTAIT FAUX (11/09, « enrichir le NAS ne marche pas »). La
+# synchronisation descendait elle-même `SYNOLOGY_FOLDERS`, dossier par
+# dossier, séquentiellement :
+#   * une racine FANTÔME (`/Drive`, le vrai partage est `/home/Drive`) rendait
+#     « dossier illisible » et zéro fichier, sans que l'écran le dise ;
+#   * elle descendait la corbeille `#recycle` et les vignettes `@eaDir` ;
+#   * elle s'arrêtait à 6 niveaux et ne lisait que les 1 000 premières
+#     entrées d'un dossier ;
+#   * elle retéléchargeait et ré-OCRisait TOUT à chaque passage, y compris les
+#     photos sans texte, sans jamais dire où elle en était.
+# Or le chat a, depuis le 08/09, un CATALOGUE de tout le serveur (`nas.acces`)
+# qui règle déjà chacun de ces points. La synchronisation part donc de lui :
+# une seule façon de voir le NAS, pas deux qui divergent.
 
-    Retourne un compte-rendu : fichiers vus, ingérés, ignorés, en erreur.
+import asyncio as _asyncio
+
+# Quatre fichiers de front : assez pour ne pas attendre le réseau fichier par
+# fichier, pas assez pour saturer le NAS ni l'OCR (CPU) du serveur.
+SYNC_DE_FRONT = 4
+# Un fichier pathologique (PDF de 400 pages scanné) ne bloque pas la
+# synchronisation : passé ce délai, il est écarté et MÉMORISÉ.
+DELAI_LECTURE_S = 180
+# La colonne `documents.source_id` fait 255 caractères ; un chemin profond du
+# NAS peut dépasser. Au-delà, l'identifiant garde une empreinte stable du
+# chemin complet et sa FIN (le nom du fichier reste lisible).
+MAX_SOURCE_ID = 255
+FICHIER_ECARTES = "nas_ecartes.json"
+
+
+def _source_id(chemin: str) -> str:
+    """`synology:<chemin>` — stable, donc resynchronisation idempotente."""
+    import hashlib
+    brut = f"synology:{chemin}"
+    if len(brut) <= MAX_SOURCE_ID:
+        return brut
+    empreinte = hashlib.sha1(chemin.encode("utf-8")).hexdigest()[:16]
+    reste = MAX_SOURCE_ID - len("synology:#") - len(empreinte) - 1
+    return f"synology:#{empreinte}:{chemin[-reste:]}"
+
+
+def _mtime(entree: dict):
+    """La date de modification du NAS (secondes epoch) en datetime UTC, ou None."""
+    from datetime import datetime, timezone
+    try:
+        v = int(entree.get("modifie") or 0)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(v, tz=timezone.utc) if v > 0 else None
+
+
+def _inchange(entree: dict, derniere_ingestion) -> bool:
+    """Le fichier n'a pas bougé depuis son ingestion. Fonction PURE (banc).
+    Sans date d'un côté ou de l'autre, on relit : c'est la relecture qui est
+    sans risque."""
+    from datetime import timezone
+    modifie = _mtime(entree)
+    if modifie is None or derniere_ingestion is None:
+        return False
+    d = (derniere_ingestion if derniere_ingestion.tzinfo
+         else derniere_ingestion.replace(tzinfo=timezone.utc))
+    return d >= modifie
+
+
+def _chemin_ecartes():
+    """Les fichiers écartés vivent dans le volume des documents : la mémoire
+    survit au redéploiement, c'est tout son intérêt."""
+    import os
+    import pathlib
+    return pathlib.Path(os.environ.get("DOCUMENTS_DIR", "/tmp/duret-documents")) / FICHIER_ECARTES
+
+
+def _lire_ecartes() -> dict:
+    import json
+    try:
+        return dict(json.loads(_chemin_ecartes().read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return {}
+
+
+def _ecrire_ecartes(ecartes: dict) -> None:
+    import json
+    try:
+        chemin = _chemin_ecartes()
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_text(json.dumps(ecartes, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:  # noqa: BLE001 — une mémoire d'appoint ne casse pas une synchro
+        logger.warning("NAS : mémoire des fichiers écartés non écrite : %s", e)
+
+
+async def _dates_ingerees() -> dict:
+    """source_id → date de la dernière ingestion (les morceaux sont réécrits à
+    chaque ingestion : `created_at` la date donc). Illisible → tout sera relu."""
+    try:
+        from database.connection import get_db
+        async with get_db() as conn:
+            lignes = await conn.fetch(
+                "SELECT source_id, MAX(created_at) AS d FROM documents "
+                "WHERE source_type = $1 GROUP BY source_id",
+                settings.synology_source_type)
+        return {l["source_id"]: l["d"] for l in lignes}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("NAS : dates d'ingestion illisibles (%s) — tout sera relu", e)
+        return {}
+
+
+def _sous(chemin: str, racines: list[str]) -> bool:
+    return any(chemin == r or chemin.startswith(r + "/") for r in racines)
+
+
+async def sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
+    """Ouvre chaque fichier lisible du NAS et le range dans la mémoire.
+
+    Les fichiers viennent du CATALOGUE (`nas.acces`) : toutes les racines
+    ouvertes, sous-dossiers compris, sans la corbeille. `dossiers` restreint à
+    une partie du serveur (essai sur un seul dossier). Incrémentale : un
+    fichier inchangé depuis son ingestion n'est pas retéléchargé, un fichier
+    sans texte ou trop lent n'est pas retenté tant qu'il ne change pas.
+
+    `avancer(traites, total, etape)` est appelé au fil de l'eau quand le
+    routeur en fournit un (la carte de l'écran montre la progression).
     """
-    import httpx
     from ingestion.parsers import analyser, ligne_en_texte, famille, FichierNonSupporte
+    from nas import acces
 
-    cibles = dossiers or [d.strip() for d in (settings.synology_folders or "").split(",") if d.strip()]
-    if not cibles:
+    racines = acces.dossiers_autorises()
+    if not racines:
         raise NotImplementedError(
             "Aucun dossier à synchroniser : renseignez SYNOLOGY_FOLDERS "
-            "(ex. /Chantiers,/Devis) dans le .env."
-        )
+            "(ex. /home/Drive) dans le .env.")
+    cibles = [acces.normaliser(d) for d in (dossiers or [])] or racines
 
-    # verify=False : les NAS utilisent très souvent un certificat auto-signé.
-    # Acceptable ici car la liaison passe par le VPN ou le relais Synology ;
-    # à repasser à True dès qu'un certificat valide (Let's Encrypt) est en place.
-    async with httpx.AsyncClient(verify=settings.synology_verify_tls, follow_redirects=True) as client:
-        base = await _base_url(client)
-        sid = await _login(client, base)
-        logger.info("Synology : session ouverte")
-
+    async def _prevenir(traites, total, etape):
+        if avancer is None:
+            return
         try:
-            bilan: dict = {}
-            fichiers: list[dict] = []
-            for dossier in cibles:
-                fichiers.extend(await _lister_recursif(client, base, sid, dossier, bilan))
+            await avancer(traites, total, etape)
+        except Exception as e:  # noqa: BLE001 — un compteur ne casse pas une ingestion
+            logger.debug("NAS : avancement non enregistré : %s", e)
 
-            vus = len(fichiers)
-            ingeres = ignores = erreurs = 0
+    await _prevenir(0, None, "je relève l'arborescence du NAS")
+    entrees, complet = await acces.catalogue_attendu()
 
-            for f in fichiers:
-                if famille(f["name"]) is None:
-                    ignores += 1               # format non exploitable (zip, exe, vidéo…)
-                    continue
+    # UNE RACINE QUI NE REND RIEN SE DIT. C'est la racine fantôme du .env :
+    # silencieuse, elle faisait croire à un NAS vide.
+    racines_vides = [r for r in cibles
+                     if not any(_sous(str(e.get("chemin") or ""), [r]) for e in entrees)]
 
-                brut = await _telecharger(client, base, sid, f["path"])
+    fichiers = [e for e in entrees
+                if not e.get("dossier") and e.get("chemin")
+                and _sous(str(e["chemin"]), cibles)]
+    total = len(fichiers)
+    plafond = settings.synology_max_file_mb * 1024 * 1024
+
+    connus = await _dates_ingerees()
+    ecartes = _lire_ecartes()
+    bilan = {"format_non_lu": 0, "trop_volumineux": 0, "inchangés": 0,
+             "déjà_écartés": 0, "sans_texte": 0, "trop_lents": 0}
+    a_lire = []
+    for f in fichiers:
+        nom = str(f.get("nom") or f["chemin"].rsplit("/", 1)[-1])
+        if famille(nom) is None:
+            bilan["format_non_lu"] += 1           # zip, dwg, vidéo… : pas de texte à tirer
+            continue
+        if int(f.get("octets") or 0) > plafond:
+            bilan["trop_volumineux"] += 1
+            continue
+        if _inchange(f, connus.get(_source_id(f["chemin"]))):
+            bilan["inchangés"] += 1
+            continue
+        if ecartes.get(f["chemin"]) and ecartes[f["chemin"]] == f.get("modifie"):
+            bilan["déjà_écartés"] += 1            # écarté à un passage précédent, inchangé depuis
+            continue
+        a_lire.append((f, nom))
+
+    logger.info("NAS : %d fichier(s) au catalogue, %d à lire (%s)", total, len(a_lire), bilan)
+    compte = {"traites": 0, "ingeres": 0, "erreurs": 0}
+    porte = _asyncio.Semaphore(SYNC_DE_FRONT)
+
+    def _ecarter(f):
+        ecartes[f["chemin"]] = f.get("modifie")
+
+    async def _un(f, nom):
+        async with porte:
+            try:
+                async with acces.connexion() as (client, base, sid):
+                    brut, raison = await _telecharger_ou_raison(client, base, sid, f["chemin"])
                 if not brut:
-                    erreurs += 1
-                    continue
-
+                    compte["erreurs"] += 1
+                    logger.info("NAS : %s non téléchargé (%s)", f["chemin"], raison)
+                    return
                 try:
-                    structure = analyser(f["name"], brut)
-                except FichierNonSupporte as e:
-                    logger.info("Ignoré (%s) : %s", e, f["path"])
-                    ignores += 1
-                    continue
-                except Exception as e:         # noqa: BLE001 - un fichier ne doit pas tout arrêter
-                    logger.warning("Lecture de %s impossible : %s", f["path"], e)
-                    erreurs += 1
-                    continue
-
+                    structure = await _asyncio.wait_for(
+                        _asyncio.to_thread(analyser, nom, brut), timeout=DELAI_LECTURE_S)
+                except (_asyncio.TimeoutError, TimeoutError):
+                    bilan["trop_lents"] += 1
+                    _ecarter(f)
+                    return
+                except FichierNonSupporte:
+                    bilan["sans_texte"] += 1          # image sans texte, PDF vide…
+                    _ecarter(f)
+                    return
                 if structure["kind"] == "tabulaire":
                     texte = "\n\n".join(ligne_en_texte(l) for l in structure["rows"])
                 else:
-                    texte = structure["text"]
-                if not texte or not texte.strip():
-                    ignores += 1
-                    continue
-
-                # source_id = chemin sur le NAS : stable, donc resynchro idempotente.
+                    texte = structure.get("text") or ""
+                if not texte.strip():
+                    bilan["sans_texte"] += 1
+                    _ecarter(f)
+                    return
                 if await ingest_document(
-                    text=texte,
-                    source_type=settings.synology_source_type,
-                    source_id=f"synology:{f['path']}",
-                    source_filename=f["name"],
-                    access_level=settings.synology_access_level,
-                ):
-                    ingeres += 1
+                        text=texte, source_type=settings.synology_source_type,
+                        source_id=_source_id(f["chemin"]), source_filename=nom,
+                        access_level=settings.synology_access_level):
+                    compte["ingeres"] += 1
                 else:
-                    erreurs += 1
+                    compte["erreurs"] += 1
+            except Exception as e:  # noqa: BLE001 — un fichier ne doit pas tout arrêter
+                compte["erreurs"] += 1
+                logger.warning("NAS : lecture de %s impossible : %s", f["chemin"], e)
+            finally:
+                compte["traites"] += 1
+                await _prevenir(compte["traites"], len(a_lire), f"j'ouvre {nom[:60]}")
 
-            logger.info("Synology : %d vus, %d ingérés, %d ignorés, %d erreurs %s",
-                        vus, ingeres, ignores, erreurs, bilan or "")
-            # `bilan` remonte ce qui a été écarté AVANT le téléchargement (taille,
-            # profondeur, dossier illisible) : le compte-rendu ne doit pas laisser
-            # croire que tout a été traité.
-            return {"fichiers": vus, "ingérés": ingeres, "ignorés": ignores,
-                    "erreurs": erreurs, **bilan}
-        finally:
-            await _logout(client, base, sid)
+    try:
+        # Par paquets : la mémoire des écartés est écrite au fil de l'eau — un
+        # redémarrage au milieu ne fait pas tout reperdre.
+        for i in range(0, len(a_lire), 40):
+            await _asyncio.gather(*[_un(f, nom) for f, nom in a_lire[i:i + 40]])
+            _ecrire_ecartes(ecartes)
+    finally:
+        _ecrire_ecartes(ecartes)
+
+    resultat = {"fichiers": total, "ouverts": compte["traites"],
+                "ingérés": compte["ingeres"], "erreurs": compte["erreurs"],
+                **{k: v for k, v in bilan.items() if v}}
+    if racines_vides:
+        resultat["racines_introuvables"] = ", ".join(racines_vides)
+    if not complet:
+        # Le catalogue s'est arrêté avant la fin (plafond de temps ou de
+        # dossiers) : une partie du serveur n'a pas été vue. Dire « terminée »
+        # là-dessus mentirait — l'écran affichera « Partielle ».
+        resultat["arret_anticipe"] = True
+        resultat["raison_partielle"] = ("le relevé du NAS s'est arrêté avant la fin (plafond de "
+                                        "temps ou de dossiers) : une partie du serveur n'a pas "
+                                        "été vue — relancer pour continuer")
+    logger.info("NAS : synchronisation — %s", resultat)
+    return resultat

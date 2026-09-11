@@ -286,9 +286,12 @@ LISTAGES = []
 _vrai_lister = acces._lister_ouvert
 
 
-async def _compte(client, base, sid, chemin):
+async def _compte(client, base, sid, chemin, **options):
+    # `**options` : le balayage demande `tout=True` (toutes les pages d'un
+    # dossier, 11/09). Une doublure plus étroite que le code faisait lever
+    # chaque listage — avalé comme « dossier illisible ».
     LISTAGES.append(chemin)
-    return await _vrai_lister(client, base, sid, chemin)
+    return await _vrai_lister(client, base, sid, chemin, **options)
 
 
 acces._CACHE_LISTAGE.clear()

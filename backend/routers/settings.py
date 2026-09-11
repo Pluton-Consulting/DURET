@@ -369,6 +369,109 @@ async def tester_boite_mail(current_user: User = Depends(get_current_user)):
     return await asyncio.to_thread(imap.tester)
 
 
+# GMAIL PAR COMPTE DE SERVICE (11/09, Noa : « connecter Gmail via compte de
+# service, prévois ça pour que je rentre les clés »). La clé JSON, le domaine
+# et l'administrateur vivent dans `cles_api`, comme la boîte unique : priorité
+# Paramètres > `.env`, effet immédiat. Ce fichier est du SOCLE : les routes ne
+# répondent que là où le connecteur Gmail existe, et la carte se cache ailleurs.
+
+class CompteServiceBody(BaseModel):
+    cle_json: Optional[str] = None          # le contenu du fichier .json ; vide = inchangée
+    domaine: Optional[str] = None
+    administrateur: Optional[str] = None
+    retirer: bool = False
+
+
+def _connecteur_gmail():
+    """Le connecteur Gmail de CE client, ou None."""
+    import importlib.util
+    try:
+        if importlib.util.find_spec("ingestion.connectors.gmail") is None:
+            return None
+    except (ImportError, ValueError):
+        return None
+    from ingestion.connectors import gmail
+    return gmail
+
+
+@router.get("/compte-service-google")
+async def lire_compte_service(current_user: User = Depends(get_current_user)):
+    """Ce qui est configuré, d'où ça vient, ce qu'il faut coller dans la console
+    Admin, et la messagerie effective. Jamais la clé privée."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    gmail = _connecteur_gmail()
+    if gmail is None:
+        return {"disponible": False}
+    from llm.cles import rafraichir
+    await rafraichir(force=True)
+    etat = gmail.etat_compte_de_service()
+    try:
+        from mail.collecte import fournisseur
+        etat["fournisseur"] = fournisseur()
+    except Exception:  # noqa: BLE001 — rien de configuré
+        etat["fournisseur"] = None
+    return etat
+
+
+@router.put("/compte-service-google")
+async def ecrire_compte_service(body: CompteServiceBody,
+                                current_user: User = Depends(get_current_user)):
+    """Enregistre la clé (vérifiée), le domaine et l'administrateur. `retirer`
+    efface les trois surcharges : le `.env` du serveur reprend la main."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    gmail = _connecteur_gmail()
+    if gmail is None:
+        raise HTTPException(status_code=404, detail="Pas de connecteur Gmail dans ce projet")
+    import re
+    from llm.cles import enregistrer
+    uid = str(current_user.id)
+    if body.retirer:
+        for cle in ("google_sa_json", "gmail_domain", "google_admin_subject"):
+            await enregistrer(cle, "", uid)
+        await log_action(action="compte_service_google_modifie", user_id=uid,
+                         metadata={"retire": True})
+        return {"note": "Compte de service retiré des Paramètres."}
+
+    domaine = (body.domaine or "").strip().strip("@").lower()
+    if domaine and not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", domaine):
+        raise HTTPException(status_code=422,
+                            detail="Le domaine attendu ressemble à « entreprise.fr », sans @ ni espace.")
+    admin = (body.administrateur or "").strip().lower()
+    if admin and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", admin):
+        raise HTTPException(status_code=422, detail="L'administrateur doit être une adresse mail.")
+    cle = (body.cle_json or "").strip()
+    if cle:
+        try:
+            cle = gmail.valider_cle(cle)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Clé refusée : {e}")
+        await enregistrer("google_sa_json", cle, uid)
+    await enregistrer("gmail_domain", domaine, uid)
+    await enregistrer("google_admin_subject", admin, uid)
+    # Journalisé SANS les valeurs, comme les autres clés.
+    await log_action(action="compte_service_google_modifie", user_id=uid,
+                     metadata={"cle_posee": bool(cle), "domaine_pose": bool(domaine),
+                               "administrateur_pose": bool(admin)})
+    return {"note": "Prise en compte immédiate, sans redéploiement."}
+
+
+@router.post("/compte-service-google/tester")
+async def tester_compte_service(current_user: User = Depends(get_current_user)):
+    """Lecture, envoi et annuaire éprouvés un par un : ok, ou la raison."""
+    if not has_permission(current_user.role, "manage_system"):
+        raise HTTPException(status_code=403, detail="Réservé à l'administration système")
+    gmail = _connecteur_gmail()
+    if gmail is None:
+        raise HTTPException(status_code=404, detail="Pas de connecteur Gmail dans ce projet")
+    import asyncio
+    from llm.cles import rafraichir
+    await rafraichir(force=True)
+    boite = await gmail.boite_pour_le_test(getattr(current_user, "email", None))
+    return await asyncio.to_thread(gmail.tester_compte_de_service, boite)
+
+
 def _moteur_images_present() -> bool:
     """Le moteur d'images (`visuels/nano_banana.py`) est-il livré ici ?
 

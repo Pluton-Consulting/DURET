@@ -50,6 +50,27 @@ SCOPES_ANNUAIRE = ["https://www.googleapis.com/auth/admin.directory.user.readonl
 _RE_BALISES = re.compile(r"<[^>]+>")
 
 
+def _reglage(nom: str) -> str:
+    """Un réglage du compte de service : Paramètres (table `cles_api`) d'abord,
+    `.env` ensuite — même priorité que les clés de modèles (`llm/cles.py`).
+
+    Pourquoi : la clé, le domaine et l'administrateur se saisissent désormais
+    dans Paramètres → Clés API (11/09). Sans ce détour, une clé collée à
+    l'écran serait ignorée tant que le `.env` du serveur ne la porte pas.
+    """
+    try:
+        from llm.cles import valeur
+        v = valeur(nom)
+    except Exception:  # noqa: BLE001 — sans cache de clés, le .env
+        v = getattr(settings, nom, None)
+    return str(v or "").strip()
+
+
+def _domaine() -> str:
+    """Le domaine dont on emprunte les boîtes, sans « @ » ni majuscules."""
+    return _reglage("gmail_domain").strip("@").lower()
+
+
 def _texte_du_message(charge: dict) -> str:
     """Extrait le corps lisible d'un message Gmail (préfère le texte brut au HTML)."""
 
@@ -106,14 +127,15 @@ def _cle_compte_de_service() -> Optional[dict]:
     import json
     import os
 
-    brut = (settings.google_sa_json or "").strip()
+    brut = _reglage("google_sa_json")
     if brut:
         try:
             return json.loads(brut)
         except ValueError as e:
             raise NotImplementedError(
-                f"GOOGLE_SA_JSON illisible ({e}). Attendu : le contenu exact du "
-                "fichier de clé du compte de service, sur UNE seule ligne.") from e
+                f"Clé du compte de service illisible ({e}). Attendu : le contenu "
+                "exact du fichier .json téléchargé dans la console Google Cloud "
+                "(Paramètres → Clés API, ou GOOGLE_SA_JSON sur une ligne).") from e
 
     fichier = settings.google_sa_file
     if fichier and os.path.exists(fichier):
@@ -143,7 +165,8 @@ def _service(boite: str):
         raise NotImplementedError(
             f"La boîte {boite} n'est pas reliée (Paramètres > Ma boîte Google) "
             "et aucun compte de service n'est configuré : collez la clé "
-            f"dans GOOGLE_SA_JSON (une ligne) ou déposez-la dans "
+            "dans Paramètres → Clés API (carte « Gmail par compte de service »), "
+            f"ou dans GOOGLE_SA_JSON (une ligne), ou déposez-la dans "
             f"{settings.google_sa_file or 'GOOGLE_SA_FILE'}, puis autorisez la "
             "délégation domaine (console Admin > Sécurité > Contrôles des API > "
             f"Délégation à l'échelle du domaine) avec le scope {SCOPES[0]}."
@@ -205,7 +228,7 @@ def _service_annuaire():
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
-    sujet = (settings.google_admin_subject or "").strip()
+    sujet = _reglage("google_admin_subject").lower()
     if not sujet:
         return None
     infos = _cle_compte_de_service()
@@ -229,7 +252,7 @@ async def boites_du_domaine() -> list[str]:
     """
     import asyncio
 
-    domaine = (settings.gmail_domain or "").strip().lower()
+    domaine = _domaine()
 
     def _lister() -> list[str]:
         service = _service_annuaire()
@@ -311,7 +334,7 @@ async def boites_a_synchroniser() -> list[str]:
         if "@" in extra and extra not in boites:
             boites.append(extra)                    # ex. contact@, compta@
 
-    domaine = (settings.gmail_domain or "").strip().lower()
+    domaine = _domaine()
     if domaine:
         # Garde-fou : ne jamais tenter d'emprunter une identité hors du domaine
         # de l'entreprise (un compte invité ne relève pas de la délégation).
@@ -428,3 +451,238 @@ async def sync(boites: Optional[list[str]] = None,
 
     logger.info("Gmail : %s", bilan)
     return bilan
+
+
+# ── LA CARTE DE PARAMÈTRES (11/09) ────────────────────────────────────────────
+# Noa : « connecter Gmail via compte de service, prévois ça pour que je rentre
+# les clés ». La carte « Gmail par compte de service » (Paramètres → Clés API)
+# passe par `routers/settings.py`, qui reste du socle : ses routes n'existent
+# que là où CE connecteur existe. Trois gestes : valider la clé collée, dire
+# ce qui est configuré, éprouver chaque autorisation.
+
+CHAMPS_CLE = ("client_email", "client_id", "private_key", "token_uri")
+
+
+def valider_cle(brut: str) -> str:
+    """La clé collée (ou lue d'un fichier), vérifiée, remise sur UNE ligne.
+
+    Lève `ValueError` avec une raison lisible. Le piège le plus courant est
+    refusé en le nommant : la console Google Cloud télécharge AUSSI en .json
+    la clé d'un client OAuth, qui ne sait emprunter aucune boîte.
+    """
+    import json
+
+    texte = (brut or "").strip()
+    if not texte:
+        raise ValueError("aucune clé fournie")
+    try:
+        infos = json.loads(texte)
+    except ValueError as e:
+        raise ValueError(f"ce n'est pas du JSON lisible ({e}) — collez le fichier "
+                         "en entier, accolades comprises") from e
+    if not isinstance(infos, dict):
+        raise ValueError("le fichier attendu est un objet JSON, entre accolades")
+    if "web" in infos or "installed" in infos:
+        raise ValueError(
+            "c'est la clé d'un client OAuth, pas celle d'un compte de service : "
+            "console Google Cloud → IAM et administration → Comptes de service → "
+            "le compte → Clés → Ajouter une clé → JSON")
+    if infos.get("type") != "service_account":
+        raise ValueError(f"le champ « type » vaut « {infos.get('type')} » "
+                         "au lieu de « service_account »")
+    manquants = [c for c in CHAMPS_CLE if not str(infos.get(c) or "").strip()]
+    if manquants:
+        raise ValueError("champ(s) manquant(s) dans la clé : " + ", ".join(manquants))
+    if "PRIVATE KEY" not in infos["private_key"]:
+        raise ValueError("la clé privée est illisible (copie tronquée ?)")
+    try:
+        from google.oauth2 import service_account
+        service_account.Credentials.from_service_account_info(infos, scopes=SCOPES)
+    except ImportError:
+        pass  # bibliothèque absente (banc hors conteneur) : le test de connexion jugera
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"clé privée refusée par la bibliothèque Google ({str(e)[:120]})") from e
+    return json.dumps(infos, separators=(",", ":"), ensure_ascii=False)
+
+
+def _origine_cle() -> Optional[str]:
+    """D'où vient la clé effective : 'parametres', 'env', 'fichier' ou None."""
+    import os
+    try:
+        from llm.cles import _CACHE
+        if (_CACHE.get("google_sa_json") or "").strip():
+            return "parametres"
+    except Exception:  # noqa: BLE001
+        pass
+    if (getattr(settings, "google_sa_json", None) or "").strip():
+        return "env"
+    fichier = getattr(settings, "google_sa_file", None)
+    if fichier and os.path.exists(fichier):
+        return "fichier"
+    return None
+
+
+def etat_compte_de_service() -> dict:
+    """Pour la carte : ce qui est configuré, d'où ça vient, et ce qu'il faut
+    coller dans la console Admin. JAMAIS la clé privée.
+
+    L'identifiant du client et l'adresse du compte ne sont pas des secrets :
+    ce sont eux que l'administrateur recopie dans la délégation.
+    """
+    try:
+        from llm.cles import masquer
+    except Exception:  # noqa: BLE001
+        def masquer(v):
+            return "•" * len(v or "")
+    etat = {
+        "disponible": True, "configuree": False, "origine": _origine_cle(),
+        "domaine": _domaine(), "administrateur": _reglage("google_admin_subject").lower(),
+        "scopes": {"lecture": SCOPES[0], "envoi": SCOPES_ENVOI[0], "annuaire": SCOPES_ANNUAIRE[0]},
+        "erreur": "",
+    }
+    try:
+        infos = _cle_compte_de_service()
+    except NotImplementedError as e:
+        etat["erreur"] = str(e)
+        infos = None
+    if infos:
+        etat.update(
+            configuree=True,
+            compte=str(infos.get("client_email") or ""),
+            client_id=str(infos.get("client_id") or ""),
+            projet=str(infos.get("project_id") or ""),
+            empreinte=masquer(str(infos.get("private_key_id") or "")),
+        )
+        # L'ordre de la console : lecture, envoi, annuaire, séparés par des virgules.
+        etat["a_coller"] = ",".join((SCOPES[0], SCOPES_ENVOI[0], SCOPES_ANNUAIRE[0]))
+    return etat
+
+
+def _raison_google(e: Exception) -> str:
+    """L'erreur de Google traduite en geste à faire.
+
+    Les messages bruts (« unauthorized_client: Client is unauthorized to
+    retrieve access tokens using this method ») ne disent jamais QUOI faire ;
+    chacun correspond pourtant à un réglage précis de la console.
+    """
+    texte = str(e)
+    bas = texte.lower()
+    if "accessnotconfigured" in bas or "has not been used in project" in bas or "it is disabled" in bas:
+        return ("l'API n'est pas activée dans le projet Google Cloud du compte de "
+                "service (Bibliothèque → « Gmail API », et « Admin SDK API » pour "
+                "l'annuaire → Activer)")
+    if "unauthorized_client" in bas:
+        return ("autorisation non accordée : ajoutez ce champ d'application à la "
+                "délégation du compte de service dans la console Admin (quelques "
+                "minutes de propagation après l'ajout)")
+    if "invalid_grant" in bas and ("invalid email" in bas or "user id" in bas):
+        return "cette adresse n'est pas une boîte du domaine Google Workspace"
+    if "invalid_grant" in bas:
+        return (f"Google refuse la clé ({texte[:120]}) : clé supprimée ou "
+                "désactivée dans la console, ou horloge du serveur décalée")
+    if "failedprecondition" in bas or "precondition check failed" in bas:
+        return "Gmail n'est pas activé pour cette boîte (compte sans licence Gmail, ou adresse hors Workspace)"
+    if "not authorized to access this resource" in bas:
+        return ("ce compte n'est pas administrateur du domaine : l'annuaire exige "
+                "un administrateur qui peut lire les utilisateurs")
+    return texte[:200]
+
+
+async def boite_pour_le_test(email_courant: Optional[str] = None) -> Optional[str]:
+    """La boîte sur laquelle éprouver la délégation.
+
+    L'administrateur d'abord (c'est une vraie boîte du domaine, et c'est lui
+    qui ouvre l'annuaire) ; sinon la personne qui clique, si elle est du
+    domaine ; sinon le premier compte actif de l'application qui l'est. Le
+    super-administrateur est souvent HORS domaine : sans ce repli, le bouton
+    échouerait pour la seule personne qui s'en sert.
+    """
+    admin = _reglage("google_admin_subject").lower()
+    if admin:
+        return admin
+    domaine = _domaine()
+    moi = (email_courant or "").strip().lower()
+    if moi and (not domaine or moi.endswith("@" + domaine)):
+        return moi
+    if not domaine:
+        return moi or None
+    try:
+        async with get_db() as conn:
+            adresse = await conn.fetchval(
+                "SELECT lower(email) FROM users WHERE actif = true "
+                "AND lower(email) LIKE $1 ORDER BY created_at LIMIT 1",
+                "%@" + domaine)
+    except Exception as e:  # noqa: BLE001
+        logger.info("Boîte de test introuvable en base (%s)", e)
+        adresse = None
+    return adresse or None
+
+
+def tester_compte_de_service(boite: Optional[str]) -> dict:
+    """Un jeton par autorisation, puis une lecture réelle : ok, ou la raison.
+
+    Trois contrôles indépendants, parce que la délégation s'accorde champ par
+    champ : lire peut marcher sans envoyer, et l'annuaire sans l'un ni
+    l'autre. RIEN n'est envoyé ni ouvert : l'envoi se juge à l'obtention de
+    son jeton, la lecture au nombre de messages de la boîte. Synchrone (le
+    client Google l'est) : l'appelant le passe dans un thread.
+    """
+    resultat = {"ok": False, "boite": boite or "", "lecture": None, "envoi": None,
+                "annuaire": None, "erreur": ""}
+    try:
+        infos = _cle_compte_de_service()
+    except NotImplementedError as e:
+        resultat["erreur"] = str(e)
+        return resultat
+    if infos is None:
+        resultat["erreur"] = "aucune clé de compte de service enregistrée"
+        return resultat
+    if not boite:
+        resultat["erreur"] = ("aucune boîte du domaine pour le test : renseignez "
+                              "le domaine ou l'administrateur")
+        return resultat
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+    except ImportError as e:
+        resultat["erreur"] = f"bibliothèque Google absente du serveur ({e})"
+        return resultat
+
+    def _jeton(scopes, sujet):
+        creds = service_account.Credentials.from_service_account_info(
+            infos, scopes=scopes, subject=sujet)
+        creds.refresh(Request())
+        return creds
+
+    try:
+        creds = _jeton(SCOPES, boite)
+        profil = build("gmail", "v1", credentials=creds, cache_discovery=False) \
+            .users().getProfile(userId="me").execute()
+        resultat["lecture"] = {"ok": True, "messages": profil.get("messagesTotal")}
+    except Exception as e:  # noqa: BLE001
+        resultat["lecture"] = {"ok": False, "raison": _raison_google(e)}
+
+    try:
+        _jeton(SCOPES_ENVOI, boite)
+        resultat["envoi"] = {"ok": True}
+    except Exception as e:  # noqa: BLE001
+        resultat["envoi"] = {"ok": False, "raison": _raison_google(e)}
+
+    admin = _reglage("google_admin_subject").lower()
+    if admin:
+        try:
+            creds = _jeton(SCOPES_ANNUAIRE, admin)
+            domaine = _domaine()
+            build("admin", "directory_v1", credentials=creds, cache_discovery=False) \
+                .users().list(domain=domaine or None,
+                              customer=None if domaine else "my_customer",
+                              maxResults=1).execute()
+            resultat["annuaire"] = {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            resultat["annuaire"] = {"ok": False, "raison": _raison_google(e)}
+
+    # L'annuaire est un confort (sans lui, seuls les comptes de l'application
+    # sont lus) : il ne fait pas échouer le test, il s'affiche à part.
+    resultat["ok"] = bool(resultat["lecture"]["ok"] and resultat["envoi"]["ok"])
+    return resultat

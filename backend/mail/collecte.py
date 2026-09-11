@@ -68,10 +68,16 @@ def fournisseur() -> str:
     # Trois façons d'être « configuré côté Google » : la clé du compte de
     # service en fichier, la même en variable, ou le client OAuth des
     # connexions PERSONNELLES (Paramètres > Ma boîte Google) — ce dernier
-    # suffit : chaque boîte reliée porte son propre consentement.
+    # suffit : chaque boîte reliée porte son propre consentement. La clé en
+    # variable se saisit aussi dans Paramètres (11/09) : la table d'abord.
+    try:
+        from llm.cles import valeur as _valeur
+    except Exception:  # noqa: BLE001 — sans cache de clés, le .env
+        def _valeur(cle):
+            return getattr(settings, cle, None)
     google_pret = bool(
         (fichier and os.path.exists(fichier))
-        or (getattr(settings, "google_sa_json", None) or "").strip()
+        or str(_valeur("google_sa_json") or "").strip()
         or ((getattr(settings, "google_oauth_client_id", None) or "").strip()
             and (getattr(settings, "google_oauth_client_secret", None) or "").strip())
     )
@@ -82,7 +88,7 @@ def fournisseur() -> str:
         "Aucune messagerie configurée : renseignez une boîte unique par mot de passe "
         "d'application (MAIL_IMAP_USER / MAIL_IMAP_PASSWORD), les identifiants Microsoft 365 "
         "(MS_TENANT_ID / MS_CLIENT_ID / MS_CLIENT_SECRET), déposez la clé du "
-        "compte de service Google (GOOGLE_SA_FILE / GOOGLE_SA_JSON), ou "
+        "compte de service Google (Paramètres → Clés API, ou GOOGLE_SA_FILE / GOOGLE_SA_JSON), ou "
         "configurez le client OAuth des connexions personnelles "
         "(GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET)."
     )

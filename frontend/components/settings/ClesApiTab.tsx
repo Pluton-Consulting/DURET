@@ -583,6 +583,224 @@ function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendTok
   )
 }
 
+// GMAIL PAR COMPTE DE SERVICE (11/09, Noa : « connecter Gmail via compte de
+// service, prévois ça pour que je rentre les clés »). Chacun lit SA boîte
+// Google Workspace sans mot de passe ni clic : le serveur emprunte l'identité
+// des boîtes du domaine. Trois saisies (la clé JSON, le domaine,
+// l'administrateur qui ouvre l'annuaire), puis la délégation à poser dans la
+// console Admin — la carte donne l'identifiant et les champs à y coller. La
+// clé privée ne ressort jamais. La carte n'existe que là où le connecteur
+// Gmail existe : ailleurs, la route répond « indisponible » et rien ne s'affiche.
+function ReglageCompteServiceGoogle({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [etat, setEtat] = useState<any>(null)
+  const [cle, setCle] = useState("")
+  const [domaine, setDomaine] = useState("")
+  const [admin, setAdmin] = useState("")
+  const [busy, setBusy] = useState("")
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+  const [test, setTest] = useState<any>(null)
+  const [copie, setCopie] = useState("")
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/compte-service-google`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (res.status === 404) { setEtat({ disponible: false }); return }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const j = await res.json()
+      setEtat(j); setDomaine(j.domaine || ""); setAdmin(j.administrateur || ""); setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "chargement impossible")
+    }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  // Le fichier .json se lit DANS le navigateur : il n'est envoyé qu'au clic
+  // sur « Enregistrer », avec le reste, et le champ se vide ensuite.
+  const lireFichier = (fichier?: File | null) => {
+    if (!fichier) return
+    const lecteur = new FileReader()
+    lecteur.onload = () => { setCle(String(lecteur.result || "")); setNote(`Fichier « ${fichier.name} » chargé : cliquez sur Enregistrer.`) }
+    lecteur.onerror = () => setErreur("lecture du fichier impossible")
+    lecteur.readAsText(fichier)
+  }
+
+  const envoyer = async (retirer = false) => {
+    setBusy("enregistrer"); setNote(""); setTest(null)
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/compte-service-google`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(retirer ? { retirer: true } : { cle_json: cle, domaine, administrateur: admin }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j?.detail || `HTTP ${res.status}`)
+      setCle("")
+      setNote(retirer ? "Compte de service retiré des Paramètres : le fichier du serveur reprend la main s'il existe."
+                      : "Enregistré. Prise en compte immédiate. Posez la délégation dans la console Admin (ci-dessous), puis « Tester la connexion ».")
+      setErreur("")
+      await charger()
+    } catch (e: any) {
+      setErreur(e?.message || "enregistrement impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const tester = async () => {
+    setBusy("tester"); setNote(""); setTest(null)
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/compte-service-google/tester`, {
+        method: "POST", headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j?.detail || `HTTP ${res.status}`)
+      setTest(j); setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "test impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const copier = async (texte: string, quoi: string) => {
+    try { await navigator.clipboard.writeText(texte); setCopie(quoi); setTimeout(() => setCopie(""), 1800) }
+    catch { setErreur("copie impossible : sélectionnez le texte à la main") }
+  }
+
+  if (etat?.disponible === false) return null
+
+  const champ = {
+    flex: 1, minWidth: 200, padding: "8px 12px", fontSize: 13,
+    border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)",
+    color: "var(--marque-text-body)", outline: "none",
+  }
+  const bouton = {
+    padding: "8px 14px", borderRadius: "var(--marque-radius-pill)", border: "1px solid var(--marque-border)",
+    background: "var(--marque-surface)", color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+  }
+  const peutEnregistrer = !!(cle.trim() || etat?.configuree)
+  const ligneTest = (titre: string, r: any, absent: string) => (
+    <div style={{ fontSize: 12, color: r ? (r.ok ? "var(--marque-paid-text)" : "var(--marque-error-text)") : "var(--marque-text-muted)" }}>
+      {r ? (r.ok ? "✓" : "✗") : "–"} {titre}
+      {r ? (r.ok ? (typeof r.messages === "number" ? ` · ${r.messages} message(s) dans la boîte` : "") : ` : ${r.raison}`) : ` : ${absent}`}
+    </div>
+  )
+
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>Gmail par compte de service</div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
+            Chacun lit sa propre boîte Google Workspace, sans mot de passe ni clic : le serveur emprunte l'identité des boîtes du domaine. Il faut la clé JSON du compte de service, puis la délégation au niveau du domaine dans la console Admin.
+          </div>
+        </div>
+        <span style={{
+          background: etat?.configuree ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+          color: etat?.configuree ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+          padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600,
+          maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {etat === null ? "…" : etat.configuree
+            ? `${etat.compte} · clé ${etat.empreinte || "posée"} · ${etat.origine === "parametres" ? "Paramètres" : "fichier serveur"}`
+            : "Non configuré"}
+        </span>
+      </div>
+
+      <textarea value={cle} onChange={(e) => setCle(e.target.value)} spellCheck={false} autoComplete="off"
+                placeholder={etat?.configuree ? "Clé enregistrée. Collez une nouvelle clé JSON ici pour la remplacer." : '{ "type": "service_account", "project_id": …, "private_key": …, "client_email": … }'}
+                style={{
+                  width: "100%", minHeight: 76, marginTop: 8, padding: "8px 12px", fontSize: 12, fontFamily: "monospace",
+                  border: "1px solid var(--marque-border)", borderRadius: 10, color: "var(--marque-text-body)",
+                  outline: "none", resize: "vertical", boxSizing: "border-box",
+                }} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+        <label className="sym-tap" style={{ ...bouton, display: "inline-block" }}>
+          Choisir le fichier .json
+          <input type="file" accept=".json,application/json" style={{ display: "none" }}
+                 onChange={(e) => { lireFichier(e.target.files?.[0]); e.target.value = "" }} />
+        </label>
+        <input type="text" autoComplete="off" placeholder="domaine (ex. entreprise.fr)" value={domaine}
+               onChange={(e) => setDomaine(e.target.value)} style={champ} />
+        <input type="email" autoComplete="off" placeholder="administrateur (ex. admin@entreprise.fr)" value={admin}
+               onChange={(e) => setAdmin(e.target.value)} style={champ} />
+      </div>
+      <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 6 }}>
+        Le domaine borne les boîtes empruntées. L'administrateur (facultatif) ouvre l'annuaire : sans lui, seules les boîtes des comptes de l'application sont lues.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+        <button onClick={() => envoyer(false)} disabled={busy !== "" || !peutEnregistrer} className="sym-tap" style={{
+          padding: "8px 16px", borderRadius: "var(--marque-radius-pill)", border: "none",
+          background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+          color: "var(--marque-text-on-dark)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+          opacity: peutEnregistrer ? 1 : 0.5,
+        }}>{busy === "enregistrer" ? "…" : "Enregistrer"}</button>
+        <button onClick={tester} disabled={busy !== "" || !etat?.configuree} className="sym-tap" style={bouton}>
+          {busy === "tester" ? "…" : "Tester la connexion"}
+        </button>
+        {etat?.origine === "parametres" && (
+          <button onClick={() => envoyer(true)} disabled={busy !== ""} className="sym-tap" style={bouton}
+                  title="Effacer la clé, le domaine et l'administrateur saisis ici">Retirer</button>
+        )}
+      </div>
+
+      {etat?.configuree && etat?.client_id && (
+        <div style={{ marginTop: 12, padding: "10px 12px", background: "var(--marque-canvas)", borderRadius: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--marque-text-primary)" }}>À coller dans la console Admin</div>
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", margin: "2px 0 8px" }}>
+            admin.google.com → Sécurité → Contrôle des accès et des données → Commandes des API → Gérer la délégation au niveau du domaine → Ajouter
+          </div>
+          {[["ID client", etat.client_id, "id"], ["Champs d'application OAuth", etat.a_coller, "scopes"]].map(([titre, texte, quoi]) => (
+            <div key={quoi} style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, color: "var(--marque-text-body)", minWidth: 150 }}>{titre}</span>
+              <code style={{ flex: 1, minWidth: 0, fontSize: 11, overflowWrap: "anywhere", color: "var(--marque-text-body)" }}>{texte}</code>
+              <button onClick={() => copier(texte, quoi)} className="sym-tap" style={{ ...bouton, padding: "4px 10px", fontSize: 12 }}>
+                {copie === quoi ? "Copié" : "Copier"}
+              </button>
+            </div>
+          ))}
+          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>
+            Dans le projet Google Cloud du compte{etat.projet ? ` (${etat.projet})` : ""}, activez aussi « Gmail API » et, pour l'annuaire, « Admin SDK API ».
+          </div>
+        </div>
+      )}
+
+      {test && (
+        <div style={{ marginTop: 10, display: "grid", gap: 3 }}>
+          {test.erreur
+            ? <div style={{ fontSize: 12, color: "var(--marque-error-text)" }}>✗ {test.erreur}</div>
+            : <>
+                <div style={{ fontSize: 12, color: "var(--marque-text-body)" }}>Test sur la boîte {test.boite} :</div>
+                {ligneTest("Lecture des mails", test.lecture, "non testée")}
+                {ligneTest("Envoi des mails", test.envoi, "non testé")}
+                {ligneTest("Annuaire du domaine", test.annuaire, "non testé (pas d'administrateur renseigné)")}
+              </>}
+        </div>
+      )}
+      {etat?.fournisseur === "imap" && etat?.configuree && (
+        <div style={{ fontSize: 12, color: "var(--marque-late-text)", marginTop: 8 }}>
+          La boîte unique (carte ci-dessus) passe avant le compte de service : tant qu'elle est enregistrée, tout le monde lit cette boîte-là. Retirez-la pour que chacun lise la sienne.
+        </div>
+      )}
+      {etat?.fournisseur && !["imap", "gmail"].includes(etat.fournisseur) && etat?.configuree && (
+        <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>
+          La messagerie effective est « {etat.fournisseur} » : un autre réglage du serveur passe avant.
+        </div>
+      )}
+      {etat?.erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {etat.erreur}</div>}
+      {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 8 }}>{note}</div>}
+      {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
 // L'ACCORD HUMAIN AVANT CHAQUE ACTION (08/09, demande de Noa : « une
 // validation humaine à chaque fois, vraiment à chaque fois »). Réglage
 // `validation_totale` en base, effet immédiat. Actif : dans le chat, chaque
@@ -918,6 +1136,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
     <div>
       <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} signal={clesModifiees} />
       <ReglageBoiteMail apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageCompteServiceGoogle apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageAnonymisation apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageValidationTotale apiUrl={apiUrl} backendToken={backendToken} />

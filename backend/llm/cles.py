@@ -32,6 +32,13 @@ CLES_CONNUES = (
     # Ils ont leur propre carte à l'écran : hors de la liste des clés de modèles.
     "mail_imap_user",
     "mail_imap_password",
+    # LE COMPTE DE SERVICE GOOGLE (11/09, Noa : « connecter Gmail via compte de
+    # service, prévois ça pour que je rentre les clés ») : la clé JSON, le
+    # domaine dont on emprunte les boîtes, l'administrateur qui ouvre
+    # l'annuaire. Même table, même priorité ; leur propre carte à l'écran.
+    "google_sa_json",
+    "gmail_domain",
+    "google_admin_subject",
     "ollama_cloud_api_key",
     "longcat_api_key",
     "deepseek_api_key",
@@ -41,7 +48,8 @@ CLES_CONNUES = (
     "google_api_key",
 )
 
-CLES_HORS_ECRAN = frozenset({"mail_imap_user", "mail_imap_password"})
+CLES_HORS_ECRAN = frozenset({"mail_imap_user", "mail_imap_password",
+                             "google_sa_json", "gmail_domain", "google_admin_subject"})
 DUREE_CACHE_S = 30
 
 _CACHE: dict[str, str] = {}

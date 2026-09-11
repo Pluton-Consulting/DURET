@@ -193,7 +193,14 @@ def domaines_messagerie() -> frozenset:
     n'exclut personne : ce réglage sert à reconnaître les collègues, pas à
     barrer la porte.
     """
-    brut = " ".join(str(getattr(settings, cle, None) or "")
+    # Le domaine Google se saisit aussi dans Paramètres (carte du compte de
+    # service, 11/09) : la table `cles_api` d'abord, le `.env` ensuite.
+    try:
+        from llm.cles import valeur as _valeur
+    except Exception:  # noqa: BLE001 — sans cache de clés, le .env
+        def _valeur(cle):
+            return getattr(settings, cle, None)
+    brut = " ".join(str(_valeur(cle) or "")
                     for cle in ("ms_domain", "gmail_domain"))
     domaines = set()
     for morceau in brut.replace(",", " ").replace(";", " ").split():

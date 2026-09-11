@@ -67,12 +67,13 @@ async def rechercher_documents(data: dict, user) -> dict:
 
     from vectorstore.rag import rechercher
     from vectorstore.fusion import fenetre, budget_extrait
-    from mail.authorization import boites_par_id
+    from mail.authorization import boites_pour_la_memoire
 
-    # Cloisonnement : la recherche ne remonte que les boîtes de CET utilisateur.
+    # Cloisonnement : la recherche ne remonte que les boîtes de CET utilisateur
+    # (et ses dossiers, pour un profil de la boîte partagée — 11/09).
     # En cas de souci, aucune boîte — jamais de repli permissif.
     try:
-        boites = await boites_par_id(str(user.id))
+        boites = await boites_pour_la_memoire(str(user.id))
     except Exception:  # noqa: BLE001
         boites = []
 

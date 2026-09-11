@@ -741,12 +741,18 @@ async def lire_mails(data: dict, user) -> dict:
     except (TypeError, ValueError):
         limite = 25 if (_periode or recherche or avant) else 10
     depuis = data.get("depuis") or data.get("periode") or data.get("jours")
+    from mail.authorization import dossiers_autorises
+    from mail.lecture import DossierInterdit
     try:
         return await lire_boite(boite, data.get("dossier") or "recus", limite, depuis=depuis,
                                 recherche=recherche, avant=avant,
                                 # `apercu` : la longueur d'extrait voulue par un
                                 # appelant qui connaît son budget (check_mails).
-                                apercu=data.get("apercu"))
+                                apercu=data.get("apercu"),
+                                # Les dossiers ouverts à CE profil (11/09).
+                                autorises=await dossiers_autorises(user))
+    except DossierInterdit as e:
+        raise MailSkillError(str(e))
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except Exception as e:  # noqa: BLE001 - une messagerie injoignable n'est pas une panne du chat
@@ -797,11 +803,15 @@ async def lire_mail(data: dict, user) -> dict:
     # chaque logo de pied de page paierait un appel de vision, à chaque mail.
     brut_inline = data.get("inline") or data.get("images") or data.get("dans_le_corps")
     inline = str(brut_inline).strip().lower() in ("true", "1", "oui", "toutes", "all", "yes")
+    from mail.authorization import dossiers_autorises
+    from mail.lecture import DossierInterdit
     try:
         return await lire_message(boite, ref=ref, objet=objet, de=de,
                                   dossier=data.get("dossier") or "recus", rang=rang,
                                   pieces=pieces, proprietaire=str(user.id),
-                                  inline=inline)
+                                  inline=inline, autorises=await dossiers_autorises(user))
+    except DossierInterdit as e:
+        raise MailSkillError(str(e))
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except (LookupError, ValueError) as e:
@@ -831,8 +841,13 @@ async def lire_piece_jointe(data: dict, user) -> dict:
     ref = data.get("ref") or data.get("reference") or data.get("id") or data.get("piece")
     nom = data.get("nom") or data.get("fichier") or data.get("name")
     mail = data.get("mail") or data.get("message") or data.get("ref_message")
+    from mail.authorization import dossiers_autorises
+    from mail.lecture import DossierInterdit
     try:
-        return await lire_piece(boite, ref=ref, nom=nom, mail=mail, proprietaire=str(user.id))
+        return await lire_piece(boite, ref=ref, nom=nom, mail=mail, proprietaire=str(user.id),
+                                autorises=await dossiers_autorises(user))
+    except DossierInterdit as e:
+        raise MailSkillError(str(e))
     except NotImplementedError as e:
         raise MailSkillError(str(e))
     except (LookupError, ValueError) as e:
@@ -911,6 +926,39 @@ async def boites_mail(data: dict, user) -> dict:
 
 
 SKILLS_NATIFS["boites_mail"] = boites_mail
+
+
+async def dossiers_mail(data: dict, user) -> dict:
+    """LES DOSSIERS que ce profil peut lire dans la boîte de l'entreprise (11/09).
+
+    La boîte de réception toujours ; les autres selon ce que l'administrateur a
+    ouvert (Paramètres → Utilisateurs). Le modèle s'en sert pour passer le bon
+    `dossier` à `lire_mails` au lieu de deviner un nom — et pour dire, sans
+    essayer, qu'un dossier n'est pas ouvert.
+    """
+    import asyncio
+    from mail.authorization import boite_unique, dossiers_autorises
+    if not boite_unique():
+        return {"dossiers": [{"nom": "recus", "libelle": "Boîte de réception"},
+                             {"nom": "envoyes", "libelle": "Messages envoyés"}],
+                "restreint": False,
+                "a_faire": "Passe le `nom` en `dossier` de `lire_mails`."}
+    from mail import imap
+    autorises = await dossiers_autorises(user)
+    try:
+        proposables = await asyncio.to_thread(imap.dossiers_proposables)
+    except Exception as e:  # noqa: BLE001
+        raise MailSkillError(f"Les dossiers de la boîte n'ont pas pu être lus ({str(e)[:120]}).")
+    lisibles = [{"nom": "recus", "libelle": "Boîte de réception"}] + [
+        d for d in proposables if imap.dossier_permis(d["nom"], autorises)]
+    return {"dossiers": lisibles, "restreint": autorises is not None,
+            "a_faire": ("Passe le `nom` exact en `dossier` de `lire_mails` (ou de `lire_mail`). "
+                        + ("Ce profil ne lit QUE ces dossiers : pour un autre, dis qu'il n'est pas "
+                           "ouvert et qu'un administrateur peut l'ouvrir dans Paramètres → "
+                           "Utilisateurs — n'essaie pas." if autorises is not None else ""))}
+
+
+SKILLS_NATIFS["dossiers_mail"] = dossiers_mail
 
 
 async def preparer_envois(data: dict, user) -> dict:
@@ -1021,6 +1069,12 @@ async def _personnaliser_cartes(cartes: list[dict], user, mailbox, consigne: str
         logger.info("Personnalisation sans boîte : %s", e)
         return cartes
     verrou = asyncio.Semaphore(3)
+    # Un profil de la boîte partagée sans les messages envoyés ne les lit pas
+    # non plus par ce détour (11/09).
+    from mail.authorization import dossiers_autorises
+    autorises = await dossiers_autorises(user)
+    dossiers = ("recus", "envoyes") if (autorises is None or "envoyes" in
+                                         {a.lower() for a in autorises}) else ("recus",)
 
     async def _une(carte: dict) -> dict:
         adresse = str(carte.get("de") or "").strip()
@@ -1028,7 +1082,7 @@ async def _personnaliser_cartes(cartes: list[dict], user, mailbox, consigne: str
             return carte
         async with verrou:
             messages: list[dict] = []
-            for dossier in ("recus", "envoyes"):
+            for dossier in dossiers:
                 try:
                     lu = await lire_boite(boite, dossier, limite=4, recherche=adresse)
                     for m in (lu or {}).get("messages") or []:
@@ -1451,6 +1505,8 @@ EFFETS_NATIFS = {
     "lire_piece_jointe": "lecture",
     # Lister les boîtes accessibles : lecture de la configuration et de l'annuaire.
     "boites_mail": "lecture",
+    # Lister les dossiers lisibles de la boîte partagée (11/09) : lecture pure.
+    "dossiers_mail": "lecture",
     "preparer_envois": "lecture",
     # L'AGENDA (04/09). Lire une période et calculer des créneaux ne touchent à
     # rien. CRÉER un rendez-vous, si : il s'inscrit dans l'agenda d'une boîte et

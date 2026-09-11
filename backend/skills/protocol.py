@@ -507,7 +507,8 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "c'est lui qu'on cite pour « combien ». Sans `depuis` ni `recherche` : les "
         "plus récents et le total du dossier. N'en tire jamais de conclusion sur "
         "l'entreprise entière (pour cela, `lancer_enrichissement`). dossier : recus "
-        "(défaut) ou envoyes ; limite : 1 à 25. Sans mailbox, la boîte de la personne "
+        "(défaut), envoyes, ou le NOM d'un dossier de la boîte tel que `dossiers_mail` "
+        "le rend ; limite : 1 à 25. Sans mailbox, la boîte de la personne "
         "connectée. Chaque `apercu` rendu est un EXTRAIT, pas le message : pour le "
         "corps complet, `lire_mail` avec la `ref`. Pour un POINT complet avec "
         "résumés et propositions de réponse, préfère `check_mails`",
@@ -530,6 +531,13 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "rien comme lu. dossier : recus (défaut) ou envoyes. Sans mailbox, la boîte de "
         "la personne connectée",
         [], ["ref", "objet", "de", "rang", "pieces", "inline", "dossier", "mailbox"]),
+    "dossiers_mail": (
+        "LISTE les dossiers de la boîte de l'entreprise que la personne connectée peut "
+        "LIRE : la boîte de réception, et ceux qu'un administrateur lui a ouverts. À "
+        "appeler avant de lire un dossier par son nom (« les mails du dossier "
+        "Chantiers ») ou quand on demande « quels dossiers » ; un dossier absent de "
+        "la liste n'est PAS ouvert à ce profil — dis-le, n'essaie pas",
+        [], []),
     "boites_mail": (
         "LISTE les boîtes et adresses mail auxquelles la personne connectée a accès "
         "(pour un administrateur : tout l'annuaire du domaine). À appeler dès qu'on "

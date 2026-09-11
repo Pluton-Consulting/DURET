@@ -197,6 +197,9 @@ if fusion and "MAX_LIMITE" in src_skill:
     async def _boites(uid):
         return []
     faux_auth.boites_par_id = _boites
+    # 11/09 : la recherche passe par les boîtes « pour la mémoire » (dossiers
+    # de la boîte partagée) — mêmes boîtes ici, aucune restriction.
+    faux_auth.boites_pour_la_memoire = _boites
     paquet_vs = types.ModuleType("vectorstore"); paquet_vs.__path__ = []
     paquet_mail = types.ModuleType("mail"); paquet_mail.__path__ = []
     sys.modules.update({"vectorstore": paquet_vs, "vectorstore.rag": faux_rag,

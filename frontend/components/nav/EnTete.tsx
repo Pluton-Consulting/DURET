@@ -1,7 +1,7 @@
 "use client"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { signOut } from "next-auth/react"
+import { signOut, useSession } from "next-auth/react"
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { MARQUE, ROLE_LABELS, VUES, getVisibleSections } from "@/lib/permissions"
 import Logo from "@/components/nav/Logo"
@@ -66,6 +66,20 @@ export default function EnTete({ role, email, name }: Props) {
   const router = useRouter()
   const [panneau, setPanneau] = useState(false)
   const sections = getVisibleSections(role)
+  // « CHANGER DE PROFIL » (11/09, Duret) : seulement pour un compte d'une
+  // boîte partagée — le serveur dit combien de prénoms portent l'adresse, et
+  // n'en rend aucun à un administrateur. Demandé à l'ouverture du panneau.
+  const { data: session } = useSession()
+  const [autresProfils, setAutresProfils] = useState(0)
+  useEffect(() => {
+    const jeton = (session as any)?.backendToken
+    if (!panneau || !jeton) return
+    const api = process.env.NEXT_PUBLIC_API_URL || ""
+    fetch(`${api}/api/auth/profils`, { headers: { Authorization: `Bearer ${jeton}` }, cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setAutresProfils(Array.isArray(j?.profils) ? j.profils.length : 0))
+      .catch(() => setAutresProfils(0))
+  }, [panneau, session])
 
   // La vue active : lue dans l'URL, et tenue à jour par la scène quand elle glisse.
   const vueDeChemin = pathname?.startsWith("/chat") ? "chat" : pathname === "/accueil" || pathname === "/" ? "tableau" : null
@@ -170,6 +184,14 @@ export default function EnTete({ role, email, name }: Props) {
             </Link>
           ))}
           <div style={{ flex: 1 }} />
+          {autresProfils > 1 && (
+            <Link href="/profil" className="v2-section" onClick={() => setPanneau(false)}>
+              <span className="v2-section-ico">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+              </span>
+              <span><b>Changer de profil</b><small>Un autre prénom de la même boîte</small></span>
+            </Link>
+          )}
           <button type="button" className="v2-section" onClick={() => signOut({ callbackUrl: "/login" })}>
             <span className="v2-section-ico">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>

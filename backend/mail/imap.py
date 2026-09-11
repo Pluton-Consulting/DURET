@@ -28,6 +28,7 @@ sa partie dans le message.
 """
 from __future__ import annotations
 
+import base64
 import email
 import imaplib
 import logging
@@ -78,10 +79,207 @@ def _mot_de_passe() -> str:
     return _identifiant("mail_imap_password")
 
 
+# ── LES DOSSIERS DE LA BOÎTE (11/09) ─────────────────────────────────────
+# Demande de Noa (Duret) : chaque profil de la boîte partagée lit la boîte de
+# réception — le « mail général » — plus les dossiers que l'administrateur lui
+# ouvre. Il faut donc savoir LISTER les dossiers, en lire un par son NOM, et
+# dire si un dossier est permis. Trois pièges, tous payés ici :
+#   * les noms IMAP sont en « UTF-7 modifié » (RFC 3501) : « Comptabilité »
+#     s'écrit « Comptabilit&AOk- » sur le fil — on décode pour l'écran et l'on
+#     réencode pour ouvrir ;
+#   * le dossier des envoyés porte le nom de la LANGUE du compte chez Gmail
+#     (« [Gmail]/Messages envoyés » en français) : on le reconnaît à son
+#     attribut `\Sent`, pas à son nom, et il se désigne par la clé « envoyes » ;
+#   * « Tous les messages » (`\All`) contient TOUT : le proposer ferait d'une
+#     case cochée une restriction vide. Ni lui, ni la corbeille, ni les
+#     brouillons, ni le spam ne sont proposés.
+
+CLE_RECUS = "INBOX"
+CLE_ENVOYES = "envoyes"
+_ALIAS_RECUS = {"", "recus", "reçus", "inbox", "reception", "réception",
+                "boite de reception", "boîte de réception", "mail general", "mail général"}
+_EXCLUS = {"\\all", "\\trash", "\\junk", "\\drafts", "\\flagged", "\\important",
+           "\\noselect", "\\nonexistent"}
+# Le nom réel du dossier des envoyés, lu sur la boîte (attribut \Sent).
+_ENVOYES_DETECTE: Optional[str] = None
+
+
+def utf7_decoder(nom: str) -> str:
+    """« Comptabilit&AOk- » → « Comptabilité » (UTF-7 modifié, RFC 3501 §5.1.3)."""
+    sortie, i = [], 0
+    while i < len(nom):
+        if nom[i] != "&":
+            sortie.append(nom[i])
+            i += 1
+            continue
+        fin = nom.find("-", i)
+        if fin == -1:
+            sortie.append(nom[i:])
+            break
+        if fin == i + 1:
+            sortie.append("&")
+        else:
+            code = nom[i + 1:fin].replace(",", "/")
+            code += "=" * (-len(code) % 4)
+            try:
+                sortie.append(base64.b64decode(code).decode("utf-16-be"))
+            except Exception:  # noqa: BLE001 — un nom mal formé reste lisible tel quel
+                sortie.append(nom[i:fin + 1])
+        i = fin + 1
+    return "".join(sortie)
+
+
+def utf7_encoder(nom: str) -> str:
+    """L'inverse : ce qu'on envoie au serveur pour ouvrir un dossier."""
+    sortie, tampon = [], []
+
+    def vider():
+        if tampon:
+            octets = "".join(tampon).encode("utf-16-be")
+            sortie.append("&" + base64.b64encode(octets).decode().rstrip("=").replace("/", ",") + "-")
+            tampon.clear()
+    for c in nom:
+        if 0x20 <= ord(c) <= 0x7E:
+            vider()
+            sortie.append("&-" if c == "&" else c)
+        else:
+            tampon.append(c)
+    vider()
+    return "".join(sortie)
+
+
+_RE_LIST = re.compile(r'^\((?P<attributs>[^)]*)\)\s+(?:"(?:[^"\\]|\\.)*"|NIL)\s+(?P<nom>.+)$')
+
+
+def analyser_list(lignes) -> list[tuple[set, str]]:
+    """Les réponses de LIST → [(attributs en minuscules, nom décodé)]."""
+    sortie = []
+    for brut in lignes or []:
+        if isinstance(brut, tuple):                 # nom en littéral : {12}\r\nNom
+            texte = b"".join(x for x in brut if isinstance(x, bytes)).decode("utf-8", "replace")
+            texte = re.sub(r"\{\d+\}", "", texte)
+        elif isinstance(brut, bytes):
+            texte = brut.decode("utf-8", "replace")
+        else:
+            continue
+        m = _RE_LIST.match(texte.strip())
+        if not m:
+            continue
+        nom = m.group("nom").strip()
+        if nom.startswith('"') and nom.endswith('"'):
+            nom = nom[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        attributs = {a.lower() for a in m.group("attributs").split()}
+        sortie.append((attributs, utf7_decoder(nom)))
+    return sortie
+
+
+def _envoyes_du_serveur(client) -> Optional[str]:
+    """Le dossier marqué \\Sent sur CETTE boîte (mémorisé)."""
+    global _ENVOYES_DETECTE
+    try:
+        statut, lignes = client.list()
+    except Exception:  # noqa: BLE001
+        return _ENVOYES_DETECTE
+    if statut == "OK":
+        for attributs, nom in analyser_list(lignes):
+            if "\\sent" in attributs:
+                _ENVOYES_DETECTE = nom
+                break
+    return _ENVOYES_DETECTE
+
+
+def cle_dossier(nom: Optional[str]) -> str:
+    """Le nom canonique d'un dossier : « INBOX », « envoyes », ou le nom décodé."""
+    brut = " ".join(str(nom or "").split())
+    bas = brut.lower()
+    if bas in _ALIAS_RECUS:
+        return CLE_RECUS
+    reglage = (getattr(settings, "mail_imap_dossier_envoyes", None) or DOSSIER_ENVOYES_GMAIL)
+    if bas.startswith("env") or bas in ("sent", "messages envoyés", "messages envoyes") \
+            or bas == reglage.lower() or (_ENVOYES_DETECTE and bas == _ENVOYES_DETECTE.lower()):
+        return CLE_ENVOYES
+    return brut
+
+
+def dossier_permis(nom: Optional[str], autorises) -> bool:
+    """La boîte de réception l'est toujours ; les autres, s'ils sont ouverts.
+    `autorises` à None : aucune restriction."""
+    if autorises is None:
+        return True
+    cle = cle_dossier(nom)
+    if cle == CLE_RECUS:
+        return True
+    return cle.lower() in {str(a).strip().lower() for a in autorises}
+
+
 def dossier_imap(cle: str) -> str:
-    if str(cle).lower().startswith("env"):
-        return (getattr(settings, "mail_imap_dossier_envoyes", None) or DOSSIER_ENVOYES_GMAIL)
-    return "INBOX"
+    """Le nom du dossier à ouvrir : la réception, les envoyés (tel que la boîte
+    le nomme, s'il a été lu), ou le dossier demandé par son nom."""
+    canon = cle_dossier(cle)
+    if canon == CLE_RECUS:
+        return "INBOX"
+    if canon == CLE_ENVOYES:
+        return _ENVOYES_DETECTE or (getattr(settings, "mail_imap_dossier_envoyes", None)
+                                    or DOSSIER_ENVOYES_GMAIL)
+    return canon
+
+
+def _selectionner(client, dossier: str) -> None:
+    """Ouvre un dossier en lecture seule — nom réencodé, guillemets échappés.
+    Le dossier des envoyés introuvable sous son nom réglé est cherché par son
+    attribut \\Sent : c'est le cas de tout compte Gmail qui n'est pas en anglais."""
+    def _ouvrir(nom: str) -> bool:
+        code = utf7_encoder(nom).replace("\\", "\\\\").replace('"', '\\"')
+        statut, _ = client.select(f'"{code}"', readonly=True)
+        return statut == "OK"
+    if _ouvrir(dossier):
+        return
+    if cle_dossier(dossier) == CLE_ENVOYES:
+        vrai = _envoyes_du_serveur(client)
+        if vrai and vrai != dossier and _ouvrir(vrai):
+            return
+    raise RuntimeError(f"dossier IMAP « {dossier} » introuvable")
+
+
+def lister_dossiers() -> list[tuple[set, str]]:
+    """Tous les dossiers de la boîte, avec leurs attributs."""
+    client = _connexion()
+    try:
+        statut, lignes = client.list()
+        if statut != "OK":
+            raise RuntimeError("la boîte ne rend pas la liste de ses dossiers")
+        dossiers = analyser_list(lignes)
+    finally:
+        try:
+            client.logout()
+        except Exception:  # noqa: BLE001
+            pass
+    global _ENVOYES_DETECTE
+    for attributs, nom in dossiers:
+        if "\\sent" in attributs:
+            _ENVOYES_DETECTE = nom
+    return dossiers
+
+
+def dossiers_proposables(dossiers: Optional[list[tuple[set, str]]] = None) -> list[dict]:
+    """Ce qu'un administrateur peut ouvrir à un profil : les envoyés (clé
+    « envoyes ») et les dossiers de l'utilisateur ; ni la réception (toujours
+    ouverte) ni les dossiers systèmes qui montreraient tout."""
+    global _ENVOYES_DETECTE
+    dossiers = lister_dossiers() if dossiers is None else dossiers
+    envoyes, autres = [], []
+    for attributs, nom in dossiers:
+        if nom.upper() == "INBOX":
+            continue
+        if "\\sent" in attributs:
+            _ENVOYES_DETECTE = nom        # son vrai nom, pour l'ouvrir ensuite
+            envoyes = [{"nom": CLE_ENVOYES, "libelle": "Messages envoyés"}]
+            continue
+        if attributs & _EXCLUS:
+            continue
+        libelle = nom.split("/", 1)[1] if nom.startswith("[Gmail]/") else nom
+        autres.append({"nom": nom, "libelle": libelle})
+    return envoyes + sorted(autres, key=lambda d: d["libelle"].lower())
 
 
 def _connexion() -> imaplib.IMAP4_SSL:
@@ -212,9 +410,7 @@ def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = N
     """(fiches des `limite` plus récents, nombre total de correspondances)."""
     client = _connexion()
     try:
-        statut, _ = client.select(f'"{dossier}"', readonly=True)
-        if statut != "OK":
-            raise RuntimeError(f"dossier IMAP « {dossier} » introuvable")
+        _selectionner(client, dossier)
         uids = _uids(client, _criteres(depuis, recherche, avant))
         total = len(uids)
         fiches = []
@@ -240,7 +436,7 @@ def ouvrir(boite: str, uid: str, dossier: str = "INBOX") -> dict:
     from mail.lecture import MAX_APERCU, _texte_lisible
     client = _connexion()
     try:
-        client.select(f'"{dossier}"', readonly=True)
+        _selectionner(client, dossier)
         m, flags = _charger(client, uid.encode())
     finally:
         try:
@@ -260,9 +456,7 @@ def parcourir(dossier: str, maximum: int) -> list[tuple[str, object]]:
     UID — pour l'ingestion, qui a besoin du corps entier de chacun."""
     client = _connexion()
     try:
-        statut, _ = client.select(f'"{dossier}"', readonly=True)
-        if statut != "OK":
-            raise RuntimeError(f"dossier IMAP « {dossier} » introuvable")
+        _selectionner(client, dossier)
         uids = _uids(client, "ALL")
         messages = []
         for uid in reversed(uids[-max(1, int(maximum)):]):
@@ -319,7 +513,7 @@ def piece(uid: str, rang: str, dossier: str = "INBOX") -> bytes:
     """Les octets de la partie `rang` du message `uid`."""
     client = _connexion()
     try:
-        client.select(f'"{dossier}"', readonly=True)
+        _selectionner(client, dossier)
         m, _ = _charger(client, uid.encode())
     finally:
         try:

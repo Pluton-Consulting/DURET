@@ -70,6 +70,38 @@ DOSSIERS = {
 
 MAX_MESSAGES = 25
 MAX_APERCU = 800
+
+
+class DossierInterdit(PermissionError):
+    """Un dossier de la boîte partagée qui n'est pas ouvert à ce profil (11/09).
+    Le message dit ce qu'il peut lire : c'est ce que le modèle répétera."""
+
+    def __init__(self, dossier: str, autorises):
+        ouverts = sorted(a for a in (autorises or []) if str(a).lower() != "inbox")
+        libelles = ["les messages envoyés" if a == "envoyes" else f"« {a} »" for a in ouverts]
+        super().__init__(
+            f"Le dossier « {'messages envoyés' if dossier == 'envoyes' else dossier} » n'est pas "
+            "ouvert à ce profil. Il lit la boîte de réception"
+            + (" et " + ", ".join(libelles) if libelles else " seulement")
+            + ". Un administrateur peut ouvrir d'autres dossiers dans Paramètres → Utilisateurs.")
+
+
+def _dossier_imap_permis(dossier, autorises) -> str:
+    """La clé de lecture d'un dossier IMAP — « recus », « envoyes » ou son nom —
+    après contrôle du profil. Lève DossierInterdit."""
+    from mail import imap
+    canon = imap.cle_dossier(dossier)
+    if not imap.dossier_permis(canon, autorises):
+        raise DossierInterdit(canon, autorises)
+    return "recus" if canon == imap.CLE_RECUS else canon
+
+
+def _controler_identifiant(identifiant: str, autorises) -> None:
+    """Un message désigné par sa référence porte son dossier (« INBOX|123 ») :
+    une référence d'un dossier fermé ne l'ouvre pas pour autant."""
+    if autorises is None or "|" not in str(identifiant or ""):
+        return
+    _dossier_imap_permis(str(identifiant).partition("|")[0], autorises)
 # Un message OUVERT : le corps entier, jusqu'ici — et la coupure est DITE. Le
 # plafond suit celui des résultats généreux d'agent1 (12 000) : au-delà, la
 # coupure se ferait plus loin, et en silence.
@@ -696,7 +728,7 @@ async def _ouvrir_imap(boite: str, identifiant: str) -> dict:
 
 async def lire_boite(boite: str, dossier: str = "recus",
                      limite: int = 10, depuis=None, recherche=None, avant=None,
-                     apercu=None) -> dict:
+                     apercu=None, autorises=None) -> dict:
     """Derniers messages d'une boîte, lus en direct — et leur nombre.
 
     `dossier` : « recus » ou « envoyes ». `depuis` : une période (« 7j »,
@@ -710,6 +742,11 @@ async def lire_boite(boite: str, dossier: str = "recus",
     """
     nom = fournisseur()                       # lève si rien n'est configuré
     cle = "envoyes" if str(dossier).lower().startswith("env") else "recus"
+    if nom == "imap":
+        # LES DOSSIERS DE LA BOÎTE PARTAGÉE (11/09) : un nom de dossier se lit
+        # tel quel, et `autorises` (les dossiers ouverts à ce profil, None =
+        # tout) décide avant le moindre appel réseau.
+        cle = _dossier_imap_permis(dossier, autorises)
     limite = max(1, min(int(limite or 10), MAX_MESSAGES))
     debut = depuis_quand(depuis)
     borne = depuis_quand(avant)
@@ -867,7 +904,7 @@ async def telecharger_piece(boite: str, info: dict) -> bytes:
 
 async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str = "recus",
                        rang=None, pieces=False, proprietaire: str = "",
-                       inline=False) -> dict:
+                       inline=False, autorises=None) -> dict:
     """UN message, en entier : le corps complet (borné à MAX_CORPS, et la
     coupure est dite), les pièces jointes nommées — avec leur `ref` —, les
     liens du corps ; et, si `pieces` est vrai, chaque pièce RÉCUPÉRÉE,
@@ -883,6 +920,8 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
 
     nom = fournisseur()
     cle = "envoyes" if str(dossier or "").lower().startswith("env") else "recus"
+    if nom == "imap":
+        cle = _dossier_imap_permis(dossier, autorises)
     identifiant = _resoudre(str(ref or ""), boite)
     if not identifiant and not objet and not de:
         # SANS RIEN : LE DERNIER MESSAGE REÇU (31/08). « Affiche le mail complet »
@@ -916,6 +955,8 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
         if not choisi:
             raise LookupError(f"Aucun message ne correspond à « {recherche} » dans ce dossier.")
         identifiant = _resoudre(choisi["ref"], boite)
+    if nom == "imap":
+        _controler_identifiant(identifiant, autorises)
     logger.info("Ouverture d'un message de %s via %s", boite, nom)
     fiche = (await _ouvrir_outlook(boite, identifiant) if nom == "outlook"
              else await _ouvrir_imap(boite, identifiant) if nom == "imap"
@@ -1017,13 +1058,17 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     return fiche
 
 
-async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: str = "") -> dict:
+async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: str = "",
+                     autorises=None) -> dict:
     """UNE pièce jointe, par sa `ref` — ou par son nom dans un message (`mail` =
     la ref du message, sinon le dernier reçu). Récupérée, déposée, lue."""
     from mail.pieces import analyser
     info = piece_connue(str(ref or ""), boite) if ref else None
+    if info and fournisseur() == "imap":
+        _controler_identifiant(info.get("message"), autorises)
     if not info:
-        message = await lire_message(boite, ref=mail, proprietaire=proprietaire)
+        message = await lire_message(boite, ref=mail, proprietaire=proprietaire,
+                                     autorises=autorises)
         pieces = message.get("pieces_jointes") or []
         if not pieces:
             raise LookupError(f"Le message « {message.get('objet')} » n'a pas de pièce jointe.")

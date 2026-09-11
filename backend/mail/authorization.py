@@ -143,6 +143,58 @@ async def boites_autorisees(user) -> list[dict]:
     return boites
 
 
+# ── LES DOSSIERS DE LA BOÎTE PARTAGÉE (11/09, Duret) ─────────────────────
+# Chaque profil lit la boîte de réception — le « mail général » — plus les
+# dossiers que l'administrateur lui ouvre (`users.dossiers_mail`, migration
+# 040). Seulement avec une boîte unique : ailleurs chacun lit SA boîte, et
+# les dossiers n'ont pas à être découpés.
+
+# Jeton glissé dans la liste des boîtes passée à la recherche en mémoire :
+# « pas les messages envoyés ». Voir `vectorstore.rag._filtrer_mails`.
+SANS_ENVOYES = "!email_sent"
+
+
+async def dossiers_autorises(user_or_id) -> Optional[frozenset]:
+    """Les dossiers ouverts à ce profil, ou None = aucune restriction.
+
+    None pour un administrateur, sans boîte unique, pour un compte sans
+    restriction posée, et sans la migration 040 (la colonne manque : rien
+    n'était restreint, rien ne l'est). La boîte de réception n'y figure pas :
+    elle est toujours ouverte.
+    """
+    if not boite_unique():
+        return None
+    user_id = str(getattr(user_or_id, "id", user_or_id) or "")
+    if not user_id:
+        return frozenset()
+    try:
+        async with get_db() as conn:
+            ligne = await conn.fetchrow(
+                "SELECT role, dossiers_mail FROM users WHERE id = $1::uuid AND actif = true",
+                user_id)
+    except Exception as e:  # noqa: BLE001
+        from database.connection import schema_incomplet
+        if schema_incomplet(e):
+            return None
+        raise
+    if not ligne:
+        return frozenset()                      # compte inconnu : la réception seule
+    if acces_total(ligne["role"]) or ligne["dossiers_mail"] is None:
+        return None
+    return frozenset(str(d) for d in ligne["dossiers_mail"] if str(d or "").strip())
+
+
+async def boites_pour_la_memoire(user_id: Optional[str]) -> list[str]:
+    """Les boîtes que la recherche en mémoire peut montrer à ce profil — et,
+    s'il n'a pas les messages envoyés, le jeton qui les écarte : la mémoire ne
+    doit pas rendre ce que la lecture en direct refuserait."""
+    boites = await boites_par_id(user_id)
+    autorises = await dossiers_autorises(user_id)
+    if autorises is not None and "envoyes" not in {a.lower() for a in autorises}:
+        boites = list(boites) + [SANS_ENVOYES]
+    return boites
+
+
 async def boites_par_id(user_id: Optional[str]) -> list[str]:
     """Adresses accessibles à un utilisateur, à partir de son seul identifiant.
 

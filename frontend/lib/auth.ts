@@ -47,22 +47,38 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       credentials: {
         token: { type: "text" },
         email: { type: "email" },
+        // LE PRÉNOM CHOISI (11/09, Duret) : une adresse partagée porte
+        // plusieurs profils ; l'écran des cartes rappelle ici avec celui cliqué.
+        user_id: { type: "text" },
+        // LE CHANGEMENT DE PROFIL : le JWT du profil courant, qui prouve déjà
+        // la boîte partagée — pas de nouveau lien magique pour passer de
+        // Nathalie à Éric sur la même adresse.
+        bascule: { type: "text" },
       },
-      async authorize({ token, email }) {
+      async authorize({ token, email, user_id, bascule }) {
         try {
-          const res = await fetch(
-            `${API_URL}/api/auth/magic-link/verify`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ token, email }),
-            }
-          )
+          const res = bascule
+            ? await fetch(`${API_URL}/api/auth/profils/changer`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${bascule}` },
+                body: JSON.stringify({ user_id }),
+              })
+            : await fetch(
+                `${API_URL}/api/auth/magic-link/verify`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ token, email, user_id: user_id || null }),
+                }
+              )
           if (!res.ok) return null
           const data = await res.json()
           return {
-            id: email as string,
-            email: email as string,
+            // L'IDENTIFIANT DU PROFIL, pas l'adresse (11/09) : plusieurs prénoms
+            // partagent l'adresse de la boîte, et l'écran range par personne.
+            id: data.user_id || (user_id as string) || (email as string),
+            email: (email as string) || "",
+            name: data.nom || undefined,
             backendToken: data.access_token,
             // Le jeton d'appareil (03/09). Absent si la migration 034 n'est pas
             // appliquée : on retombe alors sur le comportement d'avant.
@@ -119,6 +135,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async session({ session, token }) {
       session.backendToken = token.backendToken as string
       session.user.role = token.role as string
+      // L'identifiant du profil (`sub`, posé depuis `authorize`) : c'est lui qui
+      // distingue deux prénoms d'une même adresse côté écran.
+      ;(session.user as any).id = token.sub
       return session
     },
   },

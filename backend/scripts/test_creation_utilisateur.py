@@ -103,6 +103,8 @@ class _Corps:
         self.name = kw.get("name")
         self.role = kw.get("role", "terrain")
         self.quota_mensuel = kw.get("quota_mensuel")
+        # 11/09 : les dossiers de la boîte partagée ouverts au compte.
+        self.dossiers_mail = kw.get("dossiers_mail")
 
 
 class _Moi:
@@ -134,7 +136,21 @@ espace = {
     # L'annotation `body: CreateUserRequest` est évaluée à la définition.
     "CreateUserRequest": _Corps,
 }
-exec(compile(ast.Module(body=[noeud], type_ignores=[]), "users", "exec"), espace)
+# 11/09 : la création passe par la règle des profils d'une boîte partagée
+# (`auth/profils.py`, qui lit la base par `database.connection`) et par les
+# deux aides des dossiers de mail, définies dans le même module.
+import types  # noqa: E402
+_dbc = types.ModuleType("database.connection")
+_dbc.get_db = lambda: _Db()
+_dbc.schema_incomplet = lambda e: False
+sys.modules.setdefault("database", types.ModuleType("database"))
+sys.modules["database.connection"] = _dbc
+sys.modules["auth"] = types.ModuleType("auth")
+sys.modules["auth"].__path__ = [str(BACKEND / "auth")]
+aides = [n for n in arbre.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+         and n.name in ("_nettoyer_dossiers", "_poser_dossiers")]
+espace["Optional"] = __import__("typing").Optional
+exec(compile(ast.Module(body=aides + [noeud], type_ignores=[]), "users", "exec"), espace)
 creer = espace["create_user"]
 
 import asyncio  # noqa: E402

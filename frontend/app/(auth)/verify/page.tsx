@@ -2,10 +2,16 @@
 import { Suspense, useEffect, useRef, useState } from "react"
 import { signIn } from "next-auth/react"
 import { useSearchParams } from "next/navigation"
+import ChoixProfil, { type CarteProfil } from "@/components/nav/ChoixProfil"
 
 function VerifyContent() {
   const params = useSearchParams()
-  const [status, setStatus] = useState<"loading" | "error">("loading")
+  const [status, setStatus] = useState<"loading" | "error" | "choix">("loading")
+  // LES PRÉNOMS D'UNE BOÎTE PARTAGÉE (11/09, Duret) : plusieurs profils sur
+  // l'adresse du lien — on montre les cartes, et c'est le clic qui ouvre la
+  // session. Le lien n'est consommé qu'à ce moment-là.
+  const [profils, setProfils] = useState<CarteProfil[]>([])
+  const [enCours, setEnCours] = useState<string | null>(null)
   // POURQUOI le lien est refusé (08/09). `signIn` de next-auth ne rend qu'un
   // booléen : la raison se demande au serveur, par une route qui ne consomme
   // rien. Sans elle, « Lien invalide ou expiré » couvrait quatre situations
@@ -15,18 +21,8 @@ function VerifyContent() {
   // même avec le double-rendu de React en dev (sinon le token est consommé 2×).
   const started = useRef(false)
 
-  useEffect(() => {
-    if (started.current) return
-    const token = params.get("token")
-    const email = params.get("email")
-
-    if (!token || !email) {
-      setStatus("error")
-      return
-    }
-    started.current = true
-
-    signIn("credentials", { token, email, redirect: false }).then(async (res) => {
+  const ouvrir = (token: string, email: string, userId?: string) =>
+    signIn("credentials", { token, email, user_id: userId || "", redirect: false }).then(async (res) => {
       if (res?.error) {
         setStatus("error")
         try {
@@ -45,7 +41,59 @@ function VerifyContent() {
         window.location.href = "/chat"
       }
     })
+
+  useEffect(() => {
+    if (started.current) return
+    const token = params.get("token")
+    const email = params.get("email")
+    // Le lien remis par un administrateur désigne déjà le prénom : pas de cartes.
+    const profil = params.get("profil")
+
+    if (!token || !email) {
+      setStatus("error")
+      return
+    }
+    started.current = true
+    if (profil) { ouvrir(token, email, profil); return }
+
+    ;(async () => {
+      try {
+        const api = process.env.NEXT_PUBLIC_API_URL || ""
+        const r = await fetch(`${api}/api/auth/magic-link/profils`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, email }),
+        })
+        const j = r.ok ? await r.json() : null
+        if (Array.isArray(j?.profils) && j.profils.length > 1) {
+          setProfils(j.profils)
+          setStatus("choix")
+          return
+        }
+      } catch { /* le serveur tranchera : il refuse d'ouvrir sans prénom quand il en faut un */ }
+      ouvrir(token, email)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
+
+  const choisir = (id: string) => {
+    const token = params.get("token"), email = params.get("email")
+    if (!token || !email || enCours) return
+    setEnCours(id)
+    ouvrir(token, email, id).finally(() => setEnCours(null))
+  }
+
+  if (status === "choix") {
+    return (
+      <div style={{
+        minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "32px 16px", boxSizing: "border-box",
+        background: "radial-gradient(circle at 50% -10%, var(--marque-primary-subtle), transparent 55%), var(--marque-canvas)",
+      }}>
+        <ChoixProfil profils={profils} onChoisir={choisir} enCours={enCours} />
+      </div>
+    )
+  }
 
   return (
     <div style={{

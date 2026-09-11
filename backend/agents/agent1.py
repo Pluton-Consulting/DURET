@@ -577,12 +577,13 @@ async def recherche_node(state: AgentState) -> dict:
     import asyncio
     from security.anonymizer import anonymizer
     from vectorstore.rag import retrieve_as_context
-    from mail.authorization import boites_par_id
+    from mail.authorization import boites_pour_la_memoire
 
     # Cloisonnement : uniquement les boîtes mail auxquelles cette personne a
-    # droit. Sans droits déterminables, aucun mail (fail-closed).
+    # droit — et, pour un profil de la boîte partagée, ses dossiers (11/09).
+    # Sans droits déterminables, aucun mail (fail-closed).
     try:
-        boites = await boites_par_id(state.get("user_id"))
+        boites = await boites_pour_la_memoire(state.get("user_id"))
     except Exception:  # noqa: BLE001
         boites = []
 

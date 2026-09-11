@@ -118,7 +118,8 @@ verifier("le filtrage RAG (le DÉFAUT) reste restreint : il ne teste que le jeto
 users = (BACKEND / "routers" / "users.py").read_text(encoding="utf-8")
 verifier("la liste des utilisateurs filtre les super_admin CÔTÉ SERVEUR pour la direction",
          "u.role <> 'super_admin'" in users
-         and 'current_user.role == "super_admin",' in users)
+         # 11/09 : la requête est rejouée sans `dossiers_mail` si la 040 manque.
+         and 'current_user.role == "super_admin")' in users)
 verifier("la direction ne peut pas agir sur un super_admin (désactivation, plages)",
          users.count("DIRECTION_CREATABLE_ROLES") >= 3)
 

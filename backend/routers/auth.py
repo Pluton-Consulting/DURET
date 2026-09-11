@@ -29,6 +29,13 @@ class MagicLinkRequest(BaseModel):
 class VerifyTokenRequest(BaseModel):
     token: str
     email: str
+    # Le prénom cliqué sur l'écran des cartes, quand l'adresse porte plusieurs
+    # profils (11/09). Absent : un seul compte sur l'adresse, rien à choisir.
+    user_id: str | None = None
+
+
+class ChangerProfilRequest(BaseModel):
+    user_id: str
 
 
 class RefreshRequest(BaseModel):
@@ -71,8 +78,10 @@ async def request_magic_link(body: MagicLinkRequest):
     Retourne toujours le même message pour ne pas révéler si l'email existe.
     """
     async with get_db() as conn:
+        # Insensible à la casse, et plusieurs comptes possibles sur l'adresse
+        # (profils d'une boîte partagée, 040) : il suffit qu'UN soit actif.
         user = await conn.fetchrow(
-            "SELECT id FROM users WHERE email = $1 AND actif = true",
+            "SELECT id FROM users WHERE lower(email) = lower($1) AND actif = true LIMIT 1",
             body.email,
         )
 
@@ -128,6 +137,17 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
     if row["expires_at"] < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien expiré")
 
+    # QUI ENTRE (11/09). L'adresse peut porter plusieurs profils — la boîte
+    # partagée de l'entreprise : il faut alors que le prénom ait été choisi sur
+    # l'écran des cartes. Décidé AVANT de consommer le lien : l'écran des
+    # cartes rappelle cette route avec le prénom, le lien doit encore valoir.
+    from auth import profils as _profils
+    retenu = _profils.choisir(await _profils.profils_de(body.email), body.user_id)
+    if retenu == "choix":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="choix_profil")
+    if retenu is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé")
+
     async with get_db() as conn:
         try:
             # Une utilisation de plus ; le lien se ferme quand le compte est
@@ -150,8 +170,8 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
                 body.token,
             )
         user = await conn.fetchrow(
-            "SELECT * FROM users WHERE email = $1 AND actif = true",
-            body.email,
+            "SELECT * FROM users WHERE id = $1 AND actif = true",
+            retenu["id"],
         )
 
     if not user:
@@ -174,6 +194,11 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
         # None si la migration 034 n'est pas encore appliquée : le navigateur
         # retombe alors sur le comportement d'avant (lien magique tous les jours).
         "refresh_token": jeton_appareil,
+        # L'identité du PROFIL (11/09) : deux prénoms d'une même adresse ne
+        # doivent pas partager ce que l'écran range par personne (le fil
+        # courant), et l'en-tête affiche le prénom, pas l'adresse commune.
+        "user_id": str(user["id"]),
+        "nom": user["name"],
     }
 
 
@@ -200,8 +225,10 @@ async def etat_magic_link(body: VerifyTokenRequest):
         )
         actif = None
         if row:
+            # Plusieurs profils possibles sur l'adresse : elle est ouverte si
+            # l'un d'eux l'est (NULL = aucun compte).
             actif = await conn.fetchval(
-                "SELECT actif FROM users WHERE email = $1", body.email)
+                "SELECT bool_or(actif) FROM users WHERE lower(email) = lower($1)", body.email)
 
     if not row:
         return {"raison": "inconnu",
@@ -232,6 +259,69 @@ async def etat_magic_link(body: VerifyTokenRequest):
     return {"raison": "valide",
             "message": ("Ce lien est encore valable. Si la connexion échoue quand même, "
                         "le serveur n'a pas répondu : réessayez dans un instant.")}
+
+
+@router.post("/magic-link/profils")
+async def profils_du_lien(body: VerifyTokenRequest):
+    """Les cartes à montrer après le lien magique — sans rien consommer.
+
+    Rend les profils de l'adresse quand il faut CHOISIR (plusieurs comptes
+    actifs, non administrateurs), une liste vide sinon. ⚠️ ANTI-ÉNUMÉRATION :
+    seulement contre un lien VALIDE (existant, non épuisé, non périmé) — le
+    porteur d'un lien valide a déjà la boîte, on ne lui apprend rien.
+    """
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM verification_tokens WHERE token = $1 AND email = $2",
+            body.token, body.email,
+        )
+    if not row:
+        return {"profils": []}
+    d = dict(row)
+    if d.get("used") or int(d.get("utilisations") or 0) >= int(d.get("utilisations_max") or 1) \
+            or d["expires_at"] < datetime.now(timezone.utc):
+        return {"profils": []}
+    from auth import profils as _profils
+    tous = await _profils.profils_de(body.email)
+    return {"profils": _profils.cartes(tous) if _profils.choisir(tous) == "choix" else []}
+
+
+@router.get("/profils")
+async def mes_profils(current_user: User = Depends(get_current_user)):
+    """Les profils entre lesquels ce compte peut basculer (bouton « Changer de
+    profil ») : ceux de son adresse partagée. Vide pour un compte seul sur son
+    adresse, et pour un administrateur."""
+    from auth import profils as _profils
+    partages = await _profils.profils_partages(str(current_user.id))
+    return {"profils": _profils.cartes(partages), "actuel": str(current_user.id)}
+
+
+@router.post("/profils/changer")
+async def changer_de_profil(body: ChangerProfilRequest, request: Request,
+                            current_user: User = Depends(get_current_user)):
+    """Passe à un autre prénom de la MÊME adresse, sans nouveau lien magique.
+
+    C'est la boîte partagée qui prouve l'identité, et celui qui parle l'a déjà
+    prouvée : on n'exige rien de plus, mais on ne sort jamais de l'adresse, et
+    l'on n'atteint jamais un administrateur. Une nouvelle session d'appareil
+    naît pour le profil choisi : c'est lui que l'appareil retrouvera demain.
+    """
+    from auth import profils as _profils
+    partages = await _profils.profils_partages(str(current_user.id))
+    retenu = _profils.choisir(partages, body.user_id) if partages else None
+    if not isinstance(retenu, dict):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Ce profil n'est pas accessible depuis ce compte.")
+    async with get_db() as conn:
+        await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
+                           datetime.now(timezone.utc), str(retenu["id"]))
+    await log_action(action="changement_profil", user_id=str(retenu["id"]),
+                     metadata={"depuis": str(current_user.id)})
+    access_token = create_access_token({"sub": str(retenu["id"]), "role": retenu["role"]})
+    jeton_appareil = await appareil.creer(retenu["id"], request.headers.get("user-agent", ""))
+    return {"access_token": access_token, "token_type": "bearer",
+            "role": retenu["role"], "refresh_token": jeton_appareil,
+            "user_id": str(retenu["id"]), "nom": retenu.get("name")}
 
 
 @router.post("/refresh")

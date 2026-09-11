@@ -76,9 +76,12 @@ for f in backend/database/migrations/[0-9]*.sql; do
 done
 
 echo "==> 4/5  Administrateur + catalogue de skills…"
+# Plus d'unicité sur l'adresse seule depuis la 040 (profils d'une boîte
+# partagée) : l'administrateur est créé s'il manque, et promu seulement s'il
+# est SEUL sur son adresse — jamais tous les profils d'une adresse partagée.
 if [ -n "${FIRST_ADMIN_EMAIL:-}" ]; then
   $COMPOSE exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -q -c \
-    "INSERT INTO users (email, name, role) VALUES ('${FIRST_ADMIN_EMAIL}', 'Administrateur', 'super_admin') ON CONFLICT (email) DO UPDATE SET role='super_admin', actif=true;" \
+    "INSERT INTO users (email, name, role) SELECT '${FIRST_ADMIN_EMAIL}', 'Administrateur', 'super_admin' WHERE NOT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower('${FIRST_ADMIN_EMAIL}')); UPDATE users SET role='super_admin', actif=true WHERE lower(email) = lower('${FIRST_ADMIN_EMAIL}') AND (SELECT count(*) FROM users WHERE lower(email) = lower('${FIRST_ADMIN_EMAIL}')) = 1;" \
     && echo "    super_admin : ${FIRST_ADMIN_EMAIL}"
 fi
 $COMPOSE exec -T backend sh -c "PYTHONPATH=. python scripts/seed_skills_catalogue.py" \

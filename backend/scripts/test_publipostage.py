@@ -132,7 +132,9 @@ verifier("au plus six messages, jamais l'archive entière",
 verifier("la consigne du rédacteur interdit d'inventer (chantier, montant, date)",
          "N'INVENTE RIEN" in publi.CONSIGNE_PERSONNALISATION and "[À COMPLÉTER]" in publi.CONSIGNE_PERSONNALISATION)
 verifier("le skill sait personnaliser (lecture de la boîte, reçus ET envoyés, trois de front)",
-         "async def _personnaliser_cartes" in skills_src and 'for dossier in ("recus", "envoyes")' in skills_src
+         # 11/09 : un profil sans les messages envoyés ne lit que les reçus.
+         "async def _personnaliser_cartes" in skills_src and '("recus", "envoyes")' in skills_src
+         and "for dossier in dossiers" in skills_src
          and "asyncio.Semaphore(3)" in skills_src)
 verifier("le catalogue nomme `personnaliser` comme LE geste d'une adaptation par client",
          "`personnaliser: true` ADAPTE" in (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")

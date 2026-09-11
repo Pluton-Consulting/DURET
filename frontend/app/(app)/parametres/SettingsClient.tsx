@@ -14,6 +14,18 @@ interface AgentPermissions { agent1: boolean; agent2: boolean; agent3: boolean }
 interface User {
   id: string; email: string; name: string | null; role: Role
   actif: boolean; created_at: string; agent_permissions: AgentPermissions
+  // Les dossiers de la boîte partagée ouverts à ce compte, en plus de la
+  // réception (11/09). null = aucune restriction ; [] = la réception seule.
+  dossiers_mail?: string[] | null
+}
+interface DossierBoite { nom: string; libelle: string }
+const ROLES_ADMIN: Role[] = ["super_admin", "direction"]
+
+/** « Tous les dossiers », « Réception seule », « Réception + 2 dossiers ». */
+function resumeDossiers(d: string[] | null | undefined, role: Role): string {
+  if (ROLES_ADMIN.includes(role) || d == null) return "Tous les dossiers"
+  if (d.length === 0) return "Réception seule"
+  return `Réception + ${d.length} dossier${d.length > 1 ? "s" : ""}`
 }
 interface Props {
   initialUsers: User[]; backendToken: string; currentRole: string; apiUrl: string
@@ -56,10 +68,69 @@ const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
   { key: "cles", label: "Clés API", roles: ["super_admin"] },
 ]
 
+/** Les cases des dossiers de la boîte. La réception n'y est pas : toujours ouverte. */
+function CasesDossiers({ dossiers, choix, onChange }: {
+  dossiers: DossierBoite[]; choix: string[]; onChange: (choix: string[]) => void
+}) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      {dossiers.map((d) => {
+        const coche = choix.includes(d.nom)
+        return (
+          <label key={d.nom} className="sym-tap" style={{
+            display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer",
+            padding: "6px 12px", borderRadius: "var(--marque-radius-pill)",
+            border: coche ? "1px solid var(--marque-primary)" : "1px solid var(--marque-border)",
+            background: coche ? "var(--marque-surface)" : "transparent", color: "var(--marque-text-body)",
+          }}>
+            <input type="checkbox" checked={coche}
+                   onChange={(e) => onChange(e.target.checked ? [...choix, d.nom] : choix.filter((x) => x !== d.nom))} />
+            {d.libelle}
+          </label>
+        )
+      })}
+    </div>
+  )
+}
+
 /* ---------- USERS TAB ---------- */
 function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   const [users, setUsers] = useState<User[]>(initialUsers)
-  const [form, setForm] = useState({ email: "", name: "", role: "terrain" as Role })
+  const [form, setForm] = useState({ email: "", name: "", role: "terrain" as Role, dossiers: [] as string[] })
+  // LES DOSSIERS DE LA BOÎTE PARTAGÉE (11/09, Duret) : lus sur la boîte elle-
+  // même. Vide avec une raison quand aucune boîte d'entreprise n'est reliée —
+  // les cases n'ont alors pas de sens, et rien n'est restreint.
+  const [dossiersBoite, setDossiersBoite] = useState<DossierBoite[]>([])
+  const [dossiersErreur, setDossiersErreur] = useState("")
+  const [editDossiers, setEditDossiers] = useState<{ id: string; nom: string; libres: boolean; choix: string[] } | null>(null)
+  const [dossiersEnCours, setDossiersEnCours] = useState(false)
+  useEffect(() => {
+    fetch(`${apiUrl}/api/users/dossiers-mail`, { headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j) => { setDossiersBoite(j.dossiers || []); setDossiersErreur(j.erreur || "") })
+      .catch((e) => setDossiersErreur(e?.message || "dossiers indisponibles"))
+  }, [apiUrl, backendToken])
+  const boiteReliee = dossiersBoite.length > 0
+  // Une adresse déjà portée par un compte : le nouveau sera un PROFIL de plus
+  // sur cette boîte, et son prénom devient obligatoire (c'est la carte).
+  const adresseDejaPortee = form.email.trim() !== "" &&
+    users.some((u) => u.email.toLowerCase() === form.email.trim().toLowerCase())
+
+  async function enregistrerDossiers() {
+    if (!editDossiers) return
+    setDossiersEnCours(true)
+    try {
+      const res = await fetch(`${apiUrl}/api/users/${editDossiers.id}/dossiers-mail`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ dossiers: editDossiers.libres ? null : editDossiers.choix }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setDossiersErreur(d.detail ?? "Les dossiers n'ont pas pu être enregistrés."); return }
+      setUsers((p) => p.map((u) => u.id === editDossiers.id ? { ...u, dossiers_mail: d.dossiers_mail } : u))
+      setEditDossiers(null)
+    } catch { setDossiersErreur("Le serveur n'a pas répondu. Réessayez.") } finally { setDossiersEnCours(false) }
+  }
   const [adding, setAdding] = useState(false)
   const [formError, setFormError] = useState("")
   const [showForm, setShowForm] = useState(false)
@@ -115,10 +186,14 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   async function addUser(e: React.FormEvent) {
     e.preventDefault(); setAdding(true); setFormError("")
     try {
+      const { dossiers, ...champs } = form
       const res = await fetch(`${apiUrl}/api/users/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
-        body: JSON.stringify(form),
+        // Avec une boîte d'entreprise reliée, un compte métier commence par la
+        // réception + les dossiers cochés ; sans elle, rien n'est restreint.
+        body: JSON.stringify({ ...champs,
+          dossiers_mail: boiteReliee && !ROLES_ADMIN.includes(form.role) ? dossiers : null }),
       })
       if (!res.ok) {
         const err = await res.json()
@@ -127,7 +202,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
       }
       const newUser = await res.json()
       setUsers((p) => [newUser, ...p])
-      setForm({ email: "", name: "", role: "terrain" }); setShowForm(false)
+      setForm({ email: "", name: "", role: "terrain", dossiers: [] }); setShowForm(false)
     } catch { setFormError("Erreur réseau") } finally { setAdding(false) }
   }
 
@@ -286,6 +361,41 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
         </div>
       )}
 
+      {editDossiers && (
+        <div className="sym-fade" style={{
+          background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)",
+          padding: 18, marginBottom: 20, border: "1px solid var(--marque-primary-light)",
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "var(--marque-text-primary)", marginBottom: 4 }}>
+            Dossiers du mail pour {editDossiers.nom}
+          </div>
+          <p style={{ fontSize: 13, color: "var(--marque-text-body)", margin: "0 0 12px", maxWidth: 640 }}>
+            La boîte de réception est toujours visible. Cochez les autres dossiers de la boîte que
+            ce profil peut lire ; le reste lui est fermé, dans le chat comme dans la mémoire.
+          </p>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginBottom: 10, cursor: "pointer" }}>
+            <input type="checkbox" checked={editDossiers.libres}
+                   onChange={(e) => setEditDossiers((d) => d && { ...d, libres: e.target.checked })} />
+            Aucune restriction (tous les dossiers)
+          </label>
+          {!editDossiers.libres && (
+            <CasesDossiers dossiers={dossiersBoite} choix={editDossiers.choix}
+                           onChange={(choix) => setEditDossiers((d) => d && { ...d, choix })} />
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button type="button" onClick={enregistrerDossiers} disabled={dossiersEnCours} className="sym-tap" style={{
+              background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none",
+              borderRadius: "var(--marque-radius-pill)", padding: "9px 20px", fontSize: 13, fontWeight: 600,
+              cursor: dossiersEnCours ? "wait" : "pointer",
+            }}>{dossiersEnCours ? "…" : "Enregistrer"}</button>
+            <button type="button" onClick={() => setEditDossiers(null)} className="sym-tap" style={{
+              background: "none", border: "1px solid var(--marque-border)", color: "var(--marque-text-body)",
+              borderRadius: "var(--marque-radius-pill)", padding: "9px 18px", fontSize: 13, cursor: "pointer",
+            }}>Annuler</button>
+          </div>
+        </div>
+      )}
+
       {showForm && (
         <form onSubmit={addUser} className="sym-fade" style={{
           background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)", padding: 20,
@@ -297,12 +407,33 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
           <div className="sym-grid-1" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
             <input type="email" placeholder="Email *" required value={form.email}
               onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} style={inp} />
-            <input type="text" placeholder="Nom complet" value={form.name}
+            <input type="text" placeholder={adresseDejaPortee ? "Prénom (affiché sur la carte) *" : "Nom complet"}
+              required={adresseDejaPortee} value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={inp} />
             <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as Role }))} style={inp}>
               {creatableRoles.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
             </select>
           </div>
+          {adresseDejaPortee && (
+            <p style={{ fontSize: 12.5, color: "var(--marque-text-body)", margin: "0 0 12px" }}>
+              Cette adresse est déjà utilisée : ce sera un <b>profil de plus</b> sur la même boîte,
+              avec son propre chat et ses propres documents. Après le lien magique, chacun choisit
+              son prénom sur une carte. Impossible pour un rôle de direction.
+            </p>
+          )}
+          {!ROLES_ADMIN.includes(form.role) && (boiteReliee ? (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--marque-text-primary)", marginBottom: 6 }}>
+                Dossiers du mail visibles <span style={{ fontWeight: 400, color: "var(--marque-text-muted)" }}>— la boîte de réception l'est toujours</span>
+              </div>
+              <CasesDossiers dossiers={dossiersBoite} choix={form.dossiers}
+                             onChange={(choix) => setForm((f) => ({ ...f, dossiers: choix }))} />
+            </div>
+          ) : dossiersErreur ? (
+            <p style={{ fontSize: 12, color: "var(--marque-text-muted)", margin: "0 0 12px" }}>
+              Dossiers du mail : {dossiersErreur}
+            </p>
+          ) : null)}
           {formError && <p style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "0 0 10px" }}>{formError}</p>}
           <div style={{ display: "flex", gap: 8 }}>
             <button type="submit" disabled={adding} className="sym-tap" style={{
@@ -330,7 +461,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--marque-border)", background: "var(--marque-canvas)" }}>
-              {["Utilisateur", "Rôle", ...visibleAgents.map((a) => nomExpert(a, true)), "Statut", ""].map((h, i) => (
+              {["Utilisateur", "Rôle", ...visibleAgents.map((a) => nomExpert(a, true)), ...(boiteReliee ? ["Dossiers mail"] : []), "Statut", ""].map((h, i) => (
                 <th key={i} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
               ))}
             </tr>
@@ -342,7 +473,13 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                 <tr key={user.id} style={{ borderBottom: "1px solid var(--marque-border)", opacity: user.actif ? 1 : 0.45 }}>
                   <td style={{ padding: "14px 16px" }}>
                     <div style={{ fontWeight: 600, fontSize: 14, color: "var(--marque-text-primary)" }}>{user.name || "Sans nom"}</div>
-                    <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 1 }}>{user.email}</div>
+                    <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 1 }}>
+                      {user.email}
+                      {users.filter((u) => u.email.toLowerCase() === user.email.toLowerCase()).length > 1 && (
+                        <span title="Plusieurs profils sur cette adresse : chacun choisit son prénom après le lien magique"
+                              style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: "var(--marque-primary)" }}>· boîte partagée</span>
+                      )}
+                    </div>
                   </td>
                   <td style={{ padding: "14px 16px" }}>
                     <span style={{ background: color + "18", color, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600 }}>
@@ -378,6 +515,22 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                       </td>
                     )
                   })}
+                  {boiteReliee && (
+                    <td style={{ padding: "14px 16px", whiteSpace: "nowrap" }}>
+                      {ROLES_ADMIN.includes(user.role) ? (
+                        <span style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>Tous les dossiers</span>
+                      ) : (
+                        <button type="button" className="sym-tap" title="Choisir les dossiers visibles"
+                                onClick={() => setEditDossiers({ id: user.id, nom: user.name || user.email,
+                                                                 libres: user.dossiers_mail == null,
+                                                                 choix: user.dossiers_mail || [] })}
+                                style={{ background: "none", border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)",
+                                         padding: "5px 12px", fontSize: 12, cursor: "pointer", color: "var(--marque-text-body)" }}>
+                          {resumeDossiers(user.dossiers_mail, user.role)}
+                        </button>
+                      )}
+                    </td>
+                  )}
                   <td style={{ padding: "14px 16px" }}>
                     <span style={{
                       fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)",
@@ -420,7 +573,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
               )
             })}
             {users.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "var(--marque-text-muted)", fontSize: 14 }}>
+              <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "var(--marque-text-muted)", fontSize: 14 }}>
                 Aucun utilisateur à afficher.
               </td></tr>
             )}

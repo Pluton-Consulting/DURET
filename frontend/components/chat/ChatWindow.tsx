@@ -258,7 +258,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const threadIdRef = useRef<string | null>(initialThreadId)
 
   // Enregistre le thread courant (state + localStorage) dès qu'il est connu.
-  const userKey = (session as any)?.user?.email || null
+  // Par PROFIL et non par adresse (11/09) : les prénoms d'une boîte partagée
+  // ont la même adresse, chacun son fil. Une session ouverte avant ce
+  // changement n'a que son adresse : elle garde sa clé d'avant.
+  const userKey = (session as any)?.user?.id || (session as any)?.user?.email || null
 
   const rememberThread = (tid: string) => {
     setThreadId(tid)

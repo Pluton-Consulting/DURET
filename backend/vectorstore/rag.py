@@ -72,6 +72,11 @@ def _filtrer_mails(chunks: list[dict], mailboxes: Optional[list[str]]) -> list[d
     rendre invisible jusqu'à resynchronisation que risquer de l'exposer.
     """
     autorisees = {(m or "").strip().lower() for m in (mailboxes or []) if m}
+    # « Pas les messages envoyés » (11/09) : un profil de la boîte partagée à
+    # qui ce dossier n'est pas ouvert. Posé AVANT l'accès administrateur, qui
+    # ne le porte jamais (`mail.authorization.boites_pour_la_memoire`).
+    if "!email_sent" in autorisees:
+        chunks = [c for c in chunks if c.get("source_type") != "email_sent"]
     if "*" in autorisees:
         return chunks        # accès administrateur : tous les mails sont visibles
     retenus = []

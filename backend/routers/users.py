@@ -56,6 +56,15 @@ class CreateUserRequest(BaseModel):
     name: Optional[str] = None
     role: str = "terrain"
     quota_mensuel: Optional[int] = None
+    # Les dossiers de la boîte partagée que ce profil lira, EN PLUS de la
+    # boîte de réception (11/09). None = aucune restriction.
+    dossiers_mail: Optional[list[str]] = None
+
+
+class DossiersMailRequest(BaseModel):
+    """None = aucune restriction (tout ce que la boîte contient) ; une liste,
+    même vide = la boîte de réception plus ces dossiers-là."""
+    dossiers: Optional[list[str]] = None
 
 
 class SetPermissionRequest(BaseModel):
@@ -104,13 +113,14 @@ async def list_users(current_user: User = Depends(get_current_user)):
     if not has_permission(current_user.role, "manage_users"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
 
-    async with get_db() as conn:
-        rows = await conn.fetch(
-            """
+    # `dossiers_mail` vient de la migration 040 : sans elle, la liste se lit
+    # quand même (colonne remplacée par NULL) — l'onglet Utilisateurs ne doit
+    # pas tomber pour une restriction qui n'existe pas encore.
+    requete = """
             SELECT
                 u.id, u.email, u.name, u.role, u.actif, u.quota_mensuel,
                 u.bypass_schedule, u.schedule_start_hour, u.schedule_end_hour,
-                u.created_at, u.last_login,
+                u.created_at, u.last_login, u.dossiers_mail,
                 uap_a1.has_access AS explicit_agent1,
                 uap_a2.has_access AS explicit_agent2,
                 uap_a3.has_access AS explicit_agent3
@@ -127,9 +137,17 @@ async def list_users(current_user: User = Depends(get_current_user)):
             -- suffit pas, l'API ne doit pas les livrer.
             WHERE ($1::boolean OR u.role <> 'super_admin')
             ORDER BY u.created_at DESC
-            """,
-            current_user.role == "super_admin",
-        )
+            """
+    async with get_db() as conn:
+        try:
+            rows = await conn.fetch(requete, current_user.role == "super_admin")
+        except Exception as e:  # noqa: BLE001
+            from database.connection import schema_incomplet
+            if not schema_incomplet(e):
+                raise
+            rows = await conn.fetch(
+                requete.replace("u.dossiers_mail,", "NULL::text[] AS dossiers_mail,"),
+                current_user.role == "super_admin")
 
     result = []
     for row in rows:
@@ -166,10 +184,26 @@ async def create_user(
             detail=f"Vous ne pouvez pas créer un utilisateur avec le rôle '{body.role}'",
         )
 
+    # PLUSIEURS PROFILS SUR UNE MÊME ADRESSE (11/09, Duret : « tout le monde a
+    # le même mail »). Permis pour les rôles métier, avec un prénom distinct —
+    # jamais pour un administrateur, ni sur l'adresse d'un administrateur :
+    # c'est `auth/profils.refus_creation` qui tranche, et le banc l'exécute.
+    from auth import profils as _profils
+    body.email = (body.email or "").strip()
+    body.name = (body.name or "").strip() or None
+    existants = await _profils.profils_de(body.email, actifs=False)
+    refus = _profils.refus_creation(body.role, body.name, existants)
+    if refus:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refus)
+    # Un administrateur lit tout : une restriction posée sur lui ne serait pas
+    # appliquée (`dossiers_autorises`), autant ne pas l'écrire.
+    dossiers = None if _profils.est_admin(body.role) else _nettoyer_dossiers(body.dossiers_mail)
+    if existants and dossiers is None and not _profils.est_admin(body.role):
+        # Un profil d'une boîte PARTAGÉE commence par la boîte de réception
+        # seule : c'est l'administrateur qui ouvre les autres dossiers.
+        dossiers = []
+
     async with get_db() as conn:
-        existing = await conn.fetchrow("SELECT id FROM users WHERE email = $1", body.email)
-        if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cet email est déjà enregistré")
         # LA COLONNE EST OMISE QUAND AUCUN QUOTA N'EST DONNÉ, et ce n'est pas
         # une coquetterie : `quota_mensuel` est `NOT NULL DEFAULT 50`, et
         # passer explicitement NULL N'ACTIVE PAS le défaut — en SQL, un défaut
@@ -200,14 +234,88 @@ async def create_user(
                 body.email, body.name, body.role, body.quota_mensuel,
             )
 
+        if dossiers is not None:
+            await _poser_dossiers(conn, row["id"], dossiers)
+
     await log_action(
         action="user_created",
         user_id=str(current_user.id),
-        metadata={"new_email": body.email, "new_role": body.role},
+        metadata={"new_email": body.email, "new_role": body.role,
+                  "profil_partage": bool(existants)},
     )
     d = dict(row)
+    d["dossiers_mail"] = dossiers
     d["agent_permissions"] = _effective_permissions(d["role"], {})
     return d
+
+
+def _nettoyer_dossiers(dossiers: Optional[list[str]]) -> Optional[list[str]]:
+    """Noms de dossiers dédoublonnés, sans la boîte de réception (toujours
+    lisible) ; None reste None (aucune restriction)."""
+    if dossiers is None:
+        return None
+    propres: list[str] = []
+    for d in dossiers:
+        nom = str(d or "").strip()
+        if nom and nom.upper() != "INBOX" and nom not in propres:
+            propres.append(nom[:200])
+    return propres[:100]
+
+
+async def _poser_dossiers(conn, user_id, dossiers: Optional[list[str]]) -> None:
+    """Écrit la liste — et reste muet sans la migration 040 (colonne absente) :
+    la création du compte ne doit pas tomber pour une restriction."""
+    try:
+        await conn.execute("UPDATE users SET dossiers_mail = $1 WHERE id = $2::uuid",
+                           dossiers, str(user_id))
+    except Exception as e:  # noqa: BLE001
+        from database.connection import schema_incomplet
+        if not schema_incomplet(e):
+            raise
+
+
+@router.get("/dossiers-mail")
+async def dossiers_de_la_boite(current_user: User = Depends(get_current_user)):
+    """Les dossiers de la boîte partagée, pour les cases à cocher de l'écran.
+
+    Lus en direct (IMAP LIST). Les dossiers systèmes qui montreraient TOUT —
+    « Tous les messages », la corbeille, les brouillons — ne sont pas proposés :
+    cocher « Tous les messages » viderait la restriction de son sens.
+    """
+    if not has_permission(current_user.role, "manage_users"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+    import asyncio
+    from llm.cles import rafraichir
+    await rafraichir()
+    from mail import imap
+    if not imap.configure():
+        return {"dossiers": [], "erreur": "Aucune boîte de l'entreprise n'est reliée "
+                "(Paramètres → Clés API → « La boîte mail de l'entreprise »)."}
+    try:
+        return {"dossiers": await asyncio.to_thread(imap.dossiers_proposables), "erreur": ""}
+    except Exception as e:  # noqa: BLE001
+        return {"dossiers": [], "erreur": f"Les dossiers n'ont pas pu être lus : {str(e)[:160]}"}
+
+
+@router.put("/{user_id}/dossiers-mail")
+async def poser_dossiers_mail(user_id: UUID, body: DossiersMailRequest,
+                              current_user: User = Depends(get_current_user)):
+    """Les dossiers que ce profil lit, en plus de la boîte de réception."""
+    if not has_permission(current_user.role, "manage_users"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+    async with get_db() as conn:
+        cible = await conn.fetchrow("SELECT id, role FROM users WHERE id = $1", user_id)
+        if not cible:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+        if not peut_ouvrir_pour(current_user.role, cible["role"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
+        dossiers = _nettoyer_dossiers(body.dossiers)
+        await _poser_dossiers(conn, user_id, dossiers)
+    await log_action(action="dossiers_mail_modifies", user_id=str(current_user.id),
+                     metadata={"target_user_id": str(user_id),
+                               "restreint": dossiers is not None,
+                               "nombre": len(dossiers or [])})
+    return {"user_id": str(user_id), "dossiers_mail": dossiers}
 
 
 @router.put("/{user_id}/permissions/{agent}")
@@ -340,8 +448,11 @@ async def creer_lien_connexion(
     # `quote` sur les deux valeurs : un « + » dans une adresse se décode en
     # espace côté navigateur, et le lien tomberait en « Lien invalide » pour la
     # seule personne dont l'adresse en porte un.
+    # `profil` (11/09) : sur une adresse partagée, le lien remis par
+    # l'administrateur ouvre CE prénom, sans passer par l'écran des cartes.
     url = (f"{settings.app_url}/verify"
-           f"?token={quote(jeton, safe='')}&email={quote(cible['email'], safe='')}")
+           f"?token={quote(jeton, safe='')}&email={quote(cible['email'], safe='')}"
+           f"&profil={quote(str(cible['id']), safe='')}")
     return {
         "url": url,
         "email": cible["email"],

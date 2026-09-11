@@ -31,11 +31,14 @@ def _retour_ecran(resultat: str) -> RedirectResponse:
 
 
 @router.get("/lien")
-async def lien(compte: str | None = None, current_user: User = Depends(get_current_user)):
+async def lien(compte: str | None = None, droits: str | None = None,
+               current_user: User = Depends(get_current_user)):
     """L'URL de consentement Google pour l'utilisateur connecté.
 
     `compte` (facultatif) présélectionne l'adresse attendue chez Google — la
     carte de la boîte de l'entreprise s'en sert pour relier SON agenda.
+    `droits=agenda` ne demande que l'agenda : les mails de cette boîte passent
+    par le mot de passe d'application, Gmail n'a rien à faire dans le consentement.
     """
     from llm.cles import rafraichir
     await rafraichir()
@@ -45,7 +48,7 @@ async def lien(compte: str | None = None, current_user: User = Depends(get_curre
             detail="Connexion Google non configurée : renseignez le client OAuth "
                    "dans Paramètres → Clés API (ou GOOGLE_OAUTH_CLIENT_ID et "
                    "GOOGLE_OAUTH_CLIENT_SECRET).")
-    return {"url": google_perso.lien_autorisation(str(current_user.id), compte)}
+    return {"url": google_perso.lien_autorisation(str(current_user.id), compte, droits)}
 
 
 @router.get("/retour")

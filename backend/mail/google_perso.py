@@ -56,6 +56,14 @@ SCOPES = [
     "email",
 ]
 
+# RELIER L'AGENDA SEUL (11/09, Noa : « pour les mails je veux le mot de passe
+# d'application »). Quand les mails passent par IMAP, demander aussi Gmail à
+# Google ne sert à rien — et Gmail est un droit « restreint » : l'écran de
+# consentement d'une application non validée en devient plus inquiétant. La
+# carte de la boîte mail ne demande donc que l'agenda, plus l'adresse (pour
+# savoir QUEL compte a consenti).
+DROITS_AGENDA = ("https://www.googleapis.com/auth/calendar.events", "openid", "email")
+
 # Les droits d'API qu'un compte relié AVANT l'agenda a forcément accordés
 # (voir `accorde`). Déduits de SCOPES pour ne pas tenir deux listes.
 SCOPES_HISTORIQUES = tuple(x for x in SCOPES
@@ -148,7 +156,8 @@ def _redirect_uri() -> str:
     return settings.app_url.rstrip("/") + "/api/google/retour"
 
 
-def lien_autorisation(user_id: str, compte: Optional[str] = None) -> str:
+def lien_autorisation(user_id: str, compte: Optional[str] = None,
+                      droits: Optional[str] = None) -> str:
     """L'URL de consentement Google pour CET utilisateur.
 
     `state` est un JWT court (10 min) portant l'identité : au retour, c'est LUI
@@ -171,7 +180,7 @@ def lien_autorisation(user_id: str, compte: Optional[str] = None) -> str:
         "client_id": _client()[0],
         "redirect_uri": _redirect_uri(),
         "response_type": "code",
-        "scope": " ".join(SCOPES),
+        "scope": " ".join(DROITS_AGENDA if droits == "agenda" else SCOPES),
         "access_type": "offline",
         "prompt": "consent",
         "state": state,

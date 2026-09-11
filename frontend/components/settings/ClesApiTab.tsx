@@ -520,7 +520,9 @@ function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendTok
   const relierAgenda = async () => {
     setBusy("agenda"); setNote("")
     try {
-      const res = await fetch(`${apiUrl}/api/google/lien?compte=${encodeURIComponent(etat?.adresse || "")}`, {
+      // L'agenda SEUL : les mails de cette boîte passent par le mot de passe
+      // d'application, Gmail n'a rien à faire dans le consentement.
+      const res = await fetch(`${apiUrl}/api/google/lien?droits=agenda&compte=${encodeURIComponent(etat?.adresse || "")}`, {
         headers: { Authorization: `Bearer ${backendToken}` },
       })
       const j = await res.json().catch(() => ({}))
@@ -641,7 +643,7 @@ function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendTok
               {!etat.agenda.oauth_configure
                 ? "Renseignez d'abord le client OAuth Google (carte plus bas) : le mot de passe d'application n'ouvre pas l'agenda."
                 : etat.agenda.accorde
-                  ? `L'assistant lit l'agenda de ${etat.adresse}, propose des créneaux et pose des rendez-vous (après votre accord).`
+                  ? `L'assistant lit l'agenda de ${etat.adresse}, propose des créneaux et pose des rendez-vous (après votre accord). Les mails, eux, restent sur le mot de passe d'application.`
                   : `Chez Google, choisissez le compte ${etat.adresse}. Google peut afficher « application non validée » : Paramètres avancés → Accéder.`}
             </div>
           </div>
@@ -1019,7 +1021,7 @@ function ReglageClientOAuth({ apiUrl, backendToken }: { apiUrl: string; backendT
             </button>
           </div>
           <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>
-            Dans le même projet : activer « Google Calendar API » (et « Gmail API »), puis écran de consentement OAuth en « Externe » et « Publier l'application » — laissée « en test », Google coupe l'accès au bout de 7 jours.
+            Dans le même projet : activer l'API de ce qu'on relie (« Google Calendar API » pour l'agenda), puis écran de consentement OAuth en « Externe » et « Publier l'application » — laissée « en test », Google coupe l'accès au bout de 7 jours.
           </div>
         </div>
       )}

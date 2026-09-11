@@ -169,6 +169,10 @@ q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
 verifier("le lien porte le client de Paramètres", q.get("client_id") == "ecran.apps.googleusercontent.com")
 verifier("le compte attendu est présélectionné", q.get("login_hint") == "contact@exemple-sols.fr", q)
 verifier("sans compte attendu, aucune présélection", "login_hint" not in gp.lien_autorisation("u1"))
+q_agenda = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(
+    gp.lien_autorisation("u1", "contact@exemple-sols.fr", "agenda")).query))
+verifier("relier l'agenda ne demande QUE l'agenda (les mails restent au mot de passe d'application)",
+         q_agenda.get("scope", "").split() == [AGENDA_SCOPE, "openid", "email"], q_agenda.get("scope"))
 DEMANDES = q.get("scope", "").split()
 verifier("le lien demande les droits du client (l agenda chez Duret)", AGENDA_SCOPE in DEMANDES or "drive" in q.get("scope", ""), DEMANDES)
 verifier("les droits d'avant l'agenda n'incluent pas l'agenda",
@@ -367,8 +371,13 @@ else:
              '"agenda": agenda' in src_settings and "SCOPES_AGENDA" in src_settings)
     verifier("le client OAuth se saisit dans Paramètres",
              '@router.put("/client-oauth-google")' in src_settings and 'enregistrer("google_oauth_client_secret"' in src_settings)
-    verifier("la carte de la boîte mail relie l'agenda avec le compte présélectionné",
-             "/api/google/lien?compte=" in src_tab and "Relier l'agenda Google" in src_tab)
+    verifier("la carte de la boîte mail relie l'agenda SEUL, avec le compte présélectionné",
+             "/api/google/lien?droits=agenda&compte=" in src_tab and "Relier l'agenda Google" in src_tab)
+    src_collecte = (BACKEND / "mail" / "collecte.py").read_text(encoding="utf-8")
+    ordre = src_collecte.split("def fournisseur")[1]
+    verifier("la boîte au mot de passe d'application passe AVANT toute clé Google",
+             ordre.find("_imap_configure()") != -1
+             and ordre.find("_imap_configure()") < ordre.find("google_oauth_client_id"))
     verifier("la carte du client OAuth donne l'adresse de redirection à coller",
              "function ReglageClientOAuth" in src_tab and "etat.redirection" in src_tab
              and src_tab.find("<ReglageClientOAuth") > src_tab.find("<ReglageBoiteMail"))

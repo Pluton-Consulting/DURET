@@ -175,7 +175,11 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
         _verifier_effet(name, data, ref, approbation)
 
         start = time.monotonic()
-        sortie = await executable(data or {}, user)
+        # QUI LIT (13/09) : les droits de la personne suivent le geste jusqu'aux
+        # lectures du stockage, quel que soit le chemin (security/lecteur.py).
+        from security.lecteur import au_nom_de
+        with au_nom_de(user):
+            sortie = await executable(data or {}, user)
         duree = int((time.monotonic() - start) * 1000)
         try:
             async with get_db() as conn:

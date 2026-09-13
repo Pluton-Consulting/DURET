@@ -256,6 +256,14 @@ try:
 except ImportError:
     pass
 
+# Niveau d'accès par dossier du serveur de fichiers (propre au socle NAS) :
+# même import optionnel, pour la même raison.
+try:
+    from routers import nas_niveaux as nas_niveaux_router
+    app.include_router(nas_niveaux_router.router, prefix="/api/nas-niveaux", tags=["nas"])
+except ImportError:
+    pass
+
 
 @app.get("/api/health")
 async def health():

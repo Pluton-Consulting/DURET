@@ -109,11 +109,14 @@ def verifier_role(user) -> None:
     et le lire sur le NAS demandent ainsi le même droit, ce qui évite qu'un
     chemin contourne l'autre.
     """
-    from config import settings
     from security.acces import niveaux_visibles
+    from nas import niveaux
 
-    exige = (settings.synology_access_level or "all").strip()
-    if exige not in niveaux_visibles(getattr(user, "role", "")):
+    # PAR DOSSIER DEPUIS LE 13/09 : il suffit qu'UN niveau porté par le serveur
+    # (le défaut ou celui d'une règle) soit visible de ce rôle. Le tri fin —
+    # quel dossier il voit — se fait à chaque chemin, dans `verifier`.
+    if not (niveaux.niveaux_en_usage(niveaux.regles(), niveaux.defaut())
+            & niveaux_visibles(getattr(user, "role", ""))):
         raise NasRefuse(
             "Votre profil n'a pas accès au serveur de fichiers de l'entreprise.")
 
@@ -138,6 +141,13 @@ def verifier(chemin: str) -> str:
     vise = normaliser(chemin)
     for racine in racines:
         if vise == racine or vise.startswith(racine + "/"):
+            # LE NIVEAU DU DOSSIER (13/09) : le chemin est dans le périmètre,
+            # encore faut-il que la personne pour qui l'on lit y ait droit.
+            # Le message ne dit ni le niveau ni ce qu'il y a dedans.
+            from security.lecteur import role_lecteur
+            from nas import niveaux
+            if not niveaux.visible_pour(vise, role_lecteur()):
+                raise NasRefuse(f"« {chemin} » est réservé à d'autres profils.")
             return vise
     raise NasRefuse(
         f"« {chemin} » est hors du périmètre autorisé. Dossiers ouverts : "
@@ -322,6 +332,13 @@ async def _lister_ouvert(client, base, sid, chemin: str, tout: bool = False) -> 
                         if not f.get("isdir") else None),
         })
     total = int(total or len(entrees))
+    # Ce que la personne n'a pas le droit de voir n'existe pas pour elle : ni
+    # dans la liste, ni dans le compte (13/09, niveaux par dossier).
+    from security.lecteur import role_lecteur
+    from nas import niveaux
+    visibles = niveaux.filtrer(entrees, role_lecteur())
+    total -= len(entrees) - len(visibles)
+    entrees = visibles
     return {
         "chemin": vise, "entrees": entrees, "total": total,
         "tronque": total > len(entrees),
@@ -702,12 +719,16 @@ async def construire_catalogue() -> dict:
         return _CATALOGUE
     _CATALOGUE["en_cours"] = True
     debut = _t.monotonic()
+    from security.lecteur import en_systeme
     try:
-        async with connexion() as (client, base, sid):
-            entrees, complet = await _balayer(
-                client, base, sid, racines, lambda e: True,
-                delai_s=CATALOGUE_DELAI_S, dossiers_max=CATALOGUE_DOSSIERS_MAX,
-                profondeur=CATALOGUE_PROFONDEUR)
+        # Partagé par tous : construit avec la vue ENTIÈRE, même lancé depuis
+        # le geste d'un profil (13/09, niveaux par dossier).
+        with en_systeme():
+            async with connexion() as (client, base, sid):
+                entrees, complet = await _balayer(
+                    client, base, sid, racines, lambda e: True,
+                    delai_s=CATALOGUE_DELAI_S, dossiers_max=CATALOGUE_DOSSIERS_MAX,
+                    profondeur=CATALOGUE_PROFONDEUR)
         _CATALOGUE.update({"etat": "pret" if complet else "partiel",
                            "entrees": entrees, "complet": complet,
                            "construit_le": _t.monotonic()})
@@ -880,6 +901,9 @@ async def _chercher_ouvert(client, base, sid, motif: str,
                 f"({str(pannes[0])[:120]}) : ce n'est PAS « aucun résultat ». "
                 "Passe par le listage (`nas_lister`) et le `chemin` exact.")
 
+    from security.lecteur import role_lecteur
+    from nas import niveaux
+    trouves = niveaux.filtrer(trouves, role_lecteur())
     sortie = {"motif": motif, "nombre": len(trouves), "resultats": trouves[:200],
               "dossiers_explores": racines, "methode": methode}
     if inacheve:

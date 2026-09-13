@@ -14,7 +14,8 @@ import { MARQUE } from "@/lib/permissions"
  * l'adresse. Ce composant montre, et rend l'identifiant cliqué.
  */
 
-export interface CarteProfil { id: string; nom: string }
+// `code` : la carte demande un code avant d'ouvrir la session (13/09).
+export interface CarteProfil { id: string; nom: string; code?: boolean }
 
 function initiales(nom: string): string {
   const mots = nom.trim().split(/\s+/).filter(Boolean)
@@ -66,6 +67,9 @@ export default function ChoixProfil({ profils, onChoisir, enCours, actuel, titre
               }}>{occupe ? "…" : initiales(p.nom)}</span>
               <span style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)",
                              overflowWrap: "anywhere" }}>{p.nom}</span>
+              {p.code && (
+                <span style={{ fontSize: 11, color: "var(--marque-text-muted)" }} title="Carte protégée par un code">🔒 code</span>
+              )}
               {courant && (
                 <span style={{ fontSize: 11, color: "var(--marque-paid-text)", fontWeight: 600 }}>profil actuel</span>
               )}

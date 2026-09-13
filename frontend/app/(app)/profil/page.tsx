@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { signIn, useSession } from "next-auth/react"
 import ChoixProfil, { type CarteProfil } from "@/components/nav/ChoixProfil"
+import CodeCarte, { messageCode } from "@/components/nav/CodeCarte"
 
 /**
  * CHANGER DE PROFIL (11/09, Duret). Les cartes des prénoms de la boîte
@@ -16,6 +17,8 @@ export default function PageProfil() {
   const [actuel, setActuel] = useState<string | null>(null)
   const [enCours, setEnCours] = useState<string | null>(null)
   const [erreur, setErreur] = useState("")
+  const [aCoder, setACoder] = useState<CarteProfil | null>(null)
+  const [erreurCode, setErreurCode] = useState("")
   const jeton = (session as any)?.backendToken as string | undefined
 
   useEffect(() => {
@@ -27,12 +30,21 @@ export default function PageProfil() {
       .catch((e) => setErreur(e?.message || "profils indisponibles"))
   }, [jeton])
 
-  const choisir = async (id: string) => {
+  const choisir = async (id: string, code?: string) => {
     if (!jeton || enCours) return
     if (id === actuel) { window.location.href = "/chat"; return }
+    // Une carte à code le demande aussi pour passer d'un profil à l'autre (13/09).
+    const carte = (profils || []).find((p) => p.id === id)
+    if (carte?.code && !code) { setACoder(carte); setErreurCode(""); return }
     setEnCours(id); setErreur("")
-    const res = await signIn("credentials", { bascule: jeton, user_id: id, redirect: false })
+    const res = await signIn("credentials", { bascule: jeton, user_id: id, code: code || "", redirect: false })
+    if (res?.error && carte?.code && res.code && res.code !== "credentials") {
+      setEnCours(null)
+      setErreurCode(messageCode(res.code))
+      return
+    }
     if (res?.error) {
+      setACoder(null)
       setEnCours(null)
       setErreur("Ce profil n'a pas pu être ouvert. Réessayez ; si cela persiste, prévenez un administrateur.")
       return
@@ -46,8 +58,13 @@ export default function PageProfil() {
       {profils === null && !erreur && (
         <p style={{ color: "var(--marque-text-muted)", fontSize: 14 }}>Chargement des profils…</p>
       )}
-      {profils !== null && profils.length > 1 && (
-        <ChoixProfil profils={profils} onChoisir={choisir} enCours={enCours} actuel={actuel}
+      {aCoder && (
+        <CodeCarte nom={aCoder.nom} enCours={enCours === aCoder.id} erreur={erreurCode}
+                   onValider={(code) => choisir(aCoder.id, code)}
+                   onAnnuler={() => { setACoder(null); setErreurCode("") }} />
+      )}
+      {!aCoder && profils !== null && profils.length > 1 && (
+        <ChoixProfil profils={profils} onChoisir={(id) => choisir(id)} enCours={enCours} actuel={actuel}
                      titre="Changer de profil"
                      sousTitre="Chaque prénom a ses conversations, ses documents et ses dossiers de mail." />
       )}

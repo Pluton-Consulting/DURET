@@ -25,7 +25,10 @@ async def ou_chercher(data: dict, user) -> dict:
 
     sujet = str(data.get("sujet") or data.get("motif") or data.get("requete") or "").strip()
     etat = statut()
-    chunks = chunks_prets()
+    # La carte de CETTE personne : un dossier qu'elle ne peut pas ouvrir ne
+    # s'y nomme pas (13/09, niveaux par dossier).
+    role = str(getattr(user, "role", "") or "")
+    chunks = chunks_prets(role)
     if not chunks:
         return {"sujet": sujet, "resultats": [], "carte": etat.get("etat"),
                 "message_final": ("La carte du classement n'est pas encore relevée"
@@ -35,7 +38,7 @@ async def ou_chercher(data: dict, user) -> dict:
                             f"par le nom avec `{GESTE_CHERCHER}`.")}
     if not sujet:
         from classement.carte import carte_prete
-        return {"carte": carte_prete(), "dossiers": etat.get("dossiers"),
+        return {"carte": carte_prete(role), "dossiers": etat.get("dossiers"),
                 "fichiers": etat.get("fichiers"), "complet": etat.get("complet"),
                 "message_final": (f"Carte du {NOM_STOCKAGE} : {etat.get('dossiers')} dossiers, "
                                   f"{etat.get('fichiers')} fichiers relevés."),

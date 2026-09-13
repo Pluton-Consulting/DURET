@@ -36,6 +36,25 @@ class VerifyTokenRequest(BaseModel):
 
 class ChangerProfilRequest(BaseModel):
     user_id: str
+    # Le code de la carte, quand elle en a un (13/09, migration 041).
+    code: str | None = None
+
+
+async def _exiger_code(profil: dict, code: str | None, action: str) -> None:
+    """Une carte à code ne s'ouvre qu'avec lui. Le refus porte une raison
+    courte que l'écran traduit : code_requis, code_faux, code_bloque."""
+    from auth import profils as _profils
+    if not _profils.a_un_code(profil):
+        return
+    raison = await _profils.controler_code(str(profil["id"]), code)
+    if raison is None:
+        return
+    await log_action(action=f"{action}_code_refuse", user_id=str(profil["id"]), success=False,
+                     error_message=raison)
+    raise HTTPException(
+        status_code=(status.HTTP_429_TOO_MANY_REQUESTS if raison == "code_bloque"
+                     else status.HTTP_401_UNAUTHORIZED),
+        detail=raison)
 
 
 class RefreshRequest(BaseModel):
@@ -147,6 +166,12 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="choix_profil")
     if retenu is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé")
+    # Un profil à CODE d'une adresse partagée ne s'ouvre pas par le lien : le
+    # lien prouve la boîte, que tout le monde partage ; le code prouve la
+    # personne. Il se choisit sur la page de connexion (13/09).
+    if retenu.get("a_code") and len(await _profils.profils_de(body.email)) > 1:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Ce profil est protégé par un code : choisissez-le sur la page de connexion.")
 
     async with get_db() as conn:
         try:
@@ -283,7 +308,9 @@ async def profils_du_lien(body: VerifyTokenRequest):
         return {"profils": []}
     from auth import profils as _profils
     tous = await _profils.profils_de(body.email)
-    return {"profils": _profils.cartes(tous) if _profils.choisir(tous) == "choix" else []}
+    # Les cartes à code ne s'ouvrent pas depuis un lien : elles n'y figurent pas.
+    return {"profils": [c for c in _profils.cartes(tous) if not c["code"]]
+            if _profils.choisir(tous) == "choix" else []}
 
 
 @router.get("/connexion/profils")
@@ -328,6 +355,7 @@ async def entrer_par_carte(body: ChangerProfilRequest, request: Request):
                          error_message="profil hors des cartes de connexion")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Ce profil ne s'ouvre pas depuis la page de connexion.")
+    await _exiger_code(retenu, body.code, "connexion_carte")
     async with get_db() as conn:
         await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
                            datetime.now(timezone.utc), str(retenu["id"]))
@@ -366,6 +394,7 @@ async def changer_de_profil(body: ChangerProfilRequest, request: Request,
     if not isinstance(retenu, dict):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Ce profil n'est pas accessible depuis ce compte.")
+    await _exiger_code(retenu, body.code, "changement_profil")
     async with get_db() as conn:
         await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
                            datetime.now(timezone.utc), str(retenu["id"]))

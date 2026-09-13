@@ -149,7 +149,11 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
         from nas.acces import catalogue_pret, _CATALOGUE
         cat = catalogue_pret()
         if cat is not None:
-            candidats = [e for e in cat if _correspond(e)]
+            # Le catalogue voit TOUT (il est construit par le système) : on n'en
+            # garde que ce que la personne voit (13/09, niveaux par dossier).
+            from security.lecteur import role_lecteur
+            from nas import niveaux
+            candidats = niveaux.filtrer([e for e in cat if _correspond(e)], role_lecteur())
             complet = bool(_CATALOGUE.get("complet"))
         else:
             # SANS CATALOGUE, DEUX PASSES ET ON S'ARRÊTE. La première cherche

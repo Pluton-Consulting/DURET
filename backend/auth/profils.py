@@ -26,6 +26,10 @@ Fonctions pures d'abord (le banc les exécute), accès base ensuite.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import re
+import secrets
 from typing import Optional
 
 # Les rôles qui ne partagent JAMAIS leur adresse — mêmes que ceux qui ouvrent
@@ -35,6 +39,67 @@ ROLES_ADMIN = frozenset({"super_admin", "direction"})
 
 def est_admin(role: Optional[str]) -> bool:
     return (role or "").strip().lower() in ROLES_ADMIN
+
+
+# ── Le code d'une carte (13/09) ──────────────────────────────────────────
+# La direction peut avoir sa carte sur la page de connexion, derrière un code.
+# Le super_admin, jamais : c'est le compte du développeur, il garde le lien.
+ROLES_JAMAIS_EN_CARTE = frozenset({"super_admin"})
+ROLES_CODE_OBLIGATOIRE = frozenset({"direction"})
+ESSAIS_CODE_MAX = 5
+BLOCAGE_CODE_MINUTES = 15
+_ITERATIONS = 200_000
+
+
+def code_valide(code: Optional[str]) -> bool:
+    """4 à 6 chiffres : se tape sur un téléphone, s'oublie peu."""
+    return bool(re.fullmatch(r"\d{4,6}", (code or "").strip()))
+
+
+def hacher_code(code: str) -> str:
+    """L'empreinte stockée — sel propre, PBKDF2-SHA256. Jamais le code."""
+    sel = secrets.token_bytes(16)
+    brut = hashlib.pbkdf2_hmac("sha256", code.strip().encode(), sel, _ITERATIONS)
+    return f"pbkdf2_sha256${_ITERATIONS}${sel.hex()}${brut.hex()}"
+
+
+def code_correct(code: Optional[str], empreinte: Optional[str]) -> bool:
+    try:
+        algo, iterations, sel, attendu = (empreinte or "").split("$")
+        if algo != "pbkdf2_sha256":
+            return False
+        calcule = hashlib.pbkdf2_hmac("sha256", (code or "").strip().encode(),
+                                      bytes.fromhex(sel), int(iterations))
+        return hmac.compare_digest(calcule.hex(), attendu)
+    except (ValueError, TypeError):
+        return False
+
+
+def a_un_code(p: dict) -> bool:
+    return bool(p.get("a_code") or p.get("code_pin_hash"))
+
+
+def refus_sur_boite(role: str, nom: Optional[str], avec_code: bool,
+                    existants: list[dict], soi: Optional[str] = None) -> Optional[str]:
+    """Pourquoi ce profil ne peut PAS vivre sur la boîte de l'entreprise, ou None.
+
+    `existants` : les comptes déjà sur l'adresse ; `soi` : l'identifiant du
+    profil qu'on modifie (il ne se compte pas lui-même).
+    """
+    autres = [e for e in existants if str(e.get("id")) != str(soi or "")]
+    r = (role or "").strip().lower()
+    if r in ROLES_JAMAIS_EN_CARTE:
+        return ("Un super administrateur garde sa propre adresse et le lien magique : "
+                "la boîte de l'entreprise ouvre une carte sans mail.")
+    if r in ROLES_CODE_OBLIGATOIRE and not avec_code:
+        return ("Un profil de direction sur la boîte de l'entreprise a besoin d'un code "
+                "(4 à 6 chiffres) : sans lui, n'importe qui entrerait en direction d'un clic.")
+    if not normaliser_nom(nom):
+        return ("Un profil de la boîte de l'entreprise a besoin d'un nom : c'est lui "
+                "qui s'affiche sur sa carte à la connexion.")
+    if any(normaliser_nom(e.get("name")) == normaliser_nom(nom) for e in autres):
+        return f"Un profil « {(nom or '').strip()} » existe déjà sur cette adresse."
+    return None
 
 
 def normaliser_nom(nom: Optional[str]) -> str:
@@ -68,7 +133,8 @@ def cartes(profils: list[dict]) -> list[dict]:
     """Ce que l'écran des cartes montre : l'identifiant et le nom, rien d'autre
     (ni rôle, ni adresse — tout le monde la connaît déjà). Les administrateurs
     n'y figurent pas."""
-    return [{"id": str(p["id"]), "nom": (p.get("name") or "").strip() or "Sans nom"}
+    return [{"id": str(p["id"]), "nom": (p.get("name") or "").strip() or "Sans nom",
+             "code": a_un_code(p)}
             for p in profils if not est_admin(p.get("role"))]
 
 
@@ -98,18 +164,31 @@ def meme_adresse(a: Optional[str], b: Optional[str]) -> bool:
     return bool(a and b) and a.strip().lower() == b.strip().lower()
 
 
+def en_carte(p: dict) -> bool:
+    """Ce compte a-t-il une carte sur la page de connexion ? Jamais le
+    super_admin ; la direction seulement derrière un code."""
+    r = (p.get("role") or "").strip().lower()
+    if r in ROLES_JAMAIS_EN_CARTE:
+        return False
+    if r in ROLES_CODE_OBLIGATOIRE and not a_un_code(p):
+        return False
+    return bool(p.get("actif", True))
+
+
 def cartes_de_connexion(profils: list[dict], boite: Optional[str]) -> list[dict]:
     """LA PAGE DE CONNEXION (13/09) : les cartes des profils de la boîte de
     l'entreprise, à choisir SANS lien magique.
 
-    Seulement : des comptes actifs, qui portent l'adresse de la boîte unique,
-    et qui ne sont pas administrateurs. Pas de boîte reliée : aucune carte, et
-    la page retombe sur le lien magique pour tout le monde.
+    Seulement : des comptes actifs, qui portent l'adresse de la boîte unique ;
+    jamais un super_admin ; la direction seulement si elle a un code. La carte
+    dit s'il faut un code (`code`), jamais le rôle. Pas de boîte reliée :
+    aucune carte, et la page retombe sur le lien magique pour tout le monde.
     """
     if not boite:
         return []
-    return cartes([p for p in profils
-                   if p.get("actif", True) and meme_adresse(p.get("email"), boite)])
+    return [{"id": str(p["id"]), "nom": (p.get("name") or "").strip() or "Sans nom",
+             "code": a_un_code(p)}
+            for p in profils if en_carte(p) and meme_adresse(p.get("email"), boite)]
 
 
 def entree_par_carte(profils: list[dict], boite: Optional[str], user_id: Optional[str]):
@@ -129,14 +208,24 @@ def entree_par_carte(profils: list[dict], boite: Optional[str], user_id: Optiona
 
 # ── Accès base ───────────────────────────────────────────────────────────
 async def profils_de(email: str, actifs: bool = True) -> list[dict]:
-    """Les comptes qui portent cette adresse (insensible à la casse)."""
-    from database.connection import get_db
+    """Les comptes qui portent cette adresse (insensible à la casse).
+
+    `a_code` dit si la carte a un code — jamais l'empreinte. Sans la migration
+    041, aucune carte n'a de code (et la direction n'en a donc pas)."""
+    from database.connection import get_db, schema_incomplet
+    filtre = ("WHERE lower(email) = lower($1) " + ("AND actif = true " if actifs else "") +
+              "ORDER BY lower(coalesce(name, '')), created_at")
     async with get_db() as conn:
-        lignes = await conn.fetch(
-            "SELECT id, email, name, role, actif FROM users "
-            "WHERE lower(email) = lower($1) " + ("AND actif = true " if actifs else "") +
-            "ORDER BY lower(coalesce(name, '')), created_at",
-            (email or "").strip())
+        try:
+            lignes = await conn.fetch(
+                "SELECT id, email, name, role, actif, (code_pin_hash IS NOT NULL) AS a_code "
+                "FROM users " + filtre, (email or "").strip())
+        except Exception as e:  # noqa: BLE001
+            if not schema_incomplet(e):
+                raise
+            lignes = await conn.fetch(
+                "SELECT id, email, name, role, actif, false AS a_code FROM users " + filtre,
+                (email or "").strip())
     return [dict(l) for l in lignes]
 
 
@@ -151,6 +240,48 @@ async def profils_partages(user_id: str) -> list[dict]:
         return []
     profils = await profils_de(moi["email"])
     return profils if len(profils) > 1 else []
+
+
+async def controler_code(user_id: str, code: Optional[str]) -> Optional[str]:
+    """Vérifie le code d'une carte, compte les échecs, bloque au cinquième.
+
+    Rend None si l'entrée est permise (pas de code, ou le bon), sinon la
+    raison : « code_requis », « code_faux », « code_bloque ». Un code faux
+    n'apprend rien d'autre ; le blocage est dit, pour qu'on n'insiste pas.
+    """
+    from datetime import datetime, timedelta, timezone
+    from database.connection import get_db, schema_incomplet
+    async with get_db() as conn:
+        try:
+            ligne = await conn.fetchrow(
+                "SELECT code_pin_hash, code_pin_echecs, code_pin_bloque_jusqu "
+                "FROM users WHERE id = $1::uuid", str(user_id))
+        except Exception as e:  # noqa: BLE001
+            if schema_incomplet(e):
+                return None
+            raise
+        if not ligne or not ligne["code_pin_hash"]:
+            return None
+        maintenant = datetime.now(timezone.utc)
+        if ligne["code_pin_bloque_jusqu"] and ligne["code_pin_bloque_jusqu"] > maintenant:
+            return "code_bloque"
+        if not (code or "").strip():
+            return "code_requis"
+        if code_correct(code, ligne["code_pin_hash"]):
+            await conn.execute(
+                "UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = NULL "
+                "WHERE id = $1::uuid", str(user_id))
+            return None
+        echecs = int(ligne["code_pin_echecs"] or 0) + 1
+        if echecs >= ESSAIS_CODE_MAX:
+            await conn.execute(
+                "UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = $2 "
+                "WHERE id = $1::uuid", str(user_id),
+                maintenant + timedelta(minutes=BLOCAGE_CODE_MINUTES))
+            return "code_bloque"
+        await conn.execute("UPDATE users SET code_pin_echecs = $2 WHERE id = $1::uuid",
+                           str(user_id), echecs)
+        return "code_faux"
 
 
 async def adresse_partagee() -> Optional[str]:

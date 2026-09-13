@@ -102,6 +102,7 @@ VALEURS = {
     # 01/09 : la vision et les embeddings se choisissent aussi à l'écran.
     "modele_vision": "ollama_cloud:qwen3.5:397b",
     "modele_embedding": "ollama_cloud:embeddinggemma",
+    "nas_niveaux": '[{"chemin": "/home/Drive/Compta", "niveau": "direction_only"}]',
 }
 verifier("le banc couvre TOUS les réglages déclarés (sinon il ne prouve rien)",
          set(reglages.REGLAGES_CONNUS) <= set(VALEURS),

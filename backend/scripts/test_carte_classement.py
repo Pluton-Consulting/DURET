@@ -34,6 +34,11 @@ def verifier(nom, cond, detail=""):
         echecs.append(nom)
 
 
+# Les morceaux en base se construisent par palier de niveau (13/09) : l'échelle
+# vient du vrai `security/acces.py`, module pur.
+sys.path.insert(0, str(BACKEND))
+
+
 def charger(chemin, nom, espace_sup=None):
     mod = types.ModuleType(nom)
     mod.__dict__["__file__"] = str(chemin)
@@ -179,7 +184,14 @@ etat = asyncio.run(carte.rafraichir_carte())
 verifier("après le relevé : prête, comptes justes, morceaux en mémoire ET écrits en base",
          etat["etat"] == "pret" and etat["dossiers"] == len(entrees_drive) - 1 and etat["fichiers"] == 5 + 2 + 3 + 12 + 40 + 123 * 4
          and len(etat["chunks"]) == len(carte.construire_chunks(entrees_drive, profondeur=None))
-         and etat["en_base"] == len(chunks), {k: v for k, v in etat.items() if k != "chunks"})
+         # En base, la carte s'écrit PAR PALIER de niveau depuis le 13/09 : un
+         # dossier ouvert à tous a aussi sa version qui nomme le sous-dossier réservé.
+         and etat["en_base"] == len(carte.chunks_par_palier(entrees_drive, source.niveau_de)),
+         {k: v for k, v in etat.items() if k not in ("chunks", "entrees")})
+par_palier = carte.chunks_par_palier(entrees_drive, source.niveau_de)
+verifier("en base, aucun morceau ouvert à tous ne nomme le dossier réservé à la direction",
+         par_palier and all("5-ADMINISTRATIF" not in c["texte"] for c in par_palier if c["acces"] == "all")
+         and any("5-ADMINISTRATIF" in c["texte"] for c in par_palier if c["acces"] == "direction_only"))
 verifier("chaque morceau part avec le niveau d'accès de SON dossier",
          any(n == "direction_only" for c, n in ECRITS if "5-ADMINISTRATIF" in c)
          and all(n == "all" for c, n in ECRITS if "1-ÉTUDES" in c))
@@ -240,7 +252,7 @@ verifier("la source propre au client existe et expose le contrat (entrées, nive
                                      ("async def entrees_du_classement", "def niveau_de", "NOM_STOCKAGE", "GESTE_LISTER", "GESTE_CHERCHER")))
 ag1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("agent1 : `_consigne_classement` existe et entre dans le prompt du tour",
-         "def _consigne_classement" in ag1 and "system_prompt += _consigne_classement()" in ag1)
+         "def _consigne_classement" in ag1 and "system_prompt += _consigne_classement(" in ag1)
 verifier("agent1 : le prompt dit d'appeler `ou_chercher` AVANT de parcourir l'arborescence",
          "`ou_chercher` dit D'ABORD" in ag1)
 esp = {}

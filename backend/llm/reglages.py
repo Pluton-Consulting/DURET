@@ -31,6 +31,9 @@ REGLAGES_CONNUS = (
     # refuse, et un refus coûte cinq minutes de quarantaine. Se règle à l'écran
     # parce que le plafond change avec l'offre, pas avec le code.
     "llm_simultanes",
+    # Le niveau d'accès PAR DOSSIER du serveur de fichiers (13/09, Duret) :
+    # une liste JSON [{"chemin", "niveau"}], validée par `nas/niveaux.py`.
+    "nas_niveaux",
     "kpi_depuis",   # AAAA-MM-JJ — les indicateurs ne comptent rien avant cette date
     # L'anonymisation PII se coupe d'un clic (demande de Noa, 30/08 : elle
     # cassait des flux réels — adresse tapée masquée en boucle, balises dans

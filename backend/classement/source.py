@@ -59,12 +59,28 @@ async def entrees_du_classement() -> tuple[list, bool]:
 
 
 def niveau_de(chemin: str) -> str:
-    """Le niveau d'accès du morceau qui décrit ce dossier : celui du serveur."""
+    """Le niveau d'accès du morceau qui décrit ce dossier : celui de SON dossier
+    (règles de Paramètres, 13/09), sinon celui du serveur."""
     try:
+        from nas.niveaux import niveau
+        return niveau(chemin)
+    except Exception:  # noqa: BLE001
         from config import settings
         return (getattr(settings, "synology_access_level", None) or "all").strip() or "all"
-    except Exception:  # noqa: BLE001
-        return "all"
+
+
+def signature_droits(role) -> str:
+    """Ce qui change la vue d'un rôle : ses niveaux et les règles en vigueur."""
+    from nas import niveaux
+    from security.acces import niveaux_visibles
+    return f"{sorted(niveaux_visibles(role))}|{niveaux.regles()}"
+
+
+def visible(chemin: str, role) -> bool:
+    """Ce rôle voit-il ce dossier ? La carte montrée à une personne ne nomme
+    que ce qu'elle a le droit d'ouvrir."""
+    from nas.niveaux import visible_pour
+    return visible_pour(chemin, role)
 
 # ── L'inventaire (08/09) : lister un dossier, lire un fichier. Le périmètre du
 # serveur s'applique en dessous (`verifier`), le rôle est contrôlé ici.

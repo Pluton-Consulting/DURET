@@ -10,6 +10,7 @@ const CLE_DERNIER_EMAIL = "pluton.dernier_email"
 import { signIn } from "next-auth/react"
 import { MarqueDuret } from "@/components/nav/Logo"
 import ChoixProfil, { type CarteProfil } from "@/components/nav/ChoixProfil"
+import CodeCarte, { messageCode } from "@/components/nav/CodeCarte"
 
 type State = "idle" | "loading" | "sent" | "refused" | "error"
 
@@ -29,6 +30,9 @@ export default function LoginPage() {
   const [profils, setProfils] = useState<CarteProfil[]>([])
   const [enCours, setEnCours] = useState<string | null>(null)
   const [refusCarte, setRefusCarte] = useState("")
+  // La carte à code en cours de saisie (direction, ou profil qui en a posé un).
+  const [aCoder, setACoder] = useState<CarteProfil | null>(null)
+  const [erreurCode, setErreurCode] = useState("")
 
   const chargerCartes = async () => {
     try {
@@ -49,13 +53,20 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const entrer = async (id: string) => {
+  const entrer = async (id: string, code?: string) => {
     if (enCours) return
+    const carte = profils.find((p) => p.id === id)
+    if (carte?.code && !code) { setACoder(carte); setErreurCode(""); return }
     setEnCours(id)
     setRefusCarte("")
     try {
-      const res = await signIn("credentials", { carte: "1", user_id: id, redirect: false })
+      const res = await signIn("credentials", { carte: "1", user_id: id, code: code || "", redirect: false })
+      if (res?.error && carte?.code && res.code && res.code !== "credentials") {
+        setErreurCode(messageCode(res.code))
+        return
+      }
       if (res?.error) {
+        setACoder(null)
         // Le profil a pu être désactivé ou déplacé depuis l'affichage : on
         // relit les cartes plutôt que de laisser un bouton mort à l'écran.
         setRefusCarte("Ce profil ne s'ouvre pas depuis cette page. Choisissez de nouveau, ou demandez à un administrateur.")
@@ -144,8 +155,14 @@ export default function LoginPage() {
         <div className="sym-in" style={{ marginBottom: 18 }}>
           <MarqueDuret taille={48} />
         </div>
-        <ChoixProfil profils={profils} onChoisir={entrer} enCours={enCours}
+        {aCoder ? (
+          <CodeCarte nom={aCoder.nom} enCours={enCours === aCoder.id} erreur={erreurCode}
+                     onValider={(code) => entrer(aCoder.id, code)}
+                     onAnnuler={() => { setACoder(null); setErreurCode("") }} />
+        ) : (
+        <ChoixProfil profils={profils} onChoisir={(id) => entrer(id)} enCours={enCours}
                      sousTitre="Choisissez votre nom pour retrouver vos conversations, vos documents et vos mails." />
+        )}
         {refusCarte && (
           <p className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "18px 0 0", textAlign: "center" }}>
             {refusCarte}

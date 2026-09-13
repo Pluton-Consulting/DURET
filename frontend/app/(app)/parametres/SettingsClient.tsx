@@ -3,6 +3,7 @@ import { useState, useEffect } from "react"
 import { ROLE_LABELS, ROLE_COLORS, nomExpert } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
+import NiveauxNas from "@/components/settings/NiveauxNas"
 import ClesApiTab from "@/components/settings/ClesApiTab"
 import GoogleTab from "@/components/settings/GoogleTab"
 
@@ -17,6 +18,8 @@ interface User {
   // Les dossiers de la boîte partagée ouverts à ce compte, en plus de la
   // réception (11/09). null = aucune restriction ; [] = la réception seule.
   dossiers_mail?: string[] | null
+  // La carte de connexion de ce profil est-elle protégée par un code (13/09) ?
+  a_code?: boolean
 }
 interface DossierBoite { nom: string; libelle: string }
 const ROLES_ADMIN: Role[] = ["super_admin", "direction"]
@@ -96,7 +99,7 @@ function CasesDossiers({ dossiers, choix, onChange }: {
 /* ---------- USERS TAB ---------- */
 function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   const [users, setUsers] = useState<User[]>(initialUsers)
-  const [form, setForm] = useState({ email: "", name: "", role: "terrain" as Role, dossiers: [] as string[] })
+  const [form, setForm] = useState({ email: "", name: "", role: "terrain" as Role, dossiers: [] as string[], code: "" })
   // LES DOSSIERS DE LA BOÎTE PARTAGÉE (11/09, Duret) : lus sur la boîte elle-
   // même. Vide avec une raison quand aucune boîte d'entreprise n'est reliée —
   // les cases n'ont alors pas de sens, et rien n'est restreint.
@@ -185,6 +188,50 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   }
 
   const creatableRoles = CREATABLE[currentRole] ?? []
+
+  // LE RÔLE SE CHANGE (13/09) : c'est lui qui ouvre les fonctions (matrice
+  // des permissions), les documents, les connaissances et les dossiers du NAS
+  // visibles — même pour deux profils qui partagent la boîte de l'entreprise.
+  const [roleErreur, setRoleErreur] = useState("")
+  const [roleEnCours, setRoleEnCours] = useState<string | null>(null)
+  const peutChangerRole = (cible: Role) =>
+    currentRole === "super_admin" ? cible !== "super_admin" : currentRole === "direction" && METIER_ROLES.includes(cible)
+
+  async function changerRole(userId: string, role: Role) {
+    setRoleEnCours(userId); setRoleErreur("")
+    try {
+      const res = await fetch(`${apiUrl}/api/users/${userId}/role`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ role }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setRoleErreur(d.detail ?? "Le rôle n'a pas pu être changé."); return }
+      setUsers((p) => p.map((u) => u.id === userId
+        ? { ...u, role, agent_permissions: d.agent_permissions ?? u.agent_permissions } : u))
+    } catch { setRoleErreur("Erreur réseau") } finally { setRoleEnCours(null) }
+  }
+
+  // LE CODE D'UNE CARTE (13/09) : obligatoire pour la direction sur la boîte
+  // de l'entreprise, facultatif pour les autres. Jamais relu : on le remplace.
+  const [editCode, setEditCode] = useState<{ id: string; nom: string; a_code: boolean; code: string } | null>(null)
+  const [codeErreur, setCodeErreur] = useState("")
+  const [codeEnCours, setCodeEnCours] = useState(false)
+  async function enregistrerCode(retirer: boolean) {
+    if (!editCode) return
+    setCodeEnCours(true); setCodeErreur("")
+    try {
+      const res = await fetch(`${apiUrl}/api/users/${editCode.id}/code`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
+        body: JSON.stringify({ code: retirer ? null : editCode.code.trim() }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setCodeErreur(d.detail ?? "Le code n'a pas pu être enregistré."); return }
+      setUsers((p) => p.map((u) => u.id === editCode.id ? { ...u, a_code: !!d.a_code } : u))
+      setEditCode(null)
+    } catch { setCodeErreur("Erreur réseau") } finally { setCodeEnCours(false) }
+  }
   const visibleAgents: Agent[] = ["agent1", "agent2", "agent3"].filter(
     (a) => a !== "agent3" || currentRole === "super_admin" || currentRole === "direction"
   ) as Agent[]
@@ -192,13 +239,13 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   async function addUser(e: React.FormEvent) {
     e.preventDefault(); setAdding(true); setFormError("")
     try {
-      const { dossiers, ...champs } = form
+      const { dossiers, code, ...champs } = form
       const res = await fetch(`${apiUrl}/api/users/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` },
         // Avec une boîte d'entreprise reliée, un compte métier commence par la
         // réception + les dossiers cochés ; sans elle, rien n'est restreint.
-        body: JSON.stringify({ ...champs,
+        body: JSON.stringify({ ...champs, code_pin: code.trim() || null,
           dossiers_mail: boiteReliee && !ROLES_ADMIN.includes(form.role) ? dossiers : null }),
       })
       if (!res.ok) {
@@ -208,7 +255,7 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
       }
       const newUser = await res.json()
       setUsers((p) => [newUser, ...p])
-      setForm({ email: "", name: "", role: "terrain", dossiers: [] }); setShowForm(false)
+      setForm({ email: "", name: "", role: "terrain", dossiers: [], code: "" }); setShowForm(false)
     } catch { setFormError("Erreur réseau") } finally { setAdding(false) }
   }
 
@@ -407,6 +454,50 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
         </div>
       )}
 
+      {editCode && (
+        <div className="sym-fade" style={{
+          background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)",
+          padding: 18, marginBottom: 20, border: "1px solid var(--marque-primary-light)",
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "var(--marque-text-primary)", marginBottom: 4 }}>
+            Code de la carte de {editCode.nom}
+          </div>
+          <p style={{ fontSize: 13, color: "var(--marque-text-body)", margin: "0 0 12px", maxWidth: 640 }}>
+            4 à 6 chiffres, demandés quand on clique sur cette carte à la connexion. Cinq essais
+            faux bloquent la carte un quart d'heure. {editCode.a_code ? "Un code est déjà posé : le nouveau le remplace." : ""}
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={6}
+                   placeholder="Nouveau code" value={editCode.code}
+                   onChange={(e) => setEditCode((c) => c && { ...c, code: e.target.value.replace(/\D/g, "") })}
+                   style={{ ...inp, width: 160, letterSpacing: "0.3em" }} />
+            <button type="button" onClick={() => enregistrerCode(false)} disabled={codeEnCours || editCode.code.length < 4}
+              className="sym-tap" style={{
+                background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none",
+                borderRadius: "var(--marque-radius-pill)", padding: "9px 20px", fontSize: 13, fontWeight: 600,
+                cursor: codeEnCours ? "wait" : "pointer", opacity: editCode.code.length < 4 ? 0.6 : 1,
+              }}>{codeEnCours ? "…" : "Enregistrer"}</button>
+            {editCode.a_code && (
+              <button type="button" onClick={() => enregistrerCode(true)} disabled={codeEnCours} className="sym-tap" style={{
+                background: "none", border: "1px solid var(--marque-border)", color: "var(--marque-text-body)",
+                borderRadius: "var(--marque-radius-pill)", padding: "9px 18px", fontSize: 13, cursor: "pointer",
+              }}>Retirer le code</button>
+            )}
+            <button type="button" onClick={() => { setEditCode(null); setCodeErreur("") }} className="sym-tap" style={{
+              background: "none", border: "1px solid var(--marque-border)", color: "var(--marque-text-body)",
+              borderRadius: "var(--marque-radius-pill)", padding: "9px 18px", fontSize: 13, cursor: "pointer",
+            }}>Annuler</button>
+          </div>
+          {codeErreur && <p role="status" style={{ color: "var(--marque-error-text)", fontSize: 12, margin: "10px 0 0" }}>{codeErreur}</p>}
+        </div>
+      )}
+
+      {roleErreur && (
+        <p role="status" className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "0 0 16px" }}>
+          {roleErreur}
+        </p>
+      )}
+
       {showForm && (
         <form onSubmit={addUser} className="sym-fade" style={{
           background: "var(--marque-primary-subtle)", borderRadius: "var(--marque-radius-card)", padding: 20,
@@ -426,12 +517,22 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
             </select>
           </div>
           {surLaBoite ? (
-            <p style={{ fontSize: 12.5, color: "var(--marque-text-body)", margin: "0 0 12px" }}>
-              C'est l'adresse de la <b>boîte de l'entreprise</b> : ce profil aura sa <b>carte sur la page
-              de connexion</b> et entrera d'un clic, sans lien magique, avec son propre chat, ses documents
-              et les dossiers du mail cochés ci-dessous. Impossible pour un rôle de direction : un
-              administrateur garde sa propre adresse et le lien magique.
-            </p>
+            <>
+              <p style={{ fontSize: 12.5, color: "var(--marque-text-body)", margin: "0 0 12px" }}>
+                C'est l'adresse de la <b>boîte de l'entreprise</b> : ce profil aura sa <b>carte sur la page
+                de connexion</b> et entrera d'un clic, sans lien magique, avec son propre chat, ses documents
+                et les dossiers du mail cochés ci-dessous. Son <b>rôle</b> décide de ce qu'il voit.
+                {form.role === "direction" && <> Pour la <b>direction</b>, la carte demande un <b>code</b> : obligatoire.</>}
+              </p>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", margin: "0 0 12px", flexWrap: "wrap" }}>
+                <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={6}
+                       placeholder={form.role === "direction" ? "Code de la carte * (4 à 6 chiffres)" : "Code de la carte (facultatif)"}
+                       required={form.role === "direction"} pattern="\d{4,6}" value={form.code}
+                       onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.replace(/\D/g, "") }))}
+                       style={{ ...inp, maxWidth: 280, letterSpacing: form.code ? "0.3em" : undefined }} />
+                <span style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>demandé au clic sur la carte</span>
+              </div>
+            </>
           ) : adresseDejaPortee && (
             <p style={{ fontSize: 12.5, color: "var(--marque-text-body)", margin: "0 0 12px" }}>
               Cette adresse est déjà utilisée : ce sera un <b>profil de plus</b> sur la même boîte,
@@ -502,9 +603,21 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                     </div>
                   </td>
                   <td style={{ padding: "14px 16px" }}>
-                    <span style={{ background: color + "18", color, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600 }}>
-                      {ROLE_LABELS[user.role]}
-                    </span>
+                    {peutChangerRole(user.role) ? (
+                      <select value={user.role} disabled={roleEnCours === user.id} aria-label={`Rôle de ${user.name || user.email}`}
+                              onChange={(e) => changerRole(user.id, e.target.value as Role)}
+                              style={{ background: color + "18", color, border: "none", padding: "4px 8px",
+                                       borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600,
+                                       cursor: roleEnCours === user.id ? "wait" : "pointer" }}>
+                        {Array.from(new Set([user.role, ...creatableRoles])).map((r) => (
+                          <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span style={{ background: color + "18", color, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 600 }}>
+                        {ROLE_LABELS[user.role]}
+                      </span>
+                    )}
                   </td>
                   {visibleAgents.map((agent) => {
                     const has = user.agent_permissions[agent]
@@ -577,6 +690,18 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                           color: "var(--marque-text-body)", fontWeight: 500, marginRight: 8,
                         }}>
                         {lienEnCours === user.id ? "…" : "Lien d'accès"}
+                      </button>
+                    )}
+                    {adresseBoite && user.email.toLowerCase() === adresseBoite.toLowerCase()
+                      && (currentRole === "super_admin" || METIER_ROLES.includes(user.role)) && (
+                      <button onClick={() => { setCodeErreur(""); setEditCode({ id: user.id, nom: user.name || user.email, a_code: !!user.a_code, code: "" }) }}
+                        className="sym-tap" title="Code demandé au clic sur la carte de connexion"
+                        style={{
+                          background: "none", border: "1px solid var(--marque-border)",
+                          borderRadius: "var(--marque-radius-pill)", padding: "5px 14px", fontSize: 12,
+                          cursor: "pointer", color: "var(--marque-text-body)", fontWeight: 500, marginRight: 8,
+                        }}>
+                        {user.a_code ? "🔒 Code" : "Poser un code"}
                       </button>
                     )}
                     {(currentRole === "super_admin" || currentRole === "direction" || METIER_ROLES.includes(user.role)) && (
@@ -1162,7 +1287,12 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
       {activeTab === "services" && <ServicesTab apiUrl={apiUrl} backendToken={backendToken} />}
       {activeTab === "import" && <ImportTab apiUrl={apiUrl} backendToken={backendToken} />}
       {activeTab === "synchro" && currentRole === "super_admin" && (
-        <SyncTab apiUrl={apiUrl} backendToken={backendToken} />
+        <>
+          <SyncTab apiUrl={apiUrl} backendToken={backendToken} />
+          {/* Le niveau d'accès par dossier du NAS (13/09) : ce qui est synchronisé
+              et enrichi se range là, et le chat ne montre que ce que le rôle voit. */}
+          <NiveauxNas apiUrl={apiUrl} backendToken={backendToken} />
+        </>
       )}
       {activeTab === "cles" && currentRole === "super_admin" && (
         <ClesApiTab apiUrl={apiUrl} backendToken={backendToken} />

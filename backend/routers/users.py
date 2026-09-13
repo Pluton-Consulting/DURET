@@ -60,6 +60,18 @@ class CreateUserRequest(BaseModel):
     # Les dossiers de la boîte partagée que ce profil lira, EN PLUS de la
     # boîte de réception (11/09). None = aucune restriction.
     dossiers_mail: Optional[list[str]] = None
+    # Le code de la carte de connexion (13/09) : obligatoire pour la direction
+    # sur la boîte de l'entreprise, facultatif pour les autres profils.
+    code_pin: Optional[str] = None
+
+
+class RoleRequest(BaseModel):
+    role: str
+
+
+class CodeRequest(BaseModel):
+    # Vide ou absent : retirer le code.
+    code: Optional[str] = None
 
 
 class DossiersMailRequest(BaseModel):
@@ -150,9 +162,22 @@ async def list_users(current_user: User = Depends(get_current_user)):
                 requete.replace("u.dossiers_mail,", "NULL::text[] AS dossiers_mail,"),
                 current_user.role == "super_admin")
 
+    # Quelle carte a un code (041) — jamais l'empreinte. Lu à part : sans la
+    # migration, la liste reste lisible.
+    avec_code: set = set()
+    try:
+        async with get_db() as conn:
+            avec_code = {str(r["id"]) for r in await conn.fetch(
+                "SELECT id FROM users WHERE code_pin_hash IS NOT NULL")}
+    except Exception as e:  # noqa: BLE001
+        from database.connection import schema_incomplet
+        if not schema_incomplet(e):
+            raise
+
     result = []
     for row in rows:
         d = dict(row)
+        d["a_code"] = str(d["id"]) in avec_code
         explicit = {
             a: d.pop(f"explicit_{a}")
             for a in AGENTS
@@ -201,16 +226,16 @@ async def create_user(
     if not body.email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'adresse est obligatoire.")
     partagee = _profils.meme_adresse(body.email, boite)
-    if partagee and _profils.est_admin(body.role):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
-            "Un compte administrateur a sa propre adresse : celle de la boîte de "
-            "l'entreprise ouvre la page de connexion sans lien magique."))
-    if partagee and not body.name:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
-            "Un profil de la boîte de l'entreprise a besoin d'un prénom : c'est lui "
-            "qui s'affiche sur sa carte à la connexion."))
+    code = (getattr(body, "code_pin", None) or "").strip()
+    if code and not _profils.code_valide(code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Le code d'une carte fait 4 à 6 chiffres.")
     existants = await _profils.profils_de(body.email, actifs=False)
-    refus = _profils.refus_creation(body.role, body.name, existants)
+    # Sur la boîte de l'entreprise, les règles de la PAGE DE CONNEXION (13/09) :
+    # la direction y vit derrière un code, le super_admin jamais. Ailleurs,
+    # celles des adresses partagées par lien magique (11/09).
+    refus = (_profils.refus_sur_boite(body.role, body.name, bool(code), existants) if partagee
+             else _profils.refus_creation(body.role, body.name, existants))
     if refus:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refus)
     # Un administrateur lit tout : une restriction posée sur lui ne serait pas
@@ -254,6 +279,8 @@ async def create_user(
 
         if dossiers is not None:
             await _poser_dossiers(conn, row["id"], dossiers)
+        if code:
+            await _poser_code(conn, row["id"], code)
 
     await log_action(
         action="user_created",
@@ -278,6 +305,24 @@ def _nettoyer_dossiers(dossiers: Optional[list[str]]) -> Optional[list[str]]:
         if nom and nom.upper() != "INBOX" and nom not in propres:
             propres.append(nom[:200])
     return propres[:100]
+
+
+async def _poser_code(conn, user_id, code: Optional[str]) -> None:
+    """Écrit l'EMPREINTE du code (ou le retire) et remet les essais à zéro.
+    Sans la migration 041, le refus NOMME la migration : un code qu'on croit
+    posé et qui ne l'est pas laisserait la carte ouverte."""
+    from auth import profils as _profils
+    try:
+        await conn.execute(
+            "UPDATE users SET code_pin_hash = $1, code_pin_echecs = 0, code_pin_bloque_jusqu = NULL "
+            "WHERE id = $2::uuid",
+            _profils.hacher_code(code) if code else None, str(user_id))
+    except Exception as e:  # noqa: BLE001
+        from database.connection import schema_incomplet
+        if schema_incomplet(e):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="Le code des cartes exige la migration 041 (041_code_profil.sql).")
+        raise
 
 
 async def _poser_dossiers(conn, user_id, dossiers: Optional[list[str]]) -> None:
@@ -532,6 +577,91 @@ async def reactivate_user(
         await conn.execute("UPDATE users SET actif = true WHERE id = $1", user_id)
 
     return {"status": "reactivated"}
+
+
+@router.put("/{user_id}/role")
+async def changer_role(user_id: UUID, body: RoleRequest,
+                       current_user: User = Depends(get_current_user)):
+    """CHANGER LE RÔLE d'un profil (13/09, demande de Noa : « on doit pouvoir
+    dire si c'est la direction, le commercial, l'administratif… »).
+
+    Le rôle décide de tout le reste — les fonctions ouvertes (matrice des
+    permissions), les niveaux de documents et de connaissances visibles, les
+    dossiers du NAS. Il se choisissait à la création et ne se changeait plus.
+    Même hiérarchie que la création : la direction ne touche que les rôles
+    métier et n'en fait jamais un administrateur. On ne change pas son propre
+    rôle. Sur la boîte de l'entreprise, les règles de la page de connexion.
+    Effet immédiat côté serveur (le rôle est relu en base à chaque requête).
+    """
+    if not has_permission(current_user.role, "manage_users"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+    if str(user_id) == str(current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="On ne change pas son propre rôle : demandez à un autre administrateur.")
+    permis = (SUPER_ADMIN_CREATABLE_ROLES if current_user.role == "super_admin"
+              else DIRECTION_CREATABLE_ROLES)
+    if body.role not in permis:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Vous ne pouvez pas attribuer le rôle « {body.role} ».")
+    from auth import profils as _profils
+    async with get_db() as conn:
+        cible = await conn.fetchrow("SELECT id, email, name, role FROM users WHERE id = $1", user_id)
+    if not cible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+    if not peut_ouvrir_pour(current_user.role, cible["role"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
+    if cible["role"] == body.role:
+        return {"user_id": str(user_id), "role": body.role}
+
+    boite = await _profils.adresse_partagee()
+    existants = await _profils.profils_de(cible["email"], actifs=False)
+    moi = next((e for e in existants if str(e["id"]) == str(user_id)), {})
+    if _profils.meme_adresse(cible["email"], boite):
+        refus = _profils.refus_sur_boite(body.role, cible["name"], _profils.a_un_code(moi),
+                                         existants, soi=str(user_id))
+    else:
+        autres = [e for e in existants if str(e["id"]) != str(user_id)]
+        refus = (_profils.refus_creation(body.role, cible["name"], autres)
+                 if autres and _profils.est_admin(body.role) else None)
+    if refus:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refus)
+
+    async with get_db() as conn:
+        await conn.execute("UPDATE users SET role = $1 WHERE id = $2", body.role, user_id)
+    await log_action(action="user_role_changed", user_id=str(current_user.id),
+                     metadata={"target_user_id": str(user_id), "ancien": cible["role"],
+                               "nouveau": body.role})
+    return {"user_id": str(user_id), "role": body.role,
+            "agent_permissions": _effective_permissions(body.role, {})}
+
+
+@router.put("/{user_id}/code")
+async def poser_code(user_id: UUID, body: CodeRequest,
+                     current_user: User = Depends(get_current_user)):
+    """Pose, change ou retire le code de la carte de connexion d'un profil."""
+    if not has_permission(current_user.role, "manage_users"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+    from auth import profils as _profils
+    code = (body.code or "").strip()
+    if code and not _profils.code_valide(code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Le code d'une carte fait 4 à 6 chiffres.")
+    async with get_db() as conn:
+        cible = await conn.fetchrow("SELECT id, email, role FROM users WHERE id = $1", user_id)
+    if not cible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+    if str(user_id) != str(current_user.id) and not peut_ouvrir_pour(current_user.role, cible["role"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
+    if not code and cible["role"] in _profils.ROLES_CODE_OBLIGATOIRE \
+            and _profils.meme_adresse(cible["email"], await _profils.adresse_partagee()):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
+            "Un profil de direction sur la boîte de l'entreprise garde un code : "
+            "changez-le plutôt que de le retirer."))
+    async with get_db() as conn:
+        await _poser_code(conn, user_id, code or None)
+    await log_action(action="code_carte_modifie", user_id=str(current_user.id),
+                     metadata={"target_user_id": str(user_id), "retire": not code})
+    return {"user_id": str(user_id), "a_code": bool(code)}
 
 
 @router.put("/{user_id}/schedule")

@@ -178,7 +178,16 @@ if NAS:
     _poser("ingestion.parsers", analyser=lambda nom, brut: {"kind": "texte", "text": "Règlement de consultation…"},
            FichierNonSupporte=FichierNonSupporte)
     _poser("config", settings=types.SimpleNamespace(synology_folders="/home,/Drive", synology_access_level="all"))
+    # 13/09 : le NAS se filtre par niveau de dossier (nas/niveaux.py) pour le
+    # lecteur posé par l'exécuteur (security/lecteur.py). Hors d'un geste, aucun
+    # lecteur : ces bancs, qui jouent le système, voient tout comme avant.
+    _poser("security")
+    sys.modules["security.acces"] = _exec(BACKEND / "security" / "acces.py", "security.acces")
+    sys.modules["security.lecteur"] = _exec(BACKEND / "security" / "lecteur.py", "security.lecteur")
+    _poser("nas")
     acces = _exec(BACKEND / "nas" / "acces.py", "nas.acces")
+    sys.modules["nas.acces"] = acces
+    sys.modules["nas.niveaux"] = _exec(BACKEND / "nas" / "niveaux.py", "nas.niveaux")
     _sleep_orig = asyncio.sleep
     asyncio.sleep = lambda s: _sleep_orig(0)     # le sondage de recherche n'attend pas
 

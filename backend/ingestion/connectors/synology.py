@@ -411,6 +411,14 @@ MAX_SOURCE_ID = 255
 FICHIER_ECARTES = "nas_ecartes.json"
 
 
+def _niveau_nas(chemin: str) -> str:
+    try:
+        from nas.niveaux import niveau
+        return niveau(chemin)
+    except Exception:  # noqa: BLE001 — sans règles lisibles, le niveau du serveur
+        return settings.synology_access_level
+
+
 def _source_id(chemin: str) -> str:
     """`synology:<chemin>` — stable, donc resynchronisation idempotente."""
     import hashlib
@@ -492,6 +500,17 @@ def _sous(chemin: str, racines: list[str]) -> bool:
 
 
 async def sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
+    """La synchronisation voit TOUT le NAS, même lancée depuis le geste d'un
+    profil (« lance l'import des documents » dans le chat) : chaque fichier
+    est rangé au niveau de SON dossier, c'est la recherche qui trie ensuite
+    (13/09). Sans ceci, la tâche héritait des droits de la personne et les
+    dossiers qui lui sont fermés n'étaient jamais importés pour les autres."""
+    from security.lecteur import en_systeme
+    with en_systeme():
+        return await _sync(dossiers, avancer)
+
+
+async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
     """Ouvre chaque fichier lisible du NAS et le range dans la mémoire.
 
     Les fichiers viennent du CATALOGUE (`nas.acces`) : toutes les racines
@@ -594,7 +613,9 @@ async def sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                 if await ingest_document(
                         text=texte, source_type=settings.synology_source_type,
                         source_id=_source_id(f["chemin"]), source_filename=nom,
-                        access_level=settings.synology_access_level):
+                        # Le niveau de SON dossier (Paramètres, 13/09), plus un
+                        # niveau unique pour tout le serveur.
+                        access_level=_niveau_nas(f["chemin"])):
                     compte["ingeres"] += 1
                 else:
                     compte["erreurs"] += 1

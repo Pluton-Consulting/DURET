@@ -984,7 +984,7 @@ Voici les messages trouvés :
     # Les références d'images du fil, pour que « retouche celle-là » soit une
     # action possible sans fouille de l'historique (voir cles_images_du_fil).
     system_prompt += _consigne_images(state)
-    system_prompt += _consigne_classement()
+    system_prompt += _consigne_classement(state.get("user_role") or "")
     try:
         from security.validation_totale import consigne as _consigne_accord
         system_prompt += _consigne_accord()
@@ -3270,14 +3270,15 @@ def _retouche_disponible() -> bool:
         return False
 
 
-def _consigne_classement() -> str:
+def _consigne_classement(role: str = "") -> str:
     """La carte courte du classement, relevée en fond, et le geste pour la
     fouiller. Rien tant qu'elle n'est pas construite : on ne décrit pas un
     classement qu'on n'a pas vu."""
     try:
         from classement.carte import carte_prete
         from classement.source import NOM_STOCKAGE
-        courte = carte_prete()
+        # La carte que CETTE personne a le droit de voir (13/09).
+        courte = carte_prete(role)
     except Exception:  # noqa: BLE001 — pas de carte chez ce client
         return ""
     if not courte:

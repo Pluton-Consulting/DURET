@@ -55,7 +55,7 @@ CARTE_COURTE_MAX = 700
 CARTE_DUREE_S = 6 * 3600       # rafraîchie toutes les six heures
 ATTENTE_DEMARRAGE_S = 25       # on laisse l'application démarrer avant de balayer
 
-ETAT: dict = {"etat": "vide", "courte": "", "chunks": [], "dossiers": 0, "fichiers": 0,
+ETAT: dict = {"etat": "vide", "courte": "", "chunks": [], "entrees": [], "dossiers": 0, "fichiers": 0,
               "complet": False, "en_base": 0, "construit_le": 0.0, "en_cours": False,
               "erreur": ""}
 
@@ -304,6 +304,65 @@ def chercher_dans_la_carte(chunks: list, sujet: str, limite: int = 12) -> list[d
     return tri[:limite]
 
 
+def chunks_par_palier(entrees: list, niveau_de, profondeur: Optional[int] = PROFONDEUR_CHUNKS) -> list[dict]:
+    """Les morceaux à écrire en BASE quand les dossiers n'ont pas tous le même
+    niveau d'accès (13/09, niveaux par dossier chez Duret).
+
+    LE PIÈGE : le morceau d'un dossier NOMME ses sous-dossiers. Écrit au niveau
+    du dossier, celui d'un dossier ouvert à tous livrerait à tous le nom (et le
+    compte de fichiers) d'un sous-dossier réservé à la direction. L'échelle des
+    niveaux est une chaîne (chaque rôle voit un début de l'échelle) : on
+    construit donc la carte PALIER PAR PALIER, avec les seules entrées de ce
+    palier et en dessous, et l'on n'écrit à un palier que les morceaux dont le
+    texte diffère du palier précédent. Chacun lit la version de son palier ;
+    la direction peut voir deux versions d'un même dossier, jamais un nom
+    qu'elle n'a pas le droit de voir un autre.
+    """
+    from security.acces import NIVEAUX
+
+    def _rang(n):
+        return NIVEAUX.index(n) if n in NIVEAUX else len(NIVEAUX) - 1
+
+    rangs = {e["chemin"]: _rang(niveau_de(e["chemin"])) for e in entrees}
+    paliers = sorted(set(rangs.values())) or [0]
+    if len(paliers) == 1:
+        return [dict(c, acces=NIVEAUX[paliers[0]])
+                for c in construire_chunks(entrees, profondeur=profondeur)]
+    sortie: list[dict] = []
+    precedents: dict = {}
+    for k in paliers:
+        sous = [e for e in entrees if rangs[e["chemin"]] <= k]
+        for c in construire_chunks(sous, profondeur=profondeur):
+            cle = (c["chemin"], c["index"])
+            if precedents.get(cle) == c["texte"]:
+                continue
+            precedents[cle] = c["texte"]
+            sortie.append(dict(c, acces=NIVEAUX[k], palier=k if k != paliers[0] else 0))
+    return sortie
+
+
+_VUES: dict = {}
+
+
+def _vue_pour(role: Optional[str]) -> tuple[str, list]:
+    """(carte courte, morceaux en mémoire) tels que CE rôle a le droit de les
+    voir. Sans filtre déclaré par le client, ou pour le système : la carte
+    entière. Calculé une fois par combinaison (carte, droits, règles)."""
+    if role is None:
+        return ETAT["courte"], ETAT["chunks"]
+    try:
+        from classement.source import signature_droits, visible
+    except ImportError:
+        return ETAT["courte"], ETAT["chunks"]
+    cle = (ETAT["construit_le"], signature_droits(role))
+    if cle not in _VUES:
+        if len(_VUES) > 16:
+            _VUES.clear()
+        vues = [e for e in ETAT["entrees"] if visible(e["chemin"], role)]
+        _VUES[cle] = (carte_courte(vues), construire_chunks(vues, profondeur=PROFONDEUR_MEMOIRE))
+    return _VUES[cle]
+
+
 # ── 2. La base ────────────────────────────────────────────────────────────
 
 async def enregistrer(chunks: list, niveau_de) -> int:
@@ -325,8 +384,8 @@ async def enregistrer(chunks: list, niveau_de) -> int:
         try:
             await vectorstore.insert_document_chunk(
                 content=c["texte"], source_type=SOURCE_TYPE,
-                source_id=f"classement:{c['chemin']}",
-                access_level=niveau_de(c["chemin"]) or "all",
+                source_id=f"classement:{c['chemin']}" + (f"#palier{c['palier']}" if c.get("palier") else ""),
+                access_level=c.get("acces") or niveau_de(c["chemin"]) or "all",
                 source_filename=c["nom"], chunk_index=c["index"], chunk_total=c["total"])
             ecrits += 1
         except Exception as e:  # noqa: BLE001 — un morceau refusé n'arrête pas la carte
@@ -356,13 +415,13 @@ async def rafraichir_carte() -> dict:
         d_tot = sum(1 for c in noeuds if "/" in c)
         f_tot = sum(_totaux(noeuds, r, memo)[1] for r in racines(noeuds))
         ETAT.update({"etat": "pret" if complet else "partiel", "complet": bool(complet),
-                     "courte": carte_courte(entrees), "chunks": chunks,
+                     "courte": carte_courte(entrees), "chunks": chunks, "entrees": entrees,
                      "dossiers": d_tot, "fichiers": f_tot,
                      "construit_le": time.monotonic(), "erreur": ""})
         logger.info("Carte du classement %s : %d dossiers, %d fichiers, %d morceaux en %.0f s",
                     ETAT["etat"], d_tot, f_tot, len(chunks), time.monotonic() - debut)
         try:
-            en_base = [c for c in chunks if c["chemin"].count("/") <= PROFONDEUR_CHUNKS]
+            en_base = chunks_par_palier(entrees, niveau_de, profondeur=PROFONDEUR_CHUNKS)
             ETAT["en_base"] = await enregistrer(en_base, niveau_de)
             logger.info("Carte du classement : %d morceaux écrits en base", ETAT["en_base"])
         except Exception as e:  # noqa: BLE001 — sans base, la carte reste en mémoire
@@ -375,18 +434,19 @@ async def rafraichir_carte() -> dict:
     return ETAT
 
 
-def carte_prete() -> str:
+def carte_prete(role: Optional[str] = None) -> str:
     """La carte courte si elle existe (même vieille), sinon une chaîne vide."""
-    return ETAT["courte"] if ETAT["etat"] in ("pret", "partiel") else ""
+    return _vue_pour(role)[0] if ETAT["etat"] in ("pret", "partiel") else ""
 
 
-def chunks_prets() -> list:
-    return ETAT["chunks"] if ETAT["etat"] in ("pret", "partiel") else []
+def chunks_prets(role: Optional[str] = None) -> list:
+    """Les morceaux en mémoire ; avec un `role`, ceux qu'il a le droit de voir."""
+    return _vue_pour(role)[1] if ETAT["etat"] in ("pret", "partiel") else []
 
 
 def statut() -> dict:
     """Ce que l'écran et le skill peuvent dire de la carte, sans les morceaux."""
-    return {k: v for k, v in ETAT.items() if k != "chunks"} | {"morceaux": len(ETAT["chunks"])}
+    return {k: v for k, v in ETAT.items() if k not in ("chunks", "entrees")} | {"morceaux": len(ETAT["chunks"])}
 
 
 async def demarrer_carte() -> None:

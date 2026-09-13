@@ -173,7 +173,8 @@ _poser("bureautique.atelier", deposer_fichier=lambda *a, **k: "J")
 _poser("visuels")
 _poser("visuels.depot", deposer_octets=lambda *a, **k: "c")
 _poser("security")
-_poser("security.acces", niveaux_visibles=lambda role: ["all"])
+_poser("security.acces", niveaux_visibles=lambda role: ["all"],
+       NIVEAUX=("all", "commercial_plus", "bureau_etudes_plus", "direction_only", "admin_only"))
 
 
 def _exec(chemin, nom):
@@ -184,8 +185,13 @@ def _exec(chemin, nom):
     return mod
 
 
+# 13/09 : le NAS se filtre par niveau de dossier (nas/niveaux.py) pour le
+# lecteur posé par l'exécuteur (security/lecteur.py). Hors d'un geste, aucun
+# lecteur : ces bancs, qui jouent le système, voient tout comme avant.
+_exec(BACKEND / "security" / "lecteur.py", "security.lecteur")
 _poser("nas")
 acces = _exec(BACKEND / "nas" / "acces.py", "nas.acces")
+_exec(BACKEND / "nas" / "niveaux.py", "nas.niveaux")
 
 
 class _Cnx:

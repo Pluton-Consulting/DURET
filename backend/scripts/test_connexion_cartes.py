@@ -65,7 +65,8 @@ if existe:
     c = profils.cartes_de_connexion(TOUS, BOITE)
     ids = [x["id"] for x in c]
     verifier("les profils actifs de la boîte, casse de l'adresse ignorée", ids == ["a1", "a2"], ids)
-    verifier("ni rôle ni adresse sur une carte", all(set(x) == {"id", "nom"} for x in c), c)
+    verifier("ni rôle ni adresse sur une carte (id, nom, code seulement)",
+             all(set(x) == {"id", "nom", "code"} for x in c), c)
     verifier("pas de boîte reliée : aucune carte", profils.cartes_de_connexion(TOUS, None) == [])
 
     print("— L'entrée par une carte")
@@ -135,25 +136,30 @@ source = lire("backend/routers/auth.py")
 espace = {
     "get_db": _Base(), "datetime": datetime, "timezone": timezone,
     "HTTPException": HTTPException,
-    "status": types.SimpleNamespace(HTTP_403_FORBIDDEN=403),
+    "status": types.SimpleNamespace(HTTP_403_FORBIDDEN=403, HTTP_401_UNAUTHORIZED=401,
+                                    HTTP_429_TOO_MANY_REQUESTS=429),
     "log_action": _log,
     "create_access_token": lambda d: f"jwt:{d['sub']}:{d['role']}",
     "appareil": types.SimpleNamespace(creer=_creer),
     "ChangerProfilRequest": object, "Request": object,
 }
-noms = {"profils_de_connexion", "entrer_par_carte"}
+noms = {"profils_de_connexion", "entrer_par_carte", "_exiger_code"}
 trouvees = []
 for n in ast.parse(source).body:
     if isinstance(n, ast.AsyncFunctionDef) and n.name in noms:
         n.decorator_list = []
         n.args.defaults = []
+        # Python 3.9 sur ce poste : `str | None` ne s'évalue pas, les annotations partent.
+        n.returns = None
+        for a in n.args.args:
+            a.annotation = None
         trouvees.append(n)
-verifier("routers/auth.py porte les deux routes de la page de connexion", len(trouvees) == 2,
+verifier("routers/auth.py porte les deux routes de la page de connexion", len(trouvees) == 3,
          [t.name for t in trouvees])
 verifier("routes publiques sous /connexion/…",
          '@router.get("/connexion/profils")' in source and '@router.post("/connexion/profil")' in source)
 
-if len(trouvees) == 2:
+if len(trouvees) == 3:
     exec(compile(ast.Module(body=trouvees, type_ignores=[]), "auth", "exec"), espace)
     lister, entrer = espace["profils_de_connexion"], espace["entrer_par_carte"]
 
@@ -166,7 +172,7 @@ if len(trouvees) == 2:
     def ouvrir(uid):
         JOURNAL.clear(); APPAREILS.clear(); ECRITURES.clear()
         try:
-            return asyncio.run(entrer(types.SimpleNamespace(user_id=uid),
+            return asyncio.run(entrer(types.SimpleNamespace(user_id=uid, code=None),
                                       types.SimpleNamespace(headers={"user-agent": "banc"})))
         except HTTPException as e:
             return e
@@ -194,9 +200,14 @@ print("— Paramètres")
 users = lire("backend/routers/users.py")
 verifier("un profil métier sans adresse prend celle de la boîte",
          'email: str = ""' in users and "body.email = boite" in users)
-verifier("un administrateur ne prend pas l'adresse de la boîte",
-         "partagee and _profils.est_admin(body.role)" in users)
-verifier("un profil de la boîte a un nom (sa carte)", "partagee and not body.name" in users)
+# Depuis le 13/09 ces deux règles vivent dans `refus_sur_boite` (exécutée par
+# test_droits_par_profil) : la direction y entre derrière un code.
+verifier("sur la boîte, la création passe par refus_sur_boite (super_admin jamais, nom obligatoire)",
+         "_profils.refus_sur_boite(body.role, body.name, bool(code), existants) if partagee" in users)
+if existe:
+    verifier("refus_sur_boite : super_admin refusé, profil sans nom refusé",
+             profils.refus_sur_boite("super_admin", "Noa", True, []) is not None
+             and profils.refus_sur_boite("terrain", "", False, []) is not None)
 verifier("un profil de la boîte commence par la réception seule", "(existants or partagee) and dossiers is None" in users)
 verifier("/users/dossiers-mail rend l'adresse de la boîte", '"adresse": adresse' in users)
 reglages = lire("frontend/app/(app)/parametres/SettingsClient.tsx")

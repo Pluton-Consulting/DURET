@@ -1,4 +1,4 @@
-import NextAuth from "next-auth"
+import NextAuth, { CredentialsSignin } from "next-auth"
 import Credentials from "next-auth/providers/credentials"
 
 const API_URL = process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL
@@ -41,6 +41,19 @@ async function rafraichir(jetonAppareil: string) {
   }
 }
 
+/**
+ * LE REFUS D'UN CODE DE CARTE (13/09) : sa raison courte remonte jusqu'à
+ * l'écran (`signIn(...).code`) — « code faux » et « carte bloquée » ne
+ * demandent pas le même geste. Rien d'autre ne passe par là.
+ */
+const RAISONS_CODE = ["code_requis", "code_faux", "code_bloque"]
+class CodeRefuse extends CredentialsSignin {
+  constructor(raison: string) {
+    super(raison)
+    this.code = raison
+  }
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Credentials({
@@ -58,20 +71,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // boîte de l'entreprise entre sans lien magique. Le serveur revérifie
         // tout (profil de la boîte, actif, jamais un administrateur).
         carte: { type: "text" },
+        // Le code d'une carte protégée (direction, ou profil qui en a posé un).
+        code: { type: "text" },
       },
-      async authorize({ token, email, user_id, bascule, carte }) {
+      async authorize({ token, email, user_id, bascule, carte, code }) {
+        let refus = ""
         try {
           const res = carte
             ? await fetch(`${API_URL}/api/auth/connexion/profil`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id }),
+                body: JSON.stringify({ user_id, code: code || null }),
               })
             : bascule
             ? await fetch(`${API_URL}/api/auth/profils/changer`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${bascule}` },
-                body: JSON.stringify({ user_id }),
+                body: JSON.stringify({ user_id, code: code || null }),
               })
             : await fetch(
                 `${API_URL}/api/auth/magic-link/verify`,
@@ -81,7 +97,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                   body: JSON.stringify({ token, email, user_id: user_id || null }),
                 }
               )
-          if (!res.ok) return null
+          if (!res.ok) {
+            const detail = await res.json().then((d) => String(d?.detail ?? "")).catch(() => "")
+            if (RAISONS_CODE.includes(detail)) refus = detail
+            else return null
+          }
+          if (refus) throw new CodeRefuse(refus)
           const data = await res.json()
           return {
             // L'IDENTIFIANT DU PROFIL, pas l'adresse (11/09) : plusieurs prénoms
@@ -95,7 +116,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             refreshToken: data.refresh_token ?? null,
             role: data.role,
           }
-        } catch {
+        } catch (e) {
+          // Le refus d'un code remonte tel quel ; toute autre panne = « refusé ».
+          if (e instanceof CodeRefuse) throw e
           return null
         }
       },

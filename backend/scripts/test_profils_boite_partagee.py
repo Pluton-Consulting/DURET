@@ -131,7 +131,9 @@ melange = equipe + [{"id": "d", "name": "Direction", "role": "direction"}]
 verifier("un administrateur n'est jamais atteignable par une adresse partagée",
          profils.choisir(melange, "d") is None)
 verifier("les cartes ne montrent ni administrateur, ni rôle, ni adresse",
-         profils.cartes(melange) == [{"id": "n", "nom": "Nathalie"}, {"id": "e", "nom": "Éric"}])
+         # `code` (13/09) dit seulement si la carte demande un code.
+         profils.cartes(melange) == [{"id": "n", "nom": "Nathalie", "code": False},
+                                     {"id": "e", "nom": "Éric", "code": False}])
 
 print("— qui peut être créé sur une adresse déjà portée")
 verifier("une adresse neuve : rien à redire", profils.refus_creation("terrain", None, []) is None)

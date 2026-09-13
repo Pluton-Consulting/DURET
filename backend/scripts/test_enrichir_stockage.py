@@ -495,6 +495,11 @@ else:
     synology._appel = _appel
     synology._telecharger_ou_raison = _telecharger_ou_raison
     acces = charger("nas.acces", "nas/acces.py")
+    # 13/09 : le NAS se filtre par niveau de dossier (nas/niveaux.py) pour le
+    # lecteur posé par l'exécuteur (security/lecteur.py). Hors d'un geste, aucun
+    # lecteur : ces bancs, qui jouent le système, voient tout comme avant.
+    charger("security.lecteur", "security/lecteur.py")
+    charger("nas.niveaux", "nas/niveaux.py")
 
     @asynccontextmanager
     async def _connexion():

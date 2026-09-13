@@ -94,6 +94,39 @@ def refus_creation(role: str, nom: Optional[str], existants: list[dict]) -> Opti
     return None
 
 
+def meme_adresse(a: Optional[str], b: Optional[str]) -> bool:
+    return bool(a and b) and a.strip().lower() == b.strip().lower()
+
+
+def cartes_de_connexion(profils: list[dict], boite: Optional[str]) -> list[dict]:
+    """LA PAGE DE CONNEXION (13/09) : les cartes des profils de la boîte de
+    l'entreprise, à choisir SANS lien magique.
+
+    Seulement : des comptes actifs, qui portent l'adresse de la boîte unique,
+    et qui ne sont pas administrateurs. Pas de boîte reliée : aucune carte, et
+    la page retombe sur le lien magique pour tout le monde.
+    """
+    if not boite:
+        return []
+    return cartes([p for p in profils
+                   if p.get("actif", True) and meme_adresse(p.get("email"), boite)])
+
+
+def entree_par_carte(profils: list[dict], boite: Optional[str], user_id: Optional[str]):
+    """Le profil qu'ouvre un clic sur une carte, ou None.
+
+    Tout est revérifié ici, rien n'est cru de l'écran : l'identifiant doit
+    être une des cartes que `cartes_de_connexion` montrerait — donc jamais un
+    administrateur, jamais un compte désactivé, jamais une autre adresse.
+    """
+    if not user_id:
+        return None
+    permis = {c["id"] for c in cartes_de_connexion(profils, boite)}
+    if str(user_id) not in permis:
+        return None
+    return next((p for p in profils if str(p["id"]) == str(user_id)), None)
+
+
 # ── Accès base ───────────────────────────────────────────────────────────
 async def profils_de(email: str, actifs: bool = True) -> list[dict]:
     """Les comptes qui portent cette adresse (insensible à la casse)."""
@@ -118,3 +151,18 @@ async def profils_partages(user_id: str) -> list[dict]:
         return []
     profils = await profils_de(moi["email"])
     return profils if len(profils) > 1 else []
+
+
+async def adresse_partagee() -> Optional[str]:
+    """L'adresse de la boîte de l'entreprise (Paramètres → Clés API, ou .env) :
+    celle que partagent les profils des cartes. None si aucune n'est reliée."""
+    try:
+        from llm.cles import rafraichir
+        await rafraichir()
+    except Exception:  # noqa: BLE001 — sans cache de clés, le .env fait foi
+        pass
+    try:
+        from mail.imap import boite_unique
+        return boite_unique()
+    except Exception:  # noqa: BLE001
+        return None

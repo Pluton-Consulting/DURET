@@ -104,10 +104,14 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   const [dossiersErreur, setDossiersErreur] = useState("")
   const [editDossiers, setEditDossiers] = useState<{ id: string; nom: string; libres: boolean; choix: string[] } | null>(null)
   const [dossiersEnCours, setDossiersEnCours] = useState(false)
+  // L'ADRESSE DE LA BOÎTE DE L'ENTREPRISE (13/09) : un profil créé dessus
+  // apparaît en carte sur la page de connexion, sans lien magique. Elle est
+  // posée d'office dans le formulaire ; un administrateur garde la sienne.
+  const [adresseBoite, setAdresseBoite] = useState("")
   useEffect(() => {
     fetch(`${apiUrl}/api/users/dossiers-mail`, { headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((j) => { setDossiersBoite(j.dossiers || []); setDossiersErreur(j.erreur || "") })
+      .then((j) => { setDossiersBoite(j.dossiers || []); setDossiersErreur(j.erreur || ""); setAdresseBoite(j.adresse || "") })
       .catch((e) => setDossiersErreur(e?.message || "dossiers indisponibles"))
   }, [apiUrl, backendToken])
   const boiteReliee = dossiersBoite.length > 0
@@ -115,6 +119,8 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
   // sur cette boîte, et son prénom devient obligatoire (c'est la carte).
   const adresseDejaPortee = form.email.trim() !== "" &&
     users.some((u) => u.email.toLowerCase() === form.email.trim().toLowerCase())
+  const surLaBoite = adresseBoite !== "" && form.email.trim().toLowerCase() === adresseBoite.toLowerCase()
+  const prenomRequis = adresseDejaPortee || surLaBoite
 
   async function enregistrerDossiers() {
     if (!editDossiers) return
@@ -246,7 +252,12 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
             {users.length} <span style={{ fontSize: 14, fontWeight: 500, color: "var(--marque-text-muted)" }}>utilisateurs</span>
           </div>
         </div>
-        <button onClick={() => setShowForm(!showForm)} className="sym-tap" style={{
+        <button onClick={() => {
+          // Un nouveau profil part sur la boîte de l'entreprise : c'est le cas
+          // de tout le monde sauf des administrateurs (13/09).
+          if (!showForm && adresseBoite && !form.email) setForm((f) => ({ ...f, email: adresseBoite }))
+          setShowForm(!showForm)
+        }} className="sym-tap" style={{
           background: "var(--marque-primary)", color: "var(--marque-text-on-dark)", border: "none",
           borderRadius: "var(--marque-radius-pill)", padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer",
           boxShadow: "var(--marque-shadow-card)",
@@ -407,14 +418,21 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
           <div className="sym-grid-1" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
             <input type="email" placeholder="Email *" required value={form.email}
               onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} style={inp} />
-            <input type="text" placeholder={adresseDejaPortee ? "Prénom (affiché sur la carte) *" : "Nom complet"}
-              required={adresseDejaPortee} value={form.name}
+            <input type="text" placeholder={prenomRequis ? "Nom (affiché sur la carte) *" : "Nom complet"}
+              required={prenomRequis} value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={inp} />
             <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as Role }))} style={inp}>
               {creatableRoles.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
             </select>
           </div>
-          {adresseDejaPortee && (
+          {surLaBoite ? (
+            <p style={{ fontSize: 12.5, color: "var(--marque-text-body)", margin: "0 0 12px" }}>
+              C'est l'adresse de la <b>boîte de l'entreprise</b> : ce profil aura sa <b>carte sur la page
+              de connexion</b> et entrera d'un clic, sans lien magique, avec son propre chat, ses documents
+              et les dossiers du mail cochés ci-dessous. Impossible pour un rôle de direction : un
+              administrateur garde sa propre adresse et le lien magique.
+            </p>
+          ) : adresseDejaPortee && (
             <p style={{ fontSize: 12.5, color: "var(--marque-text-body)", margin: "0 0 12px" }}>
               Cette adresse est déjà utilisée : ce sera un <b>profil de plus</b> sur la même boîte,
               avec son propre chat et ses propres documents. Après le lien magique, chacun choisit
@@ -476,7 +494,9 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                     <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 1 }}>
                       {user.email}
                       {users.filter((u) => u.email.toLowerCase() === user.email.toLowerCase()).length > 1 && (
-                        <span title="Plusieurs profils sur cette adresse : chacun choisit son prénom après le lien magique"
+                        <span title={adresseBoite && user.email.toLowerCase() === adresseBoite.toLowerCase()
+                                ? "Profil de la boîte de l'entreprise : sa carte est sur la page de connexion"
+                                : "Plusieurs profils sur cette adresse : chacun choisit son prénom après le lien magique"}
                               style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: "var(--marque-primary)" }}>· boîte partagée</span>
                       )}
                     </div>

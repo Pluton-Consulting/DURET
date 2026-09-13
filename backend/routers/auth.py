@@ -286,6 +286,60 @@ async def profils_du_lien(body: VerifyTokenRequest):
     return {"profils": _profils.cartes(tous) if _profils.choisir(tous) == "choix" else []}
 
 
+@router.get("/connexion/profils")
+async def profils_de_connexion():
+    """LA PAGE DE CONNEXION EST UN CHOIX DE PRÉNOM (13/09, Duret).
+
+    Demande de Noa : tout le monde partage la boîte Gmail de l'entreprise, et
+    la page de connexion n'est plus qu'une rangée de cartes, « comme Netflix » ;
+    le lien magique ne sert plus qu'aux administrateurs, derrière un petit
+    bouton. Rend les cartes des profils de la boîte unique — ni rôle, ni
+    adresse, ni administrateur. Aucune boîte reliée : aucune carte, et l'écran
+    montre le lien magique à tout le monde, comme avant.
+
+    ⚠️ SANS AUTHENTIFICATION, ET C'EST LE BUT. Les prénoms des profils sont
+    lisibles de quiconque atteint la page — c'est-à-dire du réseau privé
+    (Headscale) : l'application n'est pas exposée ailleurs.
+    """
+    from auth import profils as _profils
+    boite = await _profils.adresse_partagee()
+    if not boite:
+        return {"profils": []}
+    return {"profils": _profils.cartes_de_connexion(await _profils.profils_de(boite), boite)}
+
+
+@router.post("/connexion/profil")
+async def entrer_par_carte(body: ChangerProfilRequest, request: Request):
+    """Ouvre la session du prénom cliqué sur la page de connexion.
+
+    ⚠️ CE QUI PROUVE L'IDENTITÉ, DIT TEL QUEL. Plus rien : c'est le réseau
+    privé qui fait la porte, et la carte dit seulement QUI entre (son chat, ses
+    documents, ses dossiers du mail). Les gardes tiennent donc au périmètre :
+    un profil de la boîte de l'entreprise, actif, et JAMAIS un administrateur
+    (`auth/profils.entree_par_carte`) — un compte qui voit tout ou gère les
+    utilisateurs passe toujours par le lien magique. Chaque entrée est tracée.
+    """
+    from auth import profils as _profils
+    boite = await _profils.adresse_partagee()
+    tous = await _profils.profils_de(boite) if boite else []
+    retenu = _profils.entree_par_carte(tous, boite, body.user_id)
+    if retenu is None:
+        await log_action(action="connexion_carte_refusee", success=False,
+                         error_message="profil hors des cartes de connexion")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Ce profil ne s'ouvre pas depuis la page de connexion.")
+    async with get_db() as conn:
+        await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
+                           datetime.now(timezone.utc), str(retenu["id"]))
+    await log_action(action="login", user_id=str(retenu["id"]),
+                     metadata={"par": "carte_profil"})
+    access_token = create_access_token({"sub": str(retenu["id"]), "role": retenu["role"]})
+    jeton_appareil = await appareil.creer(retenu["id"], request.headers.get("user-agent", ""))
+    return {"access_token": access_token, "token_type": "bearer",
+            "role": retenu["role"], "refresh_token": jeton_appareil,
+            "user_id": str(retenu["id"]), "nom": retenu.get("name")}
+
+
 @router.get("/profils")
 async def mes_profils(current_user: User = Depends(get_current_user)):
     """Les profils entre lesquels ce compte peut basculer (bouton « Changer de

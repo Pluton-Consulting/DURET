@@ -7,14 +7,67 @@ import { useEffect, useState } from "react"
 // C'est un CONFORT, pas une preuve : le lien magique reste envoyé à l'adresse,
 // et il faut toujours l'ouvrir. Rien de sensible ne dort donc ici.
 const CLE_DERNIER_EMAIL = "pluton.dernier_email"
+import { signIn } from "next-auth/react"
 import { MarqueDuret } from "@/components/nav/Logo"
+import ChoixProfil, { type CarteProfil } from "@/components/nav/ChoixProfil"
 
 type State = "idle" | "loading" | "sent" | "refused" | "error"
+
+// LA PAGE DE CONNEXION EST UN CHOIX DE PRÉNOM (13/09, demande de Noa, Duret) :
+// tout le monde partage la boîte Gmail de l'entreprise, alors l'écran montre
+// les cartes des profils, « comme Netflix », et chacun clique sur son nom. Le
+// lien magique ne sert plus qu'aux administrateurs, derrière un petit bouton
+// en bas. Sans boîte reliée ni profil, aucune carte : le lien magique
+// s'affiche pour tout le monde, comme avant.
+type Vue = "chargement" | "cartes" | "admin"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [state, setState] = useState<State>("idle")
   const [error, setError] = useState("")
+  const [vue, setVue] = useState<Vue>("chargement")
+  const [profils, setProfils] = useState<CarteProfil[]>([])
+  const [enCours, setEnCours] = useState<string | null>(null)
+  const [refusCarte, setRefusCarte] = useState("")
+
+  const chargerCartes = async () => {
+    try {
+      const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/connexion/profils`, { cache: "no-store" })
+      const j = r.ok ? await r.json() : null
+      const liste: CarteProfil[] = Array.isArray(j?.profils) ? j.profils : []
+      setProfils(liste)
+      return liste
+    } catch {
+      // Serveur muet : le lien magique reste la porte qui marche toujours.
+      setProfils([])
+      return []
+    }
+  }
+
+  useEffect(() => {
+    chargerCartes().then((liste) => setVue(liste.length > 0 ? "cartes" : "admin"))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const entrer = async (id: string) => {
+    if (enCours) return
+    setEnCours(id)
+    setRefusCarte("")
+    try {
+      const res = await signIn("credentials", { carte: "1", user_id: id, redirect: false })
+      if (res?.error) {
+        // Le profil a pu être désactivé ou déplacé depuis l'affichage : on
+        // relit les cartes plutôt que de laisser un bouton mort à l'écran.
+        setRefusCarte("Ce profil ne s'ouvre pas depuis cette page. Choisissez de nouveau, ou demandez à un administrateur.")
+        const liste = await chargerCartes()
+        if (liste.length === 0) setVue("admin")
+        return
+      }
+      window.location.href = "/chat"
+    } finally {
+      setEnCours(null)
+    }
+  }
 
   // Après le rendu, jamais pendant : lire le stockage local au premier rendu
   // ferait diverger le HTML du serveur et celui du navigateur (hydratation).
@@ -71,14 +124,47 @@ export default function LoginPage() {
     width: "100%",
   }
 
+  const fond: React.CSSProperties = {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "32px 16px",
+    boxSizing: "border-box",
+    background: "radial-gradient(circle at 50% -10%, var(--marque-primary-subtle), transparent 55%), var(--marque-canvas)",
+  }
+
+  // Le temps d'une requête : ne rien montrer plutôt que faire clignoter le
+  // formulaire du lien magique avant les cartes.
+  if (vue === "chargement") return <div style={fond} aria-busy="true" />
+
+  if (vue === "cartes") {
+    return (
+      <div style={{ ...fond, flexDirection: "column" }}>
+        <div className="sym-in" style={{ marginBottom: 18 }}>
+          <MarqueDuret taille={48} />
+        </div>
+        <ChoixProfil profils={profils} onChoisir={entrer} enCours={enCours}
+                     sousTitre="Choisissez votre nom pour retrouver vos conversations, vos documents et vos mails." />
+        {refusCarte && (
+          <p className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "18px 0 0", textAlign: "center" }}>
+            {refusCarte}
+          </p>
+        )}
+        {/* Le petit bouton des administrateurs : volontairement discret, il
+            ouvre le lien magique d'aujourd'hui. */}
+        <button type="button" data-testid="bouton-admin" onClick={() => { setVue("admin"); setRefusCarte("") }}
+                className="sym-tap"
+                style={{ marginTop: 36, background: "none", border: "none", cursor: "pointer", padding: "4px 8px",
+                         fontSize: 11, color: "var(--marque-text-muted)", letterSpacing: ".06em", opacity: 0.7 }}>
+          Admin
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      background: "radial-gradient(circle at 50% -10%, var(--marque-primary-subtle), transparent 55%), var(--marque-canvas)",
-    }}>
+    <div style={{ ...fond, flexDirection: "column" }}>
       <div className="sym-in sym-card" style={card}>
         {/* La marque en grand : c'est le premier écran, et le seul avant
             l'authentification. Elle se déplie ici verticalement — le symbole
@@ -174,9 +260,16 @@ export default function LoginPage() {
         )}
 
         <p className="sym-in sym-in-4" style={{ color: "var(--marque-text-muted)", fontSize: 11, margin: "24px 0 0", letterSpacing: ".04em" }}>
-          Accès réservé aux collaborateurs Duret & Sols
+          {profils.length > 0 ? "Connexion administrateur par lien magique" : "Accès réservé aux collaborateurs Duret & Sols"}
         </p>
       </div>
+      {profils.length > 0 && (
+        <button type="button" onClick={() => setVue("cartes")} className="sym-tap"
+                style={{ marginTop: 20, background: "none", border: "none", cursor: "pointer",
+                         fontSize: 13, color: "var(--marque-primary)" }}>
+          ← Retour aux profils
+        </button>
+      )}
     </div>
   )
 }

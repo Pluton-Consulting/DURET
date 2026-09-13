@@ -52,7 +52,8 @@ class LienConnexionRequest(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    email: str
+    # Vide pour un profil métier : la boîte de l'entreprise (13/09).
+    email: str = ""
     name: Optional[str] = None
     role: str = "terrain"
     quota_mensuel: Optional[int] = None
@@ -191,6 +192,23 @@ async def create_user(
     from auth import profils as _profils
     body.email = (body.email or "").strip()
     body.name = (body.name or "").strip() or None
+    # LA BOÎTE DE L'ENTREPRISE PAR DÉFAUT (13/09) : un profil métier sans
+    # adresse prend celle que tout le monde partage — c'est elle qui le met
+    # sur la page de connexion. Un administrateur garde toujours la sienne.
+    boite = await _profils.adresse_partagee()
+    if not body.email and boite and not _profils.est_admin(body.role):
+        body.email = boite
+    if not body.email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'adresse est obligatoire.")
+    partagee = _profils.meme_adresse(body.email, boite)
+    if partagee and _profils.est_admin(body.role):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
+            "Un compte administrateur a sa propre adresse : celle de la boîte de "
+            "l'entreprise ouvre la page de connexion sans lien magique."))
+    if partagee and not body.name:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
+            "Un profil de la boîte de l'entreprise a besoin d'un prénom : c'est lui "
+            "qui s'affiche sur sa carte à la connexion."))
     existants = await _profils.profils_de(body.email, actifs=False)
     refus = _profils.refus_creation(body.role, body.name, existants)
     if refus:
@@ -198,7 +216,7 @@ async def create_user(
     # Un administrateur lit tout : une restriction posée sur lui ne serait pas
     # appliquée (`dossiers_autorises`), autant ne pas l'écrire.
     dossiers = None if _profils.est_admin(body.role) else _nettoyer_dossiers(body.dossiers_mail)
-    if existants and dossiers is None and not _profils.est_admin(body.role):
+    if (existants or partagee) and dossiers is None and not _profils.est_admin(body.role):
         # Un profil d'une boîte PARTAGÉE commence par la boîte de réception
         # seule : c'est l'administrateur qui ouvre les autres dossiers.
         dossiers = []
@@ -289,12 +307,15 @@ async def dossiers_de_la_boite(current_user: User = Depends(get_current_user)):
     await rafraichir()
     from mail import imap
     if not imap.configure():
-        return {"dossiers": [], "erreur": "Aucune boîte de l'entreprise n'est reliée "
+        return {"dossiers": [], "adresse": None, "erreur": "Aucune boîte de l'entreprise n'est reliée "
                 "(Paramètres → Clés API → « La boîte mail de l'entreprise »)."}
+    # L'adresse partagée voyage avec les dossiers : l'écran la pose d'office
+    # dans le formulaire d'un nouveau profil (13/09, page de connexion par cartes).
+    adresse = imap.boite_unique()
     try:
-        return {"dossiers": await asyncio.to_thread(imap.dossiers_proposables), "erreur": ""}
+        return {"dossiers": await asyncio.to_thread(imap.dossiers_proposables), "adresse": adresse, "erreur": ""}
     except Exception as e:  # noqa: BLE001
-        return {"dossiers": [], "erreur": f"Les dossiers n'ont pas pu être lus : {str(e)[:160]}"}
+        return {"dossiers": [], "adresse": adresse, "erreur": f"Les dossiers n'ont pas pu être lus : {str(e)[:160]}"}
 
 
 @router.put("/{user_id}/dossiers-mail")

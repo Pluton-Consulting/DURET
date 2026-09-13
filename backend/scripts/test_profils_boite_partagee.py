@@ -337,7 +337,8 @@ verifier("la page des profils existe", "signIn(\"credentials\", { bascule: jeton
 reglages = lire("frontend/app/(app)/parametres/SettingsClient.tsx")
 verifier("l'administrateur coche les dossiers de chacun",
          "/api/users/dossiers-mail" in reglages and "<CasesDossiers" in reglages and "dossiers-mail`" in reglages)
-verifier("sur une adresse déjà portée, le prénom devient obligatoire", "required={adresseDejaPortee}" in reglages)
+verifier("sur une adresse déjà portée, le prénom devient obligatoire",
+         "required={prenomRequis}" in reglages and "prenomRequis = adresseDejaPortee ||" in reglages)
 
 print(f"\n{'✅ tout passe' if not echecs else f'❌ {len(echecs)} échec(s)'}\n")
 sys.exit(1 if echecs else 0)

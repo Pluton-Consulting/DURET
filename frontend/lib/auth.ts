@@ -54,10 +54,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // la boîte partagée — pas de nouveau lien magique pour passer de
         // Nathalie à Éric sur la même adresse.
         bascule: { type: "text" },
+        // LA CARTE DE LA PAGE DE CONNEXION (13/09, Duret) : un profil de la
+        // boîte de l'entreprise entre sans lien magique. Le serveur revérifie
+        // tout (profil de la boîte, actif, jamais un administrateur).
+        carte: { type: "text" },
       },
-      async authorize({ token, email, user_id, bascule }) {
+      async authorize({ token, email, user_id, bascule, carte }) {
         try {
-          const res = bascule
+          const res = carte
+            ? await fetch(`${API_URL}/api/auth/connexion/profil`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id }),
+              })
+            : bascule
             ? await fetch(`${API_URL}/api/auth/profils/changer`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${bascule}` },

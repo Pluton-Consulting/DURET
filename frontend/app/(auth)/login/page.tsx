@@ -18,8 +18,9 @@ type State = "idle" | "loading" | "sent" | "refused" | "error"
 // tout le monde partage la boîte Gmail de l'entreprise, alors l'écran montre
 // les cartes des profils, « comme Netflix », et chacun clique sur son nom. Le
 // lien magique ne sert plus qu'aux administrateurs, derrière un petit bouton
-// en bas. Sans boîte reliée ni profil, aucune carte : le lien magique
-// s'affiche pour tout le monde, comme avant.
+// en bas. L'écran des cartes est TOUJOURS l'écran d'arrivée : sans carte, il
+// dit ce qui manque et garde le bouton Admin (relevé de Noa, 13/09 : la page
+// basculait seule sur le lien magique quand aucun profil n'existait encore).
 type Vue = "chargement" | "cartes" | "admin"
 
 export default function LoginPage() {
@@ -30,6 +31,7 @@ export default function LoginPage() {
   const [profils, setProfils] = useState<CarteProfil[]>([])
   const [enCours, setEnCours] = useState<string | null>(null)
   const [refusCarte, setRefusCarte] = useState("")
+  const [raisonVide, setRaisonVide] = useState<string | null>(null)
   // La carte à code en cours de saisie (direction, ou profil qui en a posé un).
   const [aCoder, setACoder] = useState<CarteProfil | null>(null)
   const [erreurCode, setErreurCode] = useState("")
@@ -40,16 +42,18 @@ export default function LoginPage() {
       const j = r.ok ? await r.json() : null
       const liste: CarteProfil[] = Array.isArray(j?.profils) ? j.profils : []
       setProfils(liste)
+      setRaisonVide(j ? (j.raison ?? null) : "serveur")
       return liste
     } catch {
-      // Serveur muet : le lien magique reste la porte qui marche toujours.
+      // Serveur muet : on le dit ; le bouton Admin reste là.
       setProfils([])
+      setRaisonVide("serveur")
       return []
     }
   }
 
   useEffect(() => {
-    chargerCartes().then((liste) => setVue(liste.length > 0 ? "cartes" : "admin"))
+    chargerCartes().then(() => setVue("cartes"))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -70,8 +74,7 @@ export default function LoginPage() {
         // Le profil a pu être désactivé ou déplacé depuis l'affichage : on
         // relit les cartes plutôt que de laisser un bouton mort à l'écran.
         setRefusCarte("Ce profil ne s'ouvre pas depuis cette page. Choisissez de nouveau, ou demandez à un administrateur.")
-        const liste = await chargerCartes()
-        if (liste.length === 0) setVue("admin")
+        await chargerCartes()
         return
       }
       window.location.href = "/chat"
@@ -159,9 +162,20 @@ export default function LoginPage() {
           <CodeCarte nom={aCoder.nom} enCours={enCours === aCoder.id} erreur={erreurCode}
                      onValider={(code) => entrer(aCoder.id, code)}
                      onAnnuler={() => { setACoder(null); setErreurCode("") }} />
-        ) : (
+        ) : profils.length > 0 ? (
         <ChoixProfil profils={profils} onChoisir={(id) => entrer(id)} enCours={enCours}
                      sousTitre="Choisissez votre nom pour retrouver vos conversations, vos documents et vos mails." />
+        ) : (
+          <div data-testid="cartes-vides" className="sym-in" style={{ maxWidth: 440, textAlign: "center" }}>
+            <h1 style={{ margin: "0 0 8px", fontSize: 24, fontWeight: 800, color: "var(--marque-text-primary)" }}>Qui êtes-vous ?</h1>
+            <p style={{ margin: 0, fontSize: 14, color: "var(--marque-text-muted)", lineHeight: 1.5 }}>
+              {raisonVide === "boite_absente"
+                ? "Aucun profil à afficher : la boîte mail de l'entreprise n'est pas encore reliée. Un administrateur l'enregistre dans Paramètres → Clés API, puis crée les profils dans Paramètres → Utilisateurs."
+                : raisonVide === "serveur"
+                ? "Le serveur ne répond pas pour le moment. Réessayez dans un instant."
+                : "Aucun profil n'est encore créé. Un administrateur les ajoute dans Paramètres → Utilisateurs, sur l'adresse de la boîte de l'entreprise."}
+            </p>
+          </div>
         )}
         {refusCarte && (
           <p className="sym-pop" style={{ color: "var(--marque-error-text)", fontSize: 13, margin: "18px 0 0", textAlign: "center" }}>
@@ -277,10 +291,10 @@ export default function LoginPage() {
         )}
 
         <p className="sym-in sym-in-4" style={{ color: "var(--marque-text-muted)", fontSize: 11, margin: "24px 0 0", letterSpacing: ".04em" }}>
-          {profils.length > 0 ? "Connexion administrateur par lien magique" : "Accès réservé aux collaborateurs Duret & Sols"}
+          Connexion administrateur par lien magique
         </p>
       </div>
-      {profils.length > 0 && (
+      {(
         <button type="button" onClick={() => setVue("cartes")} className="sym-tap"
                 style={{ marginTop: 20, background: "none", border: "none", cursor: "pointer",
                          fontSize: 13, color: "var(--marque-primary)" }}>

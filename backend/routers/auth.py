@@ -331,8 +331,12 @@ async def profils_de_connexion():
     from auth import profils as _profils
     boite = await _profils.adresse_partagee()
     if not boite:
-        return {"profils": []}
-    return {"profils": _profils.cartes_de_connexion(await _profils.profils_de(boite), boite)}
+        # La RAISON d'une page vide (13/09, relevé de Noa : « ça arrive direct
+        # sur le login avec le mail ») : l'écran reste sur les cartes et dit
+        # quel geste manque, au lieu de basculer seul sur le lien magique.
+        return {"profils": [], "raison": "boite_absente"}
+    cartes = _profils.cartes_de_connexion(await _profils.profils_de(boite), boite)
+    return {"profils": cartes, "raison": None if cartes else "aucun_profil"}
 
 
 @router.post("/connexion/profil")

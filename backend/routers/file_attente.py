@@ -618,9 +618,9 @@ async def etat(current_user: User = Depends(get_current_user)):
     # `manage_users` : un employé ordinaire voyait deux boutons qui échouaient
     # à chaque clic. Deux routeurs qui se contredisent — l'un « c'est à toi de
     # décider », l'autre « tu n'as pas le droit » — se lisent comme une panne.
-    from security.rbac import has_permission
-    peut = (has_permission(current_user.role, "validate_skills")
-            or has_permission(current_user.role, "manage_users"))
+    # (14/09) Depuis que chacun tranche SES accords, la réponse est toujours
+    # oui : ces validations sont les siennes (`WHERE user_id = $1` ci-dessus).
+    peut = True
 
     return {"taches": sortie_taches, "validations": sortie_validations,
             "peut_decider": peut}

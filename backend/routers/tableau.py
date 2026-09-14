@@ -163,21 +163,29 @@ async def tableau(current_user: User = Depends(get_current_user)):
         """, uid, global_)
 
         # ── À valider : accords en attente + compétences à valider ──
+        # CHACUN SES ACCORDS (14/09, décision de Noa) : plus le périmètre
+        # global — la direction voyait les demandes de tout le monde, et
+        # « Voir dans le chat » ouvrait la conversation d'un autre.
         accords = await _sur(conn, f"""
             SELECT v.id, v.agent, v.reason, v.created_at, v.thread_id,
                    LEFT(COALESCE(v.draft, ''), 220) AS apercu,
                    COALESCE(u.name, u.email) AS demandeur
             FROM validations v LEFT JOIN users u ON u.id = v.user_id
-            WHERE v.status = 'pending' AND {perim.format(col='v.user_id')}
+            WHERE v.status = 'pending' AND {perso.format(col='v.user_id')}
             ORDER BY v.created_at DESC LIMIT 12
-        """, uid, global_)
+        """, uid)
+        # LES COMPÉTENCES SONT CELLES DE L'ENTREPRISE : une seule décision vaut
+        # pour tout le monde. Elles ne s'affichent qu'à qui peut la prendre
+        # (`validate_skills`), et se tranchent maintenant ICI (Valider /
+        # Écarter) : le lien « ouvrir Connaissances » arrivait sur les accords,
+        # la compétence n'y était pas, et la ligne ne partait jamais (14/09).
         competences_a_valider = await _sur(conn, """
-            SELECT name, description, status, created_at
+            SELECT name, description, status, created_at, (COALESCE(code, '') <> '') AS a_du_code
             FROM skills
             WHERE status IN ('draft','testing') AND created_by <> 'system'
               AND COALESCE(code,'') NOT LIKE '%Squelette g_n_rique%'
             ORDER BY created_at DESC LIMIT 8
-        """) if global_ else []
+        """) if has_permission(current_user.role, "validate_skills") else []
 
         # ── Tâches (arrière-plan) ──
         taches = await _sur(conn, f"""

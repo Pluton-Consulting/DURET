@@ -146,6 +146,11 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
   const [historiqueOuvert, setHistoriqueOuvert] = useState<string | null>(null)
   const [historiques, setHistoriques] = useState<Record<string, any>>({})
   const [hypotheses, setHypotheses] = useState(false)
+  // TRANCHER UNE COMPÉTENCE ICI (14/09, relevé de Noa : « ça part pas »). Le
+  // lien « ouvrir Connaissances » arrivait sur la file des accords, où la
+  // compétence ne figure pas : rien ne permettait de la faire partir.
+  const [competenceEnCours, setCompetenceEnCours] = useState<string | null>(null)
+  const [competenceErreur, setCompetenceErreur] = useState<Record<string, string>>({})
 
   // CE TABLEAU NE SE RAFRAÎCHISSAIT JAMAIS (01/09). Un seul chargement au
   // montage — et, pire, la scène garde les DEUX vues montées : basculer
@@ -161,6 +166,37 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
   //   · au montage ;
   //   · quand l'onglet REDEVIENT visible (on revient du chat, ou du navigateur) ;
   //   · toutes les 60 s, mais SEULEMENT si l'onglet est visible.
+  const trancherCompetence = async (nom: string, garder: boolean) => {
+    setCompetenceEnCours(nom)
+    setCompetenceErreur((e) => ({ ...e, [nom]: "" }))
+    const appel = async (chemin: string, corps: object) => {
+      const r = await fetch(`${apiUrl}/api/skills/${encodeURIComponent(nom)}${chemin}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(corps),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j?.detail || `HTTP ${r.status}`)
+    }
+    try {
+      if (garder) {
+        await appel("/validate", { status: "validated" })
+        // Une compétence tirée d'« Enrichir » naît désactivée : la valider sans
+        // l'activer la laisserait invisible à l'assistant.
+        await appel("/enabled", { enabled: true })
+      } else {
+        // Écarter = « deprecated » : rien ne s'efface, la compétence sort de la
+        // liste et ne sera jamais proposée à l'assistant.
+        await appel("/validate", { status: "deprecated" })
+      }
+      await charger()
+    } catch (e: any) {
+      setCompetenceErreur((x) => ({ ...x, [nom]: e?.message || "La décision n'a pas pu être enregistrée." }))
+    } finally {
+      setCompetenceEnCours(null)
+    }
+  }
+
   const charger = useCallback(async () => {
     try {
       const r = await fetch(`${apiUrl}/api/dashboard/tableau`,
@@ -295,7 +331,25 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                 <b style={{ fontSize: 13 }}>Nouvelle compétence à valider : {c.name}</b><time>{quand(c.created_at)}</time>
               </div>
-              <div style={{ color: "var(--marque-text-muted)", fontSize: 12.5 }}>{c.description || "—"} · <a href="/connaissances" style={{ color: "var(--marque-primary)" }}>ouvrir Connaissances</a></div>
+              <div style={{ color: "var(--marque-text-muted)", fontSize: 12.5 }}>{c.description || "—"}</div>
+              {c.a_du_code === false && (
+                <div style={{ color: "var(--marque-text-muted)", fontSize: 12 }}>
+                  Sans code : elle ne peut pas être validée telle quelle (Savoir-faire pour la compléter), seulement écartée.
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <button type="button" className="v2-bouton-plein" disabled={competenceEnCours === c.name || c.a_du_code === false}
+                        data-testid="valider-competence" onClick={() => trancherCompetence(c.name, true)}>
+                  {competenceEnCours === c.name ? "…" : "Valider"}
+                </button>
+                <button type="button" className="v2-bouton-doux" disabled={competenceEnCours === c.name}
+                        data-testid="ecarter-competence" onClick={() => trancherCompetence(c.name, false)}>
+                  Écarter
+                </button>
+              </div>
+              {competenceErreur[c.name] && (
+                <div role="status" style={{ color: "var(--marque-error-text)", fontSize: 12 }}>{competenceErreur[c.name]}</div>
+              )}
             </div>
           ))}
         </div>

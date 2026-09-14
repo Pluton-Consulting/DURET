@@ -544,8 +544,10 @@ async def get_pending_validations(current_user: User = Depends(get_current_user)
             FROM validations v
             LEFT JOIN users u ON u.id = v.user_id
             WHERE v.status = 'pending'
+              -- CHACUN SES ACCORDS (14/09) : les siens, et ceux sans propriétaire.
+              AND (v.user_id = $1 OR v.user_id IS NULL)
             ORDER BY v.created_at ASC
-        """)
+        """, current_user.id)
     return [dict(row) for row in rows]
 
 

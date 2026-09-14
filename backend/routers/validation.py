@@ -45,6 +45,22 @@ def _peut_valider(role: str) -> bool:
     return has_permission(role, "validate_skills") or has_permission(role, "manage_users")
 
 
+def peut_trancher(user_id, role: str, proprietaire) -> bool:
+    """CHACUN SES ACCORDS (14/09, décision de Noa : « les à valider doivent être
+    propres à chaque utilisateur », puis « chacun les siennes »).
+
+    Une demande se voit et se tranche par la personne qui l'a déclenchée —
+    quel que soit son rôle : un commercial approuve son propre envoi, et la
+    direction ne voit plus, ni ne tranche, celles des autres. Seule exception :
+    une demande sans propriétaire (ancienne ligne, geste système) reste aux
+    rôles qui administrent, sans quoi personne ne pourrait la fermer.
+    Fonction pure : le banc l'exécute.
+    """
+    if proprietaire is None:
+        return _peut_valider(role)
+    return str(proprietaire) == str(user_id)
+
+
 @router.get("/")
 async def list_validations(current_user: User = Depends(get_current_user)):
     """
@@ -54,9 +70,8 @@ async def list_validations(current_user: User = Depends(get_current_user)):
     `manage_users`, sinon 403. Renvoie pour chaque demande ses métadonnées ainsi
     que l'email et le nom de l'utilisateur qui l'a déclenchée (JOIN users).
     """
-    if not _peut_valider(current_user.role):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
-
+    # Les SIENNES seulement (14/09), plus celles sans propriétaire pour qui
+    # administre. Plus de 403 pour un profil métier : il a ses propres accords.
     async with get_db() as conn:
         rows = await conn.fetch(
             """
@@ -68,8 +83,10 @@ async def list_validations(current_user: User = Depends(get_current_user)):
             FROM validations v
             LEFT JOIN users u ON u.id = v.user_id
             WHERE v.status = 'pending'
+              AND (v.user_id = $1 OR (v.user_id IS NULL AND $2::boolean))
             ORDER BY v.created_at ASC
-            """
+            """,
+            current_user.id, _peut_valider(current_user.role),
         )
 
     return [_with_payload(row) for row in rows]
@@ -86,9 +103,6 @@ async def get_validation(
     Accessible aux rôles disposant de la permission `validate_skills` ou
     `manage_users`, sinon 403.
     """
-    if not _peut_valider(current_user.role):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
-
     async with get_db() as conn:
         row = await conn.fetchrow(
             """
@@ -104,7 +118,9 @@ async def get_validation(
             validation_id,
         )
 
-    if not row:
+    # La demande d'un autre n'existe pas pour moi (14/09) : 404 plutôt que 403,
+    # pour ne pas confirmer qu'elle existe.
+    if not row or not peut_trancher(current_user.id, current_user.role, row["user_id"]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Validation introuvable")
 
     return _with_payload(row)
@@ -126,9 +142,6 @@ async def resolve_validation(
     La décision (`approved`) est transmise à `runtime.resume_turn`, qui reprend
     le graph LangGraph au point de suspension. L'action est journalisée.
     """
-    if not _peut_valider(current_user.role):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
-
     decision = "approved" if body.approved else "rejected"
 
     # RÉCLAMATION ATOMIQUE. Lire le statut puis décider en Python laissait une
@@ -141,17 +154,21 @@ async def resolve_validation(
     # l'autre reçoit 409. Le `RETURNING` sert à distinguer « déjà résolue » de
     # « inexistante » sans seconde requête.
     async with get_db() as conn:
+        # CHACUN SES ACCORDS (14/09) : la condition de propriété est DANS
+        # l'UPDATE, pas dans un contrôle préalable — rien ne peut se glisser
+        # entre la vérification et l'écriture.
         reclamee = await conn.fetchrow(
             """UPDATE validations
                SET status = $1, validated_by = $2, resolved_at = NOW()
                WHERE id = $3 AND status = 'pending'
+                 AND (user_id = $2 OR (user_id IS NULL AND $4::boolean))
                RETURNING id, thread_id, agent""",
-            decision, current_user.id, validation_id)
+            decision, current_user.id, validation_id, _peut_valider(current_user.role))
         if reclamee is None:
-            existe = await conn.fetchval(
-                "SELECT 1 FROM validations WHERE id = $1", validation_id)
+            ligne = await conn.fetchrow(
+                "SELECT user_id FROM validations WHERE id = $1", validation_id)
     if reclamee is None:
-        if not existe:
+        if not ligne or not peut_trancher(current_user.id, current_user.role, ligne["user_id"]):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="Validation introuvable")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -320,8 +337,10 @@ async def progression_reprise(validation_id: UUID,
     """
     from agents import runtime as _runtime
     async with get_db() as conn:
-        fil = await conn.fetchval(
-            "SELECT thread_id FROM validations WHERE id = $1", validation_id)
+        ligne = await conn.fetchrow(
+            "SELECT thread_id, user_id FROM validations WHERE id = $1", validation_id)
+    fil = ligne["thread_id"] if ligne and peut_trancher(
+        current_user.id, current_user.role, ligne["user_id"]) else None
     if not fil:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Validation introuvable")

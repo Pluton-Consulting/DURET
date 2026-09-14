@@ -329,13 +329,10 @@ async def profils_de_connexion():
     (Headscale) : l'application n'est pas exposée ailleurs.
     """
     from auth import profils as _profils
-    boite = await _profils.adresse_partagee()
-    if not boite:
-        # La RAISON d'une page vide (13/09, relevé de Noa : « ça arrive direct
-        # sur le login avec le mail ») : l'écran reste sur les cartes et dit
-        # quel geste manque, au lieu de basculer seul sur le lien magique.
-        return {"profils": [], "raison": "boite_absente"}
-    cartes = _profils.cartes_de_connexion(await _profils.profils_de(boite), boite)
+    # LES CARTES NE DÉPENDENT PLUS DE LA BOÎTE (14/09, Noa : « chacun peut se
+    # connecter avec son prénom même si l'adresse mail n'est pas configurée »).
+    # Une page vide dit seulement qu'aucun profil n'existe encore.
+    cartes = _profils.cartes_de_connexion(await _profils.profils_tous())
     return {"profils": cartes, "raison": None if cartes else "aucun_profil"}
 
 
@@ -351,9 +348,8 @@ async def entrer_par_carte(body: ChangerProfilRequest, request: Request):
     utilisateurs passe toujours par le lien magique. Chaque entrée est tracée.
     """
     from auth import profils as _profils
-    boite = await _profils.adresse_partagee()
-    tous = await _profils.profils_de(boite) if boite else []
-    retenu = _profils.entree_par_carte(tous, boite, body.user_id)
+    tous = await _profils.profils_tous()
+    retenu = _profils.entree_par_carte(tous, None, body.user_id)
     if retenu is None:
         await log_action(action="connexion_carte_refusee", success=False,
                          error_message="profil hors des cartes de connexion")
@@ -379,7 +375,7 @@ async def mes_profils(current_user: User = Depends(get_current_user)):
     adresse, et pour un administrateur."""
     from auth import profils as _profils
     partages = await _profils.profils_partages(str(current_user.id))
-    return {"profils": _profils.cartes(partages), "actuel": str(current_user.id)}
+    return {"profils": _profils.cartes_de_connexion(partages), "actuel": str(current_user.id)}
 
 
 @router.post("/profils/changer")
@@ -394,7 +390,7 @@ async def changer_de_profil(body: ChangerProfilRequest, request: Request,
     """
     from auth import profils as _profils
     partages = await _profils.profils_partages(str(current_user.id))
-    retenu = _profils.choisir(partages, body.user_id) if partages else None
+    retenu = _profils.entree_par_carte(partages, None, body.user_id) if partages else None
     if not isinstance(retenu, dict):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Ce profil n'est pas accessible depuis ce compte.")

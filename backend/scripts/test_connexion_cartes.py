@@ -64,17 +64,23 @@ verifier("auth/profils porte cartes_de_connexion et entree_par_carte", existe)
 if existe:
     c = profils.cartes_de_connexion(TOUS, BOITE)
     ids = [x["id"] for x in c]
-    verifier("les profils actifs de la boîte, casse de l'adresse ignorée", ids == ["a1", "a2"], ids)
+    # 14/09 (Noa) : « chacun peut se connecter avec son prénom même si l'adresse
+    # mail n'est pas configurée » — les cartes ne dépendent plus de l'adresse.
+    verifier("les profils actifs, quelle que soit leur adresse (14/09)", ids == ["a1", "a2", "x1"], ids)
     verifier("ni rôle ni adresse sur une carte (id, nom, code seulement)",
              all(set(x) == {"id", "nom", "code"} for x in c), c)
-    verifier("pas de boîte reliée : aucune carte", profils.cartes_de_connexion(TOUS, None) == [])
+    verifier("pas de boîte reliée : les MÊMES cartes (14/09)",
+             profils.cartes_de_connexion(TOUS, None) == c)
 
     print("— L'entrée par une carte")
     verifier("un profil de la boîte s'ouvre", (profils.entree_par_carte(TOUS, BOITE, "a2") or {}).get("id") == "a2")
     for uid, pourquoi in [("d1", "direction"), ("s1", "super_admin"), ("a3", "désactivé"),
-                          ("x1", "une autre adresse"), ("zz", "inventé"), ("", "vide")]:
+                          ("zz", "inventé"), ("", "vide")]:
         verifier(f"refusé : {pourquoi}", profils.entree_par_carte(TOUS, BOITE, uid) is None)
-    verifier("sans boîte reliée, rien ne s'ouvre", profils.entree_par_carte(TOUS, None, "a1") is None)
+    verifier("un profil d'une autre adresse s'ouvre aussi (14/09)",
+             (profils.entree_par_carte(TOUS, BOITE, "x1") or {}).get("id") == "x1")
+    verifier("sans boîte reliée, un profil s'ouvre quand même (14/09)",
+             (profils.entree_par_carte(TOUS, None, "a1") or {}).get("id") == "a1")
 
 # ── Les routes, extraites de routers/auth.py et exécutées ──
 print("— Les routes")
@@ -127,6 +133,13 @@ doublure = types.ModuleType("auth.profils")
 doublure.__dict__.update({k: v for k, v in profils.__dict__.items() if not k.startswith("__")})
 doublure.adresse_partagee = _adresse
 doublure.profils_de = _profils_de
+
+
+async def _profils_tous(actifs=True):
+    return [p for p in TOUS if p["actif"] or not actifs]
+
+
+doublure.profils_tous = _profils_tous
 sys.modules["auth"] = types.SimpleNamespace(profils=doublure)
 sys.modules["auth.profils"] = doublure
 
@@ -164,10 +177,10 @@ if len(trouvees) == 3:
     lister, entrer = espace["profils_de_connexion"], espace["entrer_par_carte"]
 
     r = asyncio.run(lister())
-    verifier("GET : les cartes Nathalie et Éric seulement", [p["nom"] for p in r["profils"]] == ["Nathalie", "Éric"], r)
+    verifier("GET : les cartes de tous les profils actifs non administrateurs",
+             [p["nom"] for p in r["profils"]] == ["Nathalie", "Éric", "Benoît"], r)
     _Etat.boite = None
-    verifier("GET sans boîte reliée : aucune carte, et la raison est dite",
-             asyncio.run(lister()) == {"profils": [], "raison": "boite_absente"})
+    verifier("GET sans boîte reliée : les mêmes cartes (14/09)", asyncio.run(lister()) == r)
     _Etat.boite = BOITE
 
     def ouvrir(uid):
@@ -186,14 +199,15 @@ if len(trouvees) == 3:
              any(j.get("action") == "login" and (j.get("metadata") or {}).get("par") == "carte_profil" for j in JOURNAL), JOURNAL)
     verifier("last_login posé", any("last_login" in s for s, _ in ECRITURES))
 
-    for uid in ("s1", "d1", "a3", "x1", "inconnu"):
+    for uid in ("s1", "d1", "a3", "inconnu"):
         r = ouvrir(uid)
         verifier(f"POST {uid} : 403, aucune session, refus tracé",
                  isinstance(r, HTTPException) and r.status_code == 403 and not APPAREILS
                  and any(j.get("action") == "connexion_carte_refusee" for j in JOURNAL), r)
     _Etat.boite = None
     r = ouvrir("a1")
-    verifier("POST sans boîte reliée : 403", isinstance(r, HTTPException) and r.status_code == 403)
+    verifier("POST sans boîte reliée : la session s'ouvre quand même (14/09)",
+             isinstance(r, dict) and r["user_id"] == "a1", r)
     _Etat.boite = BOITE
 
 # ── La création d'un profil ──

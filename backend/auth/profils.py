@@ -75,6 +75,39 @@ def code_correct(code: Optional[str], empreinte: Optional[str]) -> bool:
         return False
 
 
+# LE CODE SE RELIT (14/09, migration 042). Noa veut VOIR les codes depuis
+# l'administration. L'empreinte ne se relit pas : on garde donc aussi le code
+# chiffré (Fernet, clé dérivée du secret JWT). La vérification reste sur
+# l'empreinte — un secret changé rend le code illisible à l'écran, il continue
+# d'ouvrir la carte.
+def _fernet():
+    try:
+        import base64
+        from cryptography.fernet import Fernet
+        from config import settings
+        cle = hashlib.sha256(b"pluton:code-carte:" + str(settings.jwt_secret_key).encode()).digest()
+        return Fernet(base64.urlsafe_b64encode(cle))
+    except Exception:  # noqa: BLE001 — sans bibliothèque ou sans secret : code non relisible
+        return None
+
+
+def chiffrer_code(code: Optional[str]) -> Optional[str]:
+    f = _fernet()
+    if not code or f is None:
+        return None
+    return f.encrypt(code.strip().encode()).decode()
+
+
+def dechiffrer_code(chiffre: Optional[str]) -> Optional[str]:
+    f = _fernet()
+    if not chiffre or f is None:
+        return None
+    try:
+        return f.decrypt(chiffre.encode()).decode()
+    except Exception:  # noqa: BLE001 — secret changé : illisible, pas une panne
+        return None
+
+
 def a_un_code(p: dict) -> bool:
     return bool(p.get("a_code") or p.get("code_pin_hash"))
 
@@ -175,20 +208,22 @@ def en_carte(p: dict) -> bool:
     return bool(p.get("actif", True))
 
 
-def cartes_de_connexion(profils: list[dict], boite: Optional[str]) -> list[dict]:
-    """LA PAGE DE CONNEXION (13/09) : les cartes des profils de la boîte de
-    l'entreprise, à choisir SANS lien magique.
+def cartes_de_connexion(profils: list[dict], boite: Optional[str] = None) -> list[dict]:
+    """LA PAGE DE CONNEXION : les cartes des profils, à choisir SANS lien magique.
 
-    Seulement : des comptes actifs, qui portent l'adresse de la boîte unique ;
-    jamais un super_admin ; la direction seulement si elle a un code. La carte
-    dit s'il faut un code (`code`), jamais le rôle. Pas de boîte reliée :
-    aucune carte, et la page retombe sur le lien magique pour tout le monde.
+    (14/09, demande de Noa : « chacun peut se connecter à son compte avec son
+    prénom même si l'adresse mail n'est pas configurée ».) Les cartes ne
+    dépendent PLUS de la boîte de l'entreprise : jusqu'ici, sans boîte reliée,
+    aucune carte ne s'affichait, et un profil créé avant de relier la boîte
+    n'avait aucun moyen d'entrer. L'adresse ne sert désormais qu'au mail.
+
+    Seulement : des comptes actifs ; jamais un super_admin ; la direction
+    seulement si elle a un code. La carte dit s'il faut un code (`code`),
+    jamais le rôle ni l'adresse. `boite` n'est plus lu (gardé pour les appels).
     """
-    if not boite:
-        return []
     return [{"id": str(p["id"]), "nom": (p.get("name") or "").strip() or "Sans nom",
              "code": a_un_code(p)}
-            for p in profils if en_carte(p) and meme_adresse(p.get("email"), boite)]
+            for p in profils if en_carte(p)]
 
 
 def entree_par_carte(profils: list[dict], boite: Optional[str], user_id: Optional[str]):
@@ -196,7 +231,7 @@ def entree_par_carte(profils: list[dict], boite: Optional[str], user_id: Optiona
 
     Tout est revérifié ici, rien n'est cru de l'écran : l'identifiant doit
     être une des cartes que `cartes_de_connexion` montrerait — donc jamais un
-    administrateur, jamais un compte désactivé, jamais une autre adresse.
+    super_admin, jamais une direction sans code, jamais un compte désactivé.
     """
     if not user_id:
         return None
@@ -207,39 +242,61 @@ def entree_par_carte(profils: list[dict], boite: Optional[str], user_id: Optiona
 
 
 # ── Accès base ───────────────────────────────────────────────────────────
-async def profils_de(email: str, actifs: bool = True) -> list[dict]:
-    """Les comptes qui portent cette adresse (insensible à la casse).
-
-    `a_code` dit si la carte a un code — jamais l'empreinte. Sans la migration
-    041, aucune carte n'a de code (et la direction n'en a donc pas)."""
+async def _profils(filtre: str, *args) -> list[dict]:
+    """`a_code` dit si la carte a un code — jamais l'empreinte. Sans la
+    migration 041, aucune carte n'a de code (et la direction n'en a donc pas)."""
     from database.connection import get_db, schema_incomplet
-    filtre = ("WHERE lower(email) = lower($1) " + ("AND actif = true " if actifs else "") +
-              "ORDER BY lower(coalesce(name, '')), created_at")
     async with get_db() as conn:
         try:
             lignes = await conn.fetch(
                 "SELECT id, email, name, role, actif, (code_pin_hash IS NOT NULL) AS a_code "
-                "FROM users " + filtre, (email or "").strip())
+                "FROM users " + filtre, *args)
         except Exception as e:  # noqa: BLE001
             if not schema_incomplet(e):
                 raise
             lignes = await conn.fetch(
-                "SELECT id, email, name, role, actif, false AS a_code FROM users " + filtre,
-                (email or "").strip())
+                "SELECT id, email, name, role, actif, false AS a_code FROM users " + filtre, *args)
     return [dict(l) for l in lignes]
 
 
+async def profils_de(email: str, actifs: bool = True) -> list[dict]:
+    """Les comptes qui portent cette adresse (insensible à la casse)."""
+    return await _profils(
+        "WHERE lower(email) = lower($1) " + ("AND actif = true " if actifs else "") +
+        "ORDER BY lower(coalesce(name, '')), created_at", (email or "").strip())
+
+
+async def profils_tous(actifs: bool = True) -> list[dict]:
+    """Tous les comptes, dans l'ordre des cartes (14/09 : les cartes ne
+    dépendent plus d'une adresse)."""
+    return await _profils(("WHERE actif = true " if actifs else "") +
+                          "ORDER BY lower(coalesce(name, '')), created_at")
+
+
 async def profils_partages(user_id: str) -> list[dict]:
-    """Les profils entre lesquels CE compte peut basculer : ceux de son
-    adresse, s'il en partage une et n'est pas administrateur. Sinon, rien."""
+    """Les profils entre lesquels CE compte peut basculer (« Changer de
+    profil ») : les mêmes cartes que la page de connexion (14/09 : plus
+    seulement celles de son adresse). Rien pour un administrateur, rien s'il
+    n'y a pas d'autre carte que la sienne."""
     from database.connection import get_db
     async with get_db() as conn:
         moi = await conn.fetchrow(
             "SELECT email, role FROM users WHERE id = $1::uuid AND actif = true", str(user_id))
     if not moi or est_admin(moi["role"]):
         return []
-    profils = await profils_de(moi["email"])
+    profils = [p for p in await profils_tous() if en_carte(p)]
     return profils if len(profils) > 1 else []
+
+
+async def code_obligatoire(role: Optional[str], email: Optional[str]) -> bool:
+    """La direction garde un code dès que son adresse est partagée — la boîte
+    de l'entreprise ou une adresse que porte un autre profil : sans lui, sa
+    carte n'existe pas et n'importe qui entrerait en direction d'un clic."""
+    if (role or "").strip().lower() not in ROLES_CODE_OBLIGATOIRE:
+        return False
+    if meme_adresse(email, await adresse_partagee()):
+        return True
+    return len(await profils_de(email or "", actifs=False)) > 1
 
 
 async def controler_code(user_id: str, code: Optional[str]) -> Optional[str]:

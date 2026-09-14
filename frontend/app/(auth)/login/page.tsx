@@ -173,7 +173,7 @@ export default function LoginPage() {
                 ? "Aucun profil à afficher : la boîte mail de l'entreprise n'est pas encore reliée. Un administrateur l'enregistre dans Paramètres → Clés API, puis crée les profils dans Paramètres → Utilisateurs."
                 : raisonVide === "serveur"
                 ? "Le serveur ne répond pas pour le moment. Réessayez dans un instant."
-                : "Aucun profil n'est encore créé. Un administrateur les ajoute dans Paramètres → Utilisateurs, sur l'adresse de la boîte de l'entreprise."}
+                : "Aucun profil n'est encore créé. Un administrateur les ajoute dans Paramètres → Utilisateurs (la boîte mail peut être reliée plus tard)."}
             </p>
           </div>
         )}

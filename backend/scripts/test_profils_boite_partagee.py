@@ -161,8 +161,11 @@ bloc_cartes = src_auth.split("async def profils_du_lien")[1].split("@router")[0]
 verifier("les cartes ne se donnent que contre un lien VALIDE (anti-énumération)",
          "expires_at" in bloc_cartes and "utilisations_max" in bloc_cartes)
 bloc_changer = src_auth.split("async def changer_de_profil")[1].split("@router")[0]
-verifier("changer de profil ne sort jamais de l'adresse", "profils_partages" in bloc_changer
-         and "_profils.choisir(partages" in bloc_changer)
+# 14/09 : on bascule parmi les MÊMES cartes que la page de connexion (jamais un
+# super_admin, la direction seulement avec code, qui est alors exigé).
+verifier("changer de profil passe par les cartes de connexion et exige le code",
+         "profils_partages" in bloc_changer and "_profils.entree_par_carte(partages" in bloc_changer
+         and "_exiger_code(retenu" in bloc_changer)
 verifier("le changement de profil est journalisé", 'action="changement_profil"' in bloc_changer)
 src_users = lire("backend/routers/users.py")
 verifier("la création passe par la règle des profils", "_profils.refus_creation(" in src_users)

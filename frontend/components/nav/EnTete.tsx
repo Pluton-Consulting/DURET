@@ -184,12 +184,14 @@ export default function EnTete({ role, email, name }: Props) {
             </Link>
           ))}
           <div style={{ flex: 1 }} />
-          {autresProfils > 1 && (
+          {/* MON PROFIL, TOUJOURS (14/09) : chacun y change son code de carte ;
+              « Changer de profil » s'y trouve quand d'autres cartes existent. */}
+          {(
             <Link href="/profil" className="v2-section" onClick={() => setPanneau(false)}>
               <span className="v2-section-ico">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
               </span>
-              <span><b>Changer de profil</b><small>Un autre prénom de la même boîte</small></span>
+              <span><b>Mon profil</b><small>{autresProfils > 1 ? "Mon code de connexion, changer de profil" : "Mon code de connexion"}</small></span>
             </Link>
           )}
           <button type="button" className="v2-section" onClick={() => signOut({ callbackUrl: "/login" })}>

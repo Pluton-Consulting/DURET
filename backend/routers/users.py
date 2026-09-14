@@ -69,6 +69,12 @@ class RoleRequest(BaseModel):
     role: str
 
 
+class ModifierProfilRequest(BaseModel):
+    """(14/09) Le nom et l'adresse d'un profil. None = inchangé."""
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
 class CodeRequest(BaseModel):
     # Vide ou absent : retirer le code.
     code: Optional[str] = None
@@ -121,6 +127,63 @@ async def get_me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+class MonCodeRequest(BaseModel):
+    code: Optional[str] = None
+
+
+@router.get("/me/code")
+async def mon_code(current_user: User = Depends(get_current_user)):
+    """Le code de SA carte (14/09, Noa : « chacun doit pouvoir modifier le sien
+    depuis son espace »). Déclarée avant `/{user_id}/…` : « me » n'est pas un
+    identifiant."""
+    from auth import profils as _profils
+    ligne = None
+    for requete in ("SELECT email, role, code_pin_hash, code_pin_chiffre FROM users WHERE id = $1",
+                    "SELECT email, role, code_pin_hash, NULL AS code_pin_chiffre FROM users WHERE id = $1"):
+        try:
+            async with get_db() as conn:
+                ligne = await conn.fetchrow(requete, current_user.id)
+            break
+        except Exception as e:  # noqa: BLE001
+            from database.connection import schema_incomplet
+            if not schema_incomplet(e):
+                raise
+    if not ligne:
+        return {"a_code": False, "code": None, "obligatoire": False, "possible": False}
+    return {"a_code": bool(ligne["code_pin_hash"]),
+            "code": _profils.dechiffrer_code(ligne["code_pin_chiffre"]),
+            "obligatoire": await _profils.code_obligatoire(ligne["role"], ligne["email"]),
+            # Le super_admin n'a jamais de carte : un code ne lui servirait à rien.
+            "possible": ligne["role"] not in _profils.ROLES_JAMAIS_EN_CARTE}
+
+
+@router.put("/me/code")
+async def changer_mon_code(body: MonCodeRequest, current_user: User = Depends(get_current_user)):
+    """Pose, change ou retire le code de SA carte. Aucune permission requise :
+    la session prouve déjà la personne (elle est entrée par sa carte, et donc
+    par son code s'il en avait un)."""
+    from auth import profils as _profils
+    code = (body.code or "").strip()
+    if code and not _profils.code_valide(code):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Le code fait 4 à 6 chiffres.")
+    if current_user.role in _profils.ROLES_JAMAIS_EN_CARTE:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Un super administrateur n'a pas de carte : il n'a pas de code.")
+    async with get_db() as conn:
+        moi = await conn.fetchrow("SELECT email, role FROM users WHERE id = $1", current_user.id)
+    if not code and moi and await _profils.code_obligatoire(moi["role"], moi["email"]):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
+            "Un profil de direction sur une adresse partagée garde un code : changez-le "
+            "plutôt que de le retirer."))
+    async with get_db() as conn:
+        await _poser_code(conn, current_user.id, code or None)
+    await log_action(action="code_carte_modifie", user_id=str(current_user.id),
+                     metadata={"target_user_id": str(current_user.id), "par_soi": True,
+                               "retire": not code})
+    return {"a_code": bool(code), "code": code or None}
+
+
 @router.get("/")
 async def list_users(current_user: User = Depends(get_current_user)):
     if not has_permission(current_user.role, "manage_users"):
@@ -162,22 +225,34 @@ async def list_users(current_user: User = Depends(get_current_user)):
                 requete.replace("u.dossiers_mail,", "NULL::text[] AS dossiers_mail,"),
                 current_user.role == "super_admin")
 
-    # Quelle carte a un code (041) — jamais l'empreinte. Lu à part : sans la
-    # migration, la liste reste lisible.
+    # Quelle carte a un code (041) — jamais l'empreinte — et le code LUI-MÊME
+    # (042, 14/09 : Noa veut « les voir et les modifier après »), déchiffré
+    # seulement pour les profils que l'on gère : la direction ne lit pas le
+    # code d'un super_admin ni d'une autre direction. Lu à part : sans les
+    # migrations, la liste reste lisible.
+    from auth import profils as _profils
     avec_code: set = set()
-    try:
-        async with get_db() as conn:
-            avec_code = {str(r["id"]) for r in await conn.fetch(
-                "SELECT id FROM users WHERE code_pin_hash IS NOT NULL")}
-    except Exception as e:  # noqa: BLE001
-        from database.connection import schema_incomplet
-        if not schema_incomplet(e):
-            raise
+    chiffres: dict = {}
+    for requete_code in ("SELECT id, code_pin_chiffre FROM users WHERE code_pin_hash IS NOT NULL",
+                         "SELECT id, NULL AS code_pin_chiffre FROM users WHERE code_pin_hash IS NOT NULL"):
+        try:
+            async with get_db() as conn:
+                lignes_code = await conn.fetch(requete_code)
+            avec_code = {str(r["id"]) for r in lignes_code}
+            chiffres = {str(r["id"]): r["code_pin_chiffre"] for r in lignes_code}
+            break
+        except Exception as e:  # noqa: BLE001
+            from database.connection import schema_incomplet
+            if not schema_incomplet(e):
+                raise
 
     result = []
     for row in rows:
         d = dict(row)
         d["a_code"] = str(d["id"]) in avec_code
+        lisible = (str(d["id"]) == str(current_user.id)
+                   or peut_ouvrir_pour(current_user.role, d["role"]))
+        d["code"] = _profils.dechiffrer_code(chiffres.get(str(d["id"]))) if lisible and d["a_code"] else None
         explicit = {
             a: d.pop(f"explicit_{a}")
             for a in AGENTS
@@ -225,12 +300,16 @@ async def create_user(
         body.email = boite
     if not body.email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'adresse est obligatoire.")
-    partagee = _profils.meme_adresse(body.email, boite)
     code = (getattr(body, "code_pin", None) or "").strip()
     if code and not _profils.code_valide(code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Le code d'une carte fait 4 à 6 chiffres.")
     existants = await _profils.profils_de(body.email, actifs=False)
+    # (14/09) Une adresse déjà portée par un autre profil suit AUSSI les règles
+    # des cartes, boîte reliée ou non : Noa crée les profils sur l'adresse de
+    # l'entreprise AVANT de relier la boîte, et la direction qui la partage
+    # doit alors avoir un code, comme sur la boîte.
+    partagee = _profils.meme_adresse(body.email, boite) or bool(existants)
     # Sur la boîte de l'entreprise, les règles de la PAGE DE CONNEXION (13/09) :
     # la direction y vit derrière un code, le super_admin jamais. Ailleurs,
     # celles des adresses partagées par lien magique (11/09).
@@ -312,6 +391,18 @@ async def _poser_code(conn, user_id, code: Optional[str]) -> None:
     Sans la migration 041, le refus NOMME la migration : un code qu'on croit
     posé et qui ne l'est pas laisserait la carte ouverte."""
     from auth import profils as _profils
+    try:
+        await conn.execute(
+            "UPDATE users SET code_pin_hash = $1, code_pin_chiffre = $3, code_pin_echecs = 0, "
+            "code_pin_bloque_jusqu = NULL WHERE id = $2::uuid",
+            _profils.hacher_code(code) if code else None, str(user_id),
+            _profils.chiffrer_code(code) if code else None)
+        return
+    except Exception as e:  # noqa: BLE001
+        from database.connection import schema_incomplet
+        if not schema_incomplet(e):
+            raise
+    # Sans la 042 : le code ouvre la carte, mais ne se relira pas à l'écran.
     try:
         await conn.execute(
             "UPDATE users SET code_pin_hash = $1, code_pin_echecs = 0, code_pin_bloque_jusqu = NULL "
@@ -652,16 +743,132 @@ async def poser_code(user_id: UUID, body: CodeRequest,
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
     if str(user_id) != str(current_user.id) and not peut_ouvrir_pour(current_user.role, cible["role"]):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
-    if not code and cible["role"] in _profils.ROLES_CODE_OBLIGATOIRE \
-            and _profils.meme_adresse(cible["email"], await _profils.adresse_partagee()):
+    if not code and await _profils.code_obligatoire(cible["role"], cible["email"]):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
-            "Un profil de direction sur la boîte de l'entreprise garde un code : "
+            "Un profil de direction sur une adresse partagée garde un code : "
             "changez-le plutôt que de le retirer."))
     async with get_db() as conn:
         await _poser_code(conn, user_id, code or None)
     await log_action(action="code_carte_modifie", user_id=str(current_user.id),
                      metadata={"target_user_id": str(user_id), "retire": not code})
-    return {"user_id": str(user_id), "a_code": bool(code)}
+    return {"user_id": str(user_id), "a_code": bool(code), "code": code or None}
+
+
+@router.put("/{user_id}")
+async def modifier_utilisateur(user_id: UUID, body: ModifierProfilRequest,
+                               current_user: User = Depends(get_current_user)):
+    """MODIFIER UN PROFIL (14/09, demande de Noa) : son nom et son adresse.
+
+    Le rôle, les dossiers du mail et le code ont leurs propres routes. Même
+    hiérarchie que le reste : la direction ne touche que les rôles métier.
+    Une adresse partagée suit les règles des cartes (nom obligatoire et unique
+    sur l'adresse, direction avec code, jamais un super_admin).
+    """
+    if not has_permission(current_user.role, "manage_users"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+    from auth import profils as _profils
+    async with get_db() as conn:
+        cible = await conn.fetchrow("SELECT id, email, name, role FROM users WHERE id = $1", user_id)
+    if not cible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+    if str(user_id) != str(current_user.id) and not peut_ouvrir_pour(current_user.role, cible["role"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
+
+    nom = cible["name"] if body.name is None else ((body.name or "").strip() or None)
+    email = cible["email"] if body.email is None else (body.email or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="L'adresse est obligatoire.")
+
+    existants = await _profils.profils_de(email, actifs=False)
+    moi = next((e for e in await _profils.profils_de(cible["email"], actifs=False)
+                if str(e["id"]) == str(user_id)), {})
+    autres = [e for e in existants if str(e["id"]) != str(user_id)]
+    if _profils.meme_adresse(email, await _profils.adresse_partagee()) or autres:
+        refus = _profils.refus_sur_boite(cible["role"], nom, _profils.a_un_code(moi),
+                                         existants, soi=str(user_id))
+        if refus:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refus)
+
+    async with get_db() as conn:
+        try:
+            await conn.execute("UPDATE users SET name = $1, email = $2 WHERE id = $3",
+                               nom, email, user_id)
+        except Exception as e:  # noqa: BLE001
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail=f"Un profil « {nom or ''} » existe déjà sur cette adresse.")
+            raise
+    await log_action(action="user_modified", user_id=str(current_user.id),
+                     metadata={"target_user_id": str(user_id),
+                               "nom_change": nom != cible["name"],
+                               "adresse_changee": not _profils.meme_adresse(email, cible["email"])})
+    return {"id": str(user_id), "name": nom, "email": email}
+
+
+# Les colonnes qui désignent un utilisateur SANS « ON DELETE » : sans elles, le
+# DELETE serait refusé par la base. Lues dans le catalogue plutôt qu'écrites à
+# la main, pour qu'une table ajoutée demain ne rende pas la suppression
+# impossible en silence.
+_REFERENCES_SANS_CASCADE = """
+    SELECT c.conrelid::regclass::text AS tbl, a.attname AS col, NOT a.attnotnull AS nullable
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+    WHERE c.contype = 'f' AND c.confrelid = 'users'::regclass
+      AND c.confdeltype IN ('a', 'r')
+"""
+
+
+def _ident(nom: str) -> str:
+    return '"' + str(nom).replace('"', '""') + '"'
+
+
+@router.delete("/{user_id}")
+async def supprimer_utilisateur(user_id: UUID, current_user: User = Depends(get_current_user)):
+    """SUPPRIMER COMPLÈTEMENT UN PROFIL (14/09, demande de Noa).
+
+    Désactiver le laisse en base ; ceci l'efface, avec tout ce qui n'appartient
+    qu'à lui (conversations, messages, tâches, consignes, validations, appareils,
+    suivis — les tables en `ON DELETE CASCADE`). Ce qui a seulement été FAIT
+    par lui garde sa ligne sans son nom (journal d'audit, réglages qu'il a
+    modifiés, trames créées : la colonne passe à NULL) ; ce qui ne peut pas
+    rester orphelin (sa consommation d'API) part. Une seule transaction : ou
+    tout part, ou rien.
+
+    On ne se supprime pas soi-même ; la direction ne supprime que des rôles
+    métier ; le dernier super_admin actif ne se supprime pas.
+    """
+    if not has_permission(current_user.role, "manage_users"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+    if str(user_id) == str(current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="On ne supprime pas son propre profil : demandez à un autre administrateur.")
+    async with get_db() as conn:
+        cible = await conn.fetchrow("SELECT id, email, name, role FROM users WHERE id = $1", user_id)
+        if not cible:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur introuvable")
+        if not peut_ouvrir_pour(current_user.role, cible["role"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
+        if cible["role"] == "super_admin":
+            restants = await conn.fetchval(
+                "SELECT count(*) FROM users WHERE role = 'super_admin' AND actif = true AND id <> $1", user_id)
+            if not restants:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail="C'est le dernier super administrateur actif : il ne se supprime pas.")
+        async with conn.transaction():
+            # Les tables sous RLS forcée (consommation d'API) ne se nettoient
+            # qu'avec un contexte d'administration, local à la transaction.
+            await conn.execute("SELECT set_config('app.current_user_id', $1, true)", str(current_user.id))
+            await conn.execute("SELECT set_config('app.current_role', 'super_admin', true)")
+            for ref in await conn.fetch(_REFERENCES_SANS_CASCADE):
+                col = _ident(ref["col"])
+                if ref["nullable"]:
+                    await conn.execute(f"UPDATE {ref['tbl']} SET {col} = NULL WHERE {col} = $1", user_id)
+                else:
+                    await conn.execute(f"DELETE FROM {ref['tbl']} WHERE {col} = $1", user_id)
+            await conn.execute("DELETE FROM users WHERE id = $1", user_id)
+    await log_action(action="user_deleted", user_id=str(current_user.id),
+                     metadata={"target_user_id": str(user_id), "role": cible["role"]})
+    return {"status": "deleted", "user_id": str(user_id)}
 
 
 @router.put("/{user_id}/schedule")

@@ -557,11 +557,11 @@ async def dernier_fil(current_user: User = Depends(get_current_user)):
 async def get_thread_messages(thread_id: str, current_user: User = Depends(get_current_user)):
     """Historique des messages d'un thread — uniquement les siens.
 
-    CHAQUE PROFIL SA CONVERSATION (14/09, Duret : « même s'ils ont le même
-    mail »). Le filtre ne reposait que sur la RLS, qui accorde TOUS les fils
-    à la direction et au super_admin : un compte de direction qui connaissait
-    l'identifiant d'un fil lisait la conversation d'un collègue. Le filtre
-    `user_id` est désormais explicite, comme pour poursuivre un fil.
+    CHAQUE PERSONNE SA CONVERSATION (14/09). Le filtre ne reposait que sur la
+    RLS, qui accorde TOUS les fils à la direction et au super_admin : un compte
+    de direction qui connaissait l'identifiant d'un fil lisait la conversation
+    d'un collègue — et, chez Duret, d'un autre prénom de la même adresse. Le
+    filtre `user_id` est désormais explicite, comme pour poursuivre un fil.
     """
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
         rows = await conn.fetch(

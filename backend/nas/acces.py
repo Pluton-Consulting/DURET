@@ -600,12 +600,18 @@ async def _balayer(client, base, sid, racines: list[str],
                    correspond, delai_s: float = BALAYAGE_DELAI_S,
                    dossiers_max: int = BALAYAGE_DOSSIERS_MAX,
                    profondeur: int = BALAYAGE_PROFONDEUR,
-                   arret_au_premier: bool = False) -> tuple[list[dict], bool]:
+                   arret_au_premier: bool = False,
+                   progres: Optional[dict] = None) -> tuple[list[dict], bool]:
     """Descend l'arborescence et rend les entrées retenues par `correspond`.
 
     `correspond(entree) -> bool` reçoit un dict `{nom, chemin, dossier, octets}`.
     Rend `(trouvés, complet)` : `complet` est faux dès qu'un plafond a mordu —
     l'appelant doit alors dire que l'absence n'est pas prouvée.
+
+    `progres` (14/09) : un dict tenu à jour au fil du parcours — dossiers lus,
+    dossiers repérés, fichiers repérés, niveau, dernier dossier lu. Relevé de
+    Noa : « je relève l'arborescence du NAS · depuis 11 min · 0 traité(s) »,
+    rien ne disait que le parcours avançait.
     """
     import time as _t
 
@@ -616,6 +622,10 @@ async def _balayer(client, base, sid, racines: list[str],
     complet = True
     niveau = [r for r in racines if r]
     listes = 0
+    if progres is not None:
+        progres.update({"debut": debut, "delai_s": delai_s, "dossiers_lus": 0,
+                        "dossiers_vus": len(niveau), "fichiers_vus": 0, "niveau": 0,
+                        "dernier": ""})
 
     coupe = False
 
@@ -645,6 +655,9 @@ async def _balayer(client, base, sid, racines: list[str],
                             chemin, str(e)[:100])
                 return []
             entrees = brut.get("entrees") or []
+            if progres is not None:
+                progres["dossiers_lus"] = progres.get("dossiers_lus", 0) + 1
+                progres["dernier"] = chemin
             if len(_CACHE_LISTAGE) > CACHE_MAX:
                 _CACHE_LISTAGE.clear()              # borne grossière : on repart à neuf
             _CACHE_LISTAGE[chemin] = (_t.monotonic() + CACHE_DUREE_S, entrees)
@@ -656,6 +669,8 @@ async def _balayer(client, base, sid, racines: list[str],
         if _t.monotonic() - debut > delai_s or listes >= dossiers_max:
             complet = False
             break
+        if progres is not None:
+            progres["niveau"] = progres.get("niveau", 0) + 1
         paquets = await asyncio.gather(*[_un(c) for c in niveau],
                                        return_exceptions=True)
         listes += len(niveau)
@@ -674,6 +689,10 @@ async def _balayer(client, base, sid, racines: list[str],
                         return trouves, complet
                 if e.get("dossier"):
                     suivant.append(chemin)
+                elif progres is not None:
+                    progres["fichiers_vus"] = progres.get("fichiers_vus", 0) + 1
+        if progres is not None:
+            progres["dossiers_vus"] = progres.get("dossiers_vus", 0) + len(suivant)
         niveau = suivant
         if coupe:
             complet = False
@@ -703,7 +722,7 @@ CATALOGUE_DELAI_S = 900
 CATALOGUE_DOSSIERS_MAX = 60000
 CATALOGUE_PROFONDEUR = 40
 _CATALOGUE: dict = {"etat": "vide", "entrees": [], "construit_le": 0.0,
-                    "complet": False, "en_cours": False}
+                    "complet": False, "en_cours": False, "progression": {}}
 
 
 async def construire_catalogue() -> dict:
@@ -725,10 +744,12 @@ async def construire_catalogue() -> dict:
         # le geste d'un profil (13/09, niveaux par dossier).
         with en_systeme():
             async with connexion() as (client, base, sid):
+                _CATALOGUE["progression"] = {}
                 entrees, complet = await _balayer(
                     client, base, sid, racines, lambda e: True,
                     delai_s=CATALOGUE_DELAI_S, dossiers_max=CATALOGUE_DOSSIERS_MAX,
-                    profondeur=CATALOGUE_PROFONDEUR)
+                    profondeur=CATALOGUE_PROFONDEUR,
+                    progres=_CATALOGUE["progression"])
         _CATALOGUE.update({"etat": "pret" if complet else "partiel",
                            "entrees": entrees, "complet": complet,
                            "construit_le": _t.monotonic()})
@@ -759,20 +780,62 @@ def catalogue_pret() -> Optional[list]:
     return _CATALOGUE["entrees"] or None
 
 
-async def catalogue_attendu(attente_max_s: float = CATALOGUE_DELAI_S + 60) -> tuple[list, bool]:
+def decrire_progression(p: Optional[dict] = None) -> str:
+    """Le relevé en cours, en une ligne lisible : dossiers lus sur repérés,
+    fichiers repérés, profondeur, temps écoulé sur le temps imparti, et le
+    dernier dossier lu. Fonction pure (le banc l'exécute)."""
+    import time as _t
+
+    p = _CATALOGUE.get("progression") if p is None else p
+    # `is None`, pas un test de vérité : l'horloge monotone peut valoir 0 au
+    # démarrage du processus (piège déjà payé par le rapporteur d'avancement).
+    if not p or p.get("debut") is None:
+        return "je relève l'arborescence du NAS · démarrage du parcours"
+    ecoule = max(0, int(_t.monotonic() - float(p["debut"])))
+    delai = int(p.get("delai_s") or CATALOGUE_DELAI_S)
+    nb = lambda n: f"{int(n):,}".replace(",", "\u202f")  # noqa: E731
+    dernier = str(p.get("dernier") or "")
+    if len(dernier) > 60:
+        dernier = "…" + dernier[-59:]
+    texte = (f"je relève l'arborescence du NAS · {nb(p.get('dossiers_lus', 0))} dossiers lus "
+             f"sur {nb(p.get('dossiers_vus', 0))} repérés · {nb(p.get('fichiers_vus', 0))} fichiers "
+             f"repérés · profondeur {p.get('niveau', 0)} · {ecoule // 60} min {ecoule % 60:02d} s "
+             f"(arrêt à {delai // 60} min)")
+    return texte + (f" · {dernier}" if dernier else "")
+
+
+async def catalogue_attendu(attente_max_s: float = CATALOGUE_DELAI_S + 60,
+                            sur_progres=None) -> tuple[list, bool]:
     """(entrées, complet) d'un catalogue FRAIS — attendu s'il se construit,
     construit s'il manque. Pour les traitements de fond (synchronisation) :
     un second balayage du même serveur pendant que le premier tourne ne
-    ferait que doubler la charge."""
+    ferait que doubler la charge.
+
+    `sur_progres(texte)` (14/09) est appelé toutes les 5 s pendant le relevé,
+    qu'il ait été lancé ici ou par la reconstruction horaire : c'est lui qui
+    fait avancer la carte du connecteur pendant cette phase."""
     import time as _t
+
+    async def _dire():
+        if sur_progres is None:
+            return
+        try:
+            await sur_progres(decrire_progression())
+        except Exception:  # noqa: BLE001 — un compteur ne casse pas un relevé
+            pass
 
     debut = _t.monotonic()
     while _CATALOGUE["en_cours"] and _t.monotonic() - debut < attente_max_s:
+        await _dire()
         await asyncio.sleep(5)
     frais = (_CATALOGUE["etat"] in ("pret", "partiel")
              and _t.monotonic() - _CATALOGUE["construit_le"] < CATALOGUE_DUREE_S)
     if not frais and not _CATALOGUE["en_cours"]:
-        await construire_catalogue()
+        tache = asyncio.get_running_loop().create_task(construire_catalogue())
+        while not tache.done():
+            await _dire()
+            await asyncio.wait({tache}, timeout=5)
+        await tache
     return list(_CATALOGUE["entrees"] or []), bool(_CATALOGUE.get("complet"))
 
 

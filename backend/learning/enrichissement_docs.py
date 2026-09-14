@@ -95,7 +95,12 @@ Réponds par un objet JSON seul :
 DOCUMENTS (chacun précédé de son nom de fichier) :
 {corpus}"""
 
-_ETAT: dict = {"en_cours": False, "phase": "jamais lancée", "lance_par": None,
+# `etape` (14/09) : la phase en CODE — ouverture, assemblage, classement,
+# analyse, terminee, interrompue — pour que l'écran dessine une progression par
+# étapes sans relire une phrase ; `connecteur` : la carte à suivre pendant
+# l'ouverture des fichiers. Relevé de Noa : « aucun détail de où il en est ».
+_ETAT: dict = {"en_cours": False, "phase": "jamais lancée", "etape": None, "connecteur": None,
+               "lance_par": None,
                "debut": None, "fin": None, "stockage": None, "collecte": None,
                "documents": 0, "groupes": {}, "appels_prevus": 0,
                "appels_analyse": 0, "connaissances": 0, "procedures": 0,
@@ -245,7 +250,8 @@ async def _collecter(connecteur: str, nom: str, lance_par: str, lance_par_id) ->
     """Temps 1 : ouvrir chaque fichier du stockage. Une panne n'arrête pas la
     campagne — ce qui est déjà en mémoire se relit quand même — mais elle se
     DIT, en tête de l'écran : c'est la première chose à savoir."""
-    _ETAT["phase"] = f"ouverture des fichiers · {nom} (voir la carte du connecteur ci-dessous)"
+    _ETAT["phase"] = f"ouverture des fichiers · {nom}"
+    _ETAT["etape"] = "ouverture"
     try:
         from routers.ingestion import synchroniser_et_attendre
         r = await synchroniser_et_attendre(connecteur, lance_par_id, lance_par)
@@ -276,7 +282,7 @@ async def executer(lance_par: str, max_lots_par_niveau: int = 0,
     if _ETAT["en_cours"]:
         return etat()
     connecteur, nom_stockage = _stockage()
-    _ETAT.update({"en_cours": True, "phase": "démarrage",
+    _ETAT.update({"en_cours": True, "phase": "démarrage", "etape": None, "connecteur": connecteur,
                   "lance_par": lance_par, "debut": time.time(), "fin": None,
                   "stockage": nom_stockage, "collecte": None,
                   "documents": 0, "groupes": {}, "appels_prevus": 0,
@@ -297,14 +303,17 @@ async def executer(lance_par: str, max_lots_par_niveau: int = 0,
             await _collecter(connecteur, nom_stockage, lance_par, lance_par_id)
 
         _ETAT["phase"] = "assemblage des documents"
+        _ETAT["etape"] = "assemblage"
         docs = await _documents_assembles(sources)
         _ETAT["documents"] = len(docs)
         if not docs:
             _ETAT["phase"] = (f"terminée : aucun document lisible en mémoire — le {nom_stockage} "
                               "n'a rien rendu (voir la carte du connecteur ci-dessous)")
+            _ETAT["etape"] = "terminee"
             return etat()
 
         _ETAT["phase"] = "classement par niveau d'accès"
+        _ETAT["etape"] = "classement"
         groupes = await _classer(docs)
         _ETAT["groupes"] = {n: len(ds) for n, ds in groupes.items()}
         logger.info("Enrichissement documents : %d document(s), niveaux %s",
@@ -328,6 +337,7 @@ async def executer(lance_par: str, max_lots_par_niveau: int = 0,
         from learning.enrichissement import avec_reprise
         for i, (niveau, lot) in enumerate(plan):
             _ETAT["phase"] = f"analyse · {i + 1}/{len(plan)} · niveau {niveau}"
+            _ETAT["etape"] = "analyse"
             # Même patience que la campagne des mails : une cascade à terre
             # deux minutes ne jette pas des heures de distillation.
             try:
@@ -360,10 +370,12 @@ async def executer(lance_par: str, max_lots_par_niveau: int = 0,
             await asyncio.sleep(PAUSE_ENTRE_LOTS_S)
 
         _ETAT["phase"] = "terminée"
+        _ETAT["etape"] = "terminee"
         return etat()
     except Exception as e:  # noqa: BLE001
         logger.warning("Campagne documentaire interrompue : %s", e)
         _ETAT["phase"] = f"interrompue : {e}"
+        _ETAT["etape"] = "interrompue"
         _ETAT["echecs"].append(str(e)[:200])
         return etat()
     finally:

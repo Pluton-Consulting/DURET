@@ -70,6 +70,129 @@ const ETIQUETTE: Record<string, { texte: string; bg: string; fg: string }> = {
   partielle: { texte: "Partielle", bg: "var(--marque-pending-bg)", fg: "var(--marque-pending-text)" },
 }
 
+/** LA BARRE. Déterminée quand le total est connu, sinon elle glisse : un
+ *  pourcentage inventé serait un mensonge que personne ne peut vérifier. */
+function Barre({ pourcentage }: { pourcentage: number | null | undefined }) {
+  return (
+    <div style={{ height: 6, borderRadius: 999, overflow: "hidden", background: "var(--marque-canvas)" }}
+         role="progressbar" aria-valuemin={0} aria-valuemax={100}
+         aria-valuenow={pourcentage ?? undefined}>
+      <div style={{
+        height: "100%", borderRadius: 999, background: "var(--marque-primary)",
+        width: pourcentage != null ? `${Math.max(2, pourcentage)}%` : "35%",
+        transition: "width .4s ease",
+        animation: pourcentage == null ? "sym-sync-glisse 1.4s ease-in-out infinite" : undefined,
+      }} />
+    </div>
+  )
+}
+
+/** Où en est un connecteur, en clair (14/09, relevé de Noa : « je relève
+ *  l'arborescence du NAS · depuis 11 min · 0 traité(s) » — immobile). */
+function AvancementConnecteur({ e }: { e: EtatSync }) {
+  const pct = e.pourcentage ?? null
+  const compte = e.total != null
+    ? `${e.traites ?? 0} sur ${e.total} élément(s) · ${pct ?? 0} %`
+    : (e.traites ? `${e.traites} traité(s)` : "le total sera connu à la fin du relevé")
+  return (
+    <div data-testid="avancement-connecteur" style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 12, color: "var(--marque-text-body)", lineHeight: 1.45, marginBottom: 6,
+                    overflowWrap: "anywhere" }}>
+        {e.etape || "en cours"}
+      </div>
+      <Barre pourcentage={pct} />
+      <div style={{ fontSize: 11, color: "var(--marque-text-muted)", marginTop: 4 }}>
+        {compte} · depuis {duree(e.debut)}
+      </div>
+    </div>
+  )
+}
+
+// LES ÉTAPES D'« ENRICHIR LES DOCUMENTS » (14/09). La carte disait seulement
+// « En ce moment : ouverture des fichiers (voir la carte du connecteur
+// ci-dessous) » pendant des heures. Elle montre maintenant les quatre étapes,
+// celle en cours avec sa propre barre et son détail.
+const ETAPES_ENRICHISSEMENT: { cle: string; libelle: string }[] = [
+  { cle: "ouverture", libelle: "Ouvrir les fichiers" },
+  { cle: "assemblage", libelle: "Rassembler les documents" },
+  { cle: "classement", libelle: "Classer par niveau d'accès" },
+  { cle: "analyse", libelle: "Analyser et apprendre" },
+]
+
+function EtapesEnrichissement({ d, connecteur }: { d: any; connecteur?: EtatSync }) {
+  const rang = ETAPES_ENRICHISSEMENT.findIndex((x) => x.cle === d.etape)
+  const pctAnalyse = d.appels_prevus ? Math.floor((100 * (d.appels_analyse || 0)) / d.appels_prevus) : null
+  return (
+    <div data-testid="etapes-enrichissement" style={{ marginTop: 12, paddingTop: 10,
+                                                      borderTop: "1px solid var(--marque-border)" }}>
+      <div style={{ fontSize: 11, color: "var(--marque-text-muted)", marginBottom: 8 }}>
+        Lancée par {d.lance_par || "—"} · depuis {duree(d.debut ? d.debut * 1000 : null)}
+      </div>
+      <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+        {ETAPES_ENRICHISSEMENT.map((x, i) => {
+          const sautee = x.cle === "ouverture" && !d.connecteur
+          const faite = rang > i || (sautee && rang >= 0)
+          const courante = rang === i
+          const pastille = faite ? "✓" : String(i + 1)
+          return (
+            <li key={x.cle} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <span aria-hidden style={{
+                flex: "0 0 22px", height: 22, borderRadius: 999, fontSize: 11, fontWeight: 700,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                background: faite ? "var(--marque-paid-bg)" : courante ? "var(--marque-primary)" : "var(--marque-canvas)",
+                color: faite ? "var(--marque-paid-text)" : courante ? "var(--marque-text-on-dark)" : "var(--marque-text-muted)",
+              }}>{pastille}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: courante ? 700 : 500,
+                              color: courante || faite ? "var(--marque-text-primary)" : "var(--marque-text-muted)" }}>
+                  {x.libelle}
+                  {sautee ? " — sautée (aucun stockage déclaré)" : ""}
+                  {faite && x.cle === "ouverture" && d.collecte?.resume ? ` — ${d.collecte.resume}` : ""}
+                  {faite && x.cle === "assemblage" ? ` — ${d.documents} document(s)` : ""}
+                  {faite && x.cle === "classement" && d.groupes
+                    ? ` — ${Object.entries(d.groupes).map(([n, c]) => `${c} en ${n}`).join(", ")}` : ""}
+                </div>
+                {courante && x.cle === "ouverture" && (
+                  connecteur && connecteur.etat === "en_cours"
+                    ? <AvancementConnecteur e={connecteur} />
+                    : <div style={{ marginTop: 6 }}><Barre pourcentage={null} />
+                        <div style={{ fontSize: 11, color: "var(--marque-text-muted)", marginTop: 4 }}>{d.phase}</div></div>
+                )}
+                {courante && (x.cle === "assemblage" || x.cle === "classement") && (
+                  <div style={{ marginTop: 6 }}>
+                    <Barre pourcentage={null} />
+                    <div style={{ fontSize: 11, color: "var(--marque-text-muted)", marginTop: 4 }}>
+                      {d.documents ? `${d.documents} document(s) rassemblé(s)` : d.phase}
+                    </div>
+                  </div>
+                )}
+                {courante && x.cle === "analyse" && (
+                  <div style={{ marginTop: 6 }}>
+                    <Barre pourcentage={pctAnalyse} />
+                    <div style={{ fontSize: 11, color: "var(--marque-text-muted)", marginTop: 4, lineHeight: 1.45 }}>
+                      {d.appels_analyse || 0} lot(s) analysé(s) sur {d.appels_prevus || "?"}
+                      {pctAnalyse != null ? ` · ${pctAnalyse} %` : ""} · {d.phase}
+                      <br />
+                      {d.connaissances} connaissance(s) · {d.procedures} manière(s) de faire ·{" "}
+                      {(d.skills || []).length} brouillon(s) de skill
+                      {d.deja_connues ? ` · ${d.deja_connues} déjà connue(s)` : ""}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+      {(d.echecs || []).length ? (
+        <div style={{ color: "var(--marque-error-text)", fontSize: 12, marginTop: 10 }}>
+          {d.echecs.length} échec(s) — {d.echecs.slice(-3).join(" · ")}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
   const [etats, setEtats] = useState<EtatSync[]>([])
   const [erreur, setErreur] = useState("")
@@ -349,7 +472,10 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
         {/* LA PHASE EN ENTIER. La pastille la coupe à 260 px : « interrompue :
             aucun mod… » était tout ce qu'on voyait d'un arrêt (11/09, « ça
             marche pas » sans autre indice). */}
-        {enrichDocs && enrichDocs.phase && enrichDocs.phase !== "jamais lancée" ? (
+        {enrichDocs?.en_cours && enrichDocs.etape ? (
+          <EtapesEnrichissement d={enrichDocs}
+                                connecteur={etats.find((x) => x.source === enrichDocs.connecteur)} />
+        ) : enrichDocs && enrichDocs.phase && enrichDocs.phase !== "jamais lancée" ? (
           <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 10,
                         paddingTop: 10, borderTop: "1px solid var(--marque-border)",
                         lineHeight: 1.55 }}>
@@ -407,7 +533,7 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
                               color: "var(--marque-text-primary)" }}>{e.libelle}</div>
                 <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 3 }}>
                   {enCours
-                    ? `${e.etape || "en cours"} · depuis ${duree(e.debut)}`
+                    ? "En cours"
                     : (resume(e) || "Aucune donnée pour l'instant")}
                   {!enCours && e.fin ? ` · ${quand(e.fin)}` : ""}
                   {e.par ? ` · par ${e.par}` : ""}
@@ -421,31 +547,7 @@ export default function SyncTab({ apiUrl, backendToken }: { apiUrl: string; back
                     Dernière réussite {quand(e.derniere_reussite)}
                   </div>
                 ) : null}
-                {enCours ? (
-                  <div style={{ marginTop: 8 }}>
-                    {/* BARRE DÉTERMINÉE si le total est connu, INDÉTERMINÉE
-                        sinon. Le Drive connaît son total, Extrabat jamais :
-                        afficher « 40 % » sans le savoir serait un mensonge que
-                        personne ne peut vérifier. */}
-                    <div style={{ height: 4, borderRadius: 999, overflow: "hidden",
-                                  background: "var(--marque-canvas)" }}>
-                      <div style={{
-                        height: "100%", borderRadius: 999,
-                        background: "var(--marque-primary)",
-                        width: e.pourcentage != null ? `${e.pourcentage}%` : "35%",
-                        transition: "width .4s ease",
-                        animation: e.pourcentage == null
-                          ? "sym-sync-glisse 1.4s ease-in-out infinite" : undefined,
-                      }} />
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--marque-text-muted)",
-                                  marginTop: 4 }}>
-                      {e.pourcentage != null
-                        ? `${e.traites} sur ${e.total} · ${e.pourcentage} %`
-                        : `${e.traites ?? 0} traité(s)`}
-                    </div>
-                  </div>
-                ) : null}
+                {enCours ? <AvancementConnecteur e={e} /> : null}
               </div>
               <span style={{ background: et.bg, color: et.fg, padding: "5px 12px",
                              borderRadius: "var(--marque-radius-pill)", fontSize: 12,

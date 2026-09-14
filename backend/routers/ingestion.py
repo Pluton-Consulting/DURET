@@ -198,17 +198,24 @@ async def _avancement(sync_id: str):
     # « Jamais écrit » n'est pas l'instant zéro : l'horloge monotone peut
     # partir de zéro avec le processus, et la PREMIÈRE écriture — celle qui
     # dit « je relève l'arborescence » — était alors sautée.
-    dernier = {"t": None}
+    dernier = {"t": None, "total": "jamais"}
 
     async def _poser(traites: int, total, etape: str) -> None:
-        if dernier["t"] is not None and time.monotonic() - dernier["t"] < 1.0:
+        # (14/09) Un CHANGEMENT D'ÉTAPE s'écrit toujours — le total passe de
+        # « inconnu » (relevé) à un nombre (ouverture) : limité à une écriture
+        # par seconde, le passage du relevé au tri pouvait être sauté.
+        if (dernier["t"] is not None and total == dernier["total"]
+                and time.monotonic() - dernier["t"] < 1.0):
             return
         dernier["t"] = time.monotonic()
+        dernier["total"] = total
         async with get_db() as conn:
             await conn.execute(
                 "UPDATE synchronisations SET traites=$1, total=$2, etape=$3, "
                 "maj_a=NOW() WHERE id=$4::uuid",
-                int(traites or 0), total, (etape or "")[:200], sync_id)
+                # 400 : l'étape du relevé du NAS dit dossiers, fichiers, temps
+                # et dernier dossier lu — 200 la coupaient au milieu.
+                int(traites or 0), total, (etape or "")[:400], sync_id)
 
     return _poser
 

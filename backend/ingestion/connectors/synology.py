@@ -540,8 +540,12 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
         except Exception as e:  # noqa: BLE001 — un compteur ne casse pas une ingestion
             logger.debug("NAS : avancement non enregistré : %s", e)
 
-    await _prevenir(0, None, "je relève l'arborescence du NAS")
-    entrees, complet = await acces.catalogue_attendu()
+    # ÉTAPE 1 / 2 — LE RELEVÉ, DIT PENDANT QU'IL SE FAIT (14/09). Il dure
+    # jusqu'à un quart d'heure sur le NAS de l'entreprise, et la carte restait
+    # sur « 0 traité(s) » : rien ne se comptait avant l'ouverture des fichiers.
+    await _prevenir(0, None, "je relève l'arborescence du NAS · démarrage du parcours")
+    entrees, complet = await acces.catalogue_attendu(
+        sur_progres=lambda texte: _prevenir(0, None, texte))
 
     # UNE RACINE QUI NE REND RIEN SE DIT. C'est la racine fantôme du .env :
     # silencieuse, elle faisait croire à un NAS vide.
@@ -576,6 +580,13 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
         a_lire.append((f, nom))
 
     logger.info("NAS : %d fichier(s) au catalogue, %d à lire (%s)", total, len(a_lire), bilan)
+    # ÉTAPE 2 / 2 — LE TRI, puis l'ouverture : ce qui sera ouvert, et pourquoi
+    # le reste ne l'est pas, dit AVANT le premier fichier.
+    ecartes_txt = " · ".join(f"{n} {k.replace('_', ' ')}" for k, n in bilan.items() if n)
+    await _prevenir(0, len(a_lire),
+                    f"{total} fichiers au catalogue · {len(a_lire)} à ouvrir"
+                    + (f" · {ecartes_txt}" if ecartes_txt else "")
+                    + ("" if a_lire else " · rien de nouveau à ouvrir"))
     compte = {"traites": 0, "ingeres": 0, "erreurs": 0}
     porte = _asyncio.Semaphore(SYNC_DE_FRONT)
 
@@ -624,7 +635,10 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                 logger.warning("NAS : lecture de %s impossible : %s", f["chemin"], e)
             finally:
                 compte["traites"] += 1
-                await _prevenir(compte["traites"], len(a_lire), f"j'ouvre {nom[:60]}")
+                await _prevenir(compte["traites"], len(a_lire),
+                                f"j'ouvre {nom[:60]} · {compte['ingeres']} lu(s), "
+                                f"{compte['erreurs']} en échec, "
+                                f"{bilan['sans_texte'] + bilan['trop_lents']} sans texte")
 
     try:
         # Par paquets : la mémoire des écartés est écrite au fil de l'eau — un

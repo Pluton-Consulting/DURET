@@ -98,24 +98,67 @@ ALL_FEATURES = [
     # défauts par rôle : elle ne se règle simplement plus depuis cet écran.
 ]
 
+# LA MATRICE QUE L'ON MONTRE (14/09, demande de Noa : « que des permissions
+# concrètes et compréhensibles pour un profil terrain »).
+#
+# Ce que l'écran affichait n'était pas ce que le code vérifiait. Sur 17 cases,
+# CINQ ne servaient à rien — « Agent 2 (vision) », « Agent 3 (auto-évolution) »,
+# « Ses stats », « Ses coûts », « Configurer agents » : aucune ligne du backend
+# ne les lit, on pouvait les cocher sans rien changer. « Agent Navigateur » ne
+# commandait qu'une page retirée du menu (la navigation du chat ne la lit pas),
+# et « Admin système » est la clé des réglages techniques, réservée au super
+# admin. Le reste était nommé en jargon (« Dashboard global », « Valider
+# skills », « Gérer Agent 3 »).
+#
+# Chaque case montrée ici correspond donc à un contrôle RÉEL, dit ce qu'elle
+# ouvre en mots de tous les jours, et appartient à un groupe. Les permissions
+# retirées de l'écran restent valides en base (rien ne casse) ; l'accès aux
+# experts se règle personne par personne dans l'onglet Utilisateurs.
+#
+# UNE CASE NE SE RÈGLE QUE LÀ OÙ ELLE PEUT AGIR. Les écrans d'administration
+# (Utilisateurs, Savoir-faire, Connaissances) sont ceux de la direction : cocher
+# « Gérer les utilisateurs » pour un profil terrain ne lui ouvrirait rien. Ces
+# lignes ne se règlent donc que pour la direction (`roles`) ; le « Journal des
+# actions » a quitté l'écran — ses pages sont celles du super admin.
+ROLES_METIER = ("direction", "commercial", "bureau_etudes", "conducteur", "administratif", "terrain")
+MATRICE = [
+    {"groupe": "Au quotidien", "permissions": [
+        {"feature": "chat_agent1", "label": "Utiliser l'assistant", "roles": ROLES_METIER,
+         "description": "Écrire à l'assistant et lui confier des tâches. Sans elle, la personne ne peut pas se servir du chat."},
+        {"feature": "access_mail", "label": "Lire et envoyer les mails", "roles": ROLES_METIER,
+         "description": "Lire la messagerie depuis le chat et préparer des réponses. Chaque envoi attend son accord."},
+        {"feature": "import_documents", "label": "Importer des fichiers", "roles": ROLES_METIER,
+         "description": "Ajouter un tableau Excel ou des documents à la mémoire de l'entreprise (Paramètres → Import de données)."},
+        {"feature": "view_dashboard_global", "label": "Voir l'activité de toute l'équipe", "roles": ROLES_METIER,
+         "description": "Dans le tableau de bord : les tâches, l'activité et les imports de chacun. Sans elle : seulement les siens."},
+    ]},
+    {"groupe": "Administration — pour la direction", "permissions": [
+        {"feature": "manage_users", "label": "Gérer les utilisateurs", "roles": ("direction",),
+         "description": "Créer, modifier et supprimer les profils : rôle, code de connexion, dossiers du mail, horaires."},
+        {"feature": "validate_skills", "label": "Valider ce que l'assistant a appris", "roles": ("direction",),
+         "description": "Accepter ou écarter les nouvelles compétences, et voir les tâches planifiées de toute l'équipe."},
+        {"feature": "manage_agent3", "label": "Enseigner à l'assistant", "roles": ("direction",),
+         "description": "Faire le bilan de ce qu'il a appris et lui faire retenir des consignes pour toute l'entreprise."},
+        {"feature": "view_costs_global", "label": "Voir ce que coûte l'IA", "roles": ("direction",),
+         "description": "Le coût des modèles d'IA, affiché à côté des gains estimés du tableau de bord."},
+    ]},
+]
+FEATURES_MATRICE = [x["feature"] for g in MATRICE for x in g["permissions"]]
+FEATURE_DESCRIPTIONS = {x["feature"]: x["description"] for g in MATRICE for x in g["permissions"]}
+ROLES_REGLABLES = {x["feature"]: list(x["roles"]) for g in MATRICE for x in g["permissions"]}
+
 FEATURE_LABELS = {
-    "chat_agent1": "Agent 1 (chat)",
+    **{x["feature"]: x["label"] for g in MATRICE for x in g["permissions"]},
+    "view_audit_log": "Journal des actions (super admin)",
+    # Hors de l'écran, gardés pour les journaux et les anciens appels.
     "chat_agent2": "Agent 2 (vision)",
     "chat_agent3": "Agent 3 (auto-évolution)",
     "view_own_stats": "Ses stats",
     "view_own_costs": "Ses coûts",
-    "view_dashboard_global": "Dashboard global",
-    "view_costs_global": "Coûts globaux",
-    "view_audit_log": "Journal d'audit",
-    "validate_skills": "Valider skills",
     "configure_agents": "Configurer agents",
-    "manage_agent3": "Gérer Agent 3",
-    "manage_users": "Gérer utilisateurs",
-    "import_documents": "Importer des documents",
     "manage_mailboxes": "Gérer les boîtes mail",
-    "access_mail": "Accès au mail",
-    "manage_system": "Admin système",
-    "run_browser_agent": "Agent Navigateur",
+    "manage_system": "Réglages techniques (super admin)",
+    "run_browser_agent": "Page Navigateur (ancienne)",
 }
 
 # Rôle dont les permissions ne sont JAMAIS modifiables (garde-fou anti-lockout).

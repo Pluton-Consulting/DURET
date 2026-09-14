@@ -55,9 +55,10 @@ print(f"\n═══ DROITS ET VISIBILITÉ — {BACKEND.resolve().parent}\n")
 
 # ── 1. La matrice : plus de colonne « Gérer les boîtes » ─────────────────
 rb = extraire(BACKEND / "security" / "rbac.py",
-              {"ALL_FEATURES", "FEATURE_LABELS", "ROLE_PERMISSIONS"}, {})
+              {"ALL_FEATURES", "ROLES_METIER", "MATRICE", "FEATURES_MATRICE", "FEATURE_LABELS",
+               "ROLE_PERMISSIONS"}, {})
 verifier("« Gérer les boîtes » a quitté la matrice de l'onglet Permissions",
-         "manage_mailboxes" not in rb["ALL_FEATURES"])
+         "manage_mailboxes" not in rb["ALL_FEATURES"] and "manage_mailboxes" not in rb["FEATURES_MATRICE"])
 verifier("la permission SURVIT (délégations) pour super_admin et direction",
          "manage_mailboxes" in rb["ROLE_PERMISSIONS"]["super_admin"]
          and "manage_mailboxes" in rb["ROLE_PERMISSIONS"]["direction"])

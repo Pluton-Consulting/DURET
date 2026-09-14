@@ -90,17 +90,32 @@ class PermissionRequest(BaseModel):
     allowed: bool
 
 
+@router.get("/mes-permissions")
+async def mes_permissions(current_user: User = Depends(get_current_user)):
+    """Ce que MON rôle a le droit de faire (14/09) : l'écran s'en sert pour
+    ouvrir un onglet à qui a reçu la permission, pas seulement à la direction
+    (« Importer des fichiers » cochée pour un profil terrain lui ouvre l'import)."""
+    from security.rbac import ALL_FEATURES, has_permission as hp
+    return {"permissions": [f for f in ALL_FEATURES if hp(current_user.role, f)]}
+
+
 @router.get("/permissions")
 async def get_permissions(current_user: User = Depends(get_current_user)):
     """Matrice rôle × permission. Lecture : gestion des utilisateurs. Édition : super_admin."""
     if not has_permission(current_user.role, "manage_users"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
-    from security.rbac import ALL_ROLES, ALL_FEATURES, FEATURE_LABELS, PROTECTED_ROLE, has_permission as hp
-    matrix = {role: {f: hp(role, f) for f in ALL_FEATURES} for role in ALL_ROLES}
+    from security.rbac import (ALL_ROLES, FEATURES_MATRICE, FEATURE_LABELS, FEATURE_DESCRIPTIONS,
+                               MATRICE, PROTECTED_ROLE, ROLES_REGLABLES, has_permission as hp)
+    # Seulement les cases qui correspondent à un contrôle réel (14/09).
+    matrix = {role: {f: hp(role, f) for f in FEATURES_MATRICE} for role in ALL_ROLES}
     return {
         "roles": ALL_ROLES,
-        "features": ALL_FEATURES,
+        "features": FEATURES_MATRICE,
         "labels": FEATURE_LABELS,
+        "descriptions": FEATURE_DESCRIPTIONS,
+        "groupes": [{"groupe": g["groupe"], "features": [x["feature"] for x in g["permissions"]]} for g in MATRICE],
+        # Les rôles pour lesquels chaque case se règle : ailleurs, elle n'ouvrirait rien.
+        "roles_reglables": ROLES_REGLABLES,
         "protected_role": PROTECTED_ROLE,
         "matrix": matrix,
         "can_edit": has_permission(current_user.role, "manage_system"),
@@ -112,10 +127,14 @@ async def update_permission(body: PermissionRequest, current_user: User = Depend
     """Active/désactive une permission pour un rôle (super_admin uniquement)."""
     if not has_permission(current_user.role, "manage_system"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé au super admin")
-    from security.rbac import ALL_ROLES, ALL_FEATURES, PROTECTED_ROLE, reload_permissions
+    from security.rbac import ALL_ROLES, FEATURES_MATRICE, PROTECTED_ROLE, ROLES_REGLABLES, reload_permissions
     if body.role == PROTECTED_ROLE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Les permissions du super admin ne sont pas modifiables")
-    if body.role not in ALL_ROLES or body.feature not in ALL_FEATURES:
+    # Une case retirée de l'écran ne se règle plus (14/09) : elle ne commandait rien.
+    if body.feature in ROLES_REGLABLES and body.role not in ROLES_REGLABLES[body.feature]:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Cette permission ne se règle que pour la direction : ses écrans ne s'ouvrent pas aux autres rôles.")
+    if body.role not in ALL_ROLES or body.feature not in FEATURES_MATRICE:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Rôle ou permission inconnu")
     async with get_db() as conn:
         await conn.execute(

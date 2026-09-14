@@ -323,7 +323,9 @@ verifier("Paramètres → Clés API : la carte « La boîte mail de l'entreprise
 print("— la permission et le câblage")
 rbac_reel = charger(BACKEND / "security" / "rbac.py", "rbac_double", futur=True)
 verifier("la colonne « Accès au mail » existe dans la matrice, avec son libellé",
-         "access_mail" in rbac_reel.ALL_FEATURES and rbac_reel.FEATURE_LABELS.get("access_mail") == "Accès au mail")
+         "access_mail" in rbac_reel.FEATURES_MATRICE
+         # (14/09) libellé concret : ce que la case ouvre, pas le nom de la colonne
+         and rbac_reel.FEATURE_LABELS.get("access_mail") == "Lire et envoyer les mails")
 verifier("elle est accordée par défaut à TOUS les rôles (le comportement d'avant)",
          all("access_mail" in v for v in rbac_reel.ROLE_PERMISSIONS.values())
          and rbac_reel.has_permission("terrain", "access_mail") is True)

@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, Fragment } from "react"
 import { ROLE_LABELS, ROLE_COLORS, nomExpert } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
@@ -53,7 +53,7 @@ function canTogglePerm(mgr: string, _agent: Agent, target: Role): boolean {
 // personnelle. Les onglets d'administration, eux, gardent leurs rôles : les
 // quatre premiers, jadis sans restriction, ne l'étaient que parce que la PAGE
 // filtrait à l'entrée (super_admin/direction) — la restriction descend ici.
-const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
+const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[]; permission?: string }[] = [
   // Sans `roles` : visible de chacun — l'onglet ne parle que de SA boîte.
   { key: "google", label: "Mon compte Google" },
   // L'onglet « Mes appareils » a existé une journée (03/09) puis a été retiré
@@ -61,12 +61,13 @@ const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[] }[] = [
   // courant, et les routes /api/auth/appareils restent pour l'administration.
   { key: "utilisateurs", label: "Utilisateurs", roles: ["super_admin", "direction"] },
   { key: "plages", label: "Plages horaires", roles: ["super_admin", "direction"] },
-  { key: "rbac", label: "Permissions RBAC", roles: ["super_admin", "direction"] },
+  { key: "rbac", label: "Permissions", roles: ["super_admin", "direction"] },
   // 01/09 (Noa) : « États des agents » rejoint l'administration système.
   { key: "agents", label: "États des agents", roles: ["super_admin"] },
   { key: "quotas", label: "Quotas", roles: ["super_admin"] },
   { key: "services", label: "Services connectés", roles: ["super_admin"] },
-  { key: "import", label: "Import de données", roles: ["super_admin", "direction"] },
+  // (14/09) S'ouvre aussi à tout rôle qui a reçu « Importer des fichiers » dans Permissions.
+  { key: "import", label: "Import de données", roles: ["super_admin", "direction"], permission: "import_documents" },
   // Déclencher une synchronisation touche à toutes les sources de
   // l'entreprise : réservé à l'administration système, comme l'endpoint.
   { key: "synchro", label: "Synchronisations", roles: ["super_admin"] },
@@ -1080,67 +1081,95 @@ function RBACTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: strin
   if (!data) return <div className="sym-skeleton" style={{ height: 200, borderRadius: "var(--marque-radius-card)" }} />
   const canEdit = !!data.can_edit
 
+  // UNE LIGNE PAR PERMISSION, UNE COLONNE PAR RÔLE (14/09, Noa : « des
+  // permissions concrètes et compréhensibles pour un profil terrain »). Avant :
+  // dix-sept colonnes au nom technique, dont cinq ne commandaient rien. Chaque
+  // ligne dit maintenant ce qu'elle ouvre, en une phrase.
+  const groupes: { groupe: string; features: string[] }[] =
+    data.groupes || [{ groupe: "Permissions", features: data.features }]
+
   return (
     <div>
       <div className="sym-card sym-in" style={{ background: "var(--marque-surface)", borderRadius: "var(--marque-radius-card)", boxShadow: "var(--marque-shadow-card)", overflow: "hidden" }}>
-        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--marque-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--marque-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>Matrice de permissions par rôle</div>
-            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2 }}>
-              {canEdit ? "Cliquez sur une case pour activer/désactiver. Le super admin n'est pas modifiable." : "Lecture seule : édition réservée au super admin."}
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--marque-text-primary)" }}>Ce que chaque rôle peut faire</div>
+            <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2, maxWidth: 620 }}>
+              {canEdit ? "Cliquez sur une case pour ouvrir ou fermer une permission à tout un rôle. Le super admin a toujours tout." : "Lecture seule : seul le super admin modifie ces permissions."}
+              {" "}L'accès aux experts se règle personne par personne dans l'onglet Utilisateurs.
             </div>
           </div>
           <span className="sym-pop" style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", color: canEdit ? "var(--marque-paid-text)" : "var(--marque-pending-text)", background: canEdit ? "var(--marque-paid-bg)" : "var(--marque-pending-bg)" }}>
-            {canEdit ? "Éditable" : "Lecture seule"}
+            {canEdit ? "Modifiable" : "Lecture seule"}
           </span>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", minWidth: 900 }}>
+          <table data-testid="matrice-permissions" style={{ borderCollapse: "collapse", width: "100%", minWidth: 760 }}>
             <thead>
               <tr style={{ background: "var(--marque-canvas)" }}>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase", position: "sticky", left: 0, background: "var(--marque-canvas)" }}>Rôle</th>
-                {data.features.map((f: string) => (
-                  <th key={f} style={{ padding: "10px 10px", textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--marque-text-muted)", whiteSpace: "nowrap" }}>{data.labels[f] || f}</th>
-                ))}
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "var(--marque-text-muted)", textTransform: "uppercase", position: "sticky", left: 0, background: "var(--marque-canvas)", minWidth: 260 }}>Permission</th>
+                {data.roles.map((role: string) => {
+                  const color = ROLE_COLORS[role] || "#666"
+                  return (
+                    <th key={role} style={{ padding: "10px 8px", textAlign: "center", whiteSpace: "nowrap" }}>
+                      <span style={{ background: color + "18", color, padding: "3px 10px", borderRadius: "var(--marque-radius-pill)", fontSize: 11.5, fontWeight: 700 }}>{ROLE_LABELS[role] || role}</span>
+                    </th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
-              {data.roles.map((role: string) => {
-                const color = ROLE_COLORS[role] || "#666"
-                const locked = role === data.protected_role
-                return (
-                  <tr key={role} style={{ borderTop: "1px solid var(--marque-border)" }}>
-                    <td style={{ padding: "10px 16px", position: "sticky", left: 0, background: "var(--marque-surface)" }}>
-                      <span style={{ background: color + "18", color, padding: "4px 12px", borderRadius: "var(--marque-radius-pill)", fontSize: 12, fontWeight: 700 }}>{ROLE_LABELS[role]}</span>
+              {groupes.map((g) => (
+                <Fragment key={g.groupe}>
+                  <tr style={{ borderTop: "1px solid var(--marque-border)" }}>
+                    <td colSpan={data.roles.length + 1} style={{ padding: "14px 16px 4px", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--marque-primary)" }}>
+                      {g.groupe}
                     </td>
-                    {data.features.map((f: string) => {
-                      const has = !!data.matrix[role]?.[f]
-                      const key = `${role}:${f}`
-                      const editable = canEdit && !locked
-                      return (
-                        <td key={f} style={{ padding: "8px 10px", textAlign: "center" }}>
-                          <button
-                            onClick={() => editable && toggle(role, f, has)}
-                            disabled={!editable || busy === key}
-                            title={locked ? "Super admin : non modifiable" : editable ? (has ? "Désactiver" : "Activer") : "Lecture seule"}
-                            className="sym-tap"
-                            style={{
-                              width: 26, height: 26, borderRadius: 7, border: "none", fontSize: 14,
-                              cursor: editable ? "pointer" : "default",
-                              background: has ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
-                              color: has ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
-                              opacity: busy === key ? 0.5 : 1,
-                              transition: "background 0.2s ease, color 0.2s ease",
-                            }}
-                          >
-                            {has ? "✓" : "·"}
-                          </button>
-                        </td>
-                      )
-                    })}
                   </tr>
-                )
-              })}
+                  {g.features.map((f: string) => (
+                    <tr key={f} style={{ borderTop: "1px solid var(--marque-border)" }}>
+                      <td style={{ padding: "10px 16px", position: "sticky", left: 0, background: "var(--marque-surface)", maxWidth: 320 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--marque-text-primary)" }}>{data.labels[f] || f}</div>
+                        {data.descriptions?.[f] && (
+                          <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2, lineHeight: 1.45 }}>{data.descriptions[f]}</div>
+                        )}
+                      </td>
+                      {data.roles.map((role: string) => {
+                        const has = !!data.matrix[role]?.[f]
+                        const key = `${role}:${f}`
+                        const locked = role === data.protected_role
+                        const reglable = locked || !data.roles_reglables?.[f] || data.roles_reglables[f].includes(role)
+                        if (!reglable) return (
+                          <td key={role} style={{ padding: "8px", textAlign: "center", color: "var(--marque-text-muted)", fontSize: 12 }}
+                              title="Réservé à la direction : ses écrans ne s'ouvrent pas à ce rôle">—</td>
+                        )
+                        const editable = canEdit && !locked
+                        return (
+                          <td key={role} style={{ padding: "8px", textAlign: "center" }}>
+                            <button
+                              onClick={() => editable && toggle(role, f, has)}
+                              disabled={!editable || busy === key}
+                              aria-label={`${data.labels[f] || f} — ${ROLE_LABELS[role] || role} : ${has ? "oui" : "non"}`}
+                              title={locked ? "Super admin : a toujours tout" : editable ? (has ? "Fermer pour ce rôle" : "Ouvrir pour ce rôle") : "Lecture seule"}
+                              className="sym-tap"
+                              style={{
+                                width: 28, height: 28, borderRadius: 8, border: "none", fontSize: 14,
+                                cursor: editable ? "pointer" : "default",
+                                background: has ? "var(--marque-paid-bg)" : "var(--marque-canvas)",
+                                color: has ? "var(--marque-paid-text)" : "var(--marque-text-muted)",
+                                opacity: busy === key ? 0.5 : 1,
+                                transition: "background 0.2s ease, color 0.2s ease",
+                              }}
+                            >
+                              {has ? "✓" : "·"}
+                            </button>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         </div>
@@ -1394,7 +1423,17 @@ function ServicesTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: s
 
 /* ---------- MAIN COMPONENT ---------- */
 export default function SettingsClient({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
-  const subTabs = ALL_SUB_TABS.filter((t) => !t.roles || t.roles.includes(currentRole))
+  // CE QUE MON RÔLE A LE DROIT DE FAIRE (14/09) : une permission cochée dans
+  // la matrice ouvre son onglet, sans quoi la case ne servait à rien.
+  const [mesPermissions, setMesPermissions] = useState<string[]>([])
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings/mes-permissions`, { headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setMesPermissions(Array.isArray(j?.permissions) ? j.permissions : []))
+      .catch(() => setMesPermissions([]))
+  }, [apiUrl, backendToken])
+  const subTabs = ALL_SUB_TABS.filter((t) => !t.roles || t.roles.includes(currentRole)
+    || (t.permission !== undefined && mesPermissions.includes(t.permission)))
   // L'onglet d'ouverture : l'administration pour qui la voit (l'habitude), la
   // boîte Google pour tous les autres — c'est leur seul onglet.
   const [activeTab, setActiveTab] = useState<SubTab>(

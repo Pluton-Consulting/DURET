@@ -6,8 +6,9 @@ import SyncTab from "@/components/settings/SyncTab"
 import NiveauxNas from "@/components/settings/NiveauxNas"
 import ClesApiTab from "@/components/settings/ClesApiTab"
 import GoogleTab from "@/components/settings/GoogleTab"
+import MonCode from "@/components/settings/MonCode"
 
-type SubTab = "google" | "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
+type SubTab = "code" | "google" | "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
 type Role = "super_admin" | "direction" | "commercial" | "bureau_etudes" | "conducteur" | "administratif" | "terrain"
 type Agent = "agent1" | "agent2" | "agent3"
 
@@ -54,8 +55,12 @@ function canTogglePerm(mgr: string, _agent: Agent, target: Role): boolean {
 // quatre premiers, jadis sans restriction, ne l'étaient que parce que la PAGE
 // filtrait à l'entrée (super_admin/direction) — la restriction descend ici.
 const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[]; permission?: string }[] = [
-  // Sans `roles` : visible de chacun — l'onglet ne parle que de SA boîte.
-  { key: "google", label: "Mon compte Google" },
+  // (14/09, Duret, demande de Noa) LES PROFILS MÉTIER changent leur code de
+  // connexion ici, et ne voient PAS le compte Google : ils partagent la boîte
+  // de l'entreprise, relier un compte personnel n'a pas de sens pour eux.
+  // L'administration et la direction gardent l'onglet Google.
+  { key: "code", label: "Mon code de connexion", roles: ["commercial", "bureau_etudes", "conducteur", "administratif", "terrain"] },
+  { key: "google", label: "Mon compte Google", roles: ["super_admin", "direction"] },
   // L'onglet « Mes appareils » a existé une journée (03/09) puis a été retiré
   // à la demande de Noa (« inutile ») : « Se déconnecter » ferme l'appareil
   // courant, et les routes /api/auth/appareils restent pour l'administration.
@@ -1437,7 +1442,7 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
   // L'onglet d'ouverture : l'administration pour qui la voit (l'habitude), la
   // boîte Google pour tous les autres — c'est leur seul onglet.
   const [activeTab, setActiveTab] = useState<SubTab>(
-    subTabs.some((t) => t.key === "utilisateurs") ? "utilisateurs" : (subTabs[0]?.key ?? "google"))
+    subTabs.some((t) => t.key === "utilisateurs") ? "utilisateurs" : (subTabs[0]?.key ?? "code"))
   // AU RETOUR DE GOOGLE, L'ONGLET D'OÙ L'ON EST PARTI (11/09). Relier l'agenda
   // de la boîte de l'entreprise part de « Clés API » ; Google renvoie sur
   // /parametres, qui s'ouvrait sur Utilisateurs — l'issue n'était lue par
@@ -1483,6 +1488,9 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
         })}
       </div>
 
+      {activeTab === "code" && (
+        <div style={{ display: "flex", justifyContent: "flex-start" }}><MonCode jeton={backendToken} /></div>
+      )}
       {activeTab === "google" && (
         <GoogleTab apiUrl={apiUrl} backendToken={backendToken} currentRole={currentRole} />
       )}

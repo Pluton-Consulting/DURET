@@ -342,8 +342,11 @@ verifier("écran : les dossiers du mail se choisissent sans boîte reliée (plus
 verifier("écran : le code se pose à la création, boîte ou non",
          'form.role !== "super_admin" && (' in ecran)
 page = lire("frontend/app/(app)/profil/page.tsx")
+# 14/09 : la section vit dans un composant partagé avec Paramètres.
+code_perso = lire("frontend/components/settings/MonCode.tsx")
 verifier("mon espace : « Mon code de connexion », lu et changé par /me/code",
-         "Mon code de connexion" in page and "/api/users/me/code" in page)
+         "<MonCode jeton={jeton} />" in page and "Mon code de connexion" in code_perso
+         and "/api/users/me/code" in code_perso)
 verifier("le panneau mène toujours à Mon profil",
          "Mon profil" in lire("frontend/components/nav/EnTete.tsx"))
 

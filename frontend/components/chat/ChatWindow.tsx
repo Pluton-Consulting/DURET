@@ -178,12 +178,21 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // « Historique »), mais rien ici ne l'écoutait — le clic n'avait aucun
   // effet visible. La moitié émettrice existait, la moitié réceptrice non.
   const [contexte, setContexte] = useState<ContextePrealable | null>(null)
+  // (14/09, Duret) Un contexte destiné à un AUTRE profil de ce poste n'entre
+  // pas dans ce chat : la session d'abord, puis le champ `pour`.
+  const monProfil = (session as any)?.user?.id || null
   useEffect(() => {
-    try { const brut = localStorage.getItem(CLE_CONTEXTE); if (brut) setContexte(JSON.parse(brut)) } catch { /* rien */ }
-    const h = (e: Event) => setContexte((e as CustomEvent).detail)
+    if (!monProfil) return
+    const pourMoi = (c: ContextePrealable | null) => !!c && (!c.pour || c.pour === monProfil)
+    try {
+      const brut = localStorage.getItem(CLE_CONTEXTE)
+      const lu = brut ? JSON.parse(brut) as ContextePrealable : null
+      if (pourMoi(lu)) setContexte(lu)
+    } catch { /* rien */ }
+    const h = (e: Event) => { const c = (e as CustomEvent).detail as ContextePrealable; if (pourMoi(c)) setContexte(c) }
     window.addEventListener(EVENEMENT_CONTEXTE, h)
     return () => window.removeEventListener(EVENEMENT_CONTEXTE, h)
-  }, [])
+  }, [monProfil])
   const oublierContexte = () => { setContexte(null); try { localStorage.removeItem(CLE_CONTEXTE) } catch { /* rien */ } }
   const [threadId, setThreadId] = useState<string | null>(initialThreadId)
   const [loading, setLoading] = useState(false)

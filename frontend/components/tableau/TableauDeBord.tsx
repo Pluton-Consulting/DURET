@@ -46,6 +46,20 @@ export const EVENEMENT_CONTEXTE = "v2:contexte"
 
 export type ContextePrealable = {
   titre: string; resume: string; expert: string; source: "conversation" | "tache"; thread_id?: string | null
+  // LE PROFIL À QUI CE CONTEXTE EST DESTINÉ (14/09, Duret). Le stockage du
+  // navigateur est commun à tous les profils d'un poste : sans ce champ, la
+  // tâche pré-inscrite par Nathalie apparaissait dans le chat d'Éric.
+  pour?: string | null
+}
+
+/** L'identifiant du profil porté par le JWT (`sub`), sans le vérifier : il ne
+ *  sert qu'à ranger un confort local, le serveur revérifie tout le reste. */
+export function profilDuJeton(jeton?: string | null): string | null {
+  try {
+    const charge = (jeton || "").split(".")[1]
+    if (!charge) return null
+    return JSON.parse(atob(charge.replace(/-/g, "+").replace(/_/g, "/")))?.sub ?? null
+  } catch { return null }
 }
 
 /** Pré-inscrit un contexte dans le chat et y emmène. */
@@ -320,7 +334,7 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
               {a.apercu && <div style={{ color: "var(--marque-text-muted)", fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.apercu}</div>}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button type="button" className="v2-bouton-plein"
-                        onClick={() => preinscrire({ titre: `Accord : ${a.reason || "action"}`, resume: a.apercu || "", expert: a.agent || "agent1", source: "tache", thread_id: a.thread_id })}>
+                        onClick={() => preinscrire({ pour: profilDuJeton(token),  titre: `Accord : ${a.reason || "action"}`, resume: a.apercu || "", expert: a.agent || "agent1", source: "tache", thread_id: a.thread_id })}>
                   Voir dans le chat
                 </button>
               </div>
@@ -387,14 +401,14 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
                 {h && !h.erreur && (h.conversations?.length || h.taches?.length) === 0 && <div className="v2-vide">Aucune conversation ni tâche avec cet expert pour l'instant.</div>}
                 {h && !h.erreur && (h.taches || []).map((t: any) => (
                   <button key={t.id} type="button"
-                          onClick={() => preinscrire({ titre: t.demande, resume: t.reponse || t.status, expert: e.cle, source: "tache" })}>
+                          onClick={() => preinscrire({ pour: profilDuJeton(token),  titre: t.demande, resume: t.reponse || t.status, expert: e.cle, source: "tache" })}>
                     <span style={{ fontWeight: 600 }}>Tâche · {t.demande}</span>
                     <small>{STATUTS[t.status]?.libelle || t.status} · {quand(t.updated_at)}</small>
                   </button>
                 ))}
                 {h && !h.erreur && (h.conversations || []).map((c: any) => (
                   <button key={c.thread_id} type="button"
-                          onClick={() => preinscrire({ titre: c.title || "Conversation", resume: c.derniere_reponse || "", expert: e.cle, source: "conversation", thread_id: c.thread_id })}>
+                          onClick={() => preinscrire({ pour: profilDuJeton(token),  titre: c.title || "Conversation", resume: c.derniere_reponse || "", expert: e.cle, source: "conversation", thread_id: c.thread_id })}>
                     <span style={{ fontWeight: 600 }}>{c.title || "Conversation"}</span>
                     <small>{c.nb_messages} message(s) · {quand(c.updated_at)}{c.derniere_reponse ? ` · ${c.derniere_reponse}` : ""}</small>
                   </button>

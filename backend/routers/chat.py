@@ -555,7 +555,14 @@ async def dernier_fil(current_user: User = Depends(get_current_user)):
 
 @router.get("/threads/{thread_id}/messages")
 async def get_thread_messages(thread_id: str, current_user: User = Depends(get_current_user)):
-    """Historique des messages d'un thread (RLS : uniquement les siens)."""
+    """Historique des messages d'un thread — uniquement les siens.
+
+    CHAQUE PROFIL SA CONVERSATION (14/09, Duret : « même s'ils ont le même
+    mail »). Le filtre ne reposait que sur la RLS, qui accorde TOUS les fils
+    à la direction et au super_admin : un compte de direction qui connaissait
+    l'identifiant d'un fil lisait la conversation d'un collègue. Le filtre
+    `user_id` est désormais explicite, comme pour poursuivre un fil.
+    """
     async with get_rls_db(str(current_user.id), current_user.role) as conn:
         rows = await conn.fetch(
             # LA QUESTION AVANT SA RÉPONSE, MÊME À ÉGALITÉ DE DATE (01/09).
@@ -569,10 +576,10 @@ async def get_thread_messages(thread_id: str, current_user: User = Depends(get_c
             """SELECT m.id, m.role, m.content, m.metadata, m.created_at
                FROM messages m
                JOIN threads t ON t.id = m.thread_id
-               WHERE t.langgraph_thread_id = $1
+               WHERE t.langgraph_thread_id = $1 AND t.user_id = $2
                ORDER BY m.created_at ASC,
                         CASE WHEN m.role = 'user' THEN 0 ELSE 1 END ASC""",
-            thread_id,
+            thread_id, current_user.id,
         )
         return [dict(row) for row in rows]
 

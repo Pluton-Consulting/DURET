@@ -42,7 +42,28 @@ type Etat = {
   detail: string
   revectorisation_necessaire: boolean
   mesure_possible: boolean
+  // L'opération tourne en fond depuis le 14/09 : l'écran la suit ici.
+  operation?: {
+    phase: "en_cours" | "terminee" | "echec"
+    dimension: number
+    debut: number
+    fin?: number
+    erreur?: string
+    morceaux_en_file?: number
+    index_recree?: boolean
+  } | null
 }
+
+// LE NOMBRE À RECOPIER SE COMPARE EN CHIFFRES (14/09) : l'écran l'affiche
+// « 9 427 » plus haut, et « 9 427 » tapé tel quel laissait le bouton grisé.
+export const chiffres = (s: string) => s.replace(/\D/g, "")
+
+// Une réponse qui n'est pas du JSON (502/504 de nginx) disait « HTTP 504 » :
+// on dit ce que ça veut dire.
+export const messageHttp = (code: number) =>
+  code === 502 || code === 504
+    ? `le serveur n'a pas répondu à temps (HTTP ${code})`
+    : `HTTP ${code}`
 
 export default function RevectorisationCarte(
   { apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
@@ -52,6 +73,12 @@ export default function RevectorisationCarte(
   const [busy, setBusy] = useState(false)
   const [confirme, setConfirme] = useState("")
   const [ouvert, setOuvert] = useState(false)
+  // LE NOMBRE EST FIGÉ À L'OUVERTURE (14/09, relevé de Noa : « quand je clique
+  // sur re-vectoriser ça marche pas »). Il était relu toutes les 20 s : pendant
+  // qu'une synchronisation ou un enrichissement ajoutait des morceaux, le
+  // nombre changeait sous les yeux de la personne qui le recopiait, et le
+  // bouton restait grisé sans rien dire. Le serveur ne s'en sert pas.
+  const [attenduFige, setAttenduFige] = useState("")
   // LE CATALOGUE DES MODÈLES D'EMBEDDING, avec la dimension MESURÉE de chacun.
   // Demande de Noa : « dis-moi quels modèles j'ai accès ». Aucune liste écrite
   // à la main ne peut répondre — cela dépend de l'abonnement, cela change, et
@@ -78,7 +105,7 @@ export default function RevectorisationCarte(
       const r = await fetch(`${apiUrl}/api/settings/embeddings`, {
         headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
       })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) throw new Error(messageHttp(r.status))
       setEtat(await r.json())
       setErreur("")
     } catch (e: any) { setErreur(e?.message || "lecture impossible") }
@@ -89,12 +116,27 @@ export default function RevectorisationCarte(
   // Pendant que le corpus se re-vectorise, l'avancement bouge : on relit
   // périodiquement, mais JAMAIS quand l'onglet est en arrière-plan — un écran
   // que personne ne regarde n'a pas besoin d'être à jour.
+  // Pendant l'opération elle-même, toutes les 5 s : c'est là qu'on regarde.
+  const enCours = etat?.operation?.phase === "en_cours"
   useEffect(() => {
     const t = setInterval(() => {
       if (document.visibilityState === "visible") relire()
-    }, 20000)
+    }, enCours ? 5000 : 20000)
     return () => clearInterval(t)
-  }, [relire])
+  }, [relire, enCours])
+
+  // Ouvrir la confirmation RE-MESURE d'abord : le modèle a pu changer dans le
+  // menu juste au-dessus depuis la dernière lecture, et la dimension envoyée
+  // serait refusée (409) au moment d'effacer.
+  const ouvrir = async () => {
+    setMessage(""); setErreur("")
+    await relire()
+    setOuvert(true)
+  }
+  useEffect(() => {
+    if (ouvert && etat && !attenduFige) setAttenduFige(String(etat.morceaux))
+    if (!ouvert && attenduFige) setAttenduFige("")
+  }, [ouvert, etat, attenduFige])
 
   const lancer = async () => {
     if (!etat?.dimension_modele) return
@@ -106,7 +148,7 @@ export default function RevectorisationCarte(
         body: JSON.stringify({ dimension: etat.dimension_modele }),
       })
       const json = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(json?.detail || `HTTP ${r.status}`)
+      if (!r.ok) throw new Error(json?.detail || messageHttp(r.status))
       setMessage(json?.note || "Re-vectorisation lancée.")
       setOuvert(false); setConfirme("")
       await relire()
@@ -126,7 +168,11 @@ export default function RevectorisationCarte(
   }
 
   const desaccord = etat.revectorisation_necessaire
-  const attendu = String(etat.morceaux)
+  const attendu = attenduFige || String(etat.morceaux)
+  const confirmeOk = chiffres(confirme) === attendu
+  const operation = etat.operation
+  const heure = (s?: number) => s
+    ? new Date(s * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : ""
 
   return (
     <div style={cadre} data-testid="carte-revectorisation">
@@ -249,8 +295,38 @@ export default function RevectorisationCarte(
         </div>
       )}
 
+      {/* L'OPÉRATION SE VOIT (14/09) : elle tourne en fond, et son issue —
+          réussite ou cause de l'échec — reste affichée jusqu'à la suivante. */}
+      {operation?.phase === "en_cours" && (
+        <div data-testid="revectorisation-en-cours" style={{ ...petit, marginTop: 10, color: "var(--marque-text-body)" }}>
+          Re-vectorisation vers {operation.dimension} dimensions en cours depuis {heure(operation.debut)} :
+          effacement des vecteurs et reconstruction de l&apos;index. Les comptes
+          ci-dessus reprendront à la fin.
+        </div>
+      )}
+      {operation?.phase === "terminee" && (
+        <div style={{ ...petit, marginTop: 10, color: "var(--marque-text-body)" }}>
+          Re-vectorisation lancée à {heure(operation.debut)}, base passée à {operation.dimension} dimensions
+          {operation.index_recree === false && " (sans index : dimension trop grande)"} ; les morceaux
+          se re-vectorisent en fond.
+        </div>
+      )}
+      {operation?.phase === "echec" && (
+        <div style={{ ...petit, marginTop: 10, color: "var(--marque-error-text)" }}>
+          La re-vectorisation de {heure(operation.debut)} a échoué : {operation.erreur}
+        </div>
+      )}
+
+      {/* UN BOUTON GRISÉ DIT POURQUOI (14/09) : sans mesure du modèle, rien
+          ne part — la cause était en italique plus haut, loin du bouton. */}
+      {!ouvert && !etat.mesure_possible && operation?.phase !== "en_cours" && (
+        <div data-testid="revectorisation-indisponible" style={{ ...petit, marginTop: 10, color: "var(--marque-error-text)" }}>
+          Re-vectorisation indisponible : {etat.detail}
+        </div>
+      )}
+
       {!ouvert && (
-        <button type="button" onClick={() => setOuvert(true)} disabled={busy || !etat.mesure_possible}
+        <button type="button" onClick={ouvrir} disabled={busy || !etat.mesure_possible || enCours}
           style={{ marginTop: 10, padding: "6px 12px", borderRadius: 999, fontSize: 13,
                    cursor: "pointer", border: "1px solid var(--marque-border)",
                    background: "var(--marque-surface)" }}>
@@ -271,11 +347,11 @@ export default function RevectorisationCarte(
               inputMode="numeric" aria-label="Nombre de morceaux à re-vectoriser"
               style={{ width: 120, padding: "6px 10px", borderRadius: 8, fontSize: 13,
                        border: "1px solid var(--marque-border)" }} />
-            <button type="button" onClick={lancer} disabled={busy || confirme.trim() !== attendu}
+            <button type="button" onClick={lancer} disabled={busy || !confirmeOk}
               style={{ padding: "6px 12px", borderRadius: 999, fontSize: 13,
-                       cursor: confirme.trim() === attendu ? "pointer" : "not-allowed",
+                       cursor: confirmeOk ? "pointer" : "not-allowed",
                        border: "1px solid var(--marque-border)",
-                       opacity: confirme.trim() === attendu ? 1 : 0.5,
+                       opacity: confirmeOk ? 1 : 0.5,
                        background: "var(--marque-surface)" }}>
               {busy ? "En cours…" : "Effacer et re-vectoriser"}
             </button>

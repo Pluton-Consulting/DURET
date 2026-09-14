@@ -50,6 +50,8 @@ print(f"\n═══ RE-VECTORISER LE CORPUS — {BACKEND.resolve().parent}\n")
 
 # ── La base doublée ──────────────────────────────────────────────────────
 SQL: list = []
+DELAIS: list = []
+ECHEC = {"sqlstate": ""}
 COLONNE = {"valeur": "vector(1536)"}
 
 
@@ -67,8 +69,13 @@ class _Conn:
     def transaction(self):
         return _Tx()
 
-    async def execute(self, sql, *a):
+    async def execute(self, sql, *a, timeout=None):
         SQL.append(" ".join(sql.split()))
+        DELAIS.append((" ".join(sql.split())[:30], timeout))
+        if ECHEC["sqlstate"] and sql.lstrip().startswith("ALTER"):
+            e = Exception("canceling statement due to lock timeout")
+            e.sqlstate = ECHEC["sqlstate"]
+            raise e
         return "INSERT 0 3"
 
     async def fetchval(self, sql, *a):
@@ -357,6 +364,77 @@ noms = {n.name for n in arbre.body if isinstance(n, (ast.FunctionDef, ast.AsyncF
 verifier("le module expose ce que l'écran et le garde-fou attendent",
          {"mesurer_dimension", "dimension_attendue", "etat", "revectoriser"} <= noms,
          str(sorted(noms)))
+
+# ── 8. « QUAND JE CLIQUE SUR RE-VECTORISER ÇA MARCHE PAS » (14/09) ─────
+# L'opération tournait dans la requête HTTP, sous le délai du pool (180 s) et de
+# nginx (300 s) ; son verrou pouvait attendre sans fin derrière une synchro ; et
+# l'écran comparait la saisie à un nombre relu toutes les 20 s.
+SQL.clear(); DELAIS.clear()
+asyncio.run(rv.revectoriser(768))
+verifier("EXÉCUTÉ — le verrou est borné AVANT la première écriture",
+         SQL[1].startswith("SET LOCAL lock_timeout"), SQL[1])
+verifier("aucune instruction de l'opération ne subit le délai du pool (180 s)",
+         all(d == rv.DELAI_OPERATION_S for s, d in DELAIS if not s.startswith("SET LOCAL")),
+         str(DELAIS))
+
+msg = rv.expliquer_echec(type("E", (Exception,), {"sqlstate": "55P03"})())
+verifier("un verrou refusé se dit (quelle tâche, et que rien n'est effacé)",
+         "Rien n'a été effacé" in msg and "synchronisation" in msg, msg)
+
+
+async def _en_fond(echec=""):
+    ECHEC["sqlstate"] = echec
+    rv._OPERATION.clear()
+    rv.lancer_en_fond(768)
+    pendant = dict(rv._OPERATION)
+    try:
+        rv.lancer_en_fond(768)
+        double = False
+    except RuntimeError:
+        double = True
+    await rv._TACHE
+    ECHEC["sqlstate"] = ""
+    return pendant, double, dict(rv._OPERATION)
+
+pendant, double, apres = asyncio.run(_en_fond())
+verifier("EXÉCUTÉ — l'opération part en fond et se dit « en_cours »", pendant.get("phase") == "en_cours")
+verifier("une seconde opération est refusée tant que la première tourne", double)
+verifier("elle se termine « terminee » avec le compte en file",
+         apres.get("phase") == "terminee" and apres.get("morceaux_en_file") == 9427, str(apres))
+
+pendant, double, apres = asyncio.run(_en_fond("55P03"))
+verifier("EXÉCUTÉ — un échec en fond laisse sa cause lisible à l'écran",
+         apres.get("phase") == "echec" and "Rien n'a été effacé" in apres.get("erreur", ""), str(apres))
+verifier("et la transaction est annulée (ROLLBACK), rien d'effacé", SQL[-1] == "ROLLBACK", SQL[-1])
+
+rv._OPERATION.clear(); rv._OPERATION.update(phase="en_cours", dimension=768, debut=0)
+rv._DERNIER_ETAT.clear(); rv._DERNIER_ETAT.update(morceaux=9427, vectorises=0)
+SQL.clear()
+e = asyncio.run(rv.etat())
+verifier("pendant l'opération, l'état ne relit pas la table verrouillée",
+         SQL == [] and e["operation"]["phase"] == "en_cours" and e["morceaux"] == 9427, str(SQL))
+rv._OPERATION.clear()
+verifier("hors opération, l'état porte `operation` (vide)", asyncio.run(rv.etat())["operation"] is None)
+
+reglages = (BACKEND / "routers" / "settings.py").read_text(encoding="utf-8")
+verifier("la route LANCE en fond et répond tout de suite",
+         "rv.lancer_en_fond(mesuree)" in reglages and "await rv.revectoriser(" not in reglages)
+emb = (BACKEND / "vectorstore" / "embeddings.py").read_text(encoding="utf-8")
+verifier("une mesure muette dit sa cause quand on la sait (pause de quota Gemini)",
+         "def raison_du_silence" in emb and "pause de quota" in emb
+         and "raison_du_silence(modele)" in (BACKEND / "vectorstore" / "revectorisation.py").read_text(encoding="utf-8"))
+verifier("embed_texts et la cause regardent le MÊME choix de fournisseur",
+         "fournisseur_choisi(modele_force)" in emb.split("async def embed_texts")[1])
+
+carte = (BACKEND.resolve().parent / "frontend" / "components" / "settings"
+         / "RevectorisationCarte.tsx").read_text(encoding="utf-8")
+verifier("le nombre à recopier est FIGÉ à l'ouverture", "attenduFige" in carte
+         and "setAttenduFige(String(etat.morceaux))" in carte)
+verifier("la saisie se compare en chiffres (« 9 427 » accepté)", "chiffres(confirme) === attendu" in carte)
+verifier("un bouton grisé dit pourquoi", "Re-vectorisation indisponible" in carte)
+verifier("ouvrir la confirmation re-mesure d'abord", "onClick={ouvrir}" in carte and "await relire()" in carte)
+verifier("l'écran suit l'opération en fond et affiche la cause d'un échec",
+         'operation?.phase === "echec"' in carte and "operation.erreur" in carte)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

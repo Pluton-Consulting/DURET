@@ -44,7 +44,9 @@ coup plutôt que de tenir deux colonnes en parallèle.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Optional
 
 from database.connection import get_db
@@ -68,6 +70,23 @@ INDEX_VECTORIEL = "idx_documents_embedding_hnsw"
 # l'indexation HNSW à 2000 dimensions — au-delà l'index ne se crée pas.
 DIMENSION_MIN = 64
 DIMENSION_MAX_INDEXABLE = 2000
+
+# « RE-VECTORISER LE CORPUS NE MARCHE PAS » (14/09, relevé de Noa, Duret).
+# L'opération tournait DANS la requête HTTP : sur un gros corpus, l'`ALTER`
+# réécrit la table et reconstruit TOUS ses index (plein texte, trigrammes) —
+# le délai du pool (`command_timeout`, 180 s) ou celui de nginx (300 s) la
+# coupait, la transaction s'annulait, et l'écran affichait un « HTTP 500 » ou
+# « HTTP 504 » sans cause. Et pendant qu'une synchronisation ou un
+# enrichissement tenait les documents, l'`ALTER` attendait son verrou sans fin
+# en bloquant derrière lui toute la recherche.
+# Désormais : un verrou attendu 15 s au plus (l'échec le dit), aucun délai
+# client sur les instructions, et l'opération tourne EN FOND ; l'écran suit
+# `operation` dans l'état qu'il relit déjà.
+DELAI_VERROU = "15s"
+DELAI_OPERATION_S = 3600.0
+_OPERATION: dict = {}
+_DERNIER_ETAT: dict = {}
+_TACHE: Optional["asyncio.Task"] = None
 
 
 # La dimension déclarée par la colonne, mise en cache : elle est lue à chaque
@@ -126,6 +145,14 @@ async def mesurer_dimension(modele: str = "") -> tuple[Optional[int], str]:
     vecteurs = await embed_texts(["essai de dimension"], modele_force=modele)
     vecteur = vecteurs[0] if vecteurs else None
     if not vecteur:
+        cause = ""
+        try:
+            from vectorstore.embeddings import raison_du_silence
+            cause = raison_du_silence(modele)
+        except Exception:  # noqa: BLE001 — sans cause connue, le message général
+            pass
+        if cause:
+            return None, f"Le modèle n'a rendu aucun vecteur : {cause}."
         return None, ("Le modèle n'a rendu aucun vecteur. Vérifiez la clé du "
                       "fournisseur et le nom du modèle avant de relancer.")
     taille = len(vecteur)
@@ -143,6 +170,10 @@ async def mesurer_dimension(modele: str = "") -> tuple[Optional[int], str]:
 async def etat() -> dict:
     """Où en est le corpus : ce qui est vectorisé, ce qui attend, et sous quelle
     dimension la base est déclarée."""
+    # Pendant l'opération, l'`ALTER` tient la table : relire les comptes
+    # bloquerait l'écran jusqu'à la fin. On rend les derniers connus.
+    if operation_en_cours() and _DERNIER_ETAT:
+        return {**_DERNIER_ETAT, "operation": dict(_OPERATION)}
     async with get_db() as conn:
         corpus = await conn.fetchrow(
             "SELECT count(*) AS total, count(embedding) AS vectorises FROM documents")
@@ -154,7 +185,7 @@ async def etat() -> dict:
                WHERE a.attname = 'embedding' AND c.relkind = 'r'""")
     total = int(corpus["total"] or 0)
     faits = int(corpus["vectorises"] or 0)
-    return {
+    sortie = {
         "morceaux": total,
         "vectorises": faits,
         "restants": total - faits,
@@ -164,6 +195,9 @@ async def etat() -> dict:
         "file": {r["status"]: int(r["n"]) for r in file},
         "colonnes": {r["table"]: r["type"] for r in dims},
     }
+    _DERNIER_ETAT.clear()
+    _DERNIER_ETAT.update(sortie)
+    return {**sortie, "operation": dict(_OPERATION) or None}
 
 
 async def revectoriser(dimension: int, modele: str = "") -> dict:
@@ -180,23 +214,31 @@ async def revectoriser(dimension: int, modele: str = "") -> dict:
 
     async with get_db() as conn:
         async with conn.transaction():
+            # 0. Un verrou attendu 15 s au plus : une synchronisation ou un
+            #    enrichissement qui tient les documents fait ÉCHOUER l'opération
+            #    en le disant, au lieu de la suspendre sans fin — et avec elle
+            #    toute la recherche, qui attendrait derrière l'`ALTER`.
+            await conn.execute(f"SET LOCAL lock_timeout = '{DELAI_VERROU}'")
             # 1. Les vecteurs partent. Ils ne sont plus comparables à ceux que
             #    le nouveau modèle produira : les garder serait pire que de les
             #    perdre, puisqu'ils continueraient de remonter dans les
             #    résultats en se faisant passer pour pertinents.
             for table, colonne in COLONNES_VECTEUR:
                 await conn.execute(
-                    f"UPDATE {table} SET {colonne} = NULL WHERE {colonne} IS NOT NULL")
+                    f"UPDATE {table} SET {colonne} = NULL WHERE {colonne} IS NOT NULL",
+                    timeout=DELAI_OPERATION_S)
 
             # 2. L'index doit tomber AVANT le changement de type : Postgres
             #    refuse d'altérer une colonne qu'un index vectoriel occupe.
-            await conn.execute(f"DROP INDEX IF EXISTS {INDEX_VECTORIEL}")
+            await conn.execute(f"DROP INDEX IF EXISTS {INDEX_VECTORIEL}",
+                               timeout=DELAI_OPERATION_S)
 
             # 3. La base change de dimension. Les colonnes étant vides, la
             #    conversion est immédiate et ne peut pas échouer sur une donnée.
             for table, colonne in COLONNES_VECTEUR:
                 await conn.execute(
-                    f"ALTER TABLE {table} ALTER COLUMN {colonne} TYPE vector({dimension})")
+                    f"ALTER TABLE {table} ALTER COLUMN {colonne} TYPE vector({dimension})",
+                    timeout=DELAI_OPERATION_S)
 
             # 4. L'index revient, sauf si la dimension dépasse ce que pgvector
             #    sait indexer. Dans ce cas on le DIT plutôt que de faire échouer
@@ -206,7 +248,8 @@ async def revectoriser(dimension: int, modele: str = "") -> dict:
             if indexe:
                 await conn.execute(
                     f"CREATE INDEX {INDEX_VECTORIEL} ON documents "
-                    "USING hnsw (embedding vector_cosine_ops)")
+                    "USING hnsw (embedding vector_cosine_ops)",
+                    timeout=DELAI_OPERATION_S)
 
             # 5. Tout le corpus retourne en file. `attempts` DOIT repartir de
             #    zéro : un job qui a déjà épuisé ses trois tentatives sous
@@ -215,7 +258,8 @@ async def revectoriser(dimension: int, modele: str = "") -> dict:
             await conn.execute(
                 """UPDATE embedding_jobs
                    SET status = 'pending', attempts = 0,
-                       error_message = NULL, processed_at = NULL""")
+                       error_message = NULL, processed_at = NULL""",
+                timeout=DELAI_OPERATION_S)
             # Et les morceaux qui n'ont JAMAIS eu de job en reçoivent un : la
             # file et le corpus ont pu diverger (ingestion interrompue, job
             # supprimé en cascade).
@@ -223,7 +267,8 @@ async def revectoriser(dimension: int, modele: str = "") -> dict:
                 """INSERT INTO embedding_jobs (document_id, status)
                    SELECT d.id, 'pending' FROM documents d
                    WHERE NOT EXISTS (SELECT 1 FROM embedding_jobs j
-                                     WHERE j.document_id = d.id)""")
+                                     WHERE j.document_id = d.id)""",
+                timeout=DELAI_OPERATION_S)
 
             total = await conn.fetchval("SELECT count(*) FROM documents")
 
@@ -243,6 +288,51 @@ async def revectoriser(dimension: int, modele: str = "") -> dict:
         "index_recree": indexe,
         "jobs_ajoutes": manquants,
     }
+
+
+def operation_en_cours() -> bool:
+    return _OPERATION.get("phase") == "en_cours"
+
+
+def expliquer_echec(e: BaseException) -> str:
+    """La cause d'un échec, en mots. Tout se fait dans UNE transaction : un
+    échec n'a rien effacé, et le message le dit — c'est ce qu'on veut savoir
+    avant de relancer."""
+    if getattr(e, "sqlstate", "") == "55P03":
+        return ("Une autre tâche tenait les documents (synchronisation, "
+                "enrichissement ou vectorisation en cours) : la base n'a pas pu "
+                f"être verrouillée en {DELAI_VERROU}. Rien n'a été effacé. "
+                "Relancez quand cette tâche est terminée.")
+    if isinstance(e, (asyncio.TimeoutError, TimeoutError)):
+        return ("L'opération a dépassé une heure et a été annulée d'un bloc. "
+                "Rien n'a été effacé.")
+    return (f"{type(e).__name__} : {str(e)[:300]}. Rien n'a été effacé : "
+            "l'opération est annulée d'un bloc.")
+
+
+def lancer_en_fond(dimension: int, modele: str = "") -> None:
+    """Lance `revectoriser` hors de la requête HTTP et tient `_OPERATION` à
+    jour. Refuse une seconde opération tant que la première tourne."""
+    global _TACHE
+    if operation_en_cours():
+        raise RuntimeError("Une re-vectorisation est déjà en cours.")
+    if not isinstance(dimension, int) or dimension < DIMENSION_MIN:
+        raise ValueError(f"Dimension invalide : {dimension}")
+    _OPERATION.clear()
+    _OPERATION.update(phase="en_cours", dimension=dimension, debut=time.time())
+
+    async def _courir() -> None:
+        try:
+            resultat = await revectoriser(dimension, modele)
+            _OPERATION.update(phase="terminee", fin=time.time(),
+                              morceaux_en_file=resultat["morceaux_en_file"],
+                              index_recree=resultat["index_recree"])
+        except Exception as e:  # noqa: BLE001 — l'échec se montre à l'écran
+            logger.exception("Re-vectorisation vers %d échouée", dimension)
+            _OPERATION.update(phase="echec", fin=time.time(), erreur=expliquer_echec(e))
+
+    # Ancrée au module : une tâche sans référence peut être ramassée en cours.
+    _TACHE = asyncio.get_running_loop().create_task(_courir())
 
 
 # ── Le catalogue des modèles d'embedding, avec leur dimension ────────────

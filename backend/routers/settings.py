@@ -674,17 +674,25 @@ async def lancer_revectorisation(body: RevectoriserRequest,
                     f"{body.dimension}. Rien n'a été effacé : rechargez la page "
                     "pour repartir de la mesure à jour."))
 
+    # L'OPÉRATION TOURNE EN FOND (14/09) : dans la requête, un gros corpus
+    # dépassait le délai de la base ou de nginx, et l'écran ne recevait qu'un
+    # « HTTP 500 » ou « HTTP 504 ». L'avancement se lit dans `GET /embeddings`.
+    if rv.operation_en_cours():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Une re-vectorisation est déjà en cours : attendez qu'elle se termine.")
     await log_action(action="revectorisation_lancee",
                      user_id=str(current_user.id),
                      metadata={"dimension": mesuree})
-    resultat = await rv.revectoriser(mesuree)
+    rv.lancer_en_fond(mesuree)
     return {
-        **resultat,
-        "note": (f"Les vecteurs ont été effacés et la base est passée à "
-                 f"{mesuree} dimensions. Les {resultat['morceaux_en_file']} "
-                 "morceaux se re-vectorisent en tâche de fond. Pendant ce "
-                 "temps, la recherche continue de répondre par sa voie "
-                 "textuelle : les résultats sont moins fins, pas absents."),
+        "lancee": True,
+        "dimension": mesuree,
+        "note": (f"La re-vectorisation a démarré : les vecteurs s'effacent et la "
+                 f"base passe à {mesuree} dimensions, puis les morceaux se "
+                 "re-vectorisent en tâche de fond. L'avancement s'affiche ici. "
+                 "Pendant ce temps, la recherche continue de répondre par sa "
+                 "voie textuelle : les résultats sont moins fins, pas absents."),
     }
 
 

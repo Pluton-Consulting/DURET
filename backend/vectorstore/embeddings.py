@@ -342,6 +342,52 @@ _PROVIDERS = {"gemini": _embed_gemini, "openai": _embed_openai,
 
 
 # ── API publique ──────────────────────────────────────────────────────────
+def fournisseur_choisi(modele_force: str = "") -> tuple[str, str]:
+    """(fournisseur, modèle) qu'utiliserait `embed_texts`. Sorti de lui (14/09)
+    pour que `raison_du_silence` regarde LE MÊME choix, pas une copie."""
+    nom_fournisseur = (settings.embedding_provider or "gemini").strip().lower()
+    modele_choisi = ""
+    if modele_force and ":" in modele_force:
+        f, _, m = modele_force.partition(":")
+        if f.strip() and m.strip():
+            nom_fournisseur, modele_choisi = f.strip().lower(), m.strip()
+    try:
+        from llm.reglages import texte as _reglage_texte
+        brut = "" if modele_force else _reglage_texte("modele_embedding")
+        if brut:
+            f, _, m = brut.partition(":")
+            if f.strip() and m.strip():
+                nom_fournisseur, modele_choisi = f.strip().lower(), m.strip()
+    except Exception:  # noqa: BLE001 — un réglage illisible garde la configuration
+        pass
+    return nom_fournisseur, modele_choisi
+
+
+def raison_du_silence(modele_force: str = "") -> str:
+    """Pourquoi le fournisseur choisi ne rend rien, quand on le SAIT (14/09).
+
+    L'écran de re-vectorisation disait « Vérifiez la clé du fournisseur » à
+    chaque échec de mesure, et grisait le bouton. Or le cas le plus courant
+    n'est pas la clé : c'est Gemini en PAUSE DE QUOTA, prise par le worker qui
+    vectorise en fond — la mesure part pendant la pause et ne sort jamais.
+    Chaîne vide quand rien de précis n'est connu."""
+    nom, _ = fournisseur_choisi(modele_force)
+    if nom not in _PROVIDERS:
+        return f"le fournisseur d'embeddings « {nom} » est inconnu"
+    if nom in ("gemini", "google"):
+        if not settings.google_api_key:
+            return "aucune clé Google n'est posée"
+        reste = _gemini_throttle._cooldown_until - time.monotonic()
+        if reste > 0:
+            dit = _gemini_throttle._dernier_429
+            return (f"Gemini est en pause de quota encore {int(reste) + 1} s"
+                    + (f" (dernier refus : {dit})" if dit else "")
+                    + " — la mesure refonctionnera après, ou choisissez un autre modèle")
+        if _gemini_throttle._count >= settings.embedding_daily_request_cap:
+            return "le plafond quotidien de requêtes Gemini est atteint (reprise demain)"
+    return ""
+
+
 async def embed_texts(texts: list[str],
                       modele_force: str = "") -> list[Optional[list[float]]]:
     """
@@ -367,21 +413,7 @@ async def embed_texts(texts: list[str],
     # la seule façon de connaître la dimension d'un modèle était de le POSER en
     # réglage — c'est-à-dire de basculer tout le système dessus pour savoir
     # s'il convenait. On veut l'inverse : mesurer, montrer, puis choisir.
-    nom_fournisseur = (settings.embedding_provider or "gemini").strip().lower()
-    modele_choisi = ""
-    if modele_force and ":" in modele_force:
-        f, _, m = modele_force.partition(":")
-        if f.strip() and m.strip():
-            nom_fournisseur, modele_choisi = f.strip().lower(), m.strip()
-    try:
-        from llm.reglages import texte as _reglage_texte
-        brut = "" if modele_force else _reglage_texte("modele_embedding")
-        if brut:
-            f, _, m = brut.partition(":")
-            if f.strip() and m.strip():
-                nom_fournisseur, modele_choisi = f.strip().lower(), m.strip()
-    except Exception:  # noqa: BLE001 — un réglage illisible garde la configuration
-        pass
+    nom_fournisseur, modele_choisi = fournisseur_choisi(modele_force)
     provider = _PROVIDERS.get(nom_fournisseur)
     if provider is None:
         _warn_once(

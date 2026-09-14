@@ -6,6 +6,11 @@ puis les vraies valeurs sont réinjectées dans la réponse (entity_map).
 """
 import time
 import logging
+# `_json` AU MODULE (14/09) : la coupe des résultats (`_reduire_valeur`,
+# `_tailler_resultat`) s'en sert sans l'importer localement, et tout résultat
+# plus gros que son plafond levait « name '_json' is not defined » (le point
+# sur les mails de la semaine, Symbiose). Les imports locaux restent valables.
+import json as _json
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END

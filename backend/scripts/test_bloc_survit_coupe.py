@@ -185,10 +185,13 @@ verifier("ReponsesMail accepte et affiche `titre`",
 #    qui dit « Rappelle avec `filtres` pour un compte exact ». Le modèle a
 #    exploré le schéma trois fois sans jamais filtrer : il n'avait pas lu le
 #    mode d'emploi de l'outil qu'il tenait.
-import json as _js
-espace_coupe = {"_json": _js}
+# `_json` VIENT DU MODULE, il n'est plus injecté (14/09) : l'injecter cachait
+# que agent1.py ne l'importait pas — et la coupe levait « name '_json' is not
+# defined » en production sur le point des mails de la semaine.
+import json as _js      # pour les mesures du banc lui-même, pas pour la coupe
+espace_coupe = {}
 extraire(BACKEND / "agents" / "agent1.py",
-         {"_tailler_resultat", "_reduire_valeur", "_CLES_CONSIGNE",
+         {"_json", "_tailler_resultat", "_reduire_valeur", "_CLES_CONSIGNE",
           "_RESERVE_MENTION"}, espace_coupe)
 tailler = espace_coupe["_tailler_resultat"]
 

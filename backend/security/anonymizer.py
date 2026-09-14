@@ -541,6 +541,13 @@ class _Anonymizer:
             from llm.reglages import valeur
             return (valeur("anonymisation") or "").strip().lower() != "active"
         except Exception:  # noqa: BLE001 — jamais une panne
+            # `settings` n'était pas importé dans cette portée (14/09) : le
+            # repli levait à la place de répondre. Sans configuration lisible,
+            # le défaut du projet — masquage désactivé.
+            try:
+                from config import settings
+            except Exception:  # noqa: BLE001
+                return True
             return (getattr(settings, "anonymisation", "") or "").strip().lower() != "active"
 
     def anonymize(self, text: str, entity_map: Optional[dict] = None) -> tuple[str, dict]:

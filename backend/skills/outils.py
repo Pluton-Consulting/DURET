@@ -240,7 +240,8 @@ SKILLS = {
             # 395 caracteres : le catalogue est injecte a CHAQUE tour, le
             # plafond de 400 par description n'est pas negociable.
             "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois. "
-            "`blocs` : "
+            "Mise en page soignee AUTOMATIQUE (page de garde, sommaire, charte) ; REDIGE en "
+            "paragraphes, une liste seulement pour enumerer. `blocs` : "
             "{bloc:titre|paragraphe|liste|tableau|image|saut_page|feuille} ; "
             "{bloc:image, image:<reference d'une image du fil ou nom d'un fichier "
             "du stockage>}. `entete_image`/`pied_image` : logo sur chaque page (une "
@@ -249,7 +250,8 @@ SKILLS = {
             "COURT (~30 blocs) : ce geste FINALISE ; au-dela, "
             "creer/ajouter/terminer_document. `mode_emploi` documents"),
         requis=["titre", "blocs"],
-        optionnels=["format", "entete", "pied", "numeroter", "entete_image", "pied_image"],
+        optionnels=["format", "entete", "pied", "numeroter", "entete_image", "pied_image",
+                    "page_de_garde", "sommaire"],
         effet="ecriture_interne",
         libelle="je produis le document"),
     "mode_emploi": Declaration(

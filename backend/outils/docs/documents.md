@@ -3,6 +3,27 @@
 Mode d'emploi complet. Pour un document ordinaire, `produire_document` fait tout
 en un appel. Ce qui suit ne sert qu'aux cas que la bibliothèque ne couvre pas.
 
+## Un beau document, ce qui est automatique et ce qui est à toi
+
+**Automatique (Word)** : styles de la maison (police, interligne, espacements),
+titres à la couleur de la charte qui ne restent jamais seuls en bas de page,
+**page de garde** (logo d'en-tête, titre, sous-titre, date) dès que le document
+dépasse une douzaine de blocs, **sommaire** dès cinq titres de niveau 1-2,
+en-tête et pied discrets, pages numérotées, tableaux habillés dont l'en-tête se
+répète à chaque page. `page_de_garde: false` / `sommaire: false` les retirent.
+N'écris donc ni page de garde ni sommaire en blocs.
+
+**À toi, la rédaction** :
+- un mémoire, un rapport, une note se RÉDIGENT : des paragraphes de 3 à 6
+  phrases qui expliquent (méthode, moyens, pourquoi) ;
+- une `liste` seulement pour une vraie énumération courte (pièces à fournir,
+  étapes) — jamais une section faite QUE de puces, jamais une énumération
+  écrite en un paragraphe séparé par des « ; » ;
+- des titres `niveau` 1 pour les grandes parties, 2 pour les sous-parties ;
+- ce qui se compare (moyens, effectifs, planning) va dans un `tableau` ;
+- un texte que tu écris avec des tirets en début de ligne devient une vraie
+  liste, et « **gras** » du gras — mais préfère les blocs.
+
 ## Le contenu se DÉCRIT
 
 On ne programme jamais la mise en page : on décrit des blocs, et le code de

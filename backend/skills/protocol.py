@@ -431,10 +431,14 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "d'une image de la conversation, le NOM d'un fichier image du "
         "stockage, ou le NOM d'un PDF de la maison (devis type, plaquette) : "
         "on en tire son logo. Pour les COULEURS de la maison, mets "
-        "couleur:'charte' sur un titre ou un paragraphe. Ne produit aucun fichier",
+        "couleur:'charte' sur un titre ou un paragraphe. MISE EN PAGE AUTOMATIQUE (Word) : "
+        "page de garde et sommaire pour un document long, titres a la couleur de la "
+        "maison — n'ecris ni page de garde ni sommaire toi-meme. REDIGE en paragraphes "
+        "(3 a 6 phrases) ; une liste seulement pour une vraie enumeration courte, "
+        "jamais une section faite QUE de puces. Ne produit aucun fichier",
 
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter",
-                    "entete_image", "pied_image"]),
+                    "entete_image", "pied_image", "page_de_garde", "sommaire"]),
     "ajouter_document": (
         # LA TAILLE PAR APPEL MANQUAIT ICI. Le catalogue disait « autant de
         # fois qu'il le faut » sans jamais dire COMBIEN par fois : le modele a

@@ -314,11 +314,11 @@ if RENDU:
 print("\n── 5. Le catalogue et les consignes")
 protocole = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
 verifier("catalogue : `creer_document` dit `entete_image` / `pied_image` (une IMAGE sur chaque page) et les liste",
-         "`entete_image` / " in protocole and '"entete_image", "pied_image"]' in protocole)
+         "`entete_image` / " in protocole and '"entete_image", "pied_image"' in protocole)
 verifier("catalogue : `ajouter_document` dit le bloc image", "{bloc:image, image:<reference>, legende}" in protocole)
 outils_src = (BACKEND / "skills" / "outils.py").read_text(encoding="utf-8")
 verifier("catalogue : `produire_document` dit image, entete_image, pied_image, et transmet `user`",
-         "|image|" in outils_src and '"entete_image", "pied_image"]' in outils_src and "user=user)" in outils_src)
+         "|image|" in outils_src and '"entete_image", "pied_image"' in outils_src and "user=user)" in outils_src)
 ag1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("la consigne des images dit comment mettre une image DANS un document, en-tête ou pied",
          "DANS un document (corps, en-tête ou pied de page)" in ag1 and "`entete_image` / `pied_image`" in ag1)

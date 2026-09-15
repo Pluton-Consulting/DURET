@@ -106,6 +106,14 @@ def _texte(v, limite: int = MAX_TEXTE) -> str:
     return " ".join(str(v if v is not None else "").split())[:limite]
 
 
+def _texte_lignes(v, limite: int = MAX_TEXTE) -> str:
+    """Comme `_texte`, mais les RETOURS À LA LIGNE restent (15/09) : un paragraphe
+    écrit « Pièces à fournir :\n- DC1\n- Kbis » doit devenir une liste au rendu,
+    pas une ligne « - DC1 - Kbis »."""
+    lignes = [" ".join(l.split()) for l in str(v if v is not None else "").splitlines()]
+    return "\n".join(l for l in lignes if l)[:limite]
+
+
 # LES SYNONYMES OBSERVÉS EN PRODUCTION, pas un dictionnaire imaginaire.
 #
 # L'export Langfuse du 14/08 montre le modèle envoyer {"type":"titre",
@@ -137,10 +145,10 @@ _TYPES = {
 }
 
 
-def _champ_texte(brut: dict, limite: int = MAX_TEXTE) -> str:
+def _champ_texte(brut: dict, limite: int = MAX_TEXTE, lignes: bool = False) -> str:
     """Le texte d'un bloc, sous le nom que le modèle lui a donné ce jour-là."""
     for cle in ("texte", "text", "contenu", "content", "valeur", "value"):
-        v = _texte(brut.get(cle), limite)
+        v = (_texte_lignes if lignes else _texte)(brut.get(cle), limite)
         if v:
             return v
     return ""
@@ -217,7 +225,7 @@ def normaliser_element(brut) -> dict | None:
                 "couleur": couleur if couleur in COULEURS else ""}
 
     if bloc == "paragraphe":
-        texte = _champ_texte(brut)
+        texte = _champ_texte(brut, lignes=True)
         if not texte:
             return None
         # Mise en forme facultative, en vocabulaire FERMÉ. On demande « grand »
@@ -294,4 +302,8 @@ def normaliser_entete(brut: dict) -> dict:
         # combien de pages sortiront, ce qu'il ne peut pas savoir.
         "numeroter": brut.get("numeroter") is not False,
         "paysage": bool(brut.get("paysage")),
+        # (15/09) Word : page de garde et sommaire. Absents = décidés par le rendu
+        # (un document long les reçoit) ; `false` les retire.
+        "page_de_garde": None if brut.get("page_de_garde") is None else bool(brut.get("page_de_garde")),
+        "sommaire": None if brut.get("sommaire") is None else bool(brut.get("sommaire")),
     }

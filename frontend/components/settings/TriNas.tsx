@@ -18,6 +18,8 @@ interface Estimation { total: number; a_lire: number; demande: number; ignorer: 
 interface Etat {
   regles: Ligne[]; age_ans: number; estimation: Estimation | null; catalogue: string | null
   ocr_differe: number; nuit: { debut: number; fin: number }
+  continu?: { active: boolean; prochain: number | null; dernier: number | null; rien_a_lire: boolean
+              cycle_minutes: number; palier_minutes: number }
   proposition: { en_cours: boolean; avancement?: string | null; date?: number; appels?: number;
                  dossiers?: Ligne[]; erreur?: string | null; non_juges?: number; estimation?: Estimation }
 }
@@ -61,6 +63,16 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
     if (!r.ok) { setErreur(d.detail || "La proposition n'a pas pu être lancée."); return }
     setBilan("Proposition lancée : l'IA juge les dossiers sur leurs noms, sans rien ouvrir. Quelques minutes.")
     charger()
+  }
+
+  /** L'INTÉGRATION CONTINUE (15/09) : le serveur lance lui-même un palier de
+   *  lecture à chaque cycle — rien ne dépend de ce navigateur ni de ce PC. */
+  async function basculerContinu(active: boolean) {
+    setErreur("")
+    const r = await fetch(`${apiUrl}/api/nas-tri/continu`, { method: "PUT", headers: entetes, body: JSON.stringify({ active }) })
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) { setErreur(d.detail || "Le réglage n'a pas pu être enregistré."); return }
+    await charger(true)
   }
 
   async function valider() {
@@ -120,6 +132,22 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
               {nb(etat.ocr_differe)} scan(s) attendent la nuit
             </span>
           )}
+        </div>
+      )}
+      {etat?.continu && (
+        <div data-testid="tri-continu" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, margin: "0 0 14px",
+                                                padding: "10px 12px", border: "1px solid var(--marque-border)", borderRadius: 10 }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "var(--marque-text-primary)", cursor: "pointer" }}>
+            <input type="checkbox" checked={etat.continu.active} onChange={(ev) => basculerContinu(ev.target.checked)} />
+            Intégration continue
+          </label>
+          <span style={{ fontSize: 12.5, color: "var(--marque-text-body)" }}>
+            {etat.continu.active
+              ? `Toutes les ${etat.continu.cycle_minutes} min, le serveur lit ce qu'il peut en ${etat.continu.palier_minutes} min et l'intègre aussitôt — même PC éteint. `
+                + (etat.continu.rien_a_lire ? "Tout est à jour : il repassera au prochain relevé du NAS."
+                   : etat.continu.prochain ? `Prochain palier vers ${new Date(etat.continu.prochain * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}.` : "Premier palier dans quelques minutes.")
+              : "Coupée : le NAS n'est lu que lorsque vous lancez la synchronisation."}
+          </span>
         </div>
       )}
       {etat && !etat.estimation && (

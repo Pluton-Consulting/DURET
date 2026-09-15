@@ -601,6 +601,52 @@ else:
     verifier("l'écran dit le rythme et le temps restant", any("fichier(s)/min" in e and "reste ~" in e for e in ETAPES))
     verifier("le compte rendu dit où passe le temps (NAS, lecture, base)",
              set(res3.get("temps_moyen_s") or {}) == {"telechargement", "lecture", "base"}, res3)
+    # 15/09 (suite) — UN PALIER AUTOMATIQUE S'ARRÊTE À SON TEMPS, et le serveur
+    # en relance un à chaque cycle, sans navigateur.
+    print("\n5 ter. L'intégration continue : un palier borné, relancé par le serveur")
+    horloge[0] = 1000.0
+    PAUSES.clear()
+    _vrai_temps.monotonic = _fausse_monotonic
+    try:
+        res4 = asyncio.run(synology.sync(budget_s=120))
+    finally:
+        _vrai_temps.monotonic = ancienne_monotonic
+    verifier("le palier s'arrête à son budget, dit ce qui reste, et ne fait AUCUNE pause",
+             res4.get("palier") and 0 < res4.get("ingérés", 0) < 251 and res4.get("reste_a_lire")
+             and 120 not in PAUSES and "prochain palier" in res4.get("raison_partielle", ""), res4)
+    tri_mod = sys.modules["nas.tri"]
+    LANCES = []
+
+    async def _ouvrir(source, uid, email):
+        return None if LANCES and LANCES[-1] == "occupe" else "sync-1"
+
+    async def _executer(source, module, uid, sync_id, **options):
+        LANCES.append(options.get("budget_s"))
+        routeur_double._SYNCS["synology"] = {"resultat": {"ouverts": 0}}
+    routeur_double = poser("routers.ingestion", CONNECTEURS={"synology": ("NAS", "x")}, _SYNCS={},
+                           _executer_sync=_executer, _ouvrir_sync=_ouvrir)
+    poser("llm.reglages", valeur=lambda nom: "active")
+    sys.modules["config"].settings.nas_cycle_minutes = 10
+    sys.modules["config"].settings.nas_palier_lecture_minutes = 8
+    tri_mod._CONTINU.update({"prochain": None, "dernier": None, "catalogue_vu": None, "rien_a_lire": False})
+    asyncio.run(tri_mod.palier_si_du(maintenant=10_000))
+    verifier("le serveur lance lui-même un palier de 8 min", LANCES == [480], LANCES)
+    asyncio.run(tri_mod.palier_si_du(maintenant=10_000 + 300))
+    verifier("pas de second palier avant la fin du cycle de 10 min", LANCES == [480], LANCES)
+    asyncio.run(tri_mod.palier_si_du(maintenant=10_000 + 601))
+    verifier("rien lu la dernière fois et NAS non relevé depuis : pas de palier inutile", LANCES == [480], LANCES)
+    acces._CATALOGUE["construit_le"] = "nouveau relevé"
+    asyncio.run(tri_mod.palier_si_du(maintenant=10_000 + 1300))
+    verifier("le NAS relevé à nouveau : le palier repart", LANCES == [480, 480], LANCES)
+    poser("llm.reglages", valeur=lambda nom: "desactivee")
+    asyncio.run(tri_mod.palier_si_du(maintenant=10_000 + 5000))
+    verifier("« Intégration continue » coupée : aucun palier", LANCES == [480, 480], LANCES)
+    principal = (BACKEND / "main.py").read_text(encoding="utf-8")
+    routeur_src = (BACKEND / "routers" / "ingestion.py").read_text(encoding="utf-8")
+    verifier("la boucle démarre avec le serveur, et les tâches de fond sont TENUES (pas ramassées en route)",
+             "lancer_en_fond(boucle_continue())" in principal and "_TACHES.add(tache)" in routeur_src
+             and "lancer_en_fond(_executer_sync(" in routeur_src)
+
     parsers_src = (BACKEND / "ingestion" / "parsers.py").read_text(encoding="utf-8")
     verifier("les threads de lecture (et l'OCR qu'ils lancent) passent APRÈS le chat (nice 15)",
              "initializer=_basse_priorite" in parsers_src and "os.setpriority" in parsers_src)

@@ -294,7 +294,7 @@ else:
 print("— Goulots et routes")
 verifier("l'exécuteur de skills pose le lecteur", "with au_nom_de(user):" in lire("backend/skills/executor.py"))
 verifier("la synchronisation tourne en système, même lancée depuis le chat",
-         "with en_systeme():\n        return await _sync(dossiers, avancer)" in lire("backend/ingestion/connectors/synology.py"))
+         "with en_systeme():\n        return await _sync(dossiers, avancer" in lire("backend/ingestion/connectors/synology.py"))
 verifier("la synchronisation écrit le niveau du dossier", "access_level=_niveau_nas(f[\"chemin\"])" in lire("backend/ingestion/connectors/synology.py"))
 verifier("la carte en base prend le niveau du dossier", "from nas.niveaux import niveau" in lire("backend/classement/source.py"))
 users = lire("backend/routers/users.py")

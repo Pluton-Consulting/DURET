@@ -39,6 +39,7 @@ REGLAGES_CONNUS = (
     # duquel un fichier n'est pas appris d'avance (années, 0 = aucune limite).
     "nas_tri",
     "nas_tri_age_ans",
+    "nas_integration_continue",   # « active » (défaut) / « desactivee » — le palier automatique du NAS
     "kpi_depuis",   # AAAA-MM-JJ — les indicateurs ne comptent rien avant cette date
     # L'anonymisation PII se coupe d'un clic (demande de Noa, 30/08 : elle
     # cassait des flux réels — adresse tapée masquée en boucle, balises dans
@@ -185,7 +186,7 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom == "kpi_depuis" and (brut or "").strip() and not _FORMAT_INSTANT.match((brut or "").strip()):
         raise ValueError("Date attendue au format AAAA-MM-JJ, éventuellement "
                          "suivie de HH:MM (ex. 2026-08-22 ou 2026-08-22 18:30).")
-    if nom in ("anonymisation", "validation_totale") and (brut or "").strip() \
+    if nom in ("anonymisation", "validation_totale", "nas_integration_continue") and (brut or "").strip() \
             and (brut or "").strip().lower() not in ("active", "desactivee"):
         raise ValueError("Valeur attendue : « active » ou « desactivee ».")
     if nom == "nas_tri_age_ans" and (brut or "").strip():

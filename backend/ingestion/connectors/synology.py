@@ -522,7 +522,8 @@ def _sous(chemin: str, racines: list[str]) -> bool:
     return any(chemin == r or chemin.startswith(r + "/") for r in racines)
 
 
-async def sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
+async def sync(dossiers: Optional[list[str]] = None, avancer=None,
+               budget_s: Optional[float] = None) -> dict:
     """La synchronisation voit TOUT le NAS, même lancée depuis le geste d'un
     profil (« lance l'import des documents » dans le chat) : chaque fichier
     est rangé au niveau de SON dossier, c'est la recherche qui trie ensuite
@@ -530,10 +531,11 @@ async def sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
     dossiers qui lui sont fermés n'étaient jamais importés pour les autres."""
     from security.lecteur import en_systeme
     with en_systeme():
-        return await _sync(dossiers, avancer)
+        return await _sync(dossiers, avancer, budget_s)
 
 
-async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
+async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
+                budget_s: Optional[float] = None) -> dict:
     """Ouvre chaque fichier lisible du NAS et le range dans la mémoire.
 
     Les fichiers viennent du CATALOGUE (`nas.acces`) : toutes les racines
@@ -770,6 +772,11 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
             _ecrire_ecartes(ecartes)
             tri.ecrire_ocr_differe(differes)
             reste = len(a_lire) - (i + PAQUET)
+            # UN PALIER AUTOMATIQUE S'ARRÊTE À SON TEMPS (`budget_s`) : ce qui est
+            # lu est déjà rangé en base, la suite viendra au palier suivant.
+            if budget_s and reste > 0 and _time.monotonic() - debut_sync >= budget_s:
+                bilan["reste_a_lire"] = reste
+                break
             if (reste > 0 and pause_s and not tri.fenetre_de_nuit()
                     and _time.monotonic() - debut_palier >= palier_s):
                 reprise = __import__("datetime").datetime.now() + __import__("datetime").timedelta(seconds=pause_s)
@@ -794,6 +801,13 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
     if temps["n"]:
         resultat["temps_moyen_s"] = {k: round(temps[k] / temps["n"], 2)
                                      for k in ("telechargement", "lecture", "base")}
+    if bilan.get("reste_a_lire"):
+        resultat["palier"] = True
+        resultat["arret_anticipe"] = True
+        resultat["raison_partielle"] = (
+            f"palier terminé : {compte['ingeres']} fichier(s) intégré(s) en "
+            f"{_duree(budget_s or 0)}, {bilan['reste_a_lire']} restent — la suite au "
+            "prochain palier automatique")
     if racines_vides:
         resultat["racines_introuvables"] = ", ".join(racines_vides)
     if not complet:

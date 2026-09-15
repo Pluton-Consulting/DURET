@@ -323,6 +323,13 @@ class Settings(BaseSettings):
     nas_palier_minutes: int = 10
     nas_pause_minutes: int = 3
     nas_charge_max: float = 0.75
+    # L'INTÉGRATION CONTINUE (15/09, Noa : « toutes les 10 min, il intègre tout
+    # ce qu'il a eu le temps de faire en 10 min ; là il s'arrête si mon PC se met
+    # en veille »). Le SERVEUR lance lui-même un palier toutes les
+    # `nas_cycle_minutes`, qui lit au plus `nas_palier_lecture_minutes` puis
+    # s'arrête : la suite au palier suivant. Aucun navigateur n'est nécessaire.
+    nas_cycle_minutes: int = 10
+    nas_palier_lecture_minutes: int = 8
     # LA CONNEXION DE DURET N'A PLUS DE LIEN MAGIQUE (15/09, Noa : « enlève le
     # système magic link même en admin »). Les profils entrent par leur carte,
     # l'administrateur par le bouton « Admin » et son code. Le mécanisme reste

@@ -165,8 +165,11 @@ async def lifespan(app: FastAPI):
     # les met de côté ; cette boucle lance, une fois par nuit, la lecture de ce
     # qui attend. Sans module `nas`, rien ne part.
     try:
-        from nas.tri import boucle_de_nuit
-        asyncio.create_task(boucle_de_nuit())
+        from nas.tri import boucle_continue, boucle_de_nuit
+        from routers.ingestion import lancer_en_fond
+        lancer_en_fond(boucle_de_nuit())
+        # Un palier de lecture toutes les dix minutes, lancé par le serveur.
+        lancer_en_fond(boucle_continue())
     except Exception:
         pass
     # LA CARTE DU CLASSEMENT (08/09 soir) : l'architecture du stockage relevée

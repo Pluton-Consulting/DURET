@@ -106,6 +106,7 @@ VALEURS = {
     # 15/09 : le tri du NAS avant la lecture (`nas/tri.py`).
     "nas_tri": '[{"chemin": "/home/Drive/Archives", "decision": "ignorer"}]',
     "nas_tri_age_ans": "3",
+    "nas_integration_continue": "active",
 }
 verifier("le banc couvre TOUS les réglages déclarés (sinon il ne prouve rien)",
          set(reglages.REGLAGES_CONNUS) <= set(VALEURS),

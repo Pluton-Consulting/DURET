@@ -460,3 +460,78 @@ async def boucle_de_nuit() -> None:
         except Exception as e:  # noqa: BLE001 — la boucle ne meurt jamais
             logger.warning("NAS : passage de nuit impossible : %s", e)
         await asyncio.sleep(900)
+
+
+# ── L'INTÉGRATION CONTINUE : un palier toutes les 10 minutes (15/09) ───────
+# Noa : « il faudrait qu'il intègre tous les docs qu'il a le temps de faire en
+# 10 min, toutes les 10 min ; là je crois qu'il s'arrête si mon PC se met en
+# veille ». La synchronisation tourne sur le SERVEUR, mais elle ne partait que
+# d'un clic, et un redéploiement l'arrêtait pour de bon. Désormais le serveur
+# lance lui-même un palier (lecture bornée dans le temps) à chaque cycle, tant
+# qu'il reste à lire. Chaque fichier lu est rangé en base aussitôt : rien
+# n'attend la fin d'un palier pour être « intégré ».
+REGLAGE_CONTINU = "nas_integration_continue"
+_CONTINU = {"prochain": None, "dernier": None, "catalogue_vu": None, "rien_a_lire": False}
+
+
+def integration_continue_active() -> bool:
+    from llm.reglages import valeur
+    return (valeur(REGLAGE_CONTINU) or "active").strip().lower() != "desactivee"
+
+
+def etat_continu() -> dict:
+    return {"active": integration_continue_active(),
+            "prochain": _CONTINU["prochain"], "dernier": _CONTINU["dernier"],
+            "rien_a_lire": _CONTINU["rien_a_lire"]}
+
+
+async def palier_si_du(maintenant: Optional[float] = None) -> Optional[dict]:
+    """Lance UN palier si c'est l'heure, si rien ne tourne et s'il y a à lire.
+    Rend le résultat du palier, ou None s'il n'a pas eu lieu."""
+    from config import settings
+    from nas import acces
+    maintenant = maintenant or time.time()
+    cycle_s = max(2, int(getattr(settings, "nas_cycle_minutes", 10) or 10)) * 60
+    if not integration_continue_active():
+        _CONTINU["prochain"] = None
+        return None
+    if _CONTINU["prochain"] and maintenant < _CONTINU["prochain"]:
+        return None
+    # RIEN À LIRE LA DERNIÈRE FOIS, ET LE NAS N'A PAS ÉTÉ RELEVÉ DEPUIS : on
+    # n'ouvre pas une ligne de synchronisation toutes les dix minutes pour
+    # constater la même chose. Le catalogue se rafraîchit toutes les heures.
+    construit = acces._CATALOGUE.get("construit_le")
+    # La nuit ouvre ce que le jour remettait (scans, fichiers lourds) : un
+    # changement de fenêtre relance la lecture même sans nouveau relevé.
+    nuit = fenetre_de_nuit()
+    if _CONTINU.get("nuit") is not None and _CONTINU.get("nuit") != nuit:
+        _CONTINU["rien_a_lire"] = False
+    _CONTINU["nuit"] = nuit
+    if _CONTINU["rien_a_lire"] and construit == _CONTINU["catalogue_vu"]:
+        _CONTINU["prochain"] = maintenant + cycle_s
+        return None
+    from routers.ingestion import CONNECTEURS, _SYNCS, _executer_sync, _ouvrir_sync
+    sync_id = await _ouvrir_sync("synology", None, "palier automatique")
+    _CONTINU["prochain"] = maintenant + cycle_s
+    if sync_id is None:
+        return None                           # une synchro tourne déjà : elle continue
+    budget = max(1, int(getattr(settings, "nas_palier_lecture_minutes", 8) or 8)) * 60
+    _CONTINU["catalogue_vu"] = construit
+    await _executer_sync("synology", CONNECTEURS["synology"][1], None, sync_id, budget_s=budget)
+    resultat = (_SYNCS.get("synology") or {}).get("resultat") or {}
+    _CONTINU["dernier"] = time.time()
+    _CONTINU["rien_a_lire"] = not resultat.get("ouverts") and not resultat.get("reste_a_lire")
+    _CONTINU["catalogue_vu"] = acces._CATALOGUE.get("construit_le")
+    return resultat
+
+
+async def boucle_continue() -> None:
+    """Chaque minute, regarde s'il est l'heure d'un palier. Ne meurt jamais."""
+    import asyncio
+    await asyncio.sleep(180)                 # le catalogue du NAS se construit d'abord
+    while True:
+        try:
+            await palier_si_du()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("NAS : palier automatique impossible : %s", e)
+        await asyncio.sleep(60)

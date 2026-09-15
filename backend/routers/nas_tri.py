@@ -64,6 +64,9 @@ async def lire(current_user: User = Depends(get_current_user)):
         "estimation": tri.estimer(cat, regles, tri.age_ans(), time.time()) if cat else None,
         "catalogue": _CATALOGUE.get("etat"),
         "ocr_differe": len(tri.ocr_differe()),
+        "continu": {**tri.etat_continu(),
+                    "cycle_minutes": int(getattr(settings, "nas_cycle_minutes", 10)),
+                    "palier_minutes": int(getattr(settings, "nas_palier_lecture_minutes", 8))},
         "nuit": {"debut": int(getattr(settings, "nas_ocr_nuit_debut", 21)),
                  "fin": int(getattr(settings, "nas_ocr_nuit_fin", 6))},
     }
@@ -81,6 +84,25 @@ async def proposer(current_user: User = Depends(get_current_user)):
     asyncio.create_task(tri.proposer(lance_par=current_user.email or ""))
     await log_action(action="nas_tri_propose", user_id=str(current_user.id))
     return {"lance": True}
+
+
+class ContinuBody(BaseModel):
+    active: bool
+
+
+@router.put("/continu")
+async def regler_continu(body: ContinuBody, current_user: User = Depends(get_current_user)):
+    """Allume ou coupe le palier automatique (un clic, effet au cycle suivant)."""
+    _exiger(current_user)
+    from llm.reglages import enregistrer as ecrire_reglage
+    from nas import tri
+    await ecrire_reglage(tri.REGLAGE_CONTINU, "active" if body.active else "desactivee",
+                         str(current_user.id))
+    if body.active:
+        tri._CONTINU.update({"prochain": None, "rien_a_lire": False})
+    await log_action(action="nas_integration_continue", user_id=str(current_user.id),
+                     metadata={"active": body.active})
+    return tri.etat_continu()
 
 
 @router.put("")

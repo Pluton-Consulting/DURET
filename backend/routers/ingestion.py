@@ -238,8 +238,21 @@ async def _conclure(sync_id: str, statut: str, *, resultat=None, erreur=None) ->
         logger.error("Synchronisation %s laissée « %s » : %s", sync_id, statut, e)
 
 
+# LES TÂCHES DE FOND SONT TENUES (15/09). `asyncio.create_task` sans référence :
+# la boucle ne garde qu'une référence FAIBLE, et une synchro de plusieurs heures
+# pouvait être ramassée par le ramasse-miettes en plein travail, sans erreur.
+_TACHES: set = set()
+
+
+def lancer_en_fond(coro):
+    tache = __import__("asyncio").create_task(coro)
+    _TACHES.add(tache)
+    tache.add_done_callback(_TACHES.discard)
+    return tache
+
+
 async def _executer_sync(source: str, module: str, user_id: str,
-                         sync_id: str) -> None:
+                         sync_id: str, **options) -> None:
     """Déroule la synchronisation en tâche de fond et consigne le résultat."""
     import inspect
     import time
@@ -249,10 +262,12 @@ async def _executer_sync(source: str, module: str, user_id: str,
         # COMPATIBILITÉ : seuls les connecteurs qui SAVENT rendre compte
         # reçoivent le rapporteur. Imposer le paramètre casserait les autres,
         # qui n'ont aucune raison d'être réécrits pour un compteur.
-        if "avancer" in inspect.signature(run).parameters:
-            resultat = await run(avancer=await _avancement(sync_id))
+        parametres = inspect.signature(run).parameters
+        options = {k: v for k, v in options.items() if k in parametres}
+        if "avancer" in parametres:
+            resultat = await run(avancer=await _avancement(sync_id), **options)
         else:
-            resultat = await run()
+            resultat = await run(**options)
         # « Partielle » quand le connecteur a dû s'arrêter avant la fin (Drive :
         # trop de documents lents). Dire « terminée » là-dessus, c'est ce qui a
         # caché pendant des semaines qu'une synchro s'arrêtait toujours au même
@@ -365,7 +380,7 @@ async def demarrer_sync(source: str, current_user) -> dict:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Une synchronisation {source} est déjà en cours.")
 
-    asyncio.create_task(_executer_sync(source, module, str(current_user.id), sync_id))
+    lancer_en_fond(_executer_sync(source, module, str(current_user.id), sync_id))
     return {"source": source, "lance": True,
             "note": "Synchronisation lancée en tâche de fond ; l'avancement s'affiche ici."}
 

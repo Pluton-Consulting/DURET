@@ -27,10 +27,22 @@ pour des raisons qui lui appartiennent : une correction orthographique, un
 copier-coller, un retour de frappe. « Devis n° DEV-2025-014 » peut donc vivre
 en cinq runs, et chercher « DEV-2025-014 » dans chacun d'eux ne trouve RIEN. Un
 remplacement naïf échoue silencieusement sur les documents réels, précisément
-ceux qui ont été retouchés à la main. On travaille donc sur le texte ENTIER du
-paragraphe, puis on repose le résultat dans le premier run et on vide les
-autres : la mise en forme du début du paragraphe l'emporte, ce qui est le
-comportement attendu quand on remplace une valeur dans une phrase.
+ceux qui ont été retouchés à la main. On cherche donc dans le texte ENTIER du
+paragraphe — mais on n'écrit que dans les fragments concernés.
+
+⚠️ AVANT LE 16/09 (audit D-02), tout le paragraphe modifié était reposé dans le
+PREMIER run et les autres vidés : un paragraphe « Client : **Martin** (en
+rouge) » perdait son gras et sa couleur dès qu'on y changeait la date, et un
+logo porté par un run réécrit pouvait disparaître. Désormais chaque occurrence
+est reliée aux nœuds `w:t` qui la portent : le premier reçoit le texte de
+remplacement (il en garde la mise en forme), les suivants ne perdent que la
+partie remplacée, et tout ce qui entoure l'occurrence — fragments avant et
+après, dessins, sauts, champs — reste tel quel. Les remplacements sont
+appliqués SIMULTANÉMENT (jamais un remplacement dans le texte d'un autre), et
+deux textes cherchés qui se chevauchent dans le document font refuser la table
+plutôt que produire un mélange. Zones de texte, contrôles de contenu et
+hyperliens sont parcourus ; le texte affiché par un CHAMP Word (date, numéro de
+page) n'est jamais réécrit — Word le recalcule — et c'est dit.
 
 CE QU'ON NE FAIT PAS, ET POURQUOI. On n'exécute jamais de code produit par un
 modèle — même décision que `modele.py` : le modèle fournit une TABLE de
@@ -432,40 +444,274 @@ def exploitable(analyse: dict) -> tuple[bool, str]:
 
 # ── Remplir : l'original, avec un autre contenu ──────────────────────────
 
-def _remplacer_dans_paragraphe(paragraphe, table: dict) -> int:
-    """Remplace dans UN paragraphe Word, en préservant sa mise en forme.
+class RemplacementsContradictoires(ValueError):
+    """Deux textes cherchés se chevauchent dans le document : lequel l'emporte ?"""
 
-    LE PIÈGE DES RUNS, et la raison d'être de cette fonction. Word découpe un
-    paragraphe en fragments (« runs ») à chaque changement de mise en forme, et
-    en crée aussi pour ses propres raisons : une correction, un copier-coller,
-    une reprise de frappe. « Devis n° DEV-2025-014 » vit donc souvent en
-    plusieurs runs, et chercher la référence dans chacun ne trouve RIEN. C'est
-    exactement sur les documents retouchés à la main — c'est-à-dire les vrais —
-    qu'un remplacement naïf échoue en silence.
 
-    On travaille donc sur le texte ENTIER du paragraphe. Si rien ne change, on
-    ne touche à rien : ne pas réécrire un paragraphe intact, c'est garantir que
-    sa mise en forme survit exactement.
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_XML_ESPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+
+def _dans_ce_paragraphe(noeud, paragraphe) -> bool:
+    """Le nœud appartient-il à CE paragraphe, et pas à un paragraphe imbriqué
+    (zone de texte) ni au texte d'un champ Word ?"""
+    parent = noeud.getparent()
+    while parent is not None and parent is not paragraphe:
+        if parent.tag in (_W + "p", _W + "txbxContent"):
+            return False
+        parent = parent.getparent()
+    return parent is paragraphe
+
+
+def _segments(paragraphe) -> tuple[list, bool]:
+    """Les morceaux de texte du paragraphe, dans l'ordre : (nœud w:t ou None, texte).
+
+    Une tabulation ou un saut de ligne compte dans le texte logique (comme
+    `paragraph.text`) mais ne se remplace pas : son nœud vaut None. Le texte
+    affiché par un champ (entre « separate » et « end ») est rendu None aussi :
+    on le lit, on ne l'écrit pas. Rend aussi `champ_vu`.
     """
-    avant = paragraphe.text
-    apres = avant
+    morceaux, dans_resultat_champ, champ_vu = [], 0, False
+    for el in paragraphe.iter():
+        if el is paragraphe or not _dans_ce_paragraphe(el, paragraphe):
+            continue
+        tag = el.tag
+        if tag == _W + "fldChar":
+            genre = el.get(_W + "fldCharType")
+            if genre == "separate":
+                dans_resultat_champ += 1
+                champ_vu = True
+            elif genre == "end" and dans_resultat_champ:
+                dans_resultat_champ -= 1
+        elif tag == _W + "t":
+            texte = el.text or ""
+            if texte:
+                morceaux.append((None if dans_resultat_champ else el, texte))
+        elif tag == _W + "tab" and el.getparent() is not None and el.getparent().tag == _W + "r":
+            morceaux.append((None, "\t"))
+        elif tag in (_W + "br", _W + "cr"):
+            morceaux.append((None, "\n"))
+        elif tag == _W + "fldSimple":
+            champ_vu = True
+    return morceaux, champ_vu
+
+
+def _occurrences(texte: str, table: dict) -> list[tuple[int, int, str]]:
+    """Toutes les occurrences de toutes les clés, dans le texte D'ORIGINE.
+
+    Lève `RemplacementsContradictoires` quand deux occurrences de clés
+    différentes se chevauchent (« DEV-2025 » et « 2025-014 » dans
+    « DEV-2025-014 ») : les appliquer l'une après l'autre dépendrait de l'ordre
+    de la table, et produirait un mélange.
+    """
+    trouvees = []
     for cherche, remplace in table.items():
-        if cherche and cherche in apres:
-            apres = apres.replace(cherche, remplace)
-    if apres == avant:
+        depart = texte.find(cherche)
+        while depart != -1:
+            trouvees.append((depart, depart + len(cherche), remplace, cherche))
+            depart = texte.find(cherche, depart + len(cherche))
+    trouvees.sort()
+    for (a0, a1, _, ka), (b0, b1, _, kb) in zip(trouvees, trouvees[1:]):
+        if b0 < a1 and ka != kb:
+            raise RemplacementsContradictoires(
+                f"« {ka} » et « {kb} » se chevauchent dans « {texte[max(0, a0 - 20):b1 + 20]} » : "
+                "garde un seul des deux textes cherchés (le plus long, en général).")
+    return [(debut, fin, remplace) for debut, fin, remplace, _ in trouvees]
+
+
+def _poser_texte(noeud, texte: str) -> None:
+    noeud.text = texte
+    if texte != texte.strip() or "  " in texte:
+        noeud.set(_XML_ESPACE, "preserve")
+
+
+def _remplacer_dans_paragraphe(paragraphe, table: dict, limites: Optional[set] = None) -> int:
+    """Remplace dans UN paragraphe Word en ne réécrivant que les fragments visés.
+
+    Rend le nombre d'OCCURRENCES remplacées. `paragraphe` : un paragraphe
+    python-docx ou un élément `w:p` brut. `limites` reçoit, le cas échéant, ce
+    qui n'a pas pu être remplacé et pourquoi.
+    """
+    p = getattr(paragraphe, "_p", paragraphe)
+    morceaux, champ_vu = _segments(p)
+    texte = "".join(t for _, t in morceaux)
+    if not texte or not any(k in texte for k in table):
         return 0
-    runs = paragraphe.runs
-    if not runs:
-        # Un paragraphe sans run (rare, mais existe) : on écrit directement.
-        paragraphe.text = apres
-        return 1
-    # Le premier run garde SA mise en forme et reçoit tout le texte ; les
-    # suivants sont vidés sans être supprimés (retirer un run d'un paragraphe
-    # Word peut emporter avec lui des propriétés de la ligne).
-    runs[0].text = apres
-    for run in runs[1:]:
-        run.text = ""
-    return 1
+    occurrences = _occurrences(texte, table)
+    # Position de départ de chaque morceau dans le texte logique.
+    positions, curseur = [], 0
+    for _, t in morceaux:
+        positions.append(curseur)
+        curseur += len(t)
+    faits = 0
+    # DE DROITE À GAUCHE : un remplacement ne décale pas les positions des
+    # occurrences situées avant lui.
+    for debut, fin, remplace in reversed(occurrences):
+        touches = [i for i, (n, t) in enumerate(morceaux)
+                   if positions[i] < fin and positions[i] + len(t) > debut]
+        if not touches or any(morceaux[i][0] is None for i in touches):
+            # L'occurrence traverse une tabulation, un saut ou le texte d'un
+            # champ : la réécrire casserait ce qui la sépare. On la laisse.
+            if limites is not None:
+                limites.add("un texte cherché traverse une tabulation, un saut de ligne ou un "
+                            "champ Word (date, numéro de page) : laissé tel quel")
+            continue
+        premier = touches[0]
+        for rang, i in enumerate(touches):
+            noeud, t = morceaux[i]
+            local_debut = max(0, debut - positions[i])
+            local_fin = min(len(t), fin - positions[i])
+            if rang == 0:
+                nouveau = t[:local_debut] + remplace + (t[local_fin:] if len(touches) == 1 else "")
+            elif i == touches[-1]:
+                nouveau = t[local_fin:]
+            else:
+                nouveau = ""
+            _poser_texte(noeud, nouveau)
+            morceaux[i] = (noeud, nouveau)
+        faits += 1
+    if champ_vu and limites is not None and faits:
+        limites.add("le texte affiché par un champ Word (date, numéro de page…) n'est pas "
+                    "réécrit : Word le recalcule à l'ouverture")
+    return faits
+
+
+def _paragraphes_de(racine):
+    """Tous les paragraphes d'une partie Word : corps, tableaux imbriqués, zones de
+    texte, contrôles de contenu. Les secours VML d'une zone de texte
+    (`mc:Fallback`) sont inclus — ils portent le même texte, et un lecteur
+    ancien les affiche — mais marqués pour ne pas compter deux fois."""
+    for p in racine.iter(_W + "p"):
+        parent, secours = p.getparent(), False
+        while parent is not None:
+            if parent.tag.endswith("}Fallback"):
+                secours = True
+                break
+            parent = parent.getparent()
+        yield p, secours
+
+
+def _remplir_xlsx(octets: bytes, propre: dict, limites: set) -> tuple[bytes, int]:
+    """Les textes des cellules d'un classeur, formules et styles INTACTS."""
+    from openpyxl import load_workbook
+
+    # `data_only=False` GARDE LES FORMULES. À True, openpyxl ne lirait que la
+    # dernière valeur calculée par Excel et les écrirait en dur : le classeur
+    # rendu serait mort, ses totaux figés.
+    classeur = load_workbook(io.BytesIO(octets), data_only=False)
+    faits = 0
+    for feuille in classeur.worksheets:
+        for ligne in feuille.iter_rows():
+            for cellule in ligne:
+                v = cellule.value
+                if not isinstance(v, str):
+                    continue
+                if v.startswith("="):
+                    # UNE FORMULE NE SE RÉÉCRIT PAS PAR REMPLACEMENT DE TEXTE
+                    # (audit D-02) : « B3 » cherché dans « =B3*B4 » casserait le
+                    # calcul. Elle reste telle quelle, et c'est dit.
+                    if any(k in v for k in propre):
+                        limites.add("une formule Excel contenait un texte cherché : elle n'a pas "
+                                    "été modifiée (une formule ne se change que sur demande explicite)")
+                    continue
+                neuf = v
+                for cherche, remplace in propre.items():
+                    if cherche in neuf:
+                        neuf = neuf.replace(cherche, remplace)
+                if neuf != v:
+                    # Écrire la cellule ne touche pas à son style : openpyxl les
+                    # porte séparément de la valeur.
+                    cellule.value = neuf
+                    faits += 1
+    sortie = io.BytesIO()
+    classeur.save(sortie)
+    return sortie.getvalue(), faits
+
+
+def _controle():
+    """Le module de contrôle, voisin de celui-ci — même chargé hors du paquet
+    (les bancs chargent ce fichier seul)."""
+    try:
+        from bureautique import controle
+        if hasattr(controle, "comparer_docx"):
+            return controle
+    except ImportError:
+        pass
+    import importlib.util
+    import pathlib
+    spec = importlib.util.spec_from_file_location(
+        "bureautique_controle", pathlib.Path(__file__).with_name("controle.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def remplir_detaille(octets: bytes, genre: str, table: dict) -> dict:
+    """Comme `remplir`, avec le détail : {octets, remplacements, limites, controle}.
+
+    Le contrôle structurel est propre à Word ; Excel et PDF disent leurs limites.
+    """
+    if genre == "xlsx":
+        propre_x = {str(k): str(v) for k, v in (table or {}).items() if str(k).strip()}
+        if not propre_x:
+            raise ValueError("Aucun texte à chercher n'a été fourni.")
+        if len(propre_x) > MAX_REMPLACEMENTS:
+            raise ValueError(f"Trop de remplacements ({len(propre_x)}, plafond {MAX_REMPLACEMENTS}).")
+        limites_x: set = set()
+        produits, faits = _remplir_xlsx(octets, propre_x, limites_x)
+        return {"octets": produits, "remplacements": faits, "limites": sorted(limites_x),
+                "controle": None}
+    if genre != "docx":
+        produits, faits = remplir(octets, genre, table)
+        # Un PDF n'a pas de structure éditable : le texte est effacé et reposé à
+        # sa place (`_remplir_pdf`). Ce n'est pas un Word fidèle, et c'est dit.
+        limites_p = (["PDF : le texte est effacé puis reposé à la même place, dans une police "
+                      "proche ; ce n'est pas un document Word éditable"]
+                     if genre == "pdf" and faits else [])
+        return {"octets": produits, "remplacements": faits, "limites": limites_p, "controle": None}
+    import docx
+
+    propre = {str(k): str(v) for k, v in (table or {}).items() if str(k).strip()}
+    if not propre:
+        raise ValueError("Aucun texte à chercher n'a été fourni.")
+    if len(propre) > MAX_REMPLACEMENTS:
+        raise ValueError(f"Trop de remplacements ({len(propre)}, plafond {MAX_REMPLACEMENTS}).")
+    doc = docx.Document(io.BytesIO(octets))
+    limites: set = set()
+    faits = 0
+    # LE CORPS, PUIS CHAQUE EN-TÊTE ET PIED DE PAGE DISTINCT (première page,
+    # pages paires comprises) : c'est là que vivent la date, la référence et le
+    # nom du client. Une même partie partagée par plusieurs sections n'est
+    # traitée qu'une fois.
+    parties, vues = [doc.element.body], set()
+    for section in doc.sections:
+        for zone in (section.header, section.footer, section.first_page_header,
+                     section.first_page_footer, section.even_page_header, section.even_page_footer):
+            try:
+                if zone is None or zone.is_linked_to_previous:
+                    continue
+                element = zone._element
+            except Exception:  # noqa: BLE001 — une zone absente n'est pas une erreur
+                continue
+            if id(element) not in vues:
+                vues.add(id(element))
+                parties.append(element)
+    for partie in parties:
+        for p, secours in _paragraphes_de(partie):
+            n = _remplacer_dans_paragraphe(p, propre, limites)
+            if not secours:
+                faits += n
+    sortie = io.BytesIO()
+    doc.save(sortie)
+    produits = sortie.getvalue()
+    controle = _controle().comparer_docx(octets, produits)
+    if not controle["ok"]:
+        # UN FICHIER ABÎMÉ NE SORT PAS (audit D-02) : on garde l'original
+        # intact et on dit ce qui a été détecté.
+        raise ValueError("Le document produit ne passe pas le contrôle : "
+                         + " ; ".join(controle["problemes"]) + ". L'original n'a pas été modifié.")
+    return {"octets": produits, "remplacements": faits, "limites": sorted(limites),
+            "controle": controle}
 
 
 def remplir(octets: bytes, genre: str, table: dict) -> tuple[bytes, int]:
@@ -486,62 +732,12 @@ def remplir(octets: bytes, genre: str, table: dict) -> tuple[bytes, int]:
     if not propre:
         raise ValueError("Aucun texte à chercher n'a été fourni.")
 
-    faits = 0
-    sortie = io.BytesIO()
-
     if genre == "docx":
-        import docx
-
-        doc = docx.Document(io.BytesIO(octets))
-        for p in doc.paragraphs:
-            faits += _remplacer_dans_paragraphe(p, propre)
-        for t in doc.tables:
-            for ligne in t.rows:
-                for cellule in ligne.cells:
-                    for p in cellule.paragraphs:
-                        faits += _remplacer_dans_paragraphe(p, propre)
-        # EN-TÊTES ET PIEDS AUSSI : c'est là que vivent la date, la référence
-        # et le nom du client sur la plupart des documents d'entreprise. Les
-        # oublier produirait un document qui se contredit lui-même, l'ancienne
-        # référence subsistant en haut de chaque page.
-        for section in doc.sections:
-            for zone in (section.header, section.footer):
-                if zone is None:
-                    continue
-                for p in zone.paragraphs:
-                    faits += _remplacer_dans_paragraphe(p, propre)
-                for t in zone.tables:
-                    for ligne in t.rows:
-                        for cellule in ligne.cells:
-                            for p in cellule.paragraphs:
-                                faits += _remplacer_dans_paragraphe(p, propre)
-        doc.save(sortie)
-        return sortie.getvalue(), faits
+        resultat = remplir_detaille(octets, genre, propre)
+        return resultat["octets"], resultat["remplacements"]
 
     if genre == "xlsx":
-        from openpyxl import load_workbook
-
-        # `data_only=False` GARDE LES FORMULES. À True, openpyxl ne lirait que
-        # la dernière valeur calculée par Excel et les écrirait en dur : le
-        # classeur rendu serait mort, ses totaux figés.
-        classeur = load_workbook(io.BytesIO(octets), data_only=False)
-        for feuille in classeur.worksheets:
-            for ligne in feuille.iter_rows():
-                for cellule in ligne:
-                    v = cellule.value
-                    if not isinstance(v, str):
-                        continue
-                    neuf = v
-                    for cherche, remplace in propre.items():
-                        if cherche in neuf:
-                            neuf = neuf.replace(cherche, remplace)
-                    if neuf != v:
-                        # Écrire la cellule ne touche pas à son style :
-                        # openpyxl les porte séparément de la valeur.
-                        cellule.value = neuf
-                        faits += 1
-        classeur.save(sortie)
-        return sortie.getvalue(), faits
+        return _remplir_xlsx(octets, propre, set())
 
     if genre == "pdf":
         return _remplir_pdf(octets, propre)

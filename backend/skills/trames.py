@@ -387,8 +387,8 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
             f"Dites ce qu'il faut remplacer dans « {t['nom']} ».{manque}")
 
     try:
-        octets, faits = moteur.remplir(bytes(t["contenu"]), t["type_fichier"],
-                                       remplacements)
+        detail = moteur.remplir_detaille(bytes(t["contenu"]), t["type_fichier"], remplacements)
+        octets, faits = detail["octets"], detail["remplacements"]
     except ValueError as e:
         raise TrameInvalide(str(e)) from e
     if faits == 0:
@@ -413,9 +413,10 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
     message = (f"« {t['nom']} » est repris avec {faits} remplacement(s). "
                "La mise en page, le logo et les styles d'origine sont "
                "conservés : c'est le fichier lui-même, pas une copie "
-               "reconstruite.")
+               "reconstruite." + _dire_limites(detail))
     return {
         "nom": t["nom"], "remplacements": faits, "fichier": nom_sortie,
+        "limites": detail.get("limites") or None,
         "bloc_garanti": True,
         "bloc_ui": {"type": "fichier", "nom": nom_sortie,
                     "url": f"/api/documents/{jeton}",
@@ -428,6 +429,13 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
 
 
 # ── Reproduire : le document d'un autre, avec notre contenu ──────────────
+
+def _dire_limites(detail: dict) -> str:
+    """Ce que le remplacement n'a PAS touché, dit à la personne (audit D-02) :
+    ne jamais laisser croire à un document « identique » sur une zone non contrôlée."""
+    limites = (detail or {}).get("limites") or []
+    return (" À savoir : " + " ; ".join(limites) + ".") if limites else ""
+
 
 async def reproduire_document(parametres: dict, utilisateur) -> dict:
     """Rouvre un document du serveur et n'en change que le texte.
@@ -549,7 +557,8 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
 
     # ── Second temps : le document ──
     try:
-        produits, faits = moteur.remplir(octets, genre, remplacements)
+        detail = moteur.remplir_detaille(octets, genre, remplacements)
+        produits, faits = detail["octets"], detail["remplacements"]
     except ValueError as e:
         raise TrameInvalide(str(e)) from e
     if faits == 0:
@@ -567,9 +576,10 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
     message = (f"« {nom_fichier} » est repris avec {faits} remplacement(s). "
                "La mise en page, le logo, les styles et les formules d'origine "
                "sont conservés : c'est le fichier lui-même, pas une copie "
-               "reconstruite.")
+               "reconstruite." + _dire_limites(detail))
     return {
         "fichier": nom_sortie, "source": nom_fichier, "remplacements": faits,
+        "limites": detail.get("limites") or None,
         "bloc_garanti": True,
         "bloc_ui": {"type": "fichier", "nom": nom_sortie,
                     "url": f"/api/documents/{jeton}",

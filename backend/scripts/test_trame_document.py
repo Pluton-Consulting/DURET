@@ -213,6 +213,107 @@ verifier("LE PIÈGE DES RUNS — un texte éclaté sur plusieurs runs est rempla
 verifier("et la date qui suivait dans le même paragraphe est conservée",
          eclate and "3 avril 2026" in eclate[0].text)
 
+# ── 5 bis. LA MISE EN FORME DES FRAGMENTS (16/09, audit D-02) ────────────
+# Avant : tout le paragraphe modifié allait dans le PREMIER run, les autres
+# étaient vidés. Un nom en gras rouge perdait son gras et sa couleur, et un logo
+# posé dans un run réécrit disparaissait (`run.text = ""` efface le dessin).
+print("\n5 bis. Seuls les fragments visés sont réécrits")
+from docx.oxml import parse_xml  # noqa: E402
+from docx.oxml.ns import nsdecls  # noqa: E402
+from docx.shared import Cm  # noqa: E402
+from PIL import Image as _Image  # noqa: E402
+
+
+def _png():
+    t = io.BytesIO()
+    _Image.new("RGB", (40, 20), (200, 30, 30)).save(t, "PNG")
+    t.seek(0)
+    return t
+
+
+dd = docx.Document()
+sec = dd.sections[0]
+sec.different_first_page_header_footer = True
+sec.first_page_header.paragraphs[0].text = "Première page — DEV-2025-014"
+sec.footer.paragraphs[0].text = "Dossier Monsieur Dupont"
+pm = dd.add_paragraph()
+pm.add_run("Client : ")
+rn = pm.add_run("Monsieur Dupont")
+rn.bold = True
+rn.font.color.rgb = RGBColor(0xC0, 0x00, 0x00)
+ri = pm.add_run(" — tél. ")
+ri.italic = True
+rb = pm.add_run("05 56 00 00 00")
+rb.font.color.rgb = RGBColor(0x1F, 0x4E, 0x79)
+pr = dd.add_paragraph()
+r1 = pr.add_run("DEV")
+r1.bold = True
+pr.add_run("-2025-014 établi")
+pl = dd.add_paragraph()
+pl.add_run("Logo ")
+pl.add_run().add_picture(_png(), width=Cm(2))
+pl.add_run(" pour Monsieur Dupont")
+tab = dd.add_table(rows=1, cols=1)
+imbrique = tab.cell(0, 0).add_table(rows=1, cols=1)
+imbrique.cell(0, 0).text = "Chantier de Monsieur Dupont"
+dd.add_paragraph("Martin et Dupont")
+pc = dd.add_paragraph()
+pc.add_run("Le ")
+pc._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:fldChar w:fldCharType="begin"/></w:r>'))
+pc._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:instrText xml:space="preserve"> DATE </w:instrText></w:r>'))
+pc._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:fldChar w:fldCharType="separate"/></w:r>'))
+pc._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:t>3 avril 2026</w:t></w:r>'))
+pc._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:fldChar w:fldCharType="end"/></w:r>'))
+pz = dd.add_paragraph()
+pz._p.append(parse_xml(
+    f'<w:r {nsdecls("w")} xmlns:v="urn:schemas-microsoft-com:vml"><w:pict><v:shape><v:textbox><w:txbxContent>'
+    '<w:p><w:r><w:t>Encadré Monsieur Dupont</w:t></w:r></w:p>'
+    '</w:txbxContent></v:textbox></v:shape></w:pict></w:r>'))
+tampon = io.BytesIO()
+dd.save(tampon)
+SOURCE = tampon.getvalue()
+
+res = tr.remplir_detaille(SOURCE, "docx", {"Monsieur Dupont": "Madame Martin",
+                                            "DEV-2025-014": "DEV-2026-088"})
+rel = docx.Document(io.BytesIO(res["octets"]))
+pm2 = rel.paragraphs[0]
+verifier("le nom remplacé GARDE son gras et sa couleur",
+         pm2.runs[1].text == "Madame Martin" and pm2.runs[1].bold is True
+         and str(pm2.runs[1].font.color.rgb) == "C00000", [(r.text, r.bold) for r in pm2.runs])
+verifier("les fragments voisins gardent LEUR mise en forme (italique, bleu)",
+         pm2.runs[2].italic is True and str(pm2.runs[3].font.color.rgb) == "1F4E79"
+         and pm2.runs[0].text == "Client : ")
+pr2 = rel.paragraphs[1]
+verifier("une valeur répartie sur deux runs : remplacée, le premier fragment garde son gras, la suite reste",
+         pr2.text == "DEV-2026-088 établi" and pr2.runs[0].bold is True and pr2.runs[1].text == " établi",
+         [(r.text, r.bold) for r in pr2.runs])
+verifier("le LOGO du même paragraphe est toujours là",
+         res["controle"]["apres"]["dessins"] == res["controle"]["avant"]["dessins"] >= 1
+         and res["controle"]["apres"]["medias"] == 1 and "Madame Martin" in rel.paragraphs[2].text)
+xml_corps = rel.element.body.xml
+verifier("le tableau IMBRIQUÉ, la zone de texte et le pied de page sont traités",
+         "Chantier de Madame Martin" in xml_corps and "Encadré Madame Martin" in xml_corps
+         and "Dossier Madame Martin" in rel.sections[0].footer.paragraphs[0].text)
+verifier("l'en-tête de PREMIÈRE PAGE aussi",
+         "DEV-2026-088" in rel.sections[0].first_page_header.paragraphs[0].text)
+verifier("le compte dit les occurrences réelles (nom ×5, référence ×2)", res["remplacements"] == 7,
+         res["remplacements"])
+verifier("le contrôle du fichier rouvert passe", res["controle"]["ok"], res["controle"]["problemes"])
+res2 = tr.remplir_detaille(SOURCE, "docx", {"Martin": "Dupont", "Dupont": "Durand", "3 avril 2026": "4 mai 2026"})
+rel2 = docx.Document(io.BytesIO(res2["octets"]))
+verifier("remplacements SIMULTANÉS : jamais un remplacement dans le texte d'un autre",
+         any(p.text == "Dupont et Durand" for p in rel2.paragraphs), [p.text for p in rel2.paragraphs][4:6])
+verifier("le texte affiché par un CHAMP Word n'est pas réécrit, et c'est dit",
+         any(p.text == "Le 3 avril 2026" for p in rel2.paragraphs) and any("champ" in l for l in res2["limites"]),
+         res2["limites"])
+try:
+    tr.remplir_detaille(SOURCE, "docx", {"DEV-2025": "A", "2025-014": "B"})
+    verifier("deux textes cherchés qui se chevauchent : table refusée", False)
+except tr.RemplacementsContradictoires as e:
+    verifier("deux textes cherchés qui se chevauchent : table refusée, avec l'extrait", "se chevauchent" in str(e))
+abime = tr._controle().comparer_docx(SOURCE, b"pas un zip")
+verifier("un fichier produit illisible est détecté par le contrôle", not abime["ok"])
+
 # ── 6. REMPLIR UN EXCEL, FORMULES COMPRISES ──────────────────────────────
 rendu_x, faits_x = tr.remplir(ORIGINAL_XLSX, "xlsx", TABLE)
 verifier("EXÉCUTÉ — le classeur est réécrit", faits_x > 0, str(faits_x))
@@ -232,6 +333,12 @@ verifier("la largeur de colonne réglée à la main a survécu",
          str(f.column_dimensions["A"].width))
 verifier("le gras d'une cellule a survécu", f["A1"].font.bold is True)
 verifier("le nom de la feuille est conservé", relu_x.sheetnames == ["Devis"])
+# 16/09 (audit D-02) : une formule ne se réécrit pas par remplacement de texte.
+dx = tr.remplir_detaille(ORIGINAL_XLSX, "xlsx", {"B3": "C9", "Monsieur Dupont": "Madame Martin"})
+fx = load_workbook(io.BytesIO(dx["octets"]), data_only=False)["Devis"]
+verifier("« B3 » cherché ne casse pas la formule =B3*B4, et c'est dit",
+         fx["B5"].value == "=B3*B4" and fx["B1"].value == "Madame Martin"
+         and any("formule" in l for l in dx["limites"]), (fx["B5"].value, dx["limites"]))
 
 # ── 7. LES REFUS ─────────────────────────────────────────────────────────
 for mauvaise, pourquoi in (({}, "table vide"),

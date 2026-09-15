@@ -130,6 +130,17 @@ verifier("sans image principale, rien ne change (essai, tirage simple)",
          "{grande && (" in planche)
 verifier("le renderer transmet `principale` au bloc", "principale={p.principale}" in renderer)
 
+# 15/09, Duret : « deux tâches à valider, sur une je clique Approuver et il ne
+# se passe rien ». Pendant qu'une action approuvée s'exécute, `resoudreAccord`
+# ignore toute autre décision (garde synchrone) : la carte doit le DIRE au lieu
+# d'offrir un bouton qui ne fait rien.
+file_attente = (FRONTEND / "components" / "chat" / "FileAttente.tsx").read_text(encoding="utf-8")
+chat_src = (FRONTEND / "components" / "chat" / "ChatWindow.tsx").read_text(encoding="utf-8")
+verifier("une seconde carte n'offre pas « Approuver » pendant qu'une action s'exécute",
+         "if (accordEnCoursRef.current) return" in chat_src
+         and ") : peutDecider && accordEnCours ? (" in file_attente
+         and file_attente.index("peutDecider && accordEnCours") < file_attente.index("onResoudre(v.id, true)"))
+
 # ══════════════════════════════════════════════════════════════════════════
 print(f"\n{'═' * 72}")
 if echecs:

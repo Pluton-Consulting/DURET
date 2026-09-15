@@ -175,6 +175,15 @@ export default function FileAttente({ taches, accords, accordEnCours, erreurAcco
                   une minute. Le résultat s&apos;affichera dans le chat.
                 </div>
               </div>
+            ) : peutDecider && accordEnCours ? (
+              // UNE DÉCISION À LA FOIS (15/09, Duret : « deux tâches à valider, sur
+              // une je clique Approuver et il ne se passe rien »). Pendant qu'une
+              // action approuvée s'exécute, le chat ignore une seconde décision —
+              // les boutons restaient pourtant là, et le clic tombait dans le vide.
+              <div className="sym-carte-etat" data-testid="accord-attend-son-tour" style={{ marginTop: 8 }}>
+                Une autre action approuvée est en cours d&apos;exécution : vous pourrez trancher
+                celle-ci dès qu&apos;elle aura fini.
+              </div>
             ) : peutDecider ? (
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <PrimaryButton size="sm" onClick={() => onResoudre(v.id, true)}>Approuver</PrimaryButton>

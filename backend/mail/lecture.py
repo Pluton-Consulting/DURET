@@ -516,7 +516,12 @@ async def _ouvrir_outlook(boite: str, identifiant: str) -> dict:
                            "inline": bool(p.get("isInline")),
                            "content_id": (p.get("contentId") or "").strip("<>")}
                           for p in ra.json().get("value", [])]
-                for p in [x for x in pieces if x["inline"] and not x["content_id"]][:MAX_INLINE_RELUS]:
+                # TOUTES LES IMAGES, pas seulement celles marquées « en ligne » (15/09) :
+                # Outlook rend souvent `isInline: false` pour le logo d'une signature
+                # que le corps appelle pourtant par `cid:` — l'image n'était alors
+                # jamais rattachée, et la signature en image jamais apprise.
+                for p in [x for x in pieces if not x["content_id"]
+                          and (x["inline"] or str(x.get("type") or "").lower().startswith("image/"))][:MAX_INLINE_RELUS]:
                     try:
                         rp = await client.get(f"{base}/attachments/{p['id']}", headers=entetes)
                         rp.raise_for_status()
@@ -997,11 +1002,16 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     # que « l'image en bas du message » et « la pièce jointe » sont deux
     # choses, et la signature cesse d'être une référence orpheline.
     cids = cids_du_html(fiche.get("corps_html") or "")
+    cids_bas = [c.lower() for c in cids]
     for p in brutes:
-        cid = p.get("content_id") or ""
-        if cid and cid in cids:
+        cid = (p.get("content_id") or "").lower()
+        if cid and cid in cids_bas:
             p["dans_le_corps"] = True
-            p["position"] = cids.index(cid)
+            p["position"] = cids_bas.index(cid)
+            # Une pièce que le corps AFFICHE est une image du corps, quoi qu'en
+            # dise le fournisseur (15/09) : c'est ce qui la rend lisible par
+            # l'apprentissage de la signature.
+            p["inline"] = True
     # Les images EN LIGNE ne sont pas des pièces jointes ORDINAIRES : les
     # compter ferait dire « ce message porte 4 pièces jointes » de tout message
     # signé, et le modèle le réciterait. Elles ne sont LUES que sur demande

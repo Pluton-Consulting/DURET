@@ -171,9 +171,13 @@ verifier("agent1 : le cul-de-sac rouvre trois portes au lieu de s'arrêter",
 verifier("agent1 : deux rangées de pastilles ne survivent pas dans un message",
          re.search(r'if str\(bloc\.get\("type"\)\) == "quick_replies":\s*\n\s*'
                    r'if "quick_replies" in vus:\s*\n\s*return ""', a1))
-verifier("agent1 : le prompt ne s'annule plus lui-même (« demande close » retiré)",
+# 15/09 (Noa : « les boutons de suggestion sont toujours les mêmes alors qu'ils
+# devraient s'adapter à la question ») : le modèle écrit TOUJOURS ses suites,
+# tirées de la demande ; la table mécanique n'est plus que le secours.
+verifier("agent1 : le prompt demande TOUJOURS des suites tirées de la demande, jamais passe-partout",
          "Pas de suggestions quand la demande est close" not in a1
-         and "une suite générique est ajoutée toute seule" in a1)
+         and "Termine TOUJOURS ta réponse par un bloc `quick_replies`" in a1
+         and "tirées de CETTE demande" in a1)
 
 rt = (BACKEND / "agents" / "router.py").read_text(encoding="utf-8")
 verifier("router : les pastilles sont posées après un accord",

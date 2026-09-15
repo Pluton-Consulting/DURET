@@ -82,6 +82,13 @@ _CITATION = (
     re.compile(r"-{3,}\s*(?:Original Message|Message d'origine|Message transféré|Forwarded message)", re.I),
 )
 _RE_IMG_CID = re.compile(r"""<img[^>]+src\s*=\s*["']?\s*cid:""", re.I)
+# UNE IMAGE DE SIGNATURE N'EST PAS TOUJOURS UNE PIÈCE `cid:` (15/09). Outlook
+# récent et bien des outils de signature l'INCLUENT dans le HTML (`data:`), ou la
+# font charger depuis un site (`https://`). Ni l'une ni l'autre n'étaient vues :
+# pas de pièce, pas de `cid`, donc « Images : 0 ».
+_RE_IMG_TOUTE = re.compile(r"""<img[^>]+src\s*=\s*["']?\s*(?:cid:|data:image/|https?://)""", re.I)
+_RE_IMG_DATA = re.compile(r"""(<img[^>]+src\s*=\s*["'])data:(image/[\w.+-]+);base64,([A-Za-z0-9+/=\s]+)(["'])""", re.I)
+_RE_IMG_WEB = re.compile(r"""(<img[^>]+src\s*=\s*["'])(https?://[^"'\s>]+)(["'])""", re.I)
 _RE_ADRESSE_SIG = re.compile(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)", re.I)
 
 
@@ -184,7 +191,7 @@ def separer(html_: str) -> tuple:
     d'un message, c'est-à-dire à perdre du contenu pour en gagner un.
     """
     html_ = sans_citation(html_ or "")
-    if not _RE_BALISE.sub("", html_).strip() and not _RE_IMG_CID.search(html_):
+    if not _RE_BALISE.sub("", html_).strip() and not _RE_IMG_TOUTE.search(html_):
         return "", ""
     for balise in _BALISES:
         derniere = None
@@ -202,7 +209,7 @@ def separer(html_: str) -> tuple:
     # contact — aucune des règles ne la voyait. Si le message (citation
     # retirée) finit par une image en ligne, la signature commence après la
     # formule de politesse qui la précède, ou au bloc qui contient l'image.
-    images = list(_RE_IMG_CID.finditer(html_))
+    images = list(_RE_IMG_TOUTE.finditer(html_))
     if images:
         premiere = images[0]
         politesses = [p for p in _POLITESSE.finditer(html_, 0, premiere.start())
@@ -222,6 +229,76 @@ def separer(html_: str) -> tuple:
             coupe = html_.rfind(queue)
             return html_[:coupe], queue[:MAX_SIGNATURE_HTML]
     return "", ""
+
+
+def adresse_publique(url: str) -> bool:
+    """Une adresse web qu'on peut charger sans exposer le réseau interne : pas de
+    localhost, pas d'adresse privée ni de lien local (une signature piégée ne
+    doit pas faire interroger le serveur lui-même)."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    hote = (urlparse(url).hostname or "").strip().lower()
+    if not hote or hote in ("localhost",) or hote.endswith((".local", ".internal")):
+        return False
+    try:
+        adresses = {i[4][0] for i in socket.getaddrinfo(hote, None)}
+    except OSError:
+        return False
+    for a in adresses:
+        ip = ipaddress.ip_address(a.split("%")[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+    return True
+
+
+async def images_integrees(html_: str) -> tuple:
+    """(HTML dont les images `data:` et `https://` deviennent des `cid:`, pièces
+    correspondantes avec leurs octets). Une image web qui ne se télécharge pas
+    (site muet, trop lourde, pas une image) reste un lien, et le journal le dit.
+    """
+    pieces: list = []
+
+    def _cid(n: int) -> str:
+        return f"signature-{n}@assistant"
+
+    def _data(m):
+        try:
+            octets = base64.b64decode(re.sub(r"\s+", "", m.group(3)))
+        except (ValueError, TypeError):
+            return m.group(0)
+        cid = _cid(len(pieces) + 1)
+        pieces.append({"content_id": cid, "nom": f"signature-{len(pieces) + 1}",
+                       "mime": m.group(2).lower(), "octets": octets})
+        return f"{m.group(1)}cid:{cid}{m.group(4)}"
+
+    html_ = _RE_IMG_DATA.sub(_data, html_ or "")
+    web = list(dict.fromkeys(m.group(2) for m in _RE_IMG_WEB.finditer(html_)))[:MAX_IMAGES]
+    if web:
+        import httpx
+        remplacement: dict = {}
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            for url in web:
+                if not adresse_publique(url):
+                    logger.info("Image de signature sur une adresse interne, non chargée : %s", url[:120])
+                    continue
+                try:
+                    r = await client.get(url)
+                    mime = r.headers.get("content-type", "").split(";")[0].strip().lower()
+                    if r.status_code >= 400 or not mime.startswith("image/") or len(r.content) > MAX_IMAGE_SIGNATURE:
+                        logger.info("Image de signature en ligne non reprise (%s, %s, %d o) : %s",
+                                    r.status_code, mime, len(r.content), url[:120])
+                        continue
+                    cid = _cid(len(pieces) + 1)
+                    pieces.append({"content_id": cid, "nom": f"signature-{len(pieces) + 1}",
+                                   "mime": mime, "octets": r.content})
+                    remplacement[url] = cid
+                except Exception as e:  # noqa: BLE001 — l'image reste un lien
+                    logger.info("Image de signature en ligne injoignable (%s) : %s", type(e).__name__, url[:120])
+        if remplacement:
+            html_ = _RE_IMG_WEB.sub(lambda m: (f"{m.group(1)}cid:{remplacement[m.group(2)]}{m.group(3)}"
+                                               if m.group(2) in remplacement else m.group(0)), html_)
+    return html_, pieces
 
 
 def _images_du_html(html_: str, pieces: list) -> list:
@@ -391,10 +468,15 @@ async def apprendre(boite: str, user, ref: str = "") -> dict:
         if not signature.strip():
             continue
         cle = re.sub(r"\s+", " ", _RE_BALISE.sub("", signature)).strip()[:800]
-        if not cle and _RE_IMG_CID.search(signature):
-            # Une signature QU'IMAGE : sa clé est la liste de ses images.
+        if not cle and _RE_IMG_TOUTE.search(signature):
+            # Une signature QU'IMAGE : sa clé est la liste de ses images (`cid`,
+            # adresse web, ou empreinte d'une image intégrée).
+            import hashlib
             from mail.pieces import cids_du_html
-            cle = "images:" + ",".join(c.split("@")[0] for c in cids_du_html(signature))
+            cle = "images:" + ",".join(
+                [c.split("@")[0] for c in cids_du_html(signature)]
+                + [m.group(2)[:120] for m in _RE_IMG_WEB.finditer(signature)]
+                + [hashlib.sha1(m.group(3).encode()).hexdigest()[:12] for m in _RE_IMG_DATA.finditer(signature)])
         if not cle:
             continue
         etrangeres = adresses_etrangeres(en_texte(signature), boite)
@@ -421,6 +503,11 @@ async def apprendre(boite: str, user, ref: str = "") -> dict:
     # La plus récurrente ; à égalité, la plus longue (une signature complète
     # bat une signature de téléphone).
     cle, retenue = max(candidats.items(), key=lambda kv: (kv[1]["n"], len(kv[0])))
+    # Les images INTÉGRÉES ou HÉBERGÉES deviennent des images `cid:` de la
+    # signature, octets compris : elles partent alors avec chaque envoi, et
+    # s'affichent dans la carte comme les autres.
+    retenue["html"], integrees = await images_integrees(retenue["html"])
+    retenue["pieces"] = list(retenue["pieces"] or []) + integrees
     # LES OCTETS DES IMAGES (15/09). `lire_message` ne rend des pièces que leur
     # fiche — jamais leurs octets — et `_images_du_html` exigeait des octets :
     # une signature en image était apprise avec « 0 image », depuis toujours.

@@ -173,6 +173,73 @@ if hasattr(sig, "sans_citation"):
     else:
         verifier("signature.py porte `meme_expediteur`", False, "absent")
 
+# ── 2 bis. Les images INTÉGRÉES et HÉBERGÉES (15/09) ─────────────────────────
+print("2 bis. Une signature en image intégrée (data:) ou hébergée (https:)")
+if hasattr(sig, "images_integrees"):
+    import base64 as _b64
+    PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+    html_data = ('<p>Bonjour,</p><p>Voici le devis.</p><p>Cordialement,</p>'
+                 f'<p><img src="data:image/png;base64,{_b64.b64encode(PNG).decode()}" width="200"></p>')
+    _, s_data = sig.separer(html_data)
+    verifier("une signature QU'IMAGE intégrée (data:) est reconnue", "data:image/png" in s_data, s_data[:120])
+    html2, pieces2 = asyncio.run(sig.images_integrees(s_data))
+    verifier("l'image intégrée devient une image cid: de la signature, octets compris",
+             "cid:signature-1@assistant" in html2 and pieces2 and pieces2[0]["octets"] == PNG, (html2[:160], pieces2[:1]))
+    verifier("une adresse interne n'est jamais chargée", not sig.adresse_publique("http://localhost/logo.png")
+             and not sig.adresse_publique("http://10.0.0.5/logo.png") and not sig.adresse_publique("http://127.0.0.1/x.png"))
+
+    class _Rep:
+        def __init__(self, contenu, mime):
+            self.content, self.status_code, self.headers = contenu, 200, {"content-type": mime}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _Rep(PNG, "image/png")
+
+    ancien_httpx, ancienne_adresse = sys.modules.get("httpx"), sig.adresse_publique
+    sys.modules["httpx"], sig.adresse_publique = types.SimpleNamespace(AsyncClient=_Client), (lambda url: True)
+    try:
+        html3, pieces3 = asyncio.run(sig.images_integrees(
+            '<p>Cordialement,</p><img src="https://www.exemple-paysage.fr/logo.png">'))
+    finally:
+        sig.adresse_publique = ancienne_adresse
+        if ancien_httpx is None:
+            sys.modules.pop("httpx", None)
+        else:
+            sys.modules["httpx"] = ancien_httpx
+    verifier("une image hébergée (https:) est téléchargée et devient une image cid:",
+             "cid:signature-1@assistant" in html3 and pieces3 and pieces3[0]["mime"] == "image/png", (html3, pieces3[:1]))
+    MESSAGES["ref-data"] = {"objet": "Devis", "de": BOITE, "date": "2026-09-15",
+                            "corps_html": html_data, "pieces_jointes": []}
+    ancienne_boite = _lire_boite
+
+    async def _lire_boite_data(boite, dossier="recus", limite=8):
+        return {"messages": [{"ref": "ref-data"}]}
+    module("mail.lecture", lire_message=_lire_message, lire_boite=_lire_boite_data,
+           piece_connue=lambda ref, boite: None, telecharger_piece=_telecharger)
+    ENREGISTRE.clear()
+    r = asyncio.run(sig.apprendre(BOITE, user))
+    verifier("« apprends la signature » : une signature en image intégrée est apprise AVEC son image",
+             r.get("trouvee") and ENREGISTRE and len(ENREGISTRE[-1]["images"]) == 1
+             and "cid:signature-1@assistant" in ENREGISTRE[-1]["html"], (r, ENREGISTRE[-1:]))
+    module("mail.lecture", lire_message=_lire_message, lire_boite=ancienne_boite,
+           piece_connue=lambda ref, boite: {"id": "a", "message": "m"} if ref == "p-logo" else None,
+           telecharger_piece=_telecharger)
+else:
+    verifier("signature.py sait reprendre les images intégrées et hébergées", False, "absent")
+lecture_src = (pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend") / "mail" / "lecture.py").read_text(encoding="utf-8")
+verifier("Outlook : l'identifiant de TOUTE image est relu, et une pièce que le corps affiche est une image du corps",
+         'str(x.get("type") or "").lower().startswith("image/")' in lecture_src and 'p["inline"] = True' in lecture_src)
+
 # ── 3. apposer ──────────────────────────────────────────────────────────────
 print("3. Une signature d'un tiers ne part pas")
 

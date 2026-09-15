@@ -340,6 +340,19 @@ verifier("un tour en attente d'accord n'est pas journalisé comme un échec",
          'if event.get("type") == "pending_validation":' in chat_src
          and "success=bool(final_response) or attend_un_accord" in chat_src)
 
+# 15/09 (Symbiose, fil d4864cdc) : quatre retouches validées, et « Aucune
+# réponse enregistrée » sous chacune. Le tour arrêté sur l'accord écrit une
+# réponse VIDE ; la vraie arrive après « Approuver » — parfois un quart d'heure.
+verifier("la réponse d'un tour est la première réponse NON VIDE (celle d'après l'accord)",
+         "btrim(a.content) <> ''" in dash_src)
+verifier("le détail du tour ne prend que les lignes de sa personne",
+         'str(x.get("user_id")) == str(d["utilisateur_id"])' in dash_src)
+verifier("une réponse d'après l'accord efface le vieux « aucune réponse finale »",
+         '== "aucune réponse finale"' in dash_src)
+val_src = (BACKEND / "routers" / "validation.py").read_text(encoding="utf-8")
+verifier("la décision « Approuver » porte le fil du tour qu'elle clôt",
+         'trigger_type="validation", trigger_id=fil or None' in val_src)
+
 print()
 if echecs:
     print(f"✗ {len(echecs)} échec(s) : " + ", ".join(echecs))

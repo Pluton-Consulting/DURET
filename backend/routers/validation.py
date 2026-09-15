@@ -319,6 +319,8 @@ async def resolve_validation(
     await log_action(
         action="validation_resolved",
         user_id=str(current_user.id),
+        # Le fil rattache la décision au tour qu'elle clôt, dans la console.
+        trigger_type="validation", trigger_id=fil or None,
         metadata={"validation_id": str(validation_id), "approved": body.approved,
                   "fil": fil},
     )

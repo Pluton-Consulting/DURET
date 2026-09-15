@@ -162,6 +162,11 @@ LEFT JOIN LATERAL (
       AND a.role = 'assistant'
       AND a.created_at >= m.created_at
       AND a.id <> m.id
+      -- Un tour arrêté sur une CARTE D'ACCORD écrit une réponse VIDE ; la
+      -- vraie arrive après « Approuver » (routers/validation.py). La ligne
+      -- vide était prise pour LA réponse : « Aucune réponse enregistrée »
+      -- sous chaque retouche validée (15/09, fil d4864cdc).
+      AND btrim(a.content) <> ''
       AND (s.created_at IS NULL OR a.created_at <= s.created_at)
     ORDER BY a.created_at ASC
     LIMIT 1
@@ -281,8 +286,12 @@ async def get_echanges(
         fin = d.get("quand_reponse") or quand
         # Une marge : la ligne d'audit est écrite APRÈS la réponse, et la
         # réponse elle-même est persistée avant le journal.
+        # LES LIGNES DE CETTE PERSONNE SEULEMENT : depuis que la fenêtre court
+        # jusqu'à la réponse d'après l'accord (parfois un quart d'heure), elle
+        # attrapait les lignes sans fil d'un autre compte actif au même moment.
         detail, exact = _detail_du_fil(
-            techs, d.get("fil"),
+            [x for x in techs if str(x.get("user_id")) == str(d["utilisateur_id"])],
+            d.get("fil"),
             quand - datetime.timedelta(seconds=2),
             fin + datetime.timedelta(seconds=30))
         # LE RÉSUMÉ SE LIT SUR LA LIGNE `chat_request` DU TOUR. Elle ne porte le
@@ -317,8 +326,13 @@ async def get_echanges(
             "cout_eur": float((principal or {}).get("cost_eur") or 0),
             "jetons": int((principal or {}).get("tokens_in") or 0)
                       + int((principal or {}).get("tokens_out") or 0),
-            "succes": bool((principal or {}).get("success", True)),
-            "erreur": (principal or {}).get("error_message"),
+            # Un tour arrêté sur l'accord était journalisé « aucune réponse
+            # finale » avant c18cd7c ; si la réponse d'après l'accord existe, ce
+            # n'était pas un échec.
+            "succes": bool((principal or {}).get("success", True)) or bool(
+                d.get("reponse") and (principal or {}).get("error_message") == "aucune réponse finale"),
+            "erreur": (None if d.get("reponse") and (principal or {}).get("error_message")
+                       == "aucune réponse finale" else (principal or {}).get("error_message")),
             "gestes": ((principal or {}).get("metadata") or {}).get("gestes") or [],
             "pieces": ((principal or {}).get("metadata") or {}).get("pieces") or 0,
             # Le détail déroulant : toutes les lignes d'audit du tour.

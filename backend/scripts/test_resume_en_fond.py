@@ -67,6 +67,17 @@ if callable(getattr(mod, "fondre_en_fond", None)):
         mod.fondre_en_fond("fil-2", {"resume_couvre": 2}, ["a"] * 6, 6)
         await asyncio.sleep(0.12)
         verifier("un autre fil a sa propre fonte", mod.resume_pret("fil-2").get("resume_couvre") == 6)
+        # (16/09, audit D-13) UN RÉSUMÉ EN RETARD N'ÉCRASE PAS UNE CORRECTION.
+        mod._RESUMES_EN_FOND["fil-4"] = {"resume_conversation": "état d'avant",
+                                         "_messages_couverts": 4}
+        verifier("un résumé calculé sur une conversation plus COURTE est écarté",
+                 mod.resume_pret("fil-4", 12) == {})
+        mod._RESUMES_EN_FOND["fil-5"] = {"resume_conversation": "à jour", "_messages_couverts": 11}
+        verifier("un léger retard (le tour lui-même) reste accepté",
+                 mod.resume_pret("fil-5", 12).get("resume_conversation") == "à jour")
+        mod._RESUMES_EN_FOND["fil-6"] = {"resume_conversation": "sans repère"}
+        verifier("un résumé sans repère de longueur passe comme avant (compatibilité)",
+                 mod.resume_pret("fil-6", 12).get("resume_conversation") == "sans repère")
 
         async def _casse(state, messages, anciens):
             raise RuntimeError("modèle léger absent")
@@ -82,7 +93,7 @@ agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("rag_node ne fait plus `await fondre_dans_le_resume(` : le tour ne l'attend plus",
          "await fondre_dans_le_resume(" not in agent1)
 verifier("rag_node reprend le résumé fondu (`resume_pret`) puis lance la suivante (`fondre_en_fond`)",
-         "maj_memoire = resume_pret(_tid)" in agent1
+         "maj_memoire = resume_pret(_tid, len(_tous or []))" in agent1
          and "fondre_en_fond(_tid, {**state, **maj_memoire}, _tous, _anciens)" in agent1)
 verifier("le rappel vectoriel (un embedding, pas un appel de modèle) reste attendu",
          "_rappels = await rappeler_echanges(_tid, query, _premier_rang_fenetre)" in agent1)

@@ -75,29 +75,36 @@ async def ingest_document(
 
         chunks = chunk_text(content)
         if not chunks:
-            logger.info("Ingestion %s/%s : document vide, ignoré", source_type, source_id)
+            # UN TEXTE VIDE NE REMPLACE PAS UNE VERSION VALIDE (16/09, audit
+            # D-08) : une extraction défaillante (PDF illisible ce jour-là,
+            # OCR en panne) effaçait ce que la mémoire savait déjà.
+            logger.info("Ingestion %s/%s : document vide, ignoré (l'ancienne version reste)",
+                        source_type, source_id)
             return 0
 
+        # LA NOUVELLE GÉNÉRATION BASCULE EN UNE FOIS (audit D-08). Avant :
+        # suppression, puis N insertions séparées — une coupure au milieu
+        # laissait le document absent de la recherche alors qu'il y était.
         if replace_existing:
-            try:
-                await vectorstore.delete_by_source(source_id, source_type)
-            except Exception:
-                pass  # pas de chunks existants
-
-        total = len(chunks)
-        for i, chunk in enumerate(chunks):
-            await vectorstore.insert_document_chunk(
-                content=chunk,
-                source_type=source_type,
-                source_id=source_id,
-                access_level=access_level,
-                source_filename=source_filename,
-                chunk_index=i,
-                chunk_total=total,
-                embedding=None,          # vectorisation différée (embedding_jobs)
-                contains_pii=not anonymize,
-                is_anonymized=True,       # visible par la recherche (contenu interne validé)
-            )
+            total = await vectorstore.remplacer_source(
+                chunks, source_type=source_type, source_id=source_id,
+                source_filename=source_filename, access_level=access_level,
+                contains_pii=not anonymize, is_anonymized=True)
+        else:
+            total = len(chunks)
+            for i, chunk in enumerate(chunks):
+                await vectorstore.insert_document_chunk(
+                    content=chunk,
+                    source_type=source_type,
+                    source_id=source_id,
+                    access_level=access_level,
+                    source_filename=source_filename,
+                    chunk_index=i,
+                    chunk_total=total,
+                    embedding=None,          # vectorisation différée (embedding_jobs)
+                    contains_pii=not anonymize,
+                    is_anonymized=True,       # visible par la recherche (contenu interne validé)
+                )
 
         logger.info("Ingestion %s/%s : %d chunks insérés (source=%s)",
                     source_type, source_id, total, source_filename or "—")

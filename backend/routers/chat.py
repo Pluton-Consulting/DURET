@@ -49,6 +49,10 @@ class ChatRequest(BaseModel):
     # tout client plus ancien n'en envoient qu'un — et se replient sur cette
     # liste : un seul chemin ensuite, donc un seul comportement à vérifier.
     attachments: Optional[List[PieceJointeEntrante]] = None
+    # L'IDENTIFIANT DE LA DEMANDE (16/09, audit D-13) : fabriqué par l'écran
+    # AVANT l'envoi, gardé pour la reprise HTTP après une socket perdue. C'est
+    # lui qui empêche qu'une reprise réseau lance un second tour.
+    request_id: Optional[str] = None
 
 
 # Le tableau reproduit dans l'invite : TOUT ce qui tient dans ce budget, et
@@ -426,6 +430,16 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
 
     start = time.monotonic()
     thread_id = body.thread_id or str(uuid.uuid4())
+    # UNE DEMANDE, UN SEUL TOUR (16/09, audit D-13). La reprise HTTP après une
+    # socket perdue porte le MÊME `request_id` : si le tour d'origine tourne
+    # encore (ou s'il est fini), on ne le rejoue pas.
+    from agents import requetes as _requetes
+    demande = await _requetes.reclamer(current_user.id, body.request_id, thread_id)
+    if not demande["nouvelle"]:
+        return {"response": None, "thread_id": demande.get("thread_id") or thread_id,
+                "reprise": True, "etat": demande.get("etat"),
+                "message": ("Cette demande est déjà en cours : l'écran reprend le suivi du même "
+                            "tour au lieu d'en lancer un second.")}
     # Réservation + contrôle d'appartenance AVANT le tour : run_turn charge le
     # checkpoint LangGraph (qui contient désormais l'historique de conversation).
     thread_pk = await _claim_thread(current_user, thread_id, body.query)
@@ -480,6 +494,9 @@ async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)
 
     await _persist_messages(current_user, thread_pk, body.query, result.get("response") or "",
                             _pieces_persistables(pieces, result.get("pieces")))
+    # La demande est close : une reprise tardive sait qu'elle n'a rien à relancer.
+    await _requetes.terminer(current_user.id, body.request_id,
+                             "terminee" if success else "echouee")
     await _actualiser_expert(current_user, thread_pk, agent_used)
     await _increment_usage(current_user, tokens=tokens_in + tokens_out, cost=cost_eur)
     await log_action(
@@ -855,6 +872,10 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     if not persistance_faite:
         await _persist_messages(user, thread_pk, data.get("query", ""), final_response,
                                 _pieces_persistables(pieces, pieces_tour))
+    # La demande est close (audit D-13) : une reprise tardive ne relance rien.
+    from agents import requetes as _requetes
+    await _requetes.terminer(user.id, data.get("request_id"),
+                             "terminee" if (final_response or attend_un_accord) else "echouee")
     await _actualiser_expert(user, thread_pk, agent_used)
     await _increment_usage(user, tokens=tokens, cost=cout)
     # LE JOURNAL DISAIT « RÉUSSI » ET « MODÈLE — » À TOUS LES COUPS. Il porte
@@ -930,6 +951,18 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
                               "conversation. Attendez qu'il se termine, "
                               "arrêtez-le, ou lancez votre demande en file "
                               "d'attente."})
+                continue
+
+            # LA MÊME DEMANDE NE PART PAS DEUX FOIS (16/09, audit D-13) : si
+            # l'écran rejoue son `request_id` (reconnexion), on le dit au lieu
+            # de relancer un tour.
+            from agents import requetes as _requetes
+            demande = await _requetes.reclamer(user.id, data.get("request_id"), thread_id)
+            if not demande["nouvelle"]:
+                await websocket.send_json({
+                    "type": "reprise", "thread_id": demande.get("thread_id") or thread_id,
+                    "detail": "Cette demande est déjà en cours : je reprends le suivi du "
+                              "même tour."})
                 continue
 
             en_cours = asyncio.create_task(

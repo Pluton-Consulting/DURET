@@ -12,7 +12,7 @@ import { ReflexionEnCours } from "./ReflexionEnCours"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { apiRequest } from "@/lib/api"
 import { jetonFrais } from "@/lib/session"
-import { openChatSocket, sendQuery, sendStop, ChatEvent } from "@/lib/ws"
+import { openChatSocket, sendQuery, sendStop, nouvelleDemande, ChatEvent } from "@/lib/ws"
 import { detacherTour, majTourDetache, reprendreTour, terminerTourDetache, abonnerTour } from "@/lib/tourDetache"
 
 interface Message {
@@ -1222,6 +1222,11 @@ ${texteAffiche}`)
     const tid = threadId ?? newId()
     if (!threadId) rememberThread(tid)
 
+    // UNE DEMANDE, UN SEUL TOUR (16/09, audit D-13). L'identifiant est
+    // fabriqué ICI, avant le moindre envoi : la socket et le secours HTTP
+    // portent le MÊME, donc une reconnexion ne relance pas un second tour.
+    const demandeId = nouvelleDemande()
+
     let settled = false
     let stallTimer: ReturnType<typeof setTimeout> | null = null
     const clearStall = () => { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null } }
@@ -1320,7 +1325,11 @@ ${texteAffiche}`)
           validation_id?: string | null
         }>(
           "/api/chat/",
-          { method: "POST", token, body: JSON.stringify({ query: text, thread_id: threadForCall, ...(attachment || {}) }) }
+          { method: "POST", token,
+            // LE MÊME `request_id` QUE LA SOCKET (audit D-13) : le serveur
+            // reconnaît la demande et ne relance pas un second tour.
+            body: JSON.stringify({ query: text, thread_id: threadForCall,
+                                   request_id: demandeId, ...(attachment || {}) }) }
         )
       try {
         let res
@@ -1401,7 +1410,7 @@ ${texteAffiche}`)
     // Tente le streaming WebSocket ; garde-fou anti-blocage → POST.
     try {
       openChatSocket(tid, token, {
-        onOpen: () => sendQuery(wsRef.current!, text, false, attachment),
+        onOpen: () => sendQuery(wsRef.current!, text, false, attachment, demandeId),
         onEvent: (event: ChatEvent) => {
           clearStall()  // le WS répond → on annule le repli anti-blocage
           const t = event.type

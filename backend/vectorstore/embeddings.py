@@ -492,6 +492,15 @@ def fournisseur_choisi(modele_force: str = "") -> tuple[str, str]:
     return nom_fournisseur, modele_choisi
 
 
+def modele_courant(modele_force: str = "") -> str:
+    """« fournisseur:modèle » du jour — écrit à côté de chaque vecteur produit
+    (16/09, audit D-17). Deux modèles de même dimension ne partagent pas le
+    même espace : sans cette étiquette, on compare des vecteurs incomparables
+    sans qu'aucun message ne le dise."""
+    fournisseur, modele = fournisseur_choisi(modele_force)
+    return f"{fournisseur}:{modele}" if fournisseur and modele else (modele or "")
+
+
 def raison_du_silence(modele_force: str = "") -> str:
     """Pourquoi le fournisseur choisi ne rend rien, quand on le SAIT (14/09).
 

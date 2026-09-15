@@ -776,7 +776,9 @@ async def llm_node(state: AgentState, config=None) -> dict:
         # reste attendu (un embedding, pas un appel de modèle), et la fonte
         # suivante part sans être attendue.
         _tid = str(state.get("thread_id") or "")
-        maj_memoire = resume_pret(_tid)
+        # Le nombre de messages DU MOMENT : un résumé fondu sur une conversation
+        # plus courte est périmé, il n'écrase plus les corrections (audit D-13).
+        maj_memoire = resume_pret(_tid, len(_tous or []))
         _rappels = await rappeler_echanges(_tid, query, _premier_rang_fenetre)
         fondre_en_fond(_tid, {**state, **maj_memoire}, _tous, _anciens)
         _resume = maj_memoire.get("resume_conversation") or state.get("resume_conversation")

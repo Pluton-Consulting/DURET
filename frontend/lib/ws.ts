@@ -92,9 +92,23 @@ export function sendQuery(
   query: string,
   has_attachment = false,
   attachment?: AttachmentPayload,
+  request_id?: string,
 ): void {
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ query, has_attachment: has_attachment || Boolean(attachment), ...(attachment || {}) }))
+    // `request_id` (16/09, audit D-13) : le MÊME identifiant voyage par la
+    // socket et par le secours HTTP. C'est lui qui dit au serveur « c'est la
+    // même demande », au lieu de lancer un second tour après une reconnexion.
+    ws.send(JSON.stringify({ query, has_attachment: has_attachment || Boolean(attachment),
+                             ...(request_id ? { request_id } : {}), ...(attachment || {}) }))
+  }
+}
+
+/** Un identifiant de demande, fabriqué AVANT l'envoi et gardé pour les reprises. */
+export function nouvelleDemande(): string {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    return `d-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   }
 }
 

@@ -30,9 +30,19 @@ class VectorStoreClient:
 
     # ── Les filtres communs aux voies de recherche ─────────────────────────
     @staticmethod
-    def _filtres(params: list, source_types: Optional[List[str]], fichier: Optional[str]) -> str:
-        """`source_type` et `source_filename` : les valeurs voyagent en PARAMÈTRE,
-        jamais dans le texte SQL — même règle que partout ici."""
+    def _filtres(params: list, source_types: Optional[List[str]], fichier: Optional[str],
+                 boites: Optional[List[str]] = None) -> str:
+        """`source_type`, `source_filename` et les BOÎTES autorisées : les
+        valeurs voyagent en PARAMÈTRE, jamais dans le texte SQL.
+
+        LES DROITS AVANT LE TOP_K (16/09, audit D-09). Le cloisonnement des
+        boîtes mail se faisait APRÈS la recherche : on demandait trois fois
+        plus de morceaux « pour avoir de la marge », puis on jetait ceux des
+        boîtes fermées. Deux conséquences : de bons documents restaient dehors
+        quand la marge ne suffisait pas, et les COMPTES (« 12 documents parlent
+        de… ») comptaient ce que la personne n'a pas le droit de voir. Le
+        filtre est donc dans la requête ; le post-filtre reste, en défense.
+        """
         clauses = ""
         if source_types:
             params.append(list(source_types))
@@ -40,7 +50,36 @@ class VectorStoreClient:
         if fichier and str(fichier).strip():
             params.append(f"%{str(fichier).strip()}%")
             clauses += f" AND source_filename ILIKE ${len(params)}"
+        clauses += VectorStoreClient._clause_boites(params, boites)
         return clauses
+
+    # Les types de documents qui viennent d'une boîte mail : eux seuls sont
+    # soumis au filtre des boîtes (un devis du NAS n'a pas de boîte).
+    TYPES_MAIL = ("email", "email_sent")
+
+    @staticmethod
+    def _clause_boites(params: list, boites: Optional[List[str]]) -> str:
+        """FAIL-CLOSED : sans liste de boîtes, aucun mail ne sort. « * » = accès
+        administrateur (tous), « !email_sent » retire les envoyés."""
+        if boites is None:
+            return ""
+        autorisees = {(b or "").strip().lower() for b in boites if b}
+        clauses = ""
+        if "!email_sent" in autorisees:
+            params.append("email_sent")
+            clauses += f" AND source_type <> ${len(params)}"
+            autorisees.discard("!email_sent")
+        if "*" in autorisees:
+            return clauses                    # administrateur : toutes les boîtes
+        params.append(list(VectorStoreClient.TYPES_MAIL))
+        types_mail = f"${len(params)}::text[]"
+        if not autorisees:
+            return clauses + f" AND source_type <> ALL({types_mail})"
+        params.append(sorted(autorisees))
+        # `source_id` d'un mail : « email:<boîte>:<identifiant> ». Une boîte
+        # indéterminable (ingestion d'une version antérieure) reste écartée.
+        return (clauses + f" AND (source_type <> ALL({types_mail})"
+                f" OR lower(split_part(source_id, ':', 2)) = ANY(${len(params)}::text[]))")
 
     async def search(
         self,
@@ -50,6 +89,7 @@ class VectorStoreClient:
         top_k: int = 5,
         similarity_threshold: float = 0.3,
         fichier: Optional[str] = None,
+        boites: Optional[List[str]] = None,
     ) -> List[dict]:
         """
         Recherche VECTORIELLE avec filtres d'accès par rôle.
@@ -63,7 +103,7 @@ class VectorStoreClient:
         allowed_levels = ROLE_ACCESS_LEVELS.get(user_role, ["all"])
         top_k = max(1, int(top_k))
         params: list = [_vec_literal(query_embedding), allowed_levels, top_k, similarity_threshold]
-        filtres = self._filtres(params, source_types, fichier)
+        filtres = self._filtres(params, source_types, fichier, boites)
         requete = f"""
             SELECT
                 id, content, source_type, source_id, source_filename,
@@ -94,6 +134,7 @@ class VectorStoreClient:
         source_types: Optional[List[str]] = None,
         top_k: int = 5,
         fichier: Optional[str] = None,
+        boites: Optional[List[str]] = None,
     ) -> List[dict]:
         """
         Recherche LEXICALE : plein texte français (index GIN de la migration
@@ -111,7 +152,7 @@ class VectorStoreClient:
         if not texte:
             return []
         params: list = [texte, allowed_levels, top_k]
-        filtres = self._filtres(params, source_types, fichier)
+        filtres = self._filtres(params, source_types, fichier, boites)
         async with get_db() as conn:
             rows = await conn.fetch(f"""
                 SELECT id, content, source_type, source_id, source_filename,
@@ -150,6 +191,7 @@ class VectorStoreClient:
         user_role: str,
         source_types: Optional[List[str]] = None,
         fichier: Optional[str] = None,
+        boites: Optional[List[str]] = None,
     ) -> tuple[int, int]:
         """Le COMPTE exact des morceaux et des documents qui portent les termes
         cherchés — bon marché grâce aux index, et c'est lui qu'on cite pour
@@ -159,7 +201,7 @@ class VectorStoreClient:
         if not texte:
             return 0, 0
         params: list = [texte, allowed_levels]
-        filtres = self._filtres(params, source_types, fichier)
+        filtres = self._filtres(params, source_types, fichier, boites)
         async with get_db() as conn:
             row = await conn.fetchrow(f"""
                 SELECT COUNT(*) AS morceaux, COUNT(DISTINCT (source_type, source_id)) AS documents
@@ -180,6 +222,7 @@ class VectorStoreClient:
         top_k: int = 5,
         source_types: Optional[List[str]] = None,
         fichier: Optional[str] = None,
+        boites: Optional[List[str]] = None,
     ) -> List[dict]:
         """
         Recherche HYBRIDE : la voie vectorielle ET la voie lexicale, TOUJOURS
@@ -197,13 +240,13 @@ class VectorStoreClient:
             # voie plein texte avec lui.
             try:
                 voies["vecteur"] = await self.search(query_embedding, user_role, source_types,
-                                                     top_k=top_k, fichier=fichier)
+                                                     top_k=top_k, fichier=fichier, boites=boites)
             except Exception as e:  # noqa: BLE001
                 import logging
                 logging.getLogger(__name__).warning(
                     "Voie vectorielle écartée (%s) : plein texte seul", type(e).__name__)
         voies["texte"] = await self.search_lexical(query_text, user_role, source_types,
-                                                   top_k=top_k, fichier=fichier)
+                                                   top_k=top_k, fichier=fichier, boites=boites)
         return fusionner(voies)[:max(1, int(top_k))]
 
     async def insert_document_chunk(
@@ -249,6 +292,52 @@ class VectorStoreClient:
                     """, doc_id)
 
                 return doc_id
+
+    async def remplacer_source(self, chunks: List[str], source_type: str, source_id: str,
+                               source_filename: Optional[str] = None, access_level: str = "all",
+                               contains_pii: bool = True, is_anonymized: bool = True,
+                               embeddings: Optional[List[Optional[List[float]]]] = None) -> int:
+        """Remplace TOUS les morceaux d'une source par les nouveaux, en UNE
+        transaction (16/09, audit D-08).
+
+        Avant : `delete_by_source` puis N insertions séparées. Une coupure au
+        milieu — redémarrage, base qui ferme, plafond atteint — laissait le
+        document ABSENT de la mémoire, ou à moitié réindexé, alors que
+        l'ancienne version était parfaitement lisible une seconde plus tôt.
+        Ici, l'ancienne génération reste lisible jusqu'à la bascule : si la
+        transaction échoue, rien n'a bougé.
+
+        Rend le nombre de morceaux écrits. Ne supprime jamais sur une liste
+        vide : un texte vide après une extraction défaillante ne remplace pas
+        une version valide.
+        """
+        if not chunks:
+            return 0
+        total = len(chunks)
+        async with get_db() as conn:
+            async with conn.transaction():
+                await conn.execute("DELETE FROM documents WHERE source_id = $1 AND source_type = $2",
+                                   source_id, source_type)
+                a_vectoriser = []
+                for i, contenu in enumerate(chunks):
+                    vecteur = (embeddings or [None] * total)[i] if embeddings else None
+                    doc_id = await conn.fetchval("""
+                        INSERT INTO documents (
+                            content, embedding, source_type, source_id,
+                            source_filename, access_level, chunk_index, chunk_total,
+                            contains_pii, is_anonymized, content_tokens
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                                  array_length(string_to_array($1, ' '), 1))
+                        RETURNING id
+                    """, contenu, _vec_literal(vecteur) if vecteur else None, source_type, source_id,
+                        source_filename, access_level, i, total, contains_pii, is_anonymized)
+                    if vecteur is None:
+                        a_vectoriser.append(doc_id)
+                if a_vectoriser:
+                    await conn.execute(
+                        "INSERT INTO embedding_jobs (document_id, status) "
+                        "SELECT unnest($1::uuid[]), 'pending'", a_vectoriser)
+                return total
 
     async def copier_source(self, source_id_origine: str, source_type: str, source_id: str,
                             source_filename: Optional[str] = None, access_level: str = "all") -> int:
@@ -297,9 +386,49 @@ class VectorStoreClient:
             """, source_id, source_type)
             return int(result.split()[-1])
 
-    async def get_pending_embedding_jobs(self, limit: int = 50) -> List[dict]:
-        """Récupère les jobs de vectorisation en attente (appelé par le pipeline d'ingestion)."""
+    async def get_pending_embedding_jobs(self, limit: int = 50, preneur: Optional[str] = None,
+                                         bail_s: int = 300) -> List[dict]:
+        """Réclame un lot de jobs de vectorisation, AVEC UN BAIL (16/09, audit D-17).
+
+        Avant : un simple SELECT des jobs « en attente ». Deux workers — ou un
+        redémarrage en plein lot — pouvaient travailler le MÊME job : le
+        fournisseur était payé deux fois, et le résultat le plus lent écrasait
+        le plus récent. `FOR UPDATE SKIP LOCKED` fait que deux preneurs ne
+        prennent jamais la même ligne ; le bail fait qu'un worker mort ne
+        bloque pas la file (passé l'heure, le job revient).
+
+        Sans la migration 047, on retombe sur l'ancienne requête : la file
+        continue de tourner, sans la garantie.
+        """
+        import os as _os
+        preneur = preneur or f"worker-{_os.getpid()}"
         async with get_db() as conn:
+            try:
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        WITH pris AS (
+                            SELECT ej.id
+                              FROM embedding_jobs ej
+                             WHERE ej.status = 'pending'
+                               AND ej.attempts < ej.max_attempts
+                               AND (ej.lease_until IS NULL OR ej.lease_until < NOW())
+                               AND (ej.next_attempt_at IS NULL OR ej.next_attempt_at <= NOW())
+                             ORDER BY ej.created_at ASC
+                             LIMIT $1
+                               FOR UPDATE SKIP LOCKED
+                        )
+                        UPDATE embedding_jobs ej
+                           SET claimed_by = $2, lease_until = NOW() + ($3::int * INTERVAL '1 second')
+                          FROM pris, documents d
+                         WHERE ej.id = pris.id AND d.id = ej.document_id
+                     RETURNING ej.id AS job_id, ej.document_id, ej.attempts,
+                               d.content, d.source_type
+                    """, limit, preneur, max(30, int(bail_s)))
+                    return [dict(row) for row in rows]
+            except Exception as e:  # noqa: BLE001
+                from database.connection import schema_incomplet
+                if not schema_incomplet(e):
+                    raise
             rows = await conn.fetch("""
                 SELECT ej.id AS job_id, ej.document_id, ej.attempts,
                        d.content, d.source_type
@@ -312,7 +441,8 @@ class VectorStoreClient:
             """, limit)
             return [dict(row) for row in rows]
 
-    async def mark_job_completed(self, job_id: UUID, embedding: List[float]) -> None:
+    async def mark_job_completed(self, job_id: UUID, embedding: List[float],
+                                 modele: Optional[str] = None, preneur: Optional[str] = None) -> None:
         # LA DIMENSION EST VÉRIFIÉE AVANT D'ÉCRIRE, et c'est ce qui empêche une
         # boucle infinie. La colonne est `vector(1536)` : un vecteur d'une autre
         # longueur fait échouer le cast, ce qui annule la TRANSACTION ENTIÈRE —
@@ -339,16 +469,43 @@ class VectorStoreClient:
             return
         async with get_db() as conn:
             async with conn.transaction():
-                await conn.execute("""
-                    UPDATE embedding_jobs
-                    SET status = 'completed', processed_at = NOW()
-                    WHERE id = $1
-                """, job_id)
-                await conn.execute("""
-                    UPDATE documents
-                    SET embedding = $1::vector, updated_at = NOW()
-                    WHERE id = (SELECT document_id FROM embedding_jobs WHERE id = $2)
-                """, _vec_literal(embedding), job_id)
+                # LE BAIL EST VÉRIFIÉ AVANT D'ÉCRIRE (audit D-17) : un worker
+                # dont le bail a expiré — parce qu'il a été long — ne doit pas
+                # écraser le travail de celui qui a repris le job entre-temps.
+                try:
+                    pris = await conn.fetchval("""
+                        UPDATE embedding_jobs
+                           SET status = 'completed', processed_at = NOW(), lease_until = NULL
+                         WHERE id = $1
+                           AND ($2::text IS NULL OR claimed_by IS NULL OR claimed_by = $2)
+                     RETURNING document_id
+                    """, job_id, preneur)
+                except Exception as e:  # noqa: BLE001
+                    from database.connection import schema_incomplet
+                    if not schema_incomplet(e):
+                        raise
+                    pris = await conn.fetchval("""
+                        UPDATE embedding_jobs SET status = 'completed', processed_at = NOW()
+                         WHERE id = $1 RETURNING document_id
+                    """, job_id)
+                if pris is None:
+                    logger = __import__("logging").getLogger("duret.vectorstore")
+                    logger.info("Job %s : bail perdu, résultat ignoré (un autre l'a repris)", str(job_id)[:8])
+                    return
+                try:
+                    await conn.execute("""
+                        UPDATE documents
+                        SET embedding = $1::vector, embedding_modele = COALESCE($3, embedding_modele),
+                            updated_at = NOW()
+                        WHERE id = $2
+                    """, _vec_literal(embedding), pris, modele)
+                except Exception as e:  # noqa: BLE001
+                    from database.connection import schema_incomplet
+                    if not schema_incomplet(e):
+                        raise
+                    await conn.execute("""
+                        UPDATE documents SET embedding = $1::vector, updated_at = NOW() WHERE id = $2
+                    """, _vec_literal(embedding), pris)
 
     async def mark_job_failed(self, job_id: UUID, error: str) -> None:
         async with get_db() as conn:

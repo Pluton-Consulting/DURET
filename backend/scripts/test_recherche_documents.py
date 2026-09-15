@@ -124,19 +124,21 @@ if fusion and "async def rechercher(" in rag:
     appels = []
 
     class _VS:
-        async def search(self, emb, role, types, top_k, fichier=None):
-            appels.append(("vecteur", top_k, types, fichier))
+        async def search(self, emb, role, types, top_k, fichier=None, boites=None):
+            # (16/09, audit D-09) Les boîtes autorisées entrent dans la REQUÊTE.
+            appels.append(("vecteur", top_k, types, fichier, boites))
             return [{"id": f"v{i}", "source_id": f"doc-{i % 7}", "source_type": "document_admin",
                      "chunk_index": i, "chunk_total": 9, "content": f"vecteur {i}", "source_filename": f"doc-{i % 7}.pdf"}
                     for i in range(min(top_k, 50))]
 
-        async def search_lexical(self, q, role, types, top_k, fichier=None):
-            appels.append(("texte", top_k, types, fichier))
+        async def search_lexical(self, q, role, types, top_k, fichier=None, boites=None):
+            appels.append(("texte", top_k, types, fichier, boites))
             return [{"id": f"l{i}", "source_id": f"doc-{i % 11}", "source_type": "document_admin",
                      "chunk_index": i, "chunk_total": 9, "content": f"texte {i}", "source_filename": f"doc-{i % 11}.pdf"}
                     for i in range(min(top_k, 80))]
 
-        async def count_lexical(self, q, role, types, fichier=None):
+        async def count_lexical(self, q, role, types, fichier=None, boites=None):
+            appels.append(("compte", None, types, fichier, boites))
             return 1234, 57
 
     async def _oui():
@@ -154,7 +156,11 @@ if fusion and "async def rechercher(" in rag:
         exec(rag[debut:fin], espace)  # noqa: S102 — code du dépôt
         rechercher = espace["rechercher"]
         r = asyncio.run(rechercher("drainage terrasse", "direction", limite=6, page=1))
-        verifier("les DEUX voies sont interrogées, à la même profondeur", [a[0] for a in appels] == ["vecteur", "texte"] and appels[0][1] == appels[1][1])
+        verifier("les DEUX voies sont interrogées, à la même profondeur",
+                 [a[0] for a in appels][:2] == ["vecteur", "texte"] and appels[0][1] == appels[1][1], appels)
+        verifier("les boîtes autorisées vont aux deux voies ET au compte (audit D-09)",
+                 {a[4] for a in appels if a[0] in ("vecteur", "texte", "compte")} == {None}
+                 or all(a[4] == appels[0][4] for a in appels), appels)
         verifier("petite recherche : profondeur plancher 60", appels[0][1] == 60)
         verifier("le compte lexical est repris (57 documents, 1234 morceaux)", r["total_documents"] == 57 and r["total_morceaux"] == 1234)
         verifier("les morceaux sont GROUPÉS par document", 0 < len(r["documents"]) <= 11 and all("morceaux_correspondants" in d for d in r["documents"]))
@@ -166,7 +172,9 @@ if fusion and "async def rechercher(" in rag:
         espace["embed_query"] = (lambda q: asyncio.sleep(0, result=None))
         appels.clear()
         r = asyncio.run(rechercher("drainage", "terrain"))
-        verifier("sans embedding : la voie lexicale seule, et un résultat quand même", [a[0] for a in appels] == ["texte"] and r["documents"] and r["embedding"] is False)
+        verifier("sans embedding : la voie lexicale seule, et un résultat quand même",
+                 [a[0] for a in appels if a[0] != "compte"] == ["texte"] and r["documents"] and r["embedding"] is False,
+                 [a[0] for a in appels])
         r = asyncio.run(rechercher("", "terrain"))
         verifier("requête vide : résultat vide, sans appel", r["documents"] == [] and r["total_documents"] == 0)
         # 16/09 (audit D-06) : une PANNE du fournisseur d'embeddings ne vide plus la recherche.
@@ -176,7 +184,7 @@ if fusion and "async def rechercher(" in rag:
         appels.clear()
         r = asyncio.run(rechercher("drainage", "terrain"))
         verifier("embeddings EN PANNE : la voie plein texte répond quand même, et le diagnostic le dit",
-                 [a[0] for a in appels] == ["texte"] and r["documents"]
+                 [a[0] for a in appels if a[0] != "compte"] == ["texte"] and r["documents"]
                  and r["diagnostic"]["embedding"] == "indisponible", r.get("diagnostic"))
         espace["embed_query"] = _emb
 

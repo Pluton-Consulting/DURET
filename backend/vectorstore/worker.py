@@ -28,17 +28,28 @@ async def _loop() -> None:
     interval = settings.embedding_worker_interval_s
     while not _stop:
         try:
-            jobs = await vectorstore.get_pending_embedding_jobs(limit=settings.embedding_worker_batch)
+            # Un PRENEUR par processus (audit D-17) : c'est lui qui tient le
+            # bail, et qui sera vérifié au moment d'écrire le résultat.
+            import os as _os
+            preneur = f"worker-{_os.getpid()}"
+            jobs = await vectorstore.get_pending_embedding_jobs(
+                limit=settings.embedding_worker_batch, preneur=preneur)
             if not jobs:
                 await asyncio.sleep(interval)
                 continue
 
             vectors = await embed_texts([j["content"] for j in jobs])
+            try:
+                from vectorstore.embeddings import modele_courant
+                modele = modele_courant()
+            except Exception:  # noqa: BLE001 — sans nom de modèle, on écrit le vecteur seul
+                modele = None
             any_ok = any(v is not None for v in vectors)
             done = 0
             for job, vec in zip(jobs, vectors):
                 if vec is not None:
-                    await vectorstore.mark_job_completed(job["job_id"], vec)
+                    await vectorstore.mark_job_completed(job["job_id"], vec,
+                                                         modele=modele, preneur=preneur)
                     done += 1
                 elif any_ok:
                     # Le fournisseur répond mais ce chunk a échoué → consomme un essai.

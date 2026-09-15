@@ -28,9 +28,14 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-04 | Versions de documents et atelier durables | fait (verrou, écriture atomique, compteur réconcilié, lignée et manifeste, purge par groupe, quota qui refuse au lieu d'effacer) |
 | D-07 | Références de sources stables | étape 1 faite (registre durable des messages et pièces, relu après redémarrage) ; couverture des recherches et registre en base : lots suivants |
 | D-01 | Choisir et réutiliser le bon document de référence | fait (référence du travail mémorisée, remplacements déjà donnés repris, original modifié signalé) |
-| D-09 | Droits appliqués avant les résultats et les comptes | à faire |
-| D-08 | Réindexer sans effacer prématurément | à faire |
-| D-10 | Lire complètement les mails | à faire |
+| D-09 | Droits appliqués avant les résultats et les comptes | étape 1 faite (boîtes dans la requête, comptes alignés, post-filtre gardé en défense) ; versions d'ACL et dérivés : lot suivant |
+| D-08 | Réindexer sans effacer prématurément | étape 1 faite (bascule en une transaction, texte vide sans effet) ; générations et provenance fine : lot suivant |
+| D-10 | Lire complètement les mails | étape 1 faite (pagination `@odata.nextLink`, plafond dit) ; delta, capacités métier, brouillons serveur : lot suivant |
+| D-11 | Envois et approbations sans doublons | étape 1 faite (registre des opérations, réclamation avant l'appel, effet inconnu jamais relancé) ; figement des pièces par révision : lot suivant |
+| D-13 | Fil de travail, pas de double demande | étape 1 faite (request_id des deux transports, résumé périmé écarté, mode du checkpointer dans la readiness) ; état de travail structuré : lot suivant |
+| D-16 | Latence bornée, fournisseurs utilisables | étape 1 faite (budget de demande, pannes classées, demi-ouverture) ; propagation du budget à tous les étages : lot suivant |
+| D-17 | Embeddings et files fiables | étape 1 faite (bail des jobs, identité du modèle sur le vecteur) ; générations de vecteurs : lot suivant |
+| D-20 | Cloisonnement PostgreSQL effectif | script de contrôle en lecture + procédure ; bascule du rôle applicatif : à faire par Noa sur le serveur |
 
 ## Journal
 
@@ -137,3 +142,19 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   conversation : « refais-le pour Madame Martin » ne redemande plus le fichier, et un original qui a
   changé depuis le choix est dit. Le serveur donne le fil aux gestes de documents et de trames.
   Banc `test_versions_documents` (29, atelier et registre exécutés, concurrence réelle).
+- 16/09 — D-09 / D-08 / D-10 : les boîtes autorisées entrent dans la REQUÊTE (`_clause_boites`,
+  `search`, `search_lexical`, `search_hybrid`, `count_lexical`) au lieu d'un post-filtre après un
+  sur-échantillonnage × 3 — les comptes cités suivent donc les droits ; `remplacer_source` bascule une
+  réindexation en UNE transaction (l'ancienne version reste lisible jusqu'au bout) et un texte vide
+  n'efface plus rien ; la synchronisation Outlook suit `@odata.nextLink` et dit son plafond.
+- 16/09 — D-11 / D-13 / D-16 / D-17 / D-20 : `skills/operations.py` + migration **045** — un effet
+  externe est réclamé avant l'appel (aucun second envoi après une reprise) et un délai ambigu devient
+  « effet inconnu », jamais une relance. `agents/requetes.py` + migration **046** — l'écran fabrique un
+  `request_id` avant d'envoyer, la socket et le secours HTTP portent le même : une reconnexion ne
+  lance plus un second tour ; un résumé de fond calculé sur une conversation plus courte n'écrase plus
+  une correction. `llm/budget.py` — budget monotone par demande et pannes classées (configuration /
+  quota / réseau) ; la cascade entièrement écartée ne se retente plus en entier (demi-ouverture).
+  Migration **047** — les jobs de vectorisation se réclament avec un bail (`FOR UPDATE SKIP LOCKED`),
+  un bail perdu n'écrase plus le travail d'un autre, et le vecteur porte le modèle qui l'a produit.
+  `scripts/controle_droits_base.py` — le contrôle du cloisonnement, en lecture seule, avec un vrai
+  test de fuite. Bancs `test_droits_et_reindexation` (30) et `test_budget_et_baux` (18).

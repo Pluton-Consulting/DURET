@@ -467,15 +467,24 @@ def _ecarte(provider: str, model) -> Optional[str]:
     return raison if time.monotonic() < fin else None
 
 
+# DEMI-OUVERTURE : UN SEUL CANDIDAT RETENTÉ, PAS TOUTE LA CASCADE (16/09,
+# audit D-16). Quand tout était écarté, on retentait TOUT LE MONDE dans la même
+# demande : cinq fournisseurs morts × leurs délais, payés avant de conclure —
+# c'est ce qui faisait des tours de plusieurs minutes pour finir en « aucun
+# modèle disponible ». On ne rouvre donc qu'UN candidat à la fois, le plus
+# proche de sa sortie de quarantaine : s'il répond, la cascade repart ; sinon
+# on conclut vite, et l'administrateur a le diagnostic.
 def _filtrer_quarantaine(chain: list) -> list:
-    """Retire les candidats écartés — mais JAMAIS tous.
-
-    Si la quarantaine vidait la cascade, on n'aurait plus aucun chemin et le
-    tour tomberait alors qu'un des candidats est peut-être revenu entre-temps.
-    Tout écarter revient donc à n'écarter personne : on retente tout.
-    """
+    """Retire les candidats écartés. Si tous le sont, en rouvre UN SEUL."""
     vivants = [(p, m) for p, m in chain if not _ecarte(p, m)]
-    return vivants or chain
+    if vivants:
+        return vivants
+    if not chain:
+        return chain
+    prochain = min(chain, key=lambda c: _QUARANTAINE.get((c[0], c[1]), (0.0, ""))[0])
+    logger.info("Tous les modèles sont écartés : demi-ouverture sur %s:%s",
+                prochain[0], prochain[1])
+    return [prochain]
 
 
 # LE CATALOGUE OLLAMA VIENT DE CHEZ OLLAMA (01/09, relevé de Noa : « dans les

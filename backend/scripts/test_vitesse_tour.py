@@ -41,7 +41,7 @@ verifier("routeur : la voie rapide ne coupe pas les vraies questions (le prédic
 # FOND pour le tour suivant (9 s mesurées sur le chemin critique le 08/09).
 verifier("mémoire : le résumé glissant se calcule EN FOND, le tour ne l'attend plus",
          "fondre_en_fond(_tid, {**state, **maj_memoire}, _tous, _anciens)" in agent1
-         and "maj_memoire = resume_pret(_tid)" in agent1
+         and "maj_memoire = resume_pret(_tid, len(_tous or []))" in agent1
          and "await fondre_dans_le_resume(" not in agent1)
 
 routeur_llm = (BACKEND / "llm" / "router.py").read_text(encoding="utf-8")

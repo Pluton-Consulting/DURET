@@ -273,13 +273,31 @@ _TACHES_MEMOIRE: set = set()
 # et entre-temps la fenêtre récente porte encore ce qui n'est pas fondu. Un
 # redémarrage perd une fonte en cours : elle se refait au tour d'après.
 _RESUMES_EN_FOND: dict[str, dict] = {}
+# Un résumé calculé pendant qu'un tour se déroule a toujours un peu de retard :
+# c'est normal. Au-delà, il décrit une conversation qui n'existe plus.
+MESSAGES_DE_RETARD_TOLERES = 2
 _FONTES_EN_COURS: set = set()
 
 
-def resume_pret(thread_id: str) -> dict:
+def resume_pret(thread_id: str, messages_actuels: int = 0) -> dict:
     """Les champs d'état d'un résumé fondu en fond depuis le tour précédent,
-    ou {} — une fois repris, il n'est plus rendu."""
-    return _RESUMES_EN_FOND.pop(str(thread_id or ""), None) or {}
+    ou {} — une fois repris, il n'est plus rendu.
+
+    UN RÉSUMÉ ANCIEN N'ÉCRASE PAS UN PLUS RÉCENT (16/09, audit D-13). La fonte
+    tourne en fond : si la personne a corrigé quelque chose pendant qu'elle
+    calculait (« non, l'autre client »), le résumé qui arrive décrit l'état
+    d'AVANT la correction. Il porte donc le nombre de messages sur lequel il a
+    été fait ; s'il est en retard sur la conversation, il est écarté.
+    """
+    fondu = _RESUMES_EN_FOND.pop(str(thread_id or ""), None) or {}
+    if not fondu:
+        return {}
+    couvert = int(fondu.pop("_messages_couverts", 0) or 0)
+    if messages_actuels and couvert and couvert < messages_actuels - MESSAGES_DE_RETARD_TOLERES:
+        logger.info("Résumé de fond écarté : calculé sur %d messages, la conversation en porte %d",
+                    couvert, messages_actuels)
+        return {}
+    return fondu
 
 
 def fondre_en_fond(thread_id: str, state: dict, messages: list, anciens: int) -> None:
@@ -291,11 +309,15 @@ def fondre_en_fond(thread_id: str, state: dict, messages: list, anciens: int) ->
         return
     instantane = dict(state)
 
+    couverts = len(messages or [])
+
     async def _fondre():
         try:
             maj = await fondre_dans_le_resume(instantane, messages, anciens)
             if maj:
-                _RESUMES_EN_FOND[tid] = maj
+                # Sur COMBIEN de messages ce résumé a-t-il été fait ? C'est ce
+                # qui permet, au tour suivant, de savoir s'il est périmé.
+                _RESUMES_EN_FOND[tid] = {**maj, "_messages_couverts": couverts}
         except Exception as e:  # noqa: BLE001 — la mémoire longue ne fait pas tomber un tour
             logger.warning("Fonte du résumé en fond échouée (%s)", type(e).__name__)
         finally:

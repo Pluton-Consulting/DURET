@@ -130,22 +130,25 @@ async def retrieve_detaille(
         diagnostic["corpus_vide"] = True
         return {"chunks": [], "diagnostic": diagnostic}
     embedding = await _embedding_sans_panne(query, diagnostic)
-    # On sur-échantillonne pour le cloisonnement des boîtes (post-filtre) :
-    # sans marge on renverrait moins que `top_k` alors que des documents
-    # pertinents existent.
-    marge = 3 if mailboxes is not None else 1
+    # LES BOÎTES AUTORISÉES ENTRENT DANS LA REQUÊTE (16/09, audit D-09). On
+    # sur-échantillonnait (× 3) pour pouvoir jeter ensuite les mails des boîtes
+    # fermées : quand la marge ne suffisait pas, de bons documents restaient
+    # dehors sans que personne ne le sache. Le filtre est maintenant posé en
+    # SQL ; le post-filtre reste, en défense.
     types = list(source_types) if source_types else None
     chunks: list = []
     try:
         chunks = await vectorstore.search_hybrid(
-            query, embedding, user_role, top_k=top_k * marge, source_types=types) or []
+            query, embedding, user_role, top_k=top_k, source_types=types,
+            boites=mailboxes) or []
         diagnostic["voies"] = ["vecteur", "texte"] if embedding else ["texte"]
     except Exception as e:  # noqa: BLE001
         logger.warning("Recherche hybride en échec (rôle=%s, %s) : voie plein texte seule",
                        user_role, type(e).__name__)
         diagnostic["erreur"] = type(e).__name__
         try:
-            chunks = await vectorstore.search_lexical(query, user_role, types, top_k=top_k * marge) or []
+            chunks = await vectorstore.search_lexical(query, user_role, types, top_k=top_k,
+                                                      boites=mailboxes) or []
             diagnostic["voies"] = ["texte"]
         except Exception as e2:  # noqa: BLE001 — ne lève jamais
             logger.warning("Échec RAG retrieve (rôle=%s, %s) : %s", user_role, type(e2).__name__, e2)
@@ -284,17 +287,20 @@ async def rechercher(
             else:
                 try:
                     voies["vecteur"] = await vectorstore.search(
-                        embedding, user_role, types, top_k=profondeur, fichier=fichier)
+                        embedding, user_role, types, top_k=profondeur, fichier=fichier,
+                        boites=mailboxes)
                     diagnostic["voies"].append("vecteur")
                 except Exception as e:  # noqa: BLE001 — la voie lexicale doit survivre
                     logger.warning("Voie vectorielle écartée (%s) : la recherche "
                                    "continue en plein texte", type(e).__name__)
                     diagnostic["erreur_vecteur"] = type(e).__name__
         voies["texte"] = await vectorstore.search_lexical(
-            query, user_role, types, top_k=profondeur, fichier=fichier)
+            query, user_role, types, top_k=profondeur, fichier=fichier, boites=mailboxes)
         diagnostic["voies"].append("texte")
+        # LE COMPTE SUIT LES DROITS (audit D-09) : « 12 documents parlent de… »
+        # comptait aussi ce que la personne n'a pas le droit de lire.
         total_morceaux, total_documents = await vectorstore.count_lexical(
-            query, user_role, types, fichier=fichier)
+            query, user_role, types, fichier=fichier, boites=mailboxes)
         chunks = _filtrer_mails(fusionner(voies), mailboxes)
         documents = grouper_par_document(chunks)
         logger.debug("RAG rechercher : rôle=%s, embedding=%s, morceaux=%d, documents=%d, page=%d",

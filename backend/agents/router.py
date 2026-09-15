@@ -200,6 +200,21 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                 "final_response": "Action annulée : le contenu approuvé ne correspond pas "
                                   "à l'action demandée."}
 
+    # LE REGISTRE DES EFFETS EXTERNES (16/09, audit D-11). Entre « approuvé » et
+    # « c'est parti », il n'y avait rien d'écrit : une reprise (reconnexion,
+    # second clic, tâche de fond) pouvait renvoyer le même mail, et une réponse
+    # perdue laissait la question sans réponse. On RÉCLAME l'opération avant
+    # l'appel ; si elle est déjà prise, on ne rappelle pas le fournisseur.
+    from skills import operations
+    operation = await operations.ouvrir(action["skill"], state.get("user_id"),
+                                        validation_id=state.get("validation_id"),
+                                        thread_id=state.get("thread_id"), payload_hash=approuve)
+    if not await operations.reclamer(operation):
+        logger.info("Action %s déjà en cours ou déjà faite : aucune seconde exécution",
+                    action.get("skill"))
+        return {"pending_action": None,
+                "final_response": (state.get("final_response") or "").strip() or None}
+
     resultat = None
     erreur = None
     try:
@@ -214,10 +229,24 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.warning("Échec de l'action %s : %s", action.get("skill"), e)
         erreur = str(getattr(e, "detail", None) or e)
+        if operations.ambigu(e):
+            # NI PREUVE D'ENVOI, NI PREUVE D'ÉCHEC : on l'écrit tel quel et l'on
+            # ne relance pas. Renvoyer « pour être sûr », c'est envoyer deux fois.
+            await operations.effet_inconnu(operation, e)
+            return {"pending_action": None,
+                    "final_response": await _reponse_apres_echec(
+                        state, action["skill"],
+                        "la réponse du fournisseur s'est perdue : le résultat est À VÉRIFIER "
+                        "(rien n'a été renvoyé automatiquement)")}
     # UN ÉCHEC MÉTIER APRÈS ACCORD EST UN ÉCHEC (16/09, audit D-05) : la sortie
     # du geste le disait, le compte rendu annonçait pourtant l'action faite.
     if erreur is None and isinstance(resultat, dict) and resultat.get("ok") is False:
         erreur = str(resultat.get("error") or "l'action n'a pas abouti")
+    if erreur is None:
+        await operations.reussie(operation, recu=(resultat or {}).get("evidence_refs")
+                                 if isinstance(resultat, dict) else None)
+    else:
+        await operations.echouee(operation, erreur)
 
     # L'ACCORD AVANT CHAQUE ACTION (08/09) : le geste approuvé n'est pas la fin
     # du travail. Son résultat entre dans `tool_results` sous la forme exacte

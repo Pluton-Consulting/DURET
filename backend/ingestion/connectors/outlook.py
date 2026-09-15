@@ -88,16 +88,32 @@ async def _ingerer_dossier(client, headers: dict, boite: str,
                            dossier: str, maximum: int) -> int:
     """Ingère un dossier Graph ('inbox' ou 'sentitems'). Retourne le nombre ingéré."""
     envoyes = dossier == "sentitems"
+    # UNE PAGE N'EST PAS UNE BOÎTE (16/09, audit D-10). Graph plafonne `$top`
+    # (999 au mieux, souvent moins) et rend le reste derrière `@odata.nextLink` :
+    # la synchronisation lisait UNE page et se déclarait finie. On suit donc les
+    # pages jusqu'au maximum demandé — et l'on DIT si l'on s'arrête avant la fin.
+    par_page = max(1, min(int(maximum), 200))
     url = (f"https://graph.microsoft.com/v1.0/users/{boite}/mailFolders/{dossier}/messages"
-           f"?$top={maximum}&$select=id,subject,from,toRecipients,sentDateTime,"
+           f"?$top={par_page}&$select=id,subject,from,toRecipients,sentDateTime,"
            f"receivedDateTime,bodyPreview,body")
-    try:
-        r = await client.get(url, headers=headers)
-        r.raise_for_status()
-        messages = r.json().get("value", [])
-    except Exception as e:
-        logger.warning("Graph %s/%s : lecture impossible (%s)", boite, dossier, e)
-        return 0
+    messages: list = []
+    pages = 0
+    while url and len(messages) < maximum and pages < 50:
+        try:
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+            page = r.json()
+        except Exception as e:
+            logger.warning("Graph %s/%s : lecture impossible page %d (%s)", boite, dossier, pages + 1, e)
+            break
+        messages.extend(page.get("value") or [])
+        url = page.get("@odata.nextLink")
+        pages += 1
+    reste = bool(url) and len(messages) >= maximum
+    if reste:
+        logger.info("Graph %s/%s : plafond de %d messages atteint — la boîte en porte davantage",
+                    boite, dossier, maximum)
+    messages = messages[:maximum]
 
     ingeres = 0
     for m in messages:

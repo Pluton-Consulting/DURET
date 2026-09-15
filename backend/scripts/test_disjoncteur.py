@@ -96,13 +96,18 @@ verifier("les autres sont conservés", len(filtree) == len(chaine) - 1,
 verifier("la raison est lisible", router._ecarte(*premier) == "clé refusée",
          router._ecarte(*premier))
 
-# ── 3. On n'écarte JAMAIS tout le monde ───────────────────────────────────
-print("\n3. Garde-fou : une cascade entièrement morte reste tentée")
+# ── 3. Une cascade entièrement morte : UN SEUL candidat rouvert ───────────
+# (16/09, audit D-16) Avant, on retentait TOUT LE MONDE dans la même demande :
+# cinq fournisseurs morts × leurs délais, payés avant de conclure. On ne rouvre
+# plus qu'un candidat — celui qui sort le premier de quarantaine.
+print("\n3. Garde-fou : une cascade entièrement morte garde UN chemin")
 for p, m in chaine:
     router._ecarter(p, m, RuntimeError("Error code: 401 - User not found."))
 filtree = router._filtrer_quarantaine(chaine)
-verifier("tout écarter revient à n'écarter personne", filtree == chaine,
-         f"{len(filtree)} candidats")
+verifier("un seul candidat est rouvert, pas toute la cascade",
+         len(filtree) == 1 and filtree[0] in chaine, f"{len(filtree)} candidats")
+verifier("c'est celui dont la quarantaine finit le plus tôt",
+         filtree[0] == min(chaine, key=lambda c: router._QUARANTAINE[(c[0], c[1])][0]))
 
 # ── 4. La quarantaine EXPIRE — une clé rechargée revient seule ────────────
 print("\n4. Expiration")

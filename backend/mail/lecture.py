@@ -489,9 +489,17 @@ async def _ouvrir_outlook(boite: str, identifiant: str) -> dict:
         pieces = []
         if m.get("hasAttachments"):
             try:
+                # `contentId` N'EST PAS SUR LE TYPE DE BASE (15/09). Graph refuse un
+                # `$select` qui nomme une propriété de `fileAttachment` sur la
+                # collection `attachment` : la liste échouait À CHAQUE FOIS, l'erreur
+                # était avalée ci-dessous, et tout message rendait « pieces_jointes :
+                # [] » — aucune pièce ni signature en image lisible chez Symbiose
+                # depuis le 01/09 (trois exports : 0 pièce sur 9 ouvertures). On liste
+                # sans elle ; l'identifiant de contenu des images EN LIGNE est relu
+                # pièce par pièce, plus bas.
                 ra = await client.get(
                     base + "/attachments",
-                    params={"$select": "id,name,size,contentType,isInline,contentId"},
+                    params={"$select": "id,name,size,contentType,isInline"},
                     headers=entetes)
                 ra.raise_for_status()
                 # LES IMAGES EN LIGNE NE SONT PLUS JETÉES (01/09). Elles étaient
@@ -508,8 +516,16 @@ async def _ouvrir_outlook(boite: str, identifiant: str) -> dict:
                            "inline": bool(p.get("isInline")),
                            "content_id": (p.get("contentId") or "").strip("<>")}
                           for p in ra.json().get("value", [])]
+                for p in [x for x in pieces if x["inline"] and not x["content_id"]][:MAX_INLINE_RELUS]:
+                    try:
+                        rp = await client.get(f"{base}/attachments/{p['id']}", headers=entetes)
+                        rp.raise_for_status()
+                        p["content_id"] = str((rp.json() or {}).get("contentId") or "").strip("<>")
+                    except Exception as e:  # noqa: BLE001 — une image sans identifiant reste listée
+                        logger.info("Identifiant de l'image en ligne non lu : %s", e)
             except Exception as e:  # noqa: BLE001 — les pièces jointes sont un complément
-                logger.info("Pièces jointes non listées pour %s : %s", boite, e)
+                # Plus jamais en silence : c'est ce silence qui a caché le défaut.
+                logger.warning("Pièces jointes non listées pour %s : %s", boite, str(e)[:300])
         # LE HTML EN PLUS DU TEXTE, pour UN message seulement. La liste garde
         # son corps texte (c'est un budget d'extrait, pas une lecture) ; ici on
         # OUVRE un message, et le HTML est la SEULE forme qui porte les `cid:`
@@ -855,6 +871,11 @@ def _memoriser_piece(boite: str, message_id: str, piece: dict) -> str:
             _PIECES.pop(ancien, None)
     _PIECES[ref] = {"boite": (boite or "").lower(), "message": message_id, **piece}
     return ref
+
+
+# Les images EN LIGNE dont on relit l'identifiant une par une (logo, signature,
+# capture collée) : au-delà, le message est une planche de photos, pas une signature.
+MAX_INLINE_RELUS = 8
 
 
 def piece_connue(ref: str, boite: str) -> Optional[dict]:

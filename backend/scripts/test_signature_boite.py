@@ -245,6 +245,99 @@ if not manque:
     verifier("sans demande explicite, le compte rendu dit que le message est parti SANS signature",
              ENVOIS and r["signature"].startswith("AUCUNE") and "sans signature" in r["message_final"], r)
 
+# ── 5. La lecture Outlook des pièces (15/09, export Langfuse de 14:28) ──────
+print("5. Outlook : les pièces d'un message et la signature en image")
+# Le vrai message envoyé de l'accueil : `<div id="Signature">`, « Cordialement »,
+# puis une image en ligne de 1 445 544 octets.
+HTML_ACCUEIL = (
+    '<html><body dir="ltr"><div class="elementToProof">Bonjour,</div><div class="elementToProof">'
+    'Pouvez-vous me confirmer qu\'elles ne passeront pas en Traite fin octobre ?</div>'
+    '<div id="Signature" class="elementToProof"><div class="elementToProof"><br></div>'
+    '<p class="elementToProof" style="margin:0cm"><span style="color:black">Cordialement,</span></p>'
+    '<p class="elementToProof" style="margin:0cm"><span style="color:black">&nbsp;</span></p>'
+    '<p class="elementToProof" style="margin:0cm"><span style="color:black"><img width="626" height="254" '
+    'size="1445544" data-outlook-trace="F:1|T:1" src="cid:13b895d9-e9b7-4232-a311-6c95b978e50c" '
+    'style="width:626px; height:254px"></span></p><p class="elementToProof">&nbsp;</p></div></body></html>')
+GROS_LOGO = b"\x89PNG" + b"x" * 1_445_540
+GRAPH = []
+
+
+class _RepG:
+    def __init__(self, code, donnees):
+        self.status_code, self._d = code, donnees
+
+    def json(self):
+        return self._d
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _ClientG:
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, params=None, headers=None):
+        GRAPH.append((url, dict(params or {})))
+        select = (params or {}).get("$select", "")
+        if url.endswith("/attachments"):
+            if "contentId" in select:     # ce que Graph fait : propriété inconnue du type de base
+                return _RepG(400, {"error": {"message": "Could not find a property named 'contentId' "
+                                                        "on type 'microsoft.graph.attachment'."}})
+            return _RepG(200, {"value": [{"id": "ATT1", "name": "image.png", "size": 1445544,
+                                          "contentType": "image/png", "isInline": True}]})
+        if "/attachments/ATT1" in url:
+            return _RepG(200, {"id": "ATT1", "contentId": "13b895d9-e9b7-4232-a311-6c95b978e50c",
+                               "contentBytes": base64.b64encode(GROS_LOGO).decode()})
+        if select == "body":
+            return _RepG(200, {"body": {"contentType": "html", "content": HTML_ACCUEIL}})
+        return _RepG(200, {"id": "MSG1", "subject": "Point règlement facture", "hasAttachments": True,
+                           "from": {"emailAddress": {"address": BOITE}}, "body": {"content": "Bonjour"}})
+
+
+module("httpx", AsyncClient=_ClientG)
+module("ingestion")
+module("ingestion.connectors")
+
+
+async def _jeton_g():
+    return "J"
+module("ingestion.connectors.outlook", _jeton=_jeton_g)
+esp_l = {"logger": types.SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None),
+         "PREFER_OUTLOOK_TEXTE": "outlook.body-content-type=\"text\"", "SELECT_OUTLOOK": "id,subject",
+         "MAX_APERCU": 400, "_fiche_outlook": lambda m, b, n: {"objet": m.get("subject"), "de": BOITE},
+         "_corps_outlook": lambda m: "Bonjour"}
+manque_l = extraire(racine / "mail" / "lecture.py", {"_ouvrir_outlook"}, esp_l)
+src_lec = (racine / "mail" / "lecture.py").read_text(encoding="utf-8")
+exec(compile("\n".join(l for l in src_lec.splitlines() if l.startswith("MAX_INLINE_RELUS")), "lecture", "exec"), esp_l)
+if manque_l:
+    verifier("mail/lecture.py porte _ouvrir_outlook", False, manque_l)
+else:
+    fiche = asyncio.run(esp_l["_ouvrir_outlook"](BOITE, "MSG1"))
+    verifier("la liste des pièces ne demande plus `contentId` au type de base (Graph refusait)",
+             all("contentId" not in p.get("$select", "") for u, p in GRAPH if u.endswith("/attachments")), GRAPH)
+    verifier("l'image en ligne est LISTÉE, avec son identifiant de contenu relu",
+             fiche["pieces_jointes"] and fiche["pieces_jointes"][0]["content_id"] == "13b895d9-e9b7-4232-a311-6c95b978e50c",
+             fiche["pieces_jointes"])
+    _, s_acc = sig.separer(HTML_ACCUEIL)
+    verifier("le vrai HTML de l'accueil : la signature Outlook, image comprise", "cid:13b895d9" in s_acc, s_acc[:200])
+    images = sig._images_du_html(s_acc, [{"content_id": "13B895D9-E9B7-4232-A311-6C95B978E50C", "nom": "image.png",
+                                           "mime": "image/png", "octets": GROS_LOGO}])
+    verifier("une image de signature de 1,4 Mo est gardée (le plafond était 512 Ko)", len(images) == 1)
+    verifier("pas de « Cordialement, » en double à l'envoi",
+             sig.sans_politesse_en_double("Bonjour,\n\nMerci.\n\nCordialement,\n", "Cordialement,\n")
+             == "Bonjour,\n\nMerci.")
+    verifier("une signature sans politesse ne retire rien du corps",
+             sig.sans_politesse_en_double("Bonjour,\n\nCordialement,", "Marie Dupont\nDirectrice")
+             == "Bonjour,\n\nCordialement,")
+
 src_sup = (racine / "skills" / "suppression.py").read_text(encoding="utf-8")
 espace_sup = {"re": re}
 exec(compile(src_sup, "suppression", "exec"), espace_sup)

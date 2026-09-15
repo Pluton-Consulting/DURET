@@ -212,8 +212,12 @@ verifier("l'aperçu de validation MONTRE les pièces avant le clic",
 
 # ── 6. Les images EN LIGNE ne sont plus jetées ───────────────────────────
 lec = (BACKEND / "mail" / "lecture.py").read_text(encoding="utf-8")
-verifier("Graph : le contentId est demandé au $select",
-         "isInline,contentId" in lec)
+# 15/09 : CE CONTRÔLE VALIDAIT LE DÉFAUT. Graph refuse `contentId` dans le
+# `$select` de la collection `attachment` (propriété de `fileAttachment`) : la
+# liste échouait à chaque ouverture. L'identifiant se relit pièce par pièce
+# (`test_signature_boite.py` l'exécute contre un Graph qui refuse comme le vrai).
+verifier("Graph : le contentId N'EST PAS demandé au $select de la liste, il est relu par pièce",
+         "isInline,contentId" not in lec and 'rp.json() or {}).get("contentId")' in lec)
 verifier("Graph : plus aucun filtre ne jette les pièces isInline",
          'if not p.get("isInline")' not in lec)
 verifier("Graph : le corps HTML est récupéré (la seule forme qui porte les cid:)",
@@ -272,7 +276,8 @@ verifier("le texte de repli garde les lignes et retire les balises",
          sig["en_texte"]("<b>Jean</b><br>06 12") == "Jean\n06 12")
 verifier("une signature est bornée (elle ne peut pas devenir un document)",
          sig["MAX_SIGNATURE_HTML"] <= 20_000
-         and sig["MAX_IMAGE_SIGNATURE"] <= 1024 * 1024)
+         # 15/09 : 3 Mo — l'image de signature réelle de l'accueil pesait 1,4 Mo.
+         and sig["MAX_IMAGE_SIGNATURE"] <= 3 * 1024 * 1024)
 
 src_sig = (BACKEND / "mail" / "signature.py").read_text(encoding="utf-8")
 # Le contrôle porte sur le CODE, pas sur la prose : le docstring cite

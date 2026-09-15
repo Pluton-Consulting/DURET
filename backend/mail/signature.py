@@ -34,7 +34,10 @@ import time
 logger = logging.getLogger("duret.mail.signature")
 
 MAX_SIGNATURE_HTML = 20_000
-MAX_IMAGE_SIGNATURE = 512 * 1024        # un logo, pas une photo
+# Un logo, pas une photo — mais une signature Outlook collée en image pèse
+# souvent plus d'un mégaoctet (1 445 544 octets pour celle de l'accueil de
+# Symbiose, le 15/09) : à 512 Ko, elle était écartée sans un mot.
+MAX_IMAGE_SIGNATURE = 3 * 1024 * 1024
 MAX_IMAGES = 4
 # Assez d'envois pour qu'une RÉCURRENCE se voie, assez peu pour ne pas payer
 # huit ouvertures de message à chaque apprentissage.
@@ -91,6 +94,25 @@ def sans_citation(html_: str) -> str:
         if m and m.start() < coupe:
             coupe = m.start()
     return html_[:coupe]
+
+
+def sans_politesse_en_double(corps: str, texte_signature: str) -> str:
+    """Le corps sans sa DERNIÈRE ligne de politesse quand la signature commence par elle.
+
+    Une signature Outlook porte souvent « Cordialement, » au-dessus du logo ; le
+    brouillon rédigé finit aussi par une formule. Apposée telle quelle, la
+    signature donnait « Cordialement, Cordialement, ». On retire celle du corps,
+    pas celle de la signature : la signature se reproduit à l'identique.
+    """
+    premiere = next((l.strip() for l in (texte_signature or "").splitlines() if l.strip()), "")
+    if not premiere or not _POLITESSE.search(premiere) or len(premiere) > 60:
+        return corps
+    lignes = (corps or "").rstrip().splitlines()
+    while lignes and not lignes[-1].strip():
+        lignes.pop()
+    if lignes and _POLITESSE.search(lignes[-1]) and len(lignes[-1].strip()) <= 60:
+        lignes.pop()
+    return "\n".join(lignes).rstrip()
 
 
 def adresses_etrangeres(texte: str, boite: str) -> list:
@@ -178,15 +200,16 @@ def _images_du_html(html_: str, pieces: list) -> list:
     pièce jointe partirait à chaque envoi.
     """
     from mail.pieces import cids_du_html
-    cites = set(cids_du_html(html_))
+    cites = {c.lower() for c in cids_du_html(html_)}
     gardees = []
     for p in pieces or []:
-        cid = (p.get("content_id") or "").strip()
+        cid = (p.get("content_id") or "").strip().strip("<>")
         octets = p.get("octets") or b""
-        if not cid or cid not in cites or not octets:
+        if not cid or cid.lower() not in cites or not octets:
             continue
         if len(octets) > MAX_IMAGE_SIGNATURE:
-            logger.info("Image de signature ignorée (%d o) : %s", len(octets), cid)
+            logger.warning("Image de signature ignorée (%d o, plafond %d) : %s",
+                           len(octets), MAX_IMAGE_SIGNATURE, cid)
             continue
         gardees.append({"content_id": cid, "nom": p.get("nom") or "logo",
                         "mime": p.get("mime") or p.get("type") or "image/png",
@@ -427,6 +450,7 @@ async def apposer(boite: str, corps: str, pieces: list, demandee=None) -> tuple:
         logger.warning("Signature de %s ignorée : elle porte l'adresse d'un tiers", boite)
         return corps, "", pieces
 
+    corps = sans_politesse_en_double(corps, signature.get("texte") or "")
     images = signature.get("images") or []
     if not images:
         # Pas d'image : le texte suffit, et il reste lisible partout.

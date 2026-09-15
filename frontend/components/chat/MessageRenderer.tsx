@@ -5,6 +5,7 @@ import { CheckIcon, CopyIcon } from "lucide-react"
 import { MessageActions, MessageAction, MessageResponse } from "@/components/ai-elements/message"
 import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
 import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
+import { BlocsEnPages } from "@/components/blocks/layout/BlocsEnPages"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, SiteApercu, VisuelPaysager, FileCard, ContactCard, ProjectCard,
   ReponsesMail, CompteRendu,
@@ -416,6 +417,13 @@ export function MessageRenderer({ content, onAction, apiUrl, backendToken, derni
   // Ce qu'on copie : la réponse en toutes lettres, sans les blocs de données
   // qui ne veulent rien dire hors de l'écran.
   const texteSeul = parts.filter((p) => p.kind === "text").map((p) => p.text.trim()).join("\n\n").trim()
+  // PLUSIEURS TABLEAUX : UN À LA FOIS (15/09). Cinq ou six tableaux à la suite
+  // faisaient une réponse interminable ; ils sont réunis à la place du premier,
+  // en pages tournées par des flèches. Un tableau seul reste tel quel.
+  const tableaux = parts.filter((p): p is Extract<Part, { kind: "ui" }> =>
+    p.kind === "ui" && (p as any).block?.type === "table")
+  const enPages = tableaux.length >= 2
+  const premierTableau = enPages ? parts.indexOf(tableaux[0]) : -1
 
   return (
     // LE TEXTE DE L'IA NE VIT PLUS DANS UNE BOÎTE.
@@ -453,6 +461,15 @@ export function MessageRenderer({ content, onAction, apiUrl, backendToken, derni
                   L'ordre inverse les afficherait comme de jolis blocs de
                   code au lieu de les transformer en composants. */}
               <MessageResponse className="text-[14.5px] leading-[1.65]">{t}</MessageResponse>
+            </div>
+          )
+        }
+        if (enPages && (part.block as any)?.type === "table") {
+          if (i !== premierTableau) return null
+          return (
+            <div key={i} className="sym-in">
+              <BlocsEnPages blocs={tableaux.map((t) => t.block)}
+                            rendre={(b) => renderBlock(b, onAction, { apiUrl, backendToken, dernier })} />
             </div>
           )
         }

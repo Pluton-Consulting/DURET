@@ -65,8 +65,9 @@ class _Client:
     async def __aexit__(self, *a):
         return False
 
-    async def post(self, url, params=None, json=None):
-        ETAT["requetes"].append({"url": url, "params": params, "json": json})
+    async def post(self, url, params=None, json=None, headers=None, data=None, files=None):
+        ETAT["requetes"].append({"url": url, "params": params, "json": json,
+                                 "headers": headers, "data": data, "files": files})
         r = ETAT["reponses"].pop(0) if ETAT["reponses"] else _Reponse(200, {"candidates": [{"content": {"parts": [{"text": "vide"}]}}]})
         if isinstance(r, Exception):
             raise r
@@ -86,7 +87,8 @@ sys.modules["config"].settings = types.SimpleNamespace(
     model_google_audio="gemini-flash-latest", model_google_vision="gemini-flash-latest",
     model_google_vision_secours="gemini-3.1-flash-lite")
 mod_llm = types.ModuleType("llm"); mod_cles = types.ModuleType("llm.cles")
-mod_cles.valeur = lambda nom: ETAT["cle"] if nom == "google_api_key" else None
+mod_cles.valeur = lambda nom: (ETAT["cle"] if nom == "google_api_key"
+                               else ETAT.get("cle_groq") if nom == "groq_api_key" else None)
 sys.modules["llm"] = mod_llm; sys.modules["llm.cles"] = mod_cles
 
 module = types.ModuleType("transcription")
@@ -297,6 +299,92 @@ verifier("la route accepte le morceau et la session, et ferme sur `definitif`",
          and "definitif=body.definitif" in chat)
 verifier("la clé du tampon porte la personne ET la dictée",
          'f"{current_user.id}:{body.session[:40]}"' in chat)
+
+# ── 8. GROQ : Whisper large-v3-turbo, offre gratuite (15/09) ──────────────
+# Noa : « ça transcrit mal dès qu'on ne parle pas lentement comme un robot ».
+# Whisper `base` et un découpage toutes les 2 s : la parole rapide n'a pas de
+# silence où couper. Groq sert le plus gros Whisper, gratuitement.
+print("8. Groq : le brouillon par fenêtres, puis UNE passe complète à l'arrêt")
+import time as _time
+module._GROQ.clear(); module._TAMPONS.clear(); module._CACHE.clear()
+sys.modules["config"].settings.transcription_moteur = "auto"
+ETAT["cle_groq"] = None
+verifier("sans clé Groq, rien ne change (Whisper local, puis Google)", module.moteur_choisi() == "local")
+ETAT["cle_groq"] = "gsk-FAUSSE-CLE-DE-BANC"
+verifier("clé Groq posée : Groq passe devant, sans rien régler d'autre", module.moteur_choisi() == "groq")
+sys.modules["config"].settings.transcription_moteur = "local"
+verifier("« local » force encore Whisper local", module.moteur_choisi() == "local")
+sys.modules["config"].settings.transcription_moteur = "auto"
+# Un octet = un centième de seconde, comme plus haut.
+module._pcm16 = lambda o: (b"\x00\x00" * (len(o) * 160), len(o) / 100)
+sys.modules["emails"] = types.ModuleType("emails")
+sys.modules["emails.marque"] = types.SimpleNamespace(MARQUE={"nom": "Symbiose Paysage"})
+
+
+def _groq_ok(texte):
+    return _Reponse(200, {"text": texte})
+
+
+ETAT["requetes"].clear(); APPELS.clear()
+ETAT["reponses"] = [_groq_ok("Bonjour je voudrais")]
+g1 = asyncio.run(module.transcrire_flux("noa:g1", b"a" * 300))
+req = ETAT["requetes"][-1] if ETAT["requetes"] else {}
+verifier("le brouillon part chez Groq, modèle whisper-large-v3-turbo, en français, température 0",
+         g1 == "Bonjour je voudrais" and req.get("url", "").startswith("https://api.groq.com")
+         and (req.get("data") or {}).get("model") == "whisper-large-v3-turbo"
+         and (req.get("data") or {}).get("language") == "fr" and (req.get("data") or {}).get("temperature") == "0",
+         req)
+verifier("la clé voyage en en-tête, jamais dans le corps ni l'adresse",
+         (req.get("headers") or {}).get("Authorization") == "Bearer gsk-FAUSSE-CLE-DE-BANC"
+         and "gsk-" not in str(req.get("data")) and "gsk-" not in req.get("url", ""))
+verifier("l'amorce porte le nom de la maison (Whisper l'écrit alors juste)",
+         "Symbiose Paysage" in (req.get("data") or {}).get("prompt", ""), req.get("data"))
+verifier("aucun appel à Whisper local ni à Google", not APPELS and all("groq" in r["url"] for r in ETAT["requetes"]))
+n = len(ETAT["requetes"])
+g2 = asyncio.run(module.transcrire_flux("noa:g1", b"a" * 200))
+verifier("un envoi 2 s plus tard ne rappelle PAS Groq (quota gratuit) et rend le brouillon",
+         len(ETAT["requetes"]) == n and g2 == "Bonjour je voudrais", g2)
+module._GROQ["noa:g1"]["prochain"] = 0
+ETAT["reponses"] = [_groq_ok("Bonjour je voudrais un devis pour une terrasse")]
+g3 = asyncio.run(module.transcrire_flux("noa:g1", b"a" * 1600))     # 21 s au tampon
+verifier("passé l'intervalle, la fenêtre est relue en WAV et le texte s'allonge",
+         g3.endswith("terrasse") and ETAT["requetes"][-1]["files"]["file"][0] == "fenetre.wav", g3)
+verifier("au-delà de 20 s la fenêtre est FIGÉE (la suivante repartira de là)",
+         module._GROQ["noa:g1"]["stable_s"] >= 20 and module._GROQ["noa:g1"]["stable"].endswith("terrasse"))
+module._GROQ["noa:g1"]["prochain"] = 0
+ETAT["reponses"] = [_groq_ok("terrasse en bois et une berlinoise")]
+asyncio.run(module.transcrire_flux("noa:g1", b"a" * 500))           # 26 s
+verifier("la fenêtre suivante reprend 1,5 s avant la coupure, et l'amorce porte le texte figé",
+         len(ETAT["requetes"][-1]["files"]["file"][1]) < 26 * 32000
+         and "pour une terrasse" in ETAT["requetes"][-1]["data"]["prompt"])
+ETAT["reponses"] = [_groq_ok("Bonjour, je voudrais un devis pour une terrasse en bois et une berlinoise.")]
+fin = asyncio.run(module.transcrire_flux("noa:g1", b"a" * 50, definitif=True))
+dernier = ETAT["requetes"][-1]
+verifier("À L'ARRÊT : tout l'enregistrement repart d'UN bloc, tel que le navigateur l'a produit",
+         dernier["files"]["file"][0] == "dictee.webm" and len(dernier["files"]["file"][1]) == 2650, dernier["files"]["file"][0])
+verifier("… et son texte REMPLACE le brouillon", fin == "Bonjour, je voudrais un devis pour une terrasse en bois et une berlinoise.", fin)
+verifier("la dictée est fermée (tampon et fenêtres oubliés)", "noa:g1" not in module._GROQ and "noa:g1" not in module._TAMPONS)
+
+module._GROQ.clear()
+ETAT["reponses"] = [_groq_ok("Premier jet")]
+asyncio.run(module.transcrire_flux("noa:g2", b"a" * 300))
+ETAT["reponses"] = [_Reponse(429, {"error": {}}), _Reponse(429, {"error": {}})]
+fin2 = asyncio.run(module.transcrire_flux("noa:g2", b"a" * 100, definitif=True))
+verifier("quota gratuit atteint à l'arrêt : le brouillon est rendu plutôt qu'une erreur", fin2 == "Premier jet", fin2)
+module._GROQ.clear()
+ETAT["reponses"] = [_Reponse(401, {"error": {}})]
+try:
+    asyncio.run(module._groq_complet(b"a" * 100, "audio/webm"))
+    verifier("une clé Groq refusée se dit", False)
+except module.TranscriptionIndisponible as e:
+    verifier("une clé Groq refusée se dit, sans la clé", "refusée" in str(e) and "gsk-" not in str(e), str(e))
+ETAT["cle_groq"] = None
+verifier("le libellé de la clé Groq dit qu'elle sert la voix",
+         "Transcription de la voix" in (FRONTEND / "components" / "settings" / "ClesApiTab.tsx").read_text(encoding="utf-8"))
+dictee_src = (FRONTEND / "lib" / "dictee.ts").read_text(encoding="utf-8")
+verifier("l'envoi définitif attend l'intermédiaire en vol (l'ordre des morceaux tient)",
+         "while (definitif && envoiEnCours)" in dictee_src)
+verifier("le micro s'ouvre avec réduction du bruit et gain automatique", "noiseSuppression: true" in dictee_src)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

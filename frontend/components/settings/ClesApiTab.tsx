@@ -21,7 +21,7 @@ const LIBELLES: Record<string, { nom: string; role: string }> = {
   longcat_api_key: { nom: "LongCat", role: "Modèle principal pour la rédaction courante" },
   deepseek_api_key: { nom: "DeepSeek", role: "Flash pour l'orientation, Pro pour l'analyse" },
   openrouter_api_key: { nom: "OpenRouter", role: "Passerelle : mêmes modèles, second chemin" },
-  groq_api_key: { nom: "Groq", role: "Repli gratuit et rapide" },
+  groq_api_key: { nom: "Groq", role: "Transcription de la voix (gratuit) et repli rapide" },
   anthropic_api_key: { nom: "Anthropic", role: "Vision et raisonnement (optionnel)" },
   google_api_key: { nom: "Google AI", role: "Embeddings de la mémoire d'entreprise" },
 }

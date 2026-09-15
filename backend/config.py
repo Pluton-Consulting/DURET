@@ -113,7 +113,9 @@ class Settings(BaseSettings):
     # par défaut — aucun appel externe. « google » force le secours. `small` :
     # ~460 Mo, ~500 Mo de RAM, à peu près le temps réel sur deux cœurs ; `base`
     # si le VPS est petit, `medium` s'il est large (plus lent, plus juste).
-    transcription_moteur: str = "local"
+    # 15/09 : « auto » = Groq (Whisper large-v3-turbo, offre gratuite) dès que la
+    # clé Groq est posée, puis Whisper local, puis Google.
+    transcription_moteur: str = "auto"
     # `base` (03/09 : `small` était « beaucoup trop lent » sur le VPS). `small`
     # ou `medium` si la machine suit ; `tiny` en dernier recours.
     whisper_modele: str = "base"

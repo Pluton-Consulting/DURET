@@ -47,7 +47,7 @@ chat = (FRONTEND / "components" / "chat" / "ChatWindow.tsx").read_text(encoding=
 
 # ── 1. LE NAVIGATEUR ENREGISTRE, L'APPLICATION TRANSCRIT ──────────────────
 verifier("le micro est ouvert par getUserMedia et enregistré par MediaRecorder",
-         "getUserMedia({ audio: true })" in texte and "new (window as any).MediaRecorder" in texte)
+         "navigator.mediaDevices.getUserMedia({" in texte and "noiseSuppression: true" in texte and "new (window as any).MediaRecorder" in texte)
 verifier("PLUS de reconnaissance vocale du navigateur (absente sur la moitié des postes)",
          "webkitSpeechRecognition" not in texte and "reco.lang" not in texte)
 verifier("l'enregistrement part à l'application, avec le jeton de session",

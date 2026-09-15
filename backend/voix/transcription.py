@@ -5,7 +5,15 @@ LA DEMANDE (03/09, Noa) : « le micro peut fonctionner, il faut que le
 transcripteur soit intégré à l'app » — puis : « il n'y a pas une solution pour
 retranscrire sans token IA ? ». Si.
 
-DEUX MOTEURS, DANS CET ORDRE :
+⚠️ DEPUIS LE 15/09, GROQ PASSE DEVANT (Noa : « ça transcrit mal dès qu'on ne
+parle pas lentement comme un robot »). Deux causes : Whisper `base` est trop
+petit pour le français parlé vite, et le découpage toutes les deux secondes
+coupait les mots — la parole rapide n'a pas de silence où couper. Groq sert
+Whisper large-v3-turbo (le plus gros Whisper) avec une offre GRATUITE, sans
+modèle sur le serveur (règle du 15/09). Ordre : GROQ (dès que la clé Groq est
+posée dans Paramètres) → Whisper local → Google. Voir la section GROQ plus bas.
+
+AVANT LE 15/09, DEUX MOTEURS, DANS CET ORDRE :
 
   1. WHISPER LOCAL (`faster-whisper`, open source, sur le CPU du conteneur).
      Aucun appel externe, aucun jeton, le son ne quitte pas le serveur. Le
@@ -198,6 +206,167 @@ def _recoller(avant: str, suite: str) -> str:
     return (" ".join(a) + " " + " ".join(s)).strip()
 
 
+# ── GROQ : Whisper large-v3-turbo, offre gratuite (15/09) ────────────────
+# DEUX PASSES. Pendant la dictée, le texte s'écrit par fenêtres d'une vingtaine
+# de secondes (au plus un appel toutes les INTERVALLE_GROQ_S par dictée : l'offre
+# gratuite compte les requêtes par minute et les secondes d'audio par heure, et
+# chaque requête est facturée dix secondes au minimum). À l'ARRÊT, tout
+# l'enregistrement est retranscrit d'un bloc et remplace le brouillon : le
+# texte final n'a plus aucune coupure, c'est lui que la personne envoie.
+GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+GROQ_MODELE = "whisper-large-v3-turbo"
+MAX_OCTETS_GROQ = 25 * 1024 * 1024      # plafond d'un fichier sur l'offre gratuite
+INTERVALLE_GROQ_S = 5.0                 # un appel au plus toutes les 5 s pendant la dictée
+FENETRE_GROQ_S = 20.0                   # au-delà, la fenêtre est figée et la suivante commence
+RECOUVREMENT_GROQ_S = 1.5
+# {cle: {"stable_s", "stable", "provisoire", "prochain", "quand"}}
+_GROQ: dict[str, dict] = {}
+
+
+def _cle_groq() -> str:
+    from llm.cles import valeur
+    return (valeur("groq_api_key") or "").strip()
+
+
+def _amorce(precedent: str = "") -> str:
+    """Ce que Whisper lit AVANT l'audio : le nom de la maison (il l'écrit alors
+    juste) et la fin du texte déjà dicté (il garde le fil et la ponctuation).
+    Whisper n'en lit que ~220 jetons : on reste court."""
+    try:
+        from emails.marque import MARQUE
+        nom = str(MARQUE.get("nom") or "")
+    except Exception:  # noqa: BLE001
+        nom = ""
+    debut = f"Dictée pour {nom}." if nom else "Dictée en français."
+    return (debut + " " + (precedent or "")[-300:]).strip()
+
+
+def _pcm16(octets: bytes) -> tuple[bytes, float]:
+    """L'audio en PCM 16 bits, 16 kHz mono, et sa durée — pour découper la fin
+    d'une dictée qui grandit. Un enregistrement en cours d'écriture peut finir
+    au milieu d'un paquet : on garde ce qui a été décodé."""
+    import av
+    pcm = bytearray()
+    try:
+        conteneur = av.open(io.BytesIO(octets))
+        reechantillon = av.AudioResampler(format="s16", layout="mono", rate=HZ)
+        try:
+            for trame in conteneur.decode(audio=0):
+                trame.pts = None
+                for t in reechantillon.resample(trame):
+                    pcm.extend(t.to_ndarray().tobytes())
+            for t in reechantillon.resample(None):
+                pcm.extend(t.to_ndarray().tobytes())
+        except Exception:  # noqa: BLE001 — la fin d'un flux en cours n'est pas une panne
+            pass
+    except Exception as e:  # noqa: BLE001
+        raise TranscriptionIndisponible(f"L'enregistrement n'a pas pu être lu ({type(e).__name__}).")
+    return bytes(pcm), len(pcm) / (2 * HZ)
+
+
+def _wav(pcm: bytes) -> bytes:
+    import wave
+    tampon = io.BytesIO()
+    with wave.open(tampon, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(HZ)
+        w.writeframes(pcm)
+    return tampon.getvalue()
+
+
+class _Limite(TranscriptionIndisponible):
+    """429 : l'offre gratuite est à son plafond pour un moment."""
+    def __init__(self, message: str, attente_s: float):
+        super().__init__(message)
+        self.attente_s = attente_s
+
+
+async def _appel_groq(fichier: bytes, nom: str, mime: str, amorce: str) -> str:
+    cle = _cle_groq()
+    if not cle:
+        raise TranscriptionIndisponible("Aucune clé Groq : Paramètres > Clés API.")
+    if len(fichier) > MAX_OCTETS_GROQ:
+        raise TranscriptionIndisponible("L'enregistrement dépasse 25 Mo, trop long pour une dictée.")
+    donnees = {"model": GROQ_MODELE, "language": "fr", "temperature": "0",
+               "response_format": "json"}
+    if amorce:
+        donnees["prompt"] = amorce
+    async with httpx.AsyncClient(timeout=DELAI_S) as client:
+        rep = None
+        for pause_s in (0, 2, 5):
+            if pause_s:
+                await asyncio.sleep(pause_s)
+            try:
+                rep = await client.post(GROQ_URL, headers={"Authorization": f"Bearer {cle}"},
+                                        data=donnees, files={"file": (nom, fichier, mime)})
+            except httpx.HTTPError as e:
+                logger.info("Groq injoignable (%s)", type(e).__name__)
+                rep = None
+                continue
+            if rep.status_code in (500, 502, 503, 504):
+                rep = None
+                continue
+            break
+    if rep is None:
+        raise TranscriptionIndisponible("Le service de transcription Groq ne répond pas.")
+    if rep.status_code == 429:
+        try:
+            attente = float((getattr(rep, "headers", None) or {}).get("retry-after") or 20)
+        except (TypeError, ValueError):
+            attente = 20.0
+        raise _Limite("Le quota gratuit de transcription est atteint pour quelques instants.", attente)
+    if rep.status_code in (401, 403):
+        raise TranscriptionIndisponible("La clé Groq est refusée : vérifiez-la dans Paramètres > Clés API.")
+    if rep.status_code >= 400:
+        logger.warning("Transcription Groq refusée : HTTP %s — %s", rep.status_code, rep.text[:200])
+        raise TranscriptionIndisponible(f"Transcription refusée par Groq (HTTP {rep.status_code}).")
+    try:
+        return _nettoyer(str(rep.json().get("text") or ""))
+    except ValueError:
+        raise TranscriptionIndisponible("Réponse de Groq illisible.")
+
+
+def _extension(mime: str) -> str:
+    base = _mime_propre(mime)
+    return {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "m4a", "audio/mpeg": "mp3",
+            "audio/wav": "wav", "audio/x-wav": "wav", "audio/flac": "flac"}.get(base, "webm")
+
+
+async def _groq_complet(octets: bytes, mime: str) -> str:
+    """Tout l'enregistrement d'un bloc, tel que le navigateur l'a produit."""
+    return await _appel_groq(octets, f"dictee.{_extension(mime)}", _mime_propre(mime), _amorce())
+
+
+async def _groq_provisoire(cle: str, octets: bytes, mime: str) -> str:
+    """Le brouillon pendant la dictée : seule la fenêtre en cours est relue."""
+    maintenant = time.monotonic()
+    for k in [k for k, v in _GROQ.items() if maintenant - v["quand"] > CACHE_TTL_S]:
+        _GROQ.pop(k, None)
+    e = _GROQ.setdefault(cle, {"stable_s": 0.0, "stable": "", "provisoire": "",
+                               "prochain": 0.0, "quand": maintenant})
+    e["quand"] = maintenant
+    deja = _recoller(e["stable"], e["provisoire"]) if e["provisoire"] else e["stable"]
+    if maintenant < e["prochain"]:
+        return deja
+    e["prochain"] = maintenant + INTERVALLE_GROQ_S
+    pcm, duree = await asyncio.to_thread(_pcm16, octets)
+    depuis = max(0.0, e["stable_s"] - RECOUVREMENT_GROQ_S) if e["stable_s"] else 0.0
+    morceau = pcm[int(depuis * HZ) * 2:]
+    if len(morceau) < HZ * 2:                     # moins d'une seconde : rien à relire
+        return deja
+    try:
+        texte = await _appel_groq(_wav(morceau), "fenetre.wav", "audio/wav", _amorce(e["stable"]))
+    except _Limite as limite:
+        e["prochain"] = time.monotonic() + limite.attente_s
+        return deja
+    if duree - e["stable_s"] >= FENETRE_GROQ_S:
+        e["stable"], e["stable_s"], e["provisoire"] = _recoller(e["stable"], texte), duree, ""
+        return e["stable"]
+    e["provisoire"] = texte
+    return _recoller(e["stable"], texte) if e["stable"] else texte
+
+
 # ── LE SECOURS : GOOGLE ──────────────────────────────────────────────────
 def _cle() -> str:
     from llm.cles import valeur
@@ -296,6 +465,13 @@ async def prechauffer() -> None:
     """Charge le modèle AU DÉMARRAGE, en arrière-plan : la première dictée ne
     doit pas attendre les secondes du chargement — c'est là que « trop lent »
     se ressent le plus. Ne bloque rien, ne lève rien."""
+    # La clé Groq peut vivre en base : on relit les clés avant de décider, sinon
+    # le modèle local se chargerait pour rien (500 Mo de mémoire).
+    try:
+        from llm.cles import rafraichir
+        await rafraichir(force=True)
+    except Exception:  # noqa: BLE001
+        pass
     if moteur_choisi() != "local":
         return
     try:
@@ -335,23 +511,56 @@ async def transcrire_flux(cle: str, morceau: bytes, mime: str = "audio/webm",
     t["quand"] = time.monotonic()
     octets = bytes(t["octets"])
     try:
+        if moteur_choisi() == "groq":
+            if not definitif:
+                try:
+                    return await _groq_provisoire(cle, octets, mime)
+                except TranscriptionIndisponible as e:
+                    logger.info("Brouillon Groq indisponible (%s)", e)
+                    return (_GROQ.get(cle) or {}).get("stable", "")
+            brouillon = _GROQ.get(cle) or {}
+            try:
+                return await _groq_complet(octets, mime)
+            except _Limite as limite:
+                # La passe finale compte : on attend un peu si le quota le permet.
+                if limite.attente_s <= 8:
+                    await asyncio.sleep(limite.attente_s)
+                    try:
+                        return await _groq_complet(octets, mime)
+                    except TranscriptionIndisponible:
+                        pass
+            except TranscriptionIndisponible as e:
+                logger.warning("Passe finale Groq en échec (%s)", e)
+            texte = (_recoller(brouillon.get("stable", ""), brouillon.get("provisoire", ""))
+                     if brouillon.get("provisoire") else brouillon.get("stable", ""))
+            if texte:
+                return texte
+            return await transcrire(octets, mime, cle_cache="", sans_groq=True)
         return await transcrire(octets, mime, cle_cache=cle)
     finally:
         if definitif:
             _TAMPONS.pop(cle, None)
             _CACHE.pop(cle, None)
+            _GROQ.pop(cle, None)
 
 
 # ── L'ENTRÉE ─────────────────────────────────────────────────────────────
 def moteur_choisi() -> str:
-    """« local » si Whisper est là (et non écarté par réglage), sinon « google »."""
-    voulu = (getattr(settings, "transcription_moteur", "local") or "local").strip().lower()
-    if voulu != "google" and moteur_local_disponible():
+    """« groq » dès que sa clé est posée, sinon « local » si Whisper est là,
+    sinon « google ». `TRANSCRIPTION_MOTEUR` force un moteur (groq, local, google) ;
+    « auto » (défaut) suit cet ordre."""
+    voulu = (getattr(settings, "transcription_moteur", "auto") or "auto").strip().lower()
+    if voulu == "google":
+        return "google"
+    if voulu in ("auto", "groq") and _cle_groq():
+        return "groq"
+    if voulu in ("auto", "local", "groq") and moteur_local_disponible():
         return "local"
     return "google"
 
 
-async def transcrire(octets: bytes, mime: str = "audio/webm", cle_cache: str = "") -> str:
+async def transcrire(octets: bytes, mime: str = "audio/webm", cle_cache: str = "",
+                     sans_groq: bool = False) -> str:
     """Le texte dit dans l'enregistrement. Lève `TranscriptionIndisponible`, jamais la clé.
 
     `cle_cache` : qui dicte (l'identifiant de la personne) — c'est ce qui permet
@@ -364,7 +573,16 @@ async def transcrire(octets: bytes, mime: str = "audio/webm", cle_cache: str = "
         raise TranscriptionIndisponible(
             "L'enregistrement est trop long pour une dictée (plus de dix minutes). "
             "Pour une réunion, collez sa transcription écrite.")
-    if moteur_choisi() == "local":
+    moteur = moteur_choisi()
+    if moteur == "groq" and not sans_groq:
+        try:
+            return await _groq_complet(octets, mime)
+        except TranscriptionIndisponible as e:
+            logger.warning("Groq en échec (%s) : moteur suivant", e)
+        moteur = "local" if moteur_local_disponible() else "google"
+    if moteur == "groq":
+        moteur = "local" if moteur_local_disponible() else "google"
+    if moteur == "local":
         try:
             # Le CPU travaille hors de la boucle : un tour de chat ne doit pas
             # attendre qu'une dictée soit transcrite.

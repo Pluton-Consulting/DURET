@@ -132,6 +132,11 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
     // Rien de neuf depuis le dernier envoi : inutile de payer un appel.
     if (morceaux.length === 0) return
     if (!definitif && (morceaux.length === dernierEnvoye || envoiEnCours)) return
+    // L'ENVOI DÉFINITIF ATTEND L'INTERMÉDIAIRE EN VOL (15/09). Le serveur ajoute
+    // les morceaux dans l'ordre d'ARRIVÉE ; parti avant la fin du précédent, le
+    // dernier morceau pouvait atterrir avant lui, et la passe finale — celle qui
+    // remplace le brouillon — lisait un enregistrement au milieu manquant.
+    while (definitif && envoiEnCours) await new Promise((r) => setTimeout(r, 50))
     envoiEnCours = true
     enVol += 1
     options.surTravail?.(true)
@@ -209,7 +214,11 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
     morceaux.length = 0
     dernierEnvoye = 0
     try {
-      flux = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Réduction du bruit, annulation d'écho et gain automatique : ce que fait
+      // la dictée d'un téléphone. Un navigateur qui ne sait pas les ignore.
+      flux = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      })
     } catch (e: any) {
       voulu = false
       const nom = String(e?.name || "")

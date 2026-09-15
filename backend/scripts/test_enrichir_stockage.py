@@ -500,6 +500,11 @@ else:
     # lecteur : ces bancs, qui jouent le système, voient tout comme avant.
     charger("security.lecteur", "security/lecteur.py")
     charger("nas.niveaux", "nas/niveaux.py")
+    # 15/09 : le tri avant la lecture (`nas/tri.py`) — sans règle validée, tout
+    # est « à apprendre », mais les photos sont écartées sans être ouvertes.
+    import os as _os, tempfile as _tempfile
+    _os.environ["DOCUMENTS_DIR"] = _tempfile.mkdtemp(prefix="banc-nas-")
+    charger("nas.tri", "nas/tri.py")
 
     @asynccontextmanager
     async def _connexion():
@@ -527,9 +532,11 @@ else:
              res.get("racines_introuvables") == "/Drive", res)
     verifier("une archive n'est pas téléchargée, elle est comptée", res.get("format_non_lu") == 1
              and not any(c.endswith(".zip") for c in TELECHARGES), res)
-    verifier("une photo sans texte est comptée et MÉMORISÉE", res.get("sans_texte") == 1, res)
+    # 15/09 : une photo n'est plus ouverte du tout (tri sans IA) — elle est comptée.
+    verifier("une photo n'est pas ouverte, elle est comptée", res.get("photos") == 1
+             and not any(c.endswith(".jpg") for c in TELECHARGES), res)
     verifier("l'avancement est rendu à l'écran, total compris",
-             AVANCES and AVANCES[-1] == (252, 252), AVANCES[-1:])
+             AVANCES and AVANCES[-1] == (251, 251), AVANCES[-1:])
     ids = [k["source_id"] for k in INGESTIONS]
     verifier("aucun identifiant ne dépasse les 255 caractères de la colonne",
              max(len(i) for i in ids) <= 255 and any(i.startswith("synology:#") for i in ids),
@@ -541,8 +548,8 @@ else:
     TELECHARGES.clear()
     acces._CATALOGUE["construit_le"] = time.monotonic()        # catalogue frais : pas de nouveau relevé
     res2 = asyncio.run(synology.sync())
-    verifier("relancée, elle ne rouvre RIEN d'inchangé (ni la photo déjà écartée)",
-             TELECHARGES == [] and res2.get("inchangés") == 251 and res2.get("déjà_écartés") == 1,
+    verifier("relancée, elle ne rouvre RIEN d'inchangé (ni la photo)",
+             TELECHARGES == [] and res2.get("inchangés") == 251 and res2.get("photos") == 1,
              (len(TELECHARGES), res2))
     src_nas = CONNECTEUR_NAS.read_text(encoding="utf-8")
     verifier("l'ancien parcours maison a disparu (une seule façon de voir le NAS)",

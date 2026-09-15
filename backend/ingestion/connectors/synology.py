@@ -522,8 +522,10 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
     `avancer(traites, total, etape)` est appelé au fil de l'eau quand le
     routeur en fournit un (la carte de l'écran montre la progression).
     """
-    from ingestion.parsers import analyser, ligne_en_texte, famille, FichierNonSupporte, en_lecture
+    from ingestion.parsers import (analyser, ligne_en_texte, famille, FichierNonSupporte,
+                                   OcrReporte, en_lecture)
     from nas import acces
+    from nas import tri
 
     racines = acces.dossiers_autorises()
     if not racines:
@@ -560,11 +562,39 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
 
     connus = await _dates_ingerees()
     ecartes = _lire_ecartes()
+    # LE TRI AVANT LA LECTURE (15/09, `nas/tri.py`) : ce que l'administrateur a
+    # validé (« à la demande », « ignorer ») n'est pas ouvert ; les photos, les
+    # copies d'un même fichier et ce qui a plus de `nas_tri_age_ans` ans non plus.
+    # Les PDF scannés attendent la nuit : l'OCR de jour a déjà mis l'application
+    # à genoux.
+    regles_tri, age_max, maintenant = tri.regles(), tri.age_ans(), __import__("time").time()
+    en_double = tri.doublons(fichiers)
+    differes = tri.ocr_differe()
+    de_nuit = tri.fenetre_de_nuit()
     bilan = {"format_non_lu": 0, "trop_volumineux": 0, "inchangés": 0,
-             "déjà_écartés": 0, "sans_texte": 0, "trop_lents": 0}
+             "déjà_écartés": 0, "sans_texte": 0, "trop_lents": 0,
+             "à_la_demande": 0, "ignorés": 0, "photos": 0, "anciens": 0, "doublons": 0,
+             "scans_remis_à_la_nuit": 0}
     a_lire = []
     for f in fichiers:
         nom = str(f.get("nom") or f["chemin"].rsplit("/", 1)[-1])
+        decision = tri.decision_du_chemin(f["chemin"], regles_tri)
+        if decision == "demande":
+            bilan["à_la_demande"] += 1
+            continue
+        if decision == "ignorer":
+            bilan["ignorés"] += 1
+            continue
+        raison_tri = tri.ecarte_sans_ia(f, maintenant, age_max)
+        if raison_tri:
+            bilan["photos" if raison_tri == "photo" else "anciens"] += 1
+            continue
+        if f["chemin"] in en_double:
+            bilan["doublons"] += 1
+            continue
+        if not de_nuit and f["chemin"] in differes and differes[f["chemin"]] == f.get("modifie"):
+            bilan["scans_remis_à_la_nuit"] += 1   # déjà repéré : il attend la nuit
+            continue
         if famille(nom) is None:
             bilan["format_non_lu"] += 1           # zip, dwg, vidéo… : pas de texte à tirer
             continue
@@ -578,6 +608,9 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
             bilan["déjà_écartés"] += 1            # écarté à un passage précédent, inchangé depuis
             continue
         a_lire.append((f, nom))
+    # Les plus récents d'abord : une synchro interrompue a au moins lu les
+    # affaires en cours.
+    a_lire.sort(key=lambda fn: float(fn[0].get("modifie") or 0), reverse=True)
 
     logger.info("NAS : %d fichier(s) au catalogue, %d à lire (%s)", total, len(a_lire), bilan)
     # ÉTAPE 2 / 2 — LE TRI, puis l'ouverture : ce qui sera ouvert, et pourquoi
@@ -606,7 +639,13 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                     # `en_lecture`, pas `wait_for(to_thread(…))` (15/09) : l'ancienne
                     # forme abandonnait l'attente sans arrêter l'OCR, et les lectures
                     # fantômes ont occupé tout le serveur (voir `parsers.en_lecture`).
-                    structure = await en_lecture(analyser, nom, brut, delai=DELAI_LECTURE_S)
+                    structure = await en_lecture(analyser, nom, brut, delai=DELAI_LECTURE_S,
+                                                 ocr=tri.fenetre_de_nuit())
+                    differes.pop(f["chemin"], None)
+                except OcrReporte:
+                    bilan["scans_remis_à_la_nuit"] += 1
+                    differes[f["chemin"]] = f.get("modifie")
+                    return
                 except (_asyncio.TimeoutError, TimeoutError):
                     bilan["trop_lents"] += 1
                     _ecarter(f)
@@ -648,8 +687,12 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
         for i in range(0, len(a_lire), 40):
             await _asyncio.gather(*[_un(f, nom) for f, nom in a_lire[i:i + 40]])
             _ecrire_ecartes(ecartes)
+            tri.ecrire_ocr_differe(differes)
     finally:
         _ecrire_ecartes(ecartes)
+        # Un scan lu (ou disparu du NAS) quitte la liste de la nuit.
+        presents = {f["chemin"] for f in fichiers}
+        tri.ecrire_ocr_differe({c: m for c, m in differes.items() if c in presents})
 
     resultat = {"fichiers": total, "ouverts": compte["traites"],
                 "ingérés": compte["ingeres"], "erreurs": compte["erreurs"],

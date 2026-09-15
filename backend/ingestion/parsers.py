@@ -70,6 +70,9 @@ os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 _OCR_PORTE = threading.BoundedSemaphore(OCR_SIMULTANES)
 _ECHEANCE: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar("echeance_lecture", default=None)
+# L'OCR PEUT ÊTRE REMIS À PLUS TARD (15/09, Duret) : une synchronisation de jour
+# ne passe plus un PDF scanné à tesseract — elle le note, et la nuit le lit.
+_OCR_PERMIS: contextvars.ContextVar[bool] = contextvars.ContextVar("ocr_permis", default=True)
 _LECTEURS: Optional[ThreadPoolExecutor] = None
 _LECTEURS_VERROU = threading.Lock()
 
@@ -82,6 +85,10 @@ EXT_IMAGE = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 class FichierNonSupporte(Exception):
     """Extension inconnue ou dépendance de lecture absente."""
+
+
+class OcrReporte(FichierNonSupporte):
+    """Le document n'a de texte que par l'OCR, et l'OCR n'est pas permis maintenant."""
 
 
 class DelaiDepasse(TimeoutError):
@@ -131,7 +138,7 @@ def _lecteurs() -> ThreadPoolExecutor:
         return _LECTEURS
 
 
-async def en_lecture(fonction, *args, delai: float):
+async def en_lecture(fonction, *args, delai: float, ocr: bool = True):
     """Exécute une lecture lourde (téléchargement, analyse, OCR) hors de la boucle,
     dans la réserve DES LECTURES, avec une échéance que l'OCR respecte.
 
@@ -142,6 +149,7 @@ async def en_lecture(fonction, *args, delai: float):
     loop = asyncio.get_running_loop()
     contexte = contextvars.copy_context()
     contexte.run(_ECHEANCE.set, time.monotonic() + delai)
+    contexte.run(_OCR_PERMIS.set, ocr)
     debut = time.monotonic()
     resultat = await loop.run_in_executor(_lecteurs(), contexte.run, fonction, *args)
     if time.monotonic() - debut > delai + OCR_DELAI_PAGE_S + 30:
@@ -175,6 +183,8 @@ def ocr_disponible() -> bool:
 
 def ocr_image(brut: bytes) -> str:
     """Texte d'une image (photo ou scan d'un document)."""
+    if not _OCR_PERMIS.get():
+        raise OcrReporte("image : lecture par OCR remise à plus tard")
     try:
         import io as _io
         import pytesseract
@@ -456,6 +466,10 @@ def lire_pdf(brut: bytes) -> str:
             "de caractères n'est pas disponible sur le serveur."
         )
 
+    if not _OCR_PERMIS.get():
+        if len(texte) >= SEUIL_TEXTE_PAR_PAGE:
+            return texte        # un peu de texte vaut mieux qu'un report
+        raise OcrReporte("PDF scanné : lecture par OCR remise à plus tard")
     logger.info("PDF sans couche texte (%d caractères / %d pages) — OCR", len(texte), pages_lues)
     try:
         ocr = ocr_pdf(brut)

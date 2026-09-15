@@ -306,6 +306,13 @@ class Settings(BaseSettings):
     # refusé à l'écriture. Changer de modèle d'embedding impose donc de
     # re-vectoriser tout le corpus, parce que des vecteurs de modèles
     # différents ne se comparent pas — même à dimension égale.
+    # LE TRI AVANT LA LECTURE DU NAS (15/09, `nas/tri.py`) : les fichiers plus
+    # vieux que ce nombre d'années ne sont pas appris d'avance (0 = aucune
+    # limite ; se règle aussi dans Paramètres), et l'OCR des PDF scannés ne
+    # tourne qu'entre ces deux heures (Paris), la nuit.
+    nas_tri_age_ans: int = 3
+    nas_ocr_nuit_debut: int = 21
+    nas_ocr_nuit_fin: int = 6
     # LA CONNEXION DE DURET N'A PLUS DE LIEN MAGIQUE (15/09, Noa : « enlève le
     # système magic link même en admin »). Les profils entrent par leur carte,
     # l'administrateur par le bouton « Admin » et son code. Le mécanisme reste

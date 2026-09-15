@@ -161,6 +161,14 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(demarrer_catalogue())
     except Exception:
         pass
+    # L'OCR DES SCANS, LA NUIT (15/09, `nas/tri.py`) : la synchronisation de jour
+    # les met de côté ; cette boucle lance, une fois par nuit, la lecture de ce
+    # qui attend. Sans module `nas`, rien ne part.
+    try:
+        from nas.tri import boucle_de_nuit
+        asyncio.create_task(boucle_de_nuit())
+    except Exception:
+        pass
     # LA CARTE DU CLASSEMENT (08/09 soir) : l'architecture du stockage relevée
     # en fond, gardée en mémoire (prompt, `ou_chercher`) et écrite dans la base
     # vectorisée (recherche documentaire). Six heures entre deux relevés.
@@ -261,6 +269,13 @@ except ImportError:
 try:
     from routers import nas_niveaux as nas_niveaux_router
     app.include_router(nas_niveaux_router.router, prefix="/api/nas-niveaux", tags=["nas"])
+except ImportError:
+    pass
+
+# Le tri avant la lecture du NAS (15/09) : même import optionnel.
+try:
+    from routers import nas_tri as nas_tri_router
+    app.include_router(nas_tri_router.router, prefix="/api/nas-tri", tags=["nas"])
 except ImportError:
     pass
 

@@ -34,6 +34,11 @@ REGLAGES_CONNUS = (
     # Le niveau d'accès PAR DOSSIER du serveur de fichiers (13/09, Duret) :
     # une liste JSON [{"chemin", "niveau"}], validée par `nas/niveaux.py`.
     "nas_niveaux",
+    # LE TRI AVANT LA LECTURE DU NAS (15/09, Duret, `nas/tri.py`) : les
+    # décisions validées par dossier [{"chemin", "decision"}], et l'âge au-delà
+    # duquel un fichier n'est pas appris d'avance (années, 0 = aucune limite).
+    "nas_tri",
+    "nas_tri_age_ans",
     "kpi_depuis",   # AAAA-MM-JJ — les indicateurs ne comptent rien avant cette date
     # L'anonymisation PII se coupe d'un clic (demande de Noa, 30/08 : elle
     # cassait des flux réels — adresse tapée masquée en boucle, balises dans
@@ -183,6 +188,10 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
     if nom in ("anonymisation", "validation_totale") and (brut or "").strip() \
             and (brut or "").strip().lower() not in ("active", "desactivee"):
         raise ValueError("Valeur attendue : « active » ou « desactivee ».")
+    if nom == "nas_tri_age_ans" and (brut or "").strip():
+        age = (brut or "").strip()
+        if not age.isdigit() or not (0 <= int(age) <= 50):
+            raise ValueError("Nombre d'années attendu entre 0 (aucune limite) et 50.")
     if nom == "llm_simultanes" and (brut or "").strip():
         # ⚠️ NE JAMAIS APPELER CETTE VARIABLE `valeur` : ce module expose une
         # FONCTION `valeur()`, appelée au `return` de cette même fonction. Une

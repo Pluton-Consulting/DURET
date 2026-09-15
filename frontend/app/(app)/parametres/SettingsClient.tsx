@@ -4,6 +4,7 @@ import { ROLE_LABELS, ROLE_COLORS, nomExpert } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
 import NiveauxNas from "@/components/settings/NiveauxNas"
+import TriNas from "@/components/settings/TriNas"
 import ClesApiTab from "@/components/settings/ClesApiTab"
 import MonCode from "@/components/settings/MonCode"
 
@@ -1566,6 +1567,7 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
           <SyncTab apiUrl={apiUrl} backendToken={backendToken} />
           {/* Le niveau d'accès par dossier du NAS (13/09) : ce qui est synchronisé
               et enrichi se range là, et le chat ne montre que ce que le rôle voit. */}
+          <TriNas apiUrl={apiUrl} backendToken={backendToken} />
           <NiveauxNas apiUrl={apiUrl} backendToken={backendToken} />
         </>
       )}

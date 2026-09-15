@@ -346,7 +346,13 @@ async def deposer_brouillon(data: dict, user) -> dict:
                 + " ; ".join(f"« {r['nom']} » ({r['raison']})" for r in refusees) + ".")
 
     from mail.signature import apposer
-    corps_signe, html, pieces = await apposer(boite, corps, pieces, demandee=data.get("signature"))
+    corps_signe, html, pieces_signees = await apposer(boite, corps, pieces, demandee=data.get("signature"))
+    signee = bool(html) or corps_signe != corps or len(pieces_signees) != len(pieces)
+    pieces = pieces_signees
+    if _signature_exigee(data.get("signature")) and not signee:
+        raise MailSkillError(
+            "Aucune signature utilisable n'est enregistrée pour cette boîte : aucun brouillon "
+            "n'a été déposé. Apprends-la d'abord (`apprendre_signature`), puis redemande.")
     en_reponse_a = None
     if ref_recu:
         from mail.lecture import _resoudre
@@ -357,6 +363,7 @@ async def deposer_brouillon(data: dict, user) -> dict:
     except RuntimeError as e:
         raise MailSkillError(str(e))
     resultat["en_reponse"] = bool(en_reponse_a) or None
+    resultat["signature"] = "apposée" if signee else "AUCUNE — aucune signature enregistrée pour la boîte"
     resultat["message_final"] = (
         f"Le brouillon « {objet or 'sans objet'} » est dans le dossier Brouillons de {boite}"
         + (f", adressé à {destinataire}" if destinataire else "")
@@ -437,8 +444,18 @@ async def envoyer_email(data: dict, user) -> dict:
     # La signature de la boîte, apposée sur le corps DÉFINITIF. Ce n'est pas du
     # contenu à valider : c'est l'en-tête de la maison, reproduit à l'octet.
     from mail.signature import apposer
+    avant = (corps, len(pieces))
     corps, html, pieces = await apposer(boite, corps, pieces,
                                         demandee=data.get("signature"))
+    signee = bool(html) or (corps, len(pieces)) != avant
+    # « RENVOIE-LE AVEC LA SIGNATURE » (15/09) : aucune signature n'était
+    # enregistrée, le message est reparti sans, et personne ne l'a su. Une
+    # signature DEMANDÉE qui n'existe pas arrête l'envoi, en le disant.
+    if _signature_exigee(data.get("signature")) and not signee:
+        raise MailSkillError(
+            "Aucune signature utilisable n'est enregistrée pour cette boîte : RIEN n'a été "
+            "envoyé. Apprends-la d'abord (`apprendre_signature`, depuis un message ENVOYÉ), "
+            "puis redemande l'envoi.")
     try:
         resultat = await envoyer_message(boite, destinataire, objet, corps,
                                          cc=data.get("cc"), pieces=pieces,
@@ -448,11 +465,18 @@ async def envoyer_email(data: dict, user) -> dict:
     jointes = [{"nom": p["nom"], "octets": len(p["octets"])}
                for p in pieces if not p.get("inline")]
     resultat["pieces_jointes"] = jointes
+    resultat["signature"] = "apposée" if signee else "AUCUNE — le message est parti sans signature"
     resultat["message_final"] = (
         f"Message envoyé à {destinataire} depuis {boite} (objet : « {objet} »)"
         + (", avec " + ", ".join(p["nom"] for p in jointes) + " en pièce jointe"
-           if jointes else "") + ".")
+           if jointes else "")
+        + ("" if signee else ", sans signature (aucune n'est enregistrée pour la boîte)") + ".")
     return resultat
+
+
+def _signature_exigee(valeur) -> bool:
+    """`signature: true` explicite — pas l'absence du paramètre."""
+    return valeur is True or str(valeur).strip().lower() in ("true", "oui", "1", "yes")
 
 
 async def resumer_fil(data: dict, user) -> dict:
@@ -549,11 +573,14 @@ async def apprendre_signature(data: dict, user) -> dict:
     from mail.signature import apprendre
     resultat = await apprendre(boite, user, ref=str(data.get("ref") or ""))
     if not resultat.get("trouvee"):
-        return {**resultat, "boite": boite,
-                "message": resultat.get("message", ""),
-                "a_faire": ("Aucune signature reconnue. Dis-le, et propose "
-                            "d'apprendre depuis UN message précis en donnant "
-                            "sa `ref` (`lire_mails dossier: envoyes` la rend).")}
+        # UN ÉCHEC, PAS UN COMPTE RENDU (15/09). Rendu comme un résultat
+        # ordinaire, « rien trouvé » passait pour une réussite, et le modèle a
+        # répondu « la signature a bien été apprise ».
+        raise MailSkillError(
+            (resultat.get("message") or "Aucune signature reconnue.")
+            + " Ne dis pas qu'une signature a été apprise. Pour apprendre depuis UN "
+            "message précis, prends sa `ref` dans `lire_mails` avec `dossier: envoyes` "
+            "(un message REÇU ne porte pas la signature de la boîte).")
     return await _fiche_signature(boite, appris=True, occurrences=resultat)
 
 
@@ -579,13 +606,20 @@ async def _fiche_signature(boite: str, appris: bool, occurrences=None) -> dict:
                             "`apprendre_signature` pour aller la chercher "
                             "dans les messages envoyés.")}
     cles = _cles_deposees(signature.get("images") or [])
+    # LA CARTE NE S'AFFICHAIT PAS (15/09) : `keyvalue` exige `rows`, et le type
+    # `text` n'existe pas à l'écran. La personne n'a jamais VU la signature
+    # enregistrée — ni celle de la cliente, prise à la place de la sienne.
+    from mail.signature import adresses_etrangeres
+    etrangeres = adresses_etrangeres(signature.get("texte") or "", boite)
     blocs = [{"type": "keyvalue", "titre": f"Signature de {boite}",
-              "paires": [
-                  {"cle": "Apprise le",
-                   "valeur": str(signature.get("derniere_maj") or "")[:10]},
-                  {"cle": "Source", "valeur": signature.get("source") or "—"},
-                  {"cle": "Images", "valeur": str(len(cles))}]},
-             {"type": "text", "contenu": signature.get("texte") or ""}]
+              "rows": [["Apprise le", str(signature.get("derniere_maj") or "")[:10]],
+                       ["Source", signature.get("source") or "—"],
+                       ["Images", str(len(cles))]]}]
+    if (signature.get("texte") or "").strip():
+        blocs.append({"type": "callout", "tone": "warning" if etrangeres else "info",
+                      "title": ("Texte de la signature — porte l'adresse d'un tiers, elle ne sera PAS apposée"
+                                if etrangeres else "Texte de la signature"),
+                      "text": signature.get("texte")})
     if cles:
         blocs.append({"type": "visuel", "titre": "Images de la signature",
                       "images": cles})
@@ -593,7 +627,8 @@ async def _fiche_signature(boite: str, appris: bool, occurrences=None) -> dict:
         "boite": boite,
         "signature": {"texte": signature.get("texte") or "",
                       "images": len(cles),
-                      "source": signature.get("source")},
+                      "source": signature.get("source"),
+                      "celle_d_un_tiers": etrangeres or None},
         "apprise": bool(appris),
         "occurrences": (occurrences or {}).get("occurrences"),
         "bloc_ui": blocs,
@@ -609,6 +644,31 @@ async def _fiche_signature(boite: str, appris: bool, occurrences=None) -> dict:
     }
 
 
+async def supprimer_signature(data: dict, user) -> dict:
+    """RETIRE la signature en vigueur d'une boîte (elle n'est plus apposée).
+
+    15/09 : « oublie la signature de Sandrine » — aucun geste ne savait retirer
+    une signature mal apprise, qui serait partie sous chaque message. La ligne
+    est DÉSACTIVÉE, pas effacée (réparable en base), et le geste passe par la
+    règle de l'entreprise : rien ne se supprime sans le mot « supprime ».
+    """
+    boite = await verifier_acces(user, data.get("mailbox") or await boite_par_defaut(user),
+                                 envoi=True)
+    from database.connection import get_db
+    from mail.signature import oublier_cache
+    async with get_db() as conn:
+        n = await conn.fetchval(
+            """WITH maj AS (UPDATE mail_signatures SET active = false, derniere_maj = NOW()
+                            WHERE mailbox = $1 AND active RETURNING 1)
+               SELECT COUNT(*) FROM maj""", boite)
+    await oublier_cache(boite)
+    if not n:
+        raise MailSkillError(f"Aucune signature n'était en vigueur pour {boite}.")
+    return {"boite": boite, "retiree": True,
+            "message_final": f"La signature de {boite} est retirée : elle ne sera plus apposée.",
+            "a_faire": "Dis en une phrase que la signature est retirée, et propose d'apprendre la bonne."}
+
+
 SKILLS_NATIFS = {
     "triage_email_entrant": triage_email_entrant,
     "redaction_email": rediger_email,
@@ -619,6 +679,7 @@ SKILLS_NATIFS = {
     "apprendre_style_email": apprendre_style,
     "apprendre_signature": apprendre_signature,
     "ma_signature": ma_signature,
+    "supprimer_signature": supprimer_signature,
 }
 
 
@@ -1603,6 +1664,9 @@ EFFETS_NATIFS = {
     # sort ; la relire ne fait que lire.
     "apprendre_signature": "ecriture_interne",
     "ma_signature": "lecture",
+    # Retirer une signature écrit DANS l'application ; la règle « supprime »
+    # s'applique par le nom du geste (skills/suppression.py).
+    "supprimer_signature": "ecriture_interne",
     # Créer une tâche n'a aucun effet hors du système : quand elle s'exécutera,
     # elle repassera par tous les contrôles, validation humaine comprise.
     "creer_tache_agent": "ecriture_interne",

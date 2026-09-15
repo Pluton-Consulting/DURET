@@ -656,7 +656,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "reference et n'ecris jamais un chemin de fichier : produis ou ouvre d'abord la "
         "piece, puis recopie ce qu'on t'a rendu. Un lien de telechargement dans le corps "
         "n'est PAS une piece jointe : quand on demande de joindre, tu joins. 10 pieces au "
-        "plus, 20 Mo chacune. `signature: false` retire la signature de la boite. "
+        "plus, 20 Mo chacune. `signature: false` retire la signature de la boite ; "
+        "`signature: true` quand la personne DEMANDE la signature (sans signature "
+        "enregistree, rien ne part et on le dit). Le resultat dit si la signature a ete "
+        "apposee : ne l'affirme jamais autrement. "
         "Sans `mailbox`, la boite de la personne connectee. `cc` : adresses en copie",
         ["destinataire", "objet", "corps"], ["mailbox", "cc", "pieces", "signature"]),
     "resume_fil_email": (
@@ -672,9 +675,17 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "les derniers messages ENVOYES de la boite, et l'enregistre : elle sera "
         "apposee automatiquement a chaque envoi. C'est le geste a faire quand on "
         "demande de retrouver, mettre a jour ou corriger la signature. `ref` "
-        "l'apprend depuis UN message precis. N'ecris JAMAIS une signature "
-        "toi-meme : elle se reproduit a l'identique, elle ne se redige pas.",
+        "l'apprend depuis UN message precis, qui doit etre un message ENVOYE par la "
+        "boite (sa ref vient de `lire_mails` avec `dossier: envoyes`) : un message RECU "
+        "porte la signature de son expediteur, jamais la notre. Une signature en IMAGE "
+        "est reconnue. Si le geste echoue, dis qu'AUCUNE signature n'a ete apprise. "
+        "N'ecris JAMAIS une signature toi-meme : elle se reproduit a l'identique, "
+        "elle ne se redige pas.",
         [], ["mailbox", "ref"]),
+    "supprimer_signature": (
+        "RETIRE la signature en vigueur d'une boite (mal apprise, obsolete) : elle "
+        "n'est plus apposee. Seulement si la personne dit « supprime ».",
+        [], ["mailbox"]),
     "ma_signature": (
         "Remontre la signature en vigueur d'une boite : son texte, ses images, "
         "d'ou elle vient et quand elle a ete apprise",

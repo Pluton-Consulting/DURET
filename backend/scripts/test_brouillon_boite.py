@@ -231,7 +231,8 @@ esp = {"MailSkillError": MailSkillError, "_boite_a_lire": _boite_a_lire,
        "_protege": _protege, "_appeler": _appeler, "_rehydrater": lambda v, c: v,
        "json": json, "re": __import__("re")}
 manque = extraire(racine / "mail" / "skills.py",
-                  {"rediger_email", "TYPES_MAIL", "_CONSIGNE_COMMUNE", "_json_de", "deposer_brouillon"}, esp)
+                  {"rediger_email", "TYPES_MAIL", "_CONSIGNE_COMMUNE", "_json_de", "deposer_brouillon",
+                   "_signature_exigee"}, esp)
 verifier("les gestes existent", not manque, manque)
 user = types.SimpleNamespace(id="u-dir", email="direction@exemple-paysage.fr", role="direction")
 if not manque:

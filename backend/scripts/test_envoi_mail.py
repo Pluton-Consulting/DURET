@@ -115,7 +115,7 @@ async def verifier_acces(user, cible, envoi=False):
 
 espace = {"MailSkillError": MailSkillError, "_boite_a_lire": _boite_a_lire,
           "verifier_acces": verifier_acces}
-extraire(racine / "mail" / "skills.py", {"envoyer_email"}, espace)
+extraire(racine / "mail" / "skills.py", {"envoyer_email", "_signature_exigee"}, espace)
 skill = espace["envoyer_email"]
 
 

@@ -244,6 +244,7 @@ verifier("le rapprochement marque les pièces AFFICHÉES dans le corps",
 # ── 7. La signature ──────────────────────────────────────────────────────
 sig = extraire(BACKEND / "mail" / "signature.py",
                {"separer", "en_texte", "_BALISES", "_SEPARATEUR", "_POLITESSE",
+                "sans_citation", "_CITATION", "_RE_IMG_CID",
                 "_CONTACT", "_RE_BALISE", "_RE_BR", "MAX_SIGNATURE_HTML",
                 "MAX_IMAGE_SIGNATURE", "MAX_IMAGES"},
                {"re": re, "_html": __import__("html")})

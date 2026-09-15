@@ -97,6 +97,7 @@ ACTES = {
     "apprendre_style_email": "j'apprends le style d'écriture",
     "apprendre_signature": "j'apprends la signature",
     "ma_signature": "je relis la signature",
+    "supprimer_signature": "je retire la signature",
     "creer_tache_agent": "je programme la tâche",
     "mes_taches": "je relis les tâches programmées",
     "supprimer_tache": "je supprime la tâche",

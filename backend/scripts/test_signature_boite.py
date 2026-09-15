@@ -1,0 +1,263 @@
+"""
+Banc « LA SIGNATURE DE LA BOÎTE, ET PAS CELLE DE LA CLIENTE » — conversation du
+15/09, 13:49 → 13:52 (Symbiose, boîte partagée de l'accueil).
+
+Relevé de Noa : « il n'arrive pas à récupérer une signature de mail et il dit
+qu'il le fait ; il a été incohérent, il m'a dit avoir récupéré la signature
+d'une personne qui m'a envoyé un mail et pas la mienne ». Ce qui s'est passé :
+  · « réenvoie-le avec la signature » → aucune signature enregistrée, le mail
+    est reparti SANS, et rien ne l'a dit ;
+  · « apprends-la » depuis « RE: Relance règlement bon SAP » : c'était la
+    RÉPONSE de la cliente. Sa signature Gmail (`gmail_signature`) a été prise,
+    et `separer` a gardé tout ce qui suivait — la citation du message de
+    l'accueil comprise. « La signature a bien été apprise » ;
+  · la vraie signature de la boîte est une IMAGE sous « Cordialement » : aucune
+    règle ne la voyait, et les OCTETS des images n'étaient jamais téléchargés
+    (« Images : 0 », depuis toujours) ;
+  · la carte de la signature ne s'affichait pas (`keyvalue` sans `rows`, type
+    `text` inconnu) : personne ne l'a VUE.
+
+CE QUE CE BANC PROUVE (sans réseau ni base) :
+  · `separer` EXÉCUTÉ : la citation est coupée avant de chercher ; la réponse
+    Gmail de la cliente rend SA signature, que `adresses_etrangeres` désigne ;
+    l'envoi de l'accueil (Outlook, texte + Cordialement + image, puis citation
+    portant une `gmail_signature`) rend l'IMAGE, pas la signature citée ;
+  · `apprendre` EXÉCUTÉ contre une messagerie doublée : un message REÇU
+    n'enregistre rien ; un message envoyé enregistre la signature en image AVEC
+    ses octets téléchargés ;
+  · `apposer` : une signature enregistrée qui porte l'adresse d'un tiers ne
+    part pas ;
+  · les gestes : `apprendre_signature` en échec est un ÉCHEC ; la carte est
+    lisible (rows, callout) ; `envoyer_email` avec `signature: true` et aucune
+    signature n'envoie RIEN ; `supprimer_signature` passe par la règle
+    « supprime ».
+Tombe sur la version d'avant.
+
+Usage : python backend/scripts/test_signature_boite.py [backend]
+"""
+import ast
+import asyncio
+import base64
+import importlib.util
+import pathlib
+import re
+import sys
+import types
+
+racine = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend").resolve()
+sys.path.insert(0, str(racine))
+echecs = []
+
+
+def verifier(nom, cond, detail=""):
+    print(f"  {'✓' if cond else '✗'} {nom}" + (f"  → {str(detail)[:300]}" if detail and not cond else ""))
+    if not cond:
+        echecs.append(nom)
+
+
+def module(nom, **attrs):
+    m = types.ModuleType(nom)
+    m.__dict__.update(attrs)
+    sys.modules[nom] = m
+    return m
+
+
+BOITE = "contact@exemple-paysage.fr"
+LOGO = b"\x89PNG\r\n\x1a\n" + b"logo" * 50
+RECU_CLIENTE = (
+    '<div dir="ltr">Bonjour, c\'est réglé.</div><br>'
+    '<div class="gmail_signature"><div>RSE - FORMATION - RETAIL - ESS - ISR</div>'
+    '<div>+ 33 (0) 6.16.12.95.09</div><div>cliente.exemple@gmail.com</div></div><br>'
+    '<div class="gmail_quote"><div class="gmail_attr">Le mar. 15 sept. 2026 à 12:24, '
+    'Accueil &lt;contact@exemple-paysage.fr&gt; a écrit :</div><blockquote>Bonjour,<br>'
+    'Sauf erreur de notre part, le bon SAP est en attente.<br>Cordialement,<br>'
+    '<img src="cid:image001.png@01DC12AB"></blockquote></div>')
+ENVOI_ACCUEIL = (
+    '<div>Bonjour,</div><div>Merci pour votre retour, nous restons disponibles.</div>'
+    '<div>Cordialement,</div><div><img src="cid:image001.png@01DC12AB" width="320"></div>'
+    '<hr style="display:inline-block;width:98%" tabindex="-1">'
+    '<div id="divRplyFwdMsg"><b>De :</b> Cliente &lt;cliente.exemple@gmail.com&gt;<br>'
+    '<b>Envoyé :</b> mardi 15 septembre 2026</div>'
+    '<div class="gmail_signature">RSE - FORMATION<br>cliente.exemple@gmail.com</div>')
+
+# ── 1. separer ──────────────────────────────────────────────────────────────
+print("1. La découpe")
+spec = importlib.util.spec_from_file_location("mail.signature", racine / "mail" / "signature.py")
+sig = importlib.util.module_from_spec(spec)
+sys.modules["mail.signature"] = sig
+spec.loader.exec_module(sig)
+if not hasattr(sig, "sans_citation"):
+    verifier("mail/signature.py coupe la citation", False, "sans_citation absent")
+else:
+    _, s_recu = sig.separer(RECU_CLIENTE)
+    verifier("la réponse Gmail de la cliente : SA signature, sans la citation",
+             "RSE - FORMATION" in s_recu and "Sauf erreur" not in s_recu and "a écrit" not in s_recu, s_recu)
+    verifier("… et elle porte une adresse d'un tiers",
+             sig.adresses_etrangeres(sig.en_texte(s_recu), BOITE) == ["cliente.exemple@gmail.com"])
+    _, s_envoi = sig.separer(ENVOI_ACCUEIL)
+    verifier("l'envoi de l'accueil : la signature en IMAGE, pas celle citée plus bas",
+             "cid:image001" in s_envoi and "RSE" not in s_envoi and "Cordialement" not in s_envoi, s_envoi)
+    _, s_outlook = sig.separer('<p>Bonjour</p><div id="Signature">Marie Dupont<br>Directrice</div>'
+                               '<div id="divRplyFwdMsg"><b>De :</b> x</div><div id="Signature">Autre</div>')
+    verifier("deux signatures Outlook : la nôtre, au-dessus de la citation", "Marie Dupont" in s_outlook
+             and "Autre" not in s_outlook, s_outlook)
+    verifier("une adresse de la boîte ne rend pas la signature étrangère",
+             sig.adresses_etrangeres("Accueil\ncontact@exemple-paysage.fr", BOITE) == [])
+
+# ── 2. apprendre ────────────────────────────────────────────────────────────
+print("2. apprendre, contre une messagerie doublée")
+ENREGISTRE = []
+MESSAGES = {
+    "ref-recu": {"objet": "RE: Relance règlement bon SAP", "de": "cliente.exemple@gmail.com",
+                 "date": "2026-09-15", "corps_html": RECU_CLIENTE, "pieces_jointes": []},
+    "ref-envoi": {"objet": "RE: Relance règlement bon SAP", "de": BOITE, "date": "2026-09-15",
+                  "corps_html": ENVOI_ACCUEIL,
+                  "pieces_jointes": [{"nom": "image001.png", "type": "image/png", "inline": True,
+                                      "content_id": "image001.png@01DC12AB", "ref": "p-logo"}]},
+}
+
+
+async def _lire_message(boite, ref=None, dossier="recus", pieces=False, inline=False, **k):
+    return dict(MESSAGES[ref], pieces_jointes=[dict(p) for p in MESSAGES[ref]["pieces_jointes"]])
+
+
+async def _lire_boite(boite, dossier="recus", limite=8):
+    return {"messages": [{"ref": "ref-envoi"}]}
+
+
+async def _telecharger(boite, info):
+    return LOGO
+
+
+module("mail.lecture", lire_message=_lire_message, lire_boite=_lire_boite,
+       piece_connue=lambda ref, boite: {"id": "a", "message": "m"} if ref == "p-logo" else None,
+       telecharger_piece=_telecharger)
+module("mail.pieces", cids_du_html=lambda h: [c.strip("<>") for c in re.findall(
+    r"""src\s*=\s*["']?\s*cid:([^"'>\s]+)""", h or "", re.I)])
+
+
+async def _enregistrer(boite, html_, texte, images, source, user_id=None):
+    ENREGISTRE.append({"html": html_, "texte": texte, "images": images, "source": source})
+sig.enregistrer = _enregistrer
+user = types.SimpleNamespace(id="u-accueil", email=BOITE, role="administratif")
+if hasattr(sig, "sans_citation"):
+    r = asyncio.run(sig.apprendre(BOITE, user, ref="ref-recu"))
+    verifier("un message REÇU n'enregistre AUCUNE signature", not r.get("trouvee") and not ENREGISTRE, (r, ENREGISTRE))
+    verifier("… et le dit (rien n'a été enregistré)", "Rien n'a été enregistré" in r.get("message", ""), r)
+    r = asyncio.run(sig.apprendre(BOITE, user))
+    verifier("les derniers ENVOYÉS : la signature en image est apprise",
+             r.get("trouvee") and ENREGISTRE and "cid:image001" in ENREGISTRE[-1]["html"], (r, ENREGISTRE))
+    verifier("… AVEC les octets de son image (plus « Images : 0 »)",
+             ENREGISTRE and len(ENREGISTRE[-1]["images"]) == 1
+             and base64.b64decode(ENREGISTRE[-1]["images"][0]["octets_b64"]) == LOGO, ENREGISTRE[-1:])
+
+# ── 3. apposer ──────────────────────────────────────────────────────────────
+print("3. Une signature d'un tiers ne part pas")
+
+
+async def _enregistree_tiers(boite):
+    return {"html": "<div>RSE</div>", "texte": "RSE - FORMATION\ncliente.exemple@gmail.com", "images": []}
+sig.enregistree = _enregistree_tiers
+corps, html_, pieces = asyncio.run(sig.apposer(BOITE, "Bonjour,\n\nCordialement,", []))
+verifier("la signature enregistrée d'un tiers n'est PAS apposée", corps == "Bonjour,\n\nCordialement," and not html_)
+
+# ── 4. Les gestes ───────────────────────────────────────────────────────────
+print("4. Les gestes")
+
+
+def extraire(chemin, noms, espace):
+    arbre = ast.parse(pathlib.Path(chemin).read_text(encoding="utf-8"))
+    gardes = [n for n in arbre.body
+              if (isinstance(n, ast.ImportFrom) and n.module == "__future__")
+              or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in noms)]
+    exec(compile(ast.Module(body=gardes, type_ignores=[]), str(chemin), "exec"), espace)
+    return [x for x in noms if x not in espace]
+
+
+class MailSkillError(Exception):
+    def __init__(self, detail):
+        self.detail = detail
+        super().__init__(detail)
+
+
+async def _verifier_acces(user, cible, envoi=False):
+    return cible or BOITE
+
+
+async def _boite_par_defaut(user):
+    return BOITE
+
+esp = {"MailSkillError": MailSkillError, "verifier_acces": _verifier_acces,
+       "boite_par_defaut": _boite_par_defaut}
+manque = extraire(racine / "mail" / "skills.py",
+                  {"apprendre_signature", "_fiche_signature", "envoyer_email", "_signature_exigee",
+                   "supprimer_signature"}, esp)
+verifier("les gestes existent (dont supprimer_signature)", not manque, manque)
+if not manque:
+    async def _apprendre_rien(boite, user, ref=""):
+        return {"trouvee": False, "message": "Aucune signature de la boîte n'a été trouvée."}
+    sig.apprendre = _apprendre_rien
+    try:
+        asyncio.run(esp["apprendre_signature"]({"ref": "ref-recu"}, user))
+        verifier("apprendre_signature sans résultat est un ÉCHEC", False, "rendu comme une réussite")
+    except MailSkillError as e:
+        verifier("apprendre_signature sans résultat est un ÉCHEC",
+                 "Ne dis pas qu'une signature a été apprise" in str(e.detail), e.detail)
+
+    module("visuels")
+    module("visuels.depot", deposer_octets=lambda o, m: "c" * 24)
+    sig.enregistree = _enregistree_tiers
+    fiche = asyncio.run(esp["_fiche_signature"](BOITE, appris=False))
+    kv = [b for b in fiche["bloc_ui"] if b["type"] == "keyvalue"]
+    co = [b for b in fiche["bloc_ui"] if b["type"] == "callout"]
+    verifier("la carte s'affiche : keyvalue avec `rows`, texte dans un callout",
+             kv and kv[0].get("rows") and co and co[0].get("text")
+             and all(b["type"] in ("keyvalue", "callout", "visuel") for b in fiche["bloc_ui"]), fiche["bloc_ui"])
+    verifier("… et une signature d'un tiers est signalée comme non apposée",
+             co and co[0]["tone"] == "warning" and fiche["signature"]["celle_d_un_tiers"])
+
+    async def _aucune(boite):
+        return None
+    sig.enregistree = _aucune
+    ENVOIS = []
+
+    async def _envoyer(*a, **k):
+        ENVOIS.append(a)
+        return {"envoye": True}
+
+    async def _resoudre(brut, user, boite, plafond=None):
+        return [], []
+    module("mail.attaches", resoudre=_resoudre)
+    exp = module("mail.expedition", envoyer_message=_envoyer, porte_un_jeton=lambda t: False)
+
+    async def _boite_a_lire(data, user):
+        return BOITE
+    esp["_boite_a_lire"] = _boite_a_lire
+    try:
+        asyncio.run(esp["envoyer_email"]({"destinataire": "cliente@exemple.fr", "objet": "RE: x",
+                                          "corps": "Bonjour", "signature": True}, user))
+        verifier("« avec la signature » et aucune signature : RIEN ne part", False, "envoyé")
+    except MailSkillError as e:
+        verifier("« avec la signature » et aucune signature : RIEN ne part",
+                 not ENVOIS and "RIEN n'a été envoyé" in str(e.detail), e.detail)
+    r = asyncio.run(esp["envoyer_email"]({"destinataire": "cliente@exemple.fr", "objet": "RE: x",
+                                          "corps": "Bonjour"}, user))
+    verifier("sans demande explicite, le compte rendu dit que le message est parti SANS signature",
+             ENVOIS and r["signature"].startswith("AUCUNE") and "sans signature" in r["message_final"], r)
+
+src_sup = (racine / "skills" / "suppression.py").read_text(encoding="utf-8")
+espace_sup = {"re": re}
+exec(compile(src_sup, "suppression", "exec"), espace_sup)
+verifier("supprimer_signature exige le mot « supprime »",
+         espace_sup["est_une_suppression"]("supprimer_signature")
+         and not espace_sup["autorise_la_suppression"]("oublie la signature de la cliente"))
+proto = (racine / "skills" / "protocol.py").read_text(encoding="utf-8")
+verifier("le catalogue dit qu'un message REÇU ne porte pas notre signature, et l'échec",
+         "un message RECU" in proto and "AUCUNE signature n'a ete apprise" in proto)
+verifier("le catalogue d'envoi dit `signature: true`", "`signature: true` quand la personne DEMANDE" in proto)
+
+print()
+if echecs:
+    print(f"✗ {len(echecs)} échec(s)")
+    sys.exit(1)
+print("✓ 0 échec")

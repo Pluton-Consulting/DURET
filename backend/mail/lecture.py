@@ -883,6 +883,13 @@ def _memoriser_piece(boite: str, message_id: str, piece: dict) -> str:
 MAX_INLINE_RELUS = 8
 
 
+def boite_de_piece(ref: str) -> Optional[str]:
+    """La boîte d'où vient une pièce connue, SANS en donner l'accès (audit D-03) :
+    l'appelant doit ensuite vérifier les droits sur cette boîte."""
+    info = _PIECES.get((ref or "").strip())
+    return info["boite"] if info else None
+
+
 def piece_connue(ref: str, boite: str) -> Optional[dict]:
     info = _PIECES.get((ref or "").strip())
     return info if info and info["boite"] == (boite or "").lower() else None

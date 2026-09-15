@@ -267,6 +267,11 @@ def rendu_du_pdf(octets: bytes, nom: str, place: str = "") -> tuple[bytes, str, 
     return tampon.getvalue(), "image/png", f"{nom} ({ou}, dessiné)"
 
 
+# La référence d'une pièce jointe de mail (même forme que `mail/attaches.RE_PIECE`).
+import re as _re_pieces
+_RE_PIECE_DE_MAIL = _re_pieces.compile(r"^(?:piece:)?([0-9a-f]{16})$", _re_pieces.I)
+
+
 async def resoudre(designation: str, user, place: str = "") -> tuple[bytes, str, str]:
     """(octets, extension, nom) d'une image désignée par le modèle.
 
@@ -279,7 +284,22 @@ async def resoudre(designation: str, user, place: str = "") -> tuple[bytes, str,
     designation = str(designation or "").strip()
     if not designation:
         raise ImageRefusee("aucune référence d'image")
-    pretes, refusees = await _resoudre_pieces([designation], user, "")
+    # UNE PIÈCE JOINTE DE MAIL SE RÉSOUT DANS SA BOÎTE (16/09, audit D-03). La
+    # résolution partait d'une boîte VIDE : une image reçue par mail n'entrait
+    # jamais dans un document. On retrouve la boîte de la pièce, et on vérifie
+    # que la personne y a droit — une référence connue n'est pas une autorisation.
+    boite = ""
+    m = _RE_PIECE_DE_MAIL.match(designation)
+    if m:
+        from mail.authorization import verifier_acces
+        from mail.lecture import boite_de_piece
+        origine = boite_de_piece(m.group(1).lower())
+        if origine:
+            try:
+                boite = await verifier_acces(user, origine)
+            except Exception as e:  # noqa: BLE001 — un refus se dit, il ne plante pas
+                raise ImageRefusee("cette pièce jointe vient d'une boîte à laquelle vous n'avez pas accès") from e
+    pretes, refusees = await _resoudre_pieces([designation], user, boite)
     if not pretes:
         raison = (refusees[0].get("raison") if refusees else "") or "introuvable"
         raise ImageRefusee(raison)

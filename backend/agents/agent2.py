@@ -389,7 +389,12 @@ async def preprocess_attachment_node(state: AgentState) -> dict:
     if not pieces:
         return {}
 
-    preparees = await asyncio.gather(*[asyncio.to_thread(_preparer_piece, p) for p in pieces])
+    # Les photos déposées pendant cette préparation appartiennent à la personne
+    # du tour (audit D-03) : le contexte est copié dans chaque thread.
+    from types import SimpleNamespace
+    from security.lecteur import au_nom_de
+    with au_nom_de(SimpleNamespace(id=state.get("user_id"), role=state.get("user_role"))):
+        preparees = await asyncio.gather(*[asyncio.to_thread(_preparer_piece, p) for p in pieces])
     retenues = [p for p in preparees if p.get("pages")]
     ecartees = [p for p in preparees if not p.get("pages")]
 

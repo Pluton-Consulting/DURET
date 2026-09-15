@@ -15,7 +15,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-02 | Styles Word conservés au remplacement, contrôle du fichier produit | fait (bancs réels) |
 | D-05 | Échecs métier jamais présentés comme réussis | étape 1 faite (normaliseur, exécuteur, boucle, reprise) ; reçus avant « créé/envoyé » et preuves par requête : lot suivant |
 | D-06 | Secours lexical quand les embeddings tombent | étape 1 faite (embedding et voie vectorielle isolés, diagnostic, panne ≠ absence) ; orchestrateur de sources et comparables NAS : lot 2 |
-| D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | à faire |
+| D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | étape 1 faite (jeton par origine, propriétaire noté au dépôt, route et pièces jointes contrôlées, pièce de mail résolue dans sa boîte, script de rattachement des anciens) ; registre PostgreSQL des ressources, médias DOCX, résultat structuré d'image manquante : lot suivant |
 | D-27 | Doublons NAS : plus d'exclusion sur nom+taille | à faire |
 | D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | à faire |
 | D-22 | Export CSV neutralisé, export borné, secrets dans les traces | à faire |
@@ -39,3 +39,16 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   `search_hybrid` isole la voie vectorielle, `rechercher_documents` distingue panne (ok False,
   interdiction de conclure à l'absence) et « rien trouvé », et dit la couverture. Banc
   `test_recherche_documents` +5.
+- 16/09 — D-03 (étape 1) : `frontend/lib/origineBackend.ts` — l'aperçu et « Télécharger » ne posent
+  `Authorization` que pour l'origine du backend (ou de la page) ; un lien tiers se charge sans jeton.
+  `visuels/depot.py` note le propriétaire de chaque dépôt fait pendant un geste (`<clé>.acces`,
+  écriture atomique sous verrou, noté AVANT l'image) via `security.lecteur.id_lecteur` ; `peut_lire`
+  (super_admin, propriétaire ; visuel ancien sans propriétaire : lisible, jamais réclamé par un
+  redépôt) ; la route répond 404 et `Vary: Authorization` ; `mail/attaches._du_depot` vérifie ; les
+  photos jointes au chat appartiennent à la personne du tour (agent2). Une pièce de mail insérée dans
+  un document se résout dans SA boîte (`mail.lecture.boite_de_piece` + `verifier_acces`) au lieu d'une
+  boîte vide. `scripts/rattacher_visuels.py` (constat / `--ecrire` / `--fermer-indetermines`) établit
+  les propriétaires des visuels anciens d'après les messages qui les citent. Choix : fichiers voisins
+  dans le volume des documents plutôt qu'une migration (D-23 doit sauvegarder ce volume). Banc
+  `test_visuels_proprietaire` ; `test_pieces_multiples` charge le vrai contexte du lecteur ;
+  `test_resultats_normalises` dit sa section sautée sous Python < 3.10.

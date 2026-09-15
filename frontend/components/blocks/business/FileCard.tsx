@@ -9,6 +9,7 @@
  * ferait refuser — on récupère donc le fichier, puis on le remet au navigateur.
  */
 import { useState } from "react"
+import { cibleDocument } from "@/lib/origineBackend"
 
 type Props = {
   url: string
@@ -41,9 +42,10 @@ export function FileCard({ url, nom, format, octets, apiUrl, backendToken }: Pro
   const telecharger = async () => {
     setEtat("en_cours")
     try {
-      const base = apiUrl || ""
-      const r = await fetch(url.startsWith("http") ? url : `${base}${url}`, {
-        headers: backendToken ? { Authorization: `Bearer ${backendToken}` } : {},
+      // Le jeton ne part que vers le backend de l'application (audit D-03).
+      const { adresse, authentifier } = cibleDocument(url, apiUrl)
+      const r = await fetch(adresse, {
+        headers: authentifier && backendToken ? { Authorization: `Bearer ${backendToken}` } : {},
       })
       if (!r.ok) throw new Error(String(r.status))
       const blob = await r.blob()

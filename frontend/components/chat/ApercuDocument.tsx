@@ -27,6 +27,7 @@
 
 import * as React from "react"
 import dynamic from "next/dynamic"
+import { cibleDocument } from "@/lib/origineBackend"
 
 // LES VISIONNEUSES SE TÉLÉCHARGENT QUAND ON REGARDE UN DOCUMENT, PAS AVANT.
 //
@@ -136,9 +137,10 @@ export function ApercuDocument({
     const recuperer = async () => {
       setErreur(undefined)
       try {
-        const base = apiUrl || ""
-        const reponse = await fetch(url.startsWith("http") ? url : `${base}${url}`, {
-          headers: backendToken ? { Authorization: `Bearer ${backendToken}` } : {},
+        // Le jeton ne part que vers le backend de l'application (audit D-03).
+        const { adresse, authentifier } = cibleDocument(url, apiUrl)
+        const reponse = await fetch(adresse, {
+          headers: authentifier && backendToken ? { Authorization: `Bearer ${backendToken}` } : {},
         })
         // UN 404 SE DIT EN FRANÇAIS. « réponse 404 » laisse croire à une panne
         // de l'application, alors que le serveur répond correctement : le

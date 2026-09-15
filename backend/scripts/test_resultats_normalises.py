@@ -73,6 +73,10 @@ verifier("la phrase d'échec est celle de la sortie", r.message_d_echec({"ok": F
          == "Consigne trop courte")
 
 print("2. execute_skill, exécuté sur un skill natif doublé")
+if sys.version_info < (3, 10):
+    # `skills/executor.py` s'écrit en Python 3.10+ (`str | None` évalué au
+    # chargement) : le conteneur tourne en 3.12. Sous 3.9 la section se DIT sautée.
+    print("  (SAUTÉ : Python < 3.10 ne charge pas executor.py — rejouer ce banc en 3.12)")
 AUDIT = []
 
 
@@ -119,20 +123,21 @@ for nom, attrs in {
     m.__path__ = []
     sys.modules[nom] = m
 sys.modules["skills.resultats"] = r
-ex = charger("skills.executor", "skills/executor.py")
-utilisateur = types.SimpleNamespace(id="u1")
-brut = asyncio.run(ex.execute_skill("retenir", {"texte": "x"}, user=utilisateur))
-verifier("une sortie en échec rend ok=False, avec sa phrase d'erreur",
-         brut["ok"] is False and brut["outcome"] == "failed"
-         and brut["error"] == "Consigne trop courte pour être utile.", brut)
-verifier("les champs d'avant sont TOUS là (output, status, sandbox_type…)",
-         brut["output"] == {"ok": False, "message": "Consigne trop courte pour être utile."}
-         and brut["status"] == "native" and brut["sandbox_type"] == "natif" and "execution_time_ms" in brut)
-verifier("le journal d'audit l'enregistre comme un ÉCHEC", AUDIT and AUDIT[-1]["success"] is False
-         and AUDIT[-1]["metadata"]["outcome"] == "failed", AUDIT[-1:])
-brut2 = asyncio.run(ex.execute_skill("lister", {}, user=utilisateur))
-verifier("une lecture au compte rendu libre reste ok, marquée non vérifiée",
-         brut2["ok"] is True and brut2["outcome"] == "unverified" and brut2["error"] is None, brut2)
+if sys.version_info >= (3, 10):
+    ex = charger("skills.executor", "skills/executor.py")
+    utilisateur = types.SimpleNamespace(id="u1")
+    brut = asyncio.run(ex.execute_skill("retenir", {"texte": "x"}, user=utilisateur))
+    verifier("une sortie en échec rend ok=False, avec sa phrase d'erreur",
+             brut["ok"] is False and brut["outcome"] == "failed"
+             and brut["error"] == "Consigne trop courte pour être utile.", brut)
+    verifier("les champs d'avant sont TOUS là (output, status, sandbox_type…)",
+             brut["output"] == {"ok": False, "message": "Consigne trop courte pour être utile."}
+             and brut["status"] == "native" and brut["sandbox_type"] == "natif" and "execution_time_ms" in brut)
+    verifier("le journal d'audit l'enregistre comme un ÉCHEC", AUDIT and AUDIT[-1]["success"] is False
+             and AUDIT[-1]["metadata"]["outcome"] == "failed", AUDIT[-1:])
+    brut2 = asyncio.run(ex.execute_skill("lister", {}, user=utilisateur))
+    verifier("une lecture au compte rendu libre reste ok, marquée non vérifiée",
+             brut2["ok"] is True and brut2["outcome"] == "unverified" and brut2["error"] is None, brut2)
 
 print("3. La boucle d'actions et la reprise après accord suivent `ok`")
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")

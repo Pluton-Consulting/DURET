@@ -79,9 +79,14 @@ def _designations(brut) -> list:
     return entrees
 
 
-async def _du_depot(cle: str) -> tuple:
-    """(octets, nom, mime) d'une image du dépôt des visuels, ou (None, …)."""
+async def _du_depot(cle: str, user=None) -> tuple:
+    """(octets, nom, mime) d'une image du dépôt des visuels, ou (None, …).
+
+    Joindre ou insérer un visuel exige d'y avoir droit (audit D-03) : une clé
+    connue n'est pas une autorisation."""
     from visuels import depot
+    if hasattr(depot, "peut_lire") and not depot.peut_lire(cle, user):
+        return None, "", ""
     lu = depot.lire(cle)
     if not lu:
         return None, "", ""
@@ -167,7 +172,7 @@ async def resoudre(brut, user, boite: str, plafond: int | None = None) -> tuple:
         try:
             m = RE_VISUEL.match(ref)
             if m:
-                octets, nom, mime = await _du_depot(m.group(1).lower())
+                octets, nom, mime = await _du_depot(m.group(1).lower(), user)
             if octets is None:
                 m = RE_PIECE.match(ref)
                 if m:

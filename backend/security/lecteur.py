@@ -26,11 +26,20 @@ from contextvars import ContextVar
 from typing import Optional
 
 _ROLE: ContextVar[Optional[str]] = ContextVar("role_lecteur", default=None)
+# L'IDENTIFIANT de la personne (16/09, audit D-03) : ce qui est déposé pendant un
+# geste (une photo, une pièce, un visuel) lui appartient, sans que chaque
+# fonction de dépôt ait à connaître l'appelant.
+_ID: ContextVar[Optional[str]] = ContextVar("id_lecteur", default=None)
 
 
 def role_lecteur() -> Optional[str]:
     """Le rôle de la personne pour qui l'on lit, ou None (le système)."""
     return _ROLE.get()
+
+
+def id_lecteur() -> Optional[str]:
+    """L'identifiant de la personne pour qui l'on agit, ou None (le système)."""
+    return _ID.get()
 
 
 @contextmanager
@@ -42,11 +51,12 @@ def en_systeme():
     sinon filtré à SES droits — puis servi à tout le monde, synchronisation
     comprise. Ce qui est partagé se construit toujours avec la vue entière.
     """
-    jeton = _ROLE.set(None)
+    jeton, jeton_id = _ROLE.set(None), _ID.set(None)
     try:
         yield
     finally:
         _ROLE.reset(jeton)
+        _ID.reset(jeton_id)
 
 
 @contextmanager
@@ -57,7 +67,9 @@ def au_nom_de(user):
     reste une PERSONNE (niveau le plus bas), jamais le système qui voit tout.
     """
     jeton = _ROLE.set(str(getattr(user, "role", "") or ""))
+    jeton_id = _ID.set(str(getattr(user, "id", "") or "") or None)
     try:
         yield
     finally:
         _ROLE.reset(jeton)
+        _ID.reset(jeton_id)

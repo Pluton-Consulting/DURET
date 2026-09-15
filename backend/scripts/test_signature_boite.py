@@ -151,6 +151,28 @@ if hasattr(sig, "sans_citation"):
              ENREGISTRE and len(ENREGISTRE[-1]["images"]) == 1
              and base64.b64decode(ENREGISTRE[-1]["images"][0]["octets_b64"]) == LOGO, ENREGISTRE[-1:])
 
+    # 15/09, Duret : IMAP rend l'en-tête entier. « Revêtements Duret Sols
+    # <revetementsduret@gmail.com> » n'était jamais égal à l'adresse : les huit
+    # envoyés de la boîte étaient écartés.
+    if hasattr(sig, "meme_expediteur"):
+        GMAIL = "revetementsduret@gmail.com"
+        verifier("l'en-tête « Nom <adresse> » se lit par son adresse",
+                 sig.meme_expediteur("Revêtements Duret Sols <revetementsduret@gmail.com>", GMAIL))
+        verifier("sur une boîte Gmail, un AUTRE compte Gmail n'est pas la boîte",
+                 not sig.meme_expediteur("Cliente <cliente.exemple@gmail.com>", GMAIL))
+        verifier("sur un domaine d'entreprise, un collègue du domaine l'est",
+                 sig.meme_expediteur("Marie <marie@exemple-paysage.fr>", BOITE))
+        verifier("sur une boîte Gmail, l'adresse Gmail d'un tiers dans la signature est étrangère",
+                 sig.adresses_etrangeres("Duret\nrevetementsduret@gmail.com\ncliente.exemple@gmail.com", GMAIL)
+                 == ["cliente.exemple@gmail.com"])
+        MESSAGES["ref-envoi"]["de"] = "Accueil <" + BOITE + ">"
+        ENREGISTRE.clear()
+        r = asyncio.run(sig.apprendre(BOITE, user))
+        verifier("un envoyé dont l'expéditeur porte un nom est appris", r.get("trouvee") and ENREGISTRE, r)
+        MESSAGES["ref-envoi"]["de"] = BOITE
+    else:
+        verifier("signature.py porte `meme_expediteur`", False, "absent")
+
 # ── 3. apposer ──────────────────────────────────────────────────────────────
 print("3. Une signature d'un tiers ne part pas")
 

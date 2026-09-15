@@ -115,6 +115,35 @@ def sans_politesse_en_double(corps: str, texte_signature: str) -> str:
     return "\n".join(lignes).rstrip()
 
 
+# LES MESSAGERIES PUBLIQUES (15/09, Duret). La boîte de Duret est une adresse
+# @gmail.com : « même domaine » y voulait dire « n'importe quel compte Gmail »,
+# donc une cliente en @gmail.com passait pour la boîte. Sur ces domaines, seule
+# l'adresse EXACTE de la boîte compte.
+DOMAINES_PUBLICS = frozenset({
+    "gmail.com", "googlemail.com", "outlook.com", "outlook.fr", "hotmail.com", "hotmail.fr",
+    "live.com", "live.fr", "msn.com", "yahoo.com", "yahoo.fr", "icloud.com", "me.com",
+    "orange.fr", "wanadoo.fr", "free.fr", "sfr.fr", "laposte.net", "gmx.fr", "gmx.com",
+    "proton.me", "protonmail.com", "bbox.fr", "neuf.fr", "aol.com",
+})
+
+
+def adresse_de(valeur) -> str:
+    """« Revêtements Duret Sols <revetementsduret@gmail.com> » → l'adresse seule, en minuscules."""
+    from email.utils import parseaddr
+    return (parseaddr(str(valeur or ""))[1] or str(valeur or "")).strip().strip("<>").lower()
+
+
+def meme_expediteur(de, boite: str) -> bool:
+    """Le message vient-il de la boîte (ou, pour un domaine d'entreprise, de son domaine) ?"""
+    adresse, boite = adresse_de(de), (boite or "").strip().lower()
+    if not adresse or not boite:
+        return False
+    if adresse == boite:
+        return True
+    domaine = boite.rsplit("@", 1)[-1]
+    return domaine not in DOMAINES_PUBLICS and adresse.rsplit("@", 1)[-1] == domaine
+
+
 def adresses_etrangeres(texte: str, boite: str) -> list:
     """Les adresses d'un AUTRE domaine que la boîte, présentes dans la signature.
 
@@ -125,6 +154,9 @@ def adresses_etrangeres(texte: str, boite: str) -> list:
     domaine = (boite or "").rsplit("@", 1)[-1].lower()
     if not domaine:
         return []
+    if domaine in DOMAINES_PUBLICS:
+        return sorted({m.group(0) for m in _RE_ADRESSE_SIG.finditer(texte or "")
+                       if m.group(0).lower() != (boite or "").strip().lower()})
     return sorted({m.group(0) for m in _RE_ADRESSE_SIG.finditer(texte or "")
                    if m.group(1).lower() != domaine
                    and not m.group(1).lower().endswith("." + domaine)})
@@ -337,17 +369,22 @@ async def apprendre(boite: str, user, ref: str = "") -> dict:
     # UN MESSAGE REÇU N'APPREND PAS NOTRE SIGNATURE (15/09). Avec une `ref`
     # prise dans la réception, le message ouvert était la réponse de la
     # cliente — et sa signature a été enregistrée comme celle de la boîte.
-    domaine = (boite or "").rsplit("@", 1)[-1].lower()
     ecartes = []
 
+    # L'EXPÉDITEUR SE LIT PAR SON ADRESSE (15/09, Duret). IMAP rend l'en-tête
+    # entier, « Revêtements Duret Sols <revetementsduret@gmail.com> » : comparé
+    # tel quel à l'adresse de la boîte, il ne lui était jamais égal, et les
+    # huit messages ENVOYÉS de la boîte étaient écartés comme « la signature de
+    # quelqu'un d'autre ». Un message sans expéditeur lu (dossier des envoyés)
+    # reste admis.
     def _de_la_boite(m) -> bool:
-        de = str((m or {}).get("de") or "").strip().lower()
-        return not de or de == (boite or "").lower() or de.rsplit("@", 1)[-1] == domaine
+        de = (m or {}).get("de")
+        return not str(de or "").strip() or meme_expediteur(de, boite)
 
     candidats: dict = {}
     for m in messages or []:
         if not _de_la_boite(m):
-            ecartes.append(str((m or {}).get("de")))
+            ecartes.append(adresse_de((m or {}).get("de")))
             continue
         corps_html = (m or {}).get("corps_html") or ""
         _, signature = separer(corps_html)

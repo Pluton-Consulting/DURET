@@ -62,3 +62,4 @@
 045_operations_externes.sql	SELECT to_regclass('public.operations_externes') IS NOT NULL
 046_requetes_chat.sql	SELECT to_regclass('public.requetes_chat') IS NOT NULL
 047_baux_embeddings.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='embedding_jobs' AND column_name='lease_until')
+048_lecons_qualifiees.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='lecons' AND column_name='confiance')

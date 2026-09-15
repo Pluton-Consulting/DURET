@@ -221,6 +221,13 @@ except Exception as e:
         return min(score, 1.0)
 
     # ── Exécution RÉELLE d'un skill avec données (pour l'exécuteur) ───────
+    def isolement(self) -> Optional[str]:
+        """« daytona » quand un exécuteur isolé est configuré, sinon
+        « subprocess_fallback » : le sous-processus du backend, qui partage ses
+        fichiers, ses clés et son réseau (16/09, audit D-15). L'appelant décide
+        alors s'il exécute — par défaut, il refuse."""
+        return "daytona" if getattr(self, "daytona_available", False) else "subprocess_fallback"
+
     async def execute_skill(
         self,
         skill_code: str,

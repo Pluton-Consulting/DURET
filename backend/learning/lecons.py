@@ -167,18 +167,54 @@ async def enregistrer(user_id: str, lecon: dict, fil: str = "") -> str:
                     "UPDATE lecons SET occurrences = occurrences + 1, derniere_maj = NOW() WHERE id = $1",
                     e["id"])
                 return "renforcee"
-        await conn.execute(
-            """INSERT INTO lecons (user_id, situation, erreur, conduite, gestes, source_fil)
-               VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)""",
-            user_id, lecon["situation"], lecon["erreur"], lecon["conduite"],
-            json.dumps(lecon.get("gestes") or [], ensure_ascii=False), (fil or "")[:200])
+        # CE QU'ELLE EST, ET CE QU'ELLE VAUT (16/09, audit D-14) : une tournure
+        # de politesse et une règle de facturation ne s'injectent pas pareil, et
+        # une leçon tirée d'une correction EXPLICITE vaut mieux qu'une déduction.
+        type_lecon = str(lecon.get("type") or "procedure").strip().lower()
+        if type_lecon not in ("preference", "fait", "procedure"):
+            type_lecon = "procedure"
+        confiance = float(lecon.get("confiance") or (0.9 if lecon.get("preuve") else 0.6))
+        try:
+            await conn.execute(
+                """INSERT INTO lecons (user_id, situation, erreur, conduite, gestes, source_fil,
+                                       type_lecon, confiance, preuve)
+                   VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)""",
+                user_id, lecon["situation"], lecon["erreur"], lecon["conduite"],
+                json.dumps(lecon.get("gestes") or [], ensure_ascii=False), (fil or "")[:200],
+                type_lecon, max(0.0, min(1.0, confiance)), (lecon.get("preuve") or "")[:800] or None)
+        except Exception as e:  # noqa: BLE001
+            from database.connection import schema_incomplet
+            if not schema_incomplet(e):
+                raise
+            # Sans la migration 048 : on écrit comme avant, rien n'est perdu.
+            await conn.execute(
+                """INSERT INTO lecons (user_id, situation, erreur, conduite, gestes, source_fil)
+                   VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)""",
+                user_id, lecon["situation"], lecon["erreur"], lecon["conduite"],
+                json.dumps(lecon.get("gestes") or [], ensure_ascii=False), (fil or "")[:200])
     return "creee"
+
+
+# UNE PANNE PASSAGÈRE N'EST PAS UNE RÈGLE MÉTIER (16/09, audit D-14). Quand le
+# tour a échoué parce qu'un fournisseur n'a pas répondu, la « correction » de la
+# personne (« recommence ») ne dit rien de la conduite à tenir : en tirer une
+# leçon, c'est graver dans la mémoire une panne d'un jour.
+_PANNES_PASSAGERES = ("timeout", "timed out", "connection", "connexion", "429",
+                      "quota", "502", "503", "504", "indisponible", "effet_inconnu")
+
+
+def _panne_passagere(state: dict) -> bool:
+    texte = " ".join(str(state.get(c) or "") for c in ("error", "derniere_erreur", "note_sortie")).lower()
+    return any(mot in texte for mot in _PANNES_PASSAGERES)
 
 
 async def apprendre_du_tour(state: dict) -> str | None:
     """Tire et range la leçon d'un tour de correction. Ne lève jamais."""
     try:
         if not state.get("correction_signalee") or not state.get("user_id"):
+            return None
+        if _panne_passagere(state):
+            logger.info("Correction après une panne passagère : aucune leçon tirée")
             return None
         lecon = await extraire(state)
         if not lecon:
@@ -218,31 +254,50 @@ def requete_plein_texte(question: str) -> str:
 
 
 async def pertinentes(user_id: str, question: str, limite: int = MAX_LECONS_RAPPELEES) -> list[dict]:
-    """Les leçons dont la situation ressemble à la demande (les siennes et celles de l'entreprise)."""
+    """Les leçons dont la situation ressemble à la demande (les siennes et celles de l'entreprise).
+
+    LES PLUS SÛRES D'ABORD (16/09, audit D-14) : quand deux leçons se
+    contredisent, celle qui vient d'une correction explicite l'emporte sur une
+    déduction. Sans la migration 048, la requête d'avant sert : les leçons
+    continuent d'être rappelées, dans leur ordre d'alors.
+    """
     requete = requete_plein_texte(question)
     if not requete or not user_id:
         return []
     from database.connection import get_db, schema_incomplet
+    _CHAMPS = "id, situation, erreur, conduite, type_lecon, confiance"
+    _FILTRE = "AND COALESCE(statut, 'active') = 'active'"
+    lignes = []
     try:
         async with get_db() as conn:
-            lignes = await conn.fetch(
-                """SELECT id, situation, erreur, conduite,
-                          ts_rank(to_tsvector('french', situation || ' ' || erreur || ' ' || conduite),
-                                  to_tsquery('french', $2)) AS rang
-                   FROM lecons
-                   WHERE actif AND (user_id = $1::uuid OR portee = 'entreprise')
-                     AND to_tsvector('french', situation || ' ' || erreur || ' ' || conduite)
-                         @@ to_tsquery('french', $2)
-                   ORDER BY rang DESC, occurrences DESC, derniere_maj DESC
-                   LIMIT $3""", user_id, requete, limite)
-            if lignes:
+            for champs, filtre in ((_CHAMPS, _FILTRE), ("id, situation, erreur, conduite", "")):
+                try:
+                    lignes = await conn.fetch(
+                        f"""SELECT {champs},
+                                  ts_rank(to_tsvector('french', situation || ' ' || erreur || ' ' || conduite),
+                                          to_tsquery('french', $2)) AS rang
+                           FROM lecons
+                           WHERE actif AND (user_id = $1::uuid OR portee = 'entreprise')
+                             {filtre}
+                             AND to_tsvector('french', situation || ' ' || erreur || ' ' || conduite)
+                                 @@ to_tsquery('french', $2)
+                           ORDER BY rang DESC, occurrences DESC, derniere_maj DESC
+                           LIMIT $3""", user_id, requete, limite)
+                    break
+                except Exception as e:  # noqa: BLE001
+                    if not schema_incomplet(e):
+                        raise
+                    lignes = []      # migration 048 absente : on retente sans elle
+            propres = [dict(l) for l in lignes]
+            propres.sort(key=lambda l: float(l.get("confiance") or 0.6), reverse=True)
+            if propres:
                 await conn.execute("UPDATE lecons SET rappels = rappels + 1 WHERE id = ANY($1::uuid[])",
-                                   [l["id"] for l in lignes])
+                                   [l["id"] for l in propres])
+            return propres
     except Exception as e:  # noqa: BLE001
         if not schema_incomplet(e):
             logger.info("Leçons non lues : %s", str(e)[:160])
         return []
-    return [dict(l) for l in lignes]
 
 
 def bloc_pour_le_prompt(lecons: list[dict]) -> str:

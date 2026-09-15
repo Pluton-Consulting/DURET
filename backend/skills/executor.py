@@ -136,6 +136,20 @@ def _verifier_effet(name: str, data: dict, ligne, approbation: dict | None) -> s
     return effet
 
 
+# LA SEULE FAÇON DE REVENIR EN ARRIÈRE, ET ELLE SE VOIT. Un exploitant qui
+# accepte le risque le pose explicitement dans la configuration ; personne ne
+# peut l'activer depuis le chat ni depuis un document ingéré.
+def _autoriser_code_non_isole() -> bool:
+    try:
+        from config import settings
+        return bool(getattr(settings, "autoriser_code_non_isole", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+_AUTORISER_CODE_NON_ISOLE = _autoriser_code_non_isole()
+
+
 async def execute_skill(name: str, data: dict, user_id: str | None = None,
                         allow_draft: bool = False, user=None,
                         approbation: dict | None = None,
@@ -243,6 +257,27 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
             )
         if not row["enabled"]:
             raise SkillError(f"skill '{name}' désactivé")
+
+    # LE MÊME VERROU POUR TOUTES LES BRANCHES (16/09, audit D-15). Le contrôle
+    # d'effet ne s'appliquait qu'aux skills natifs : un skill GÉNÉRÉ déclaré à
+    # effet externe s'exécutait sans accord humain. Ici, c'est la même règle,
+    # au même endroit.
+    _verifier_effet(name, data, row, approbation)
+
+    # UN CODE GÉNÉRÉ NE TOURNE PAS DANS UN SOUS-PROCESSUS DU BACKEND (audit
+    # D-15). Le repli « subprocess » partage le système de fichiers, les
+    # variables d'environnement (donc les clés) et le réseau du backend : un
+    # environnement réduit à PATH n'isole ni l'UID, ni les montages, ni les
+    # secrets. Tant qu'un exécuteur ISOLÉ n'est pas configuré, on refuse — en
+    # le disant. Les outils natifs, eux, continuent de fonctionner.
+    isolement = getattr(sandbox_client, "isolement", None)
+    isole = isolement() if callable(isolement) else None
+    if isole in (None, "subprocess_fallback") and not _AUTORISER_CODE_NON_ISOLE:
+        raise SkillError(
+            f"skill '{name}' : c'est du code généré, et aucun exécuteur isolé n'est "
+            "configuré sur ce serveur. Il n'est pas exécuté ici — le sous-processus du "
+            "backend partagerait ses fichiers, ses clés et son réseau. Utilise les gestes "
+            "natifs, ou fais activer l'exécuteur isolé (réglage d'administration).")
 
     result = await sandbox_client.execute_skill(row["code"], name, data or {})
 

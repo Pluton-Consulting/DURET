@@ -36,6 +36,13 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-16 | Latence bornée, fournisseurs utilisables | étape 1 faite (budget de demande, pannes classées, demi-ouverture) ; propagation du budget à tous les étages : lot suivant |
 | D-17 | Embeddings et files fiables | étape 1 faite (bail des jobs, identité du modèle sur le vecteur) ; générations de vecteurs : lot suivant |
 | D-20 | Cloisonnement PostgreSQL effectif | script de contrôle en lecture + procédure ; bascule du rôle applicatif : à faire par Noa sur le serveur |
+| D-12 | Chiffres calculés, jamais devinés | étape 1 faite (montants en décimal, au centime) ; provenance ligne à ligne et rapprochement des doublons d'affaires : lot suivant |
+| D-14 | Apprendre sans mémoriser les erreurs | étape 1 faite (type, confiance, statut, panne passagère écartée, rappel par confiance) ; écran des leçons et reprise d'enrichissement : lot suivant |
+| D-15 | Skills générés testés et isolés | fait (même verrou d'effet, refus du code non isolé, retour arrière explicite) ; exécuteur isolé à fournir par l'exploitant |
+| D-18 | Travaux lourds séparés | étape 1 faite (rôle de processus, requalification seulement sans signe de vie) ; baux durables par job long : lot suivant |
+| D-21 | Secrets et navigateur | étape 1 faite (SSRF : résolution DNS, IPv6, adresses internes) ; secrets du worker et route interne : à faire avec le serveur |
+| D-24 | Vision cohérente avec Duret | à faire |
+| D-25 | Mesurer les usages et prouver l'absence de régression | fait (`scripts/recette_usages.py` : PASS/FAIL/SKIP, rapport daté par commit) |
 
 ## Journal
 
@@ -158,3 +165,14 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   un bail perdu n'écrase plus le travail d'un autre, et le vecteur porte le modèle qui l'a produit.
   `scripts/controle_droits_base.py` — le contrôle du cloisonnement, en lecture seule, avec un vrai
   test de fuite. Bancs `test_droits_et_reindexation` (30) et `test_budget_et_baux` (18).
+- 16/09 — D-12 / D-14 / D-15 / D-18 / D-21 / D-25 : les montants s'additionnent en `Decimal` au
+  centime (`_agreger`) — en flottant, un total de trois cents lignes ne tombait plus juste. Une leçon
+  porte son type, sa confiance et son statut (migration **048**), les plus sûres sont rappelées
+  d'abord, et une correction qui suit une panne passagère n'en produit plus. Un skill GÉNÉRÉ passe par
+  le même verrou d'effet que les natifs et n'est plus exécuté dans un sous-processus du backend :
+  sans exécuteur isolé, il est refusé, en le disant (`autoriser_code_non_isole` pour revenir en
+  arrière). `role_processus` commande les boucles de fond — un second processus ne relance plus les
+  mêmes travaux — et le démarrage ne requalifie que ce qui n'a plus donné signe de vie depuis un quart
+  d'heure. La garde du navigateur RÉSOUT le nom (IPv6, IPv4 déguisée, 169.254.169.254, nom public qui
+  mène à 10.x) au lieu de comparer des chaînes. `scripts/recette_usages.py` joue tous les bancs et rend
+  un rapport daté PASS/FAIL/SKIP par commit. Banc `test_chiffres_et_isolement` (22).

@@ -346,6 +346,17 @@ class Settings(BaseSettings):
     # même vie. Vide = ancienne dérivation depuis JWT_SECRET_KEY ; dès qu'elle
     # est posée, tout code relu est réécrit avec elle (rotation sans perte).
     code_chiffrement_cle: str = ""
+    # LE CODE GÉNÉRÉ NE TOURNE PAS DANS LE BACKEND (16/09, audit D-15). Sans
+    # exécuteur isolé configuré, un skill généré est REFUSÉ : le sous-processus
+    # partagerait les fichiers, les clés et le réseau du serveur. Ce drapeau
+    # rétablit l'ancien comportement — en connaissance de cause, et il se voit.
+    autoriser_code_non_isole: bool = False
+    # LE RÔLE DE CE PROCESSUS (16/09, audit D-18). « complet » : le serveur fait
+    # tout, comme aujourd'hui. « interactif » : il sert le chat et les écrans,
+    # sans les boucles de fond. « fond » : il ne fait que les boucles (embeddings,
+    # tâches, NAS, carte). C'est ce qui permet d'ajouter un second processus sans
+    # que les deux relancent les mêmes travaux.
+    role_processus: str = "complet"
     embedding_dimensions: int = 1536
     # Worker de vectorisation : draine embedding_jobs en tâche de fond (dans le backend).
     embedding_worker_enabled: bool = True

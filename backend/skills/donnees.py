@@ -602,8 +602,23 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
             return float(g["enregistrements"]) if not colonne else float(len(v))
         if not v:
             return None
-        return {"sum": sum(v), "avg": sum(v) / len(v),
-                "min": min(v), "max": max(v)}[operation]
+        # DES MONTANTS EN DÉCIMAL, PAS EN FLOTTANT (16/09, audit D-12). En
+        # binaire, 0,1 + 0,2 ne fait pas 0,3 : sur trois cents lignes de devis,
+        # le total affiché finissait par ne plus tomber juste au centime — et un
+        # total faux au centime, dans un chiffrage, se défend mal devant un
+        # client. On additionne en Decimal, on arrondit au centime, et l'on rend
+        # un nombre ordinaire (le reste de la chaîne ne change pas).
+        from decimal import Decimal, ROUND_HALF_UP
+
+        def _centimes(x) -> float:
+            return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+        exacts = [Decimal(str(x)) for x in v]
+        if operation == "sum":
+            return _centimes(sum(exacts))
+        if operation == "avg":
+            return _centimes(sum(exacts) / Decimal(len(exacts)))
+        return _centimes(min(exacts) if operation == "min" else max(exacts))
 
     sortie_groupes = [
         {"groupe": cle, "enregistrements": g["enregistrements"],

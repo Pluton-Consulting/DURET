@@ -33,7 +33,13 @@ _stop = False
 
 
 async def _requalifier_runs_interrompus() -> None:
-    """Au démarrage : les exécutions restées « running » ont été coupées net."""
+    """Au démarrage : les exécutions restées « running » ont été coupées net.
+
+    ⚠️ SEULEMENT CELLES QUI NE DONNENT PLUS SIGNE DE VIE (16/09, audit D-18).
+    Avec un second processus, requalifier TOUTES les exécutions « running »
+    au démarrage tuerait le travail d'un worker parfaitement vivant. On ne
+    reprend donc que ce qui n'a pas bougé depuis un quart d'heure.
+    """
     try:
         async with get_db() as conn:
             n = await conn.fetchval(
@@ -41,7 +47,10 @@ async def _requalifier_runs_interrompus() -> None:
                    SET status = 'failed', error = 'interrompu par un redémarrage',
                        updated_at = NOW()
                    WHERE status = 'running'
-                   RETURNING (SELECT COUNT(*) FROM agent_task_runs WHERE status = 'running')""")
+                     AND updated_at < NOW() - INTERVAL '15 minutes'
+                   RETURNING (SELECT COUNT(*) FROM agent_task_runs
+                               WHERE status = 'running'
+                                 AND updated_at < NOW() - INTERVAL '15 minutes')""")
         if n:
             logger.warning("%s exécution(s) interrompue(s) requalifiée(s) en échec", n)
     except Exception as e:  # noqa: BLE001 - la table peut ne pas exister avant migration

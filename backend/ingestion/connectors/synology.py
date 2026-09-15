@@ -522,7 +522,7 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
     `avancer(traites, total, etape)` est appelé au fil de l'eau quand le
     routeur en fournit un (la carte de l'écran montre la progression).
     """
-    from ingestion.parsers import analyser, ligne_en_texte, famille, FichierNonSupporte
+    from ingestion.parsers import analyser, ligne_en_texte, famille, FichierNonSupporte, en_lecture
     from nas import acces
 
     racines = acces.dossiers_autorises()
@@ -603,8 +603,10 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                     logger.info("NAS : %s non téléchargé (%s)", f["chemin"], raison)
                     return
                 try:
-                    structure = await _asyncio.wait_for(
-                        _asyncio.to_thread(analyser, nom, brut), timeout=DELAI_LECTURE_S)
+                    # `en_lecture`, pas `wait_for(to_thread(…))` (15/09) : l'ancienne
+                    # forme abandonnait l'attente sans arrêter l'OCR, et les lectures
+                    # fantômes ont occupé tout le serveur (voir `parsers.en_lecture`).
+                    structure = await en_lecture(analyser, nom, brut, delai=DELAI_LECTURE_S)
                 except (_asyncio.TimeoutError, TimeoutError):
                     bilan["trop_lents"] += 1
                     _ecarter(f)

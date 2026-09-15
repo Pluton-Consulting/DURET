@@ -12,13 +12,21 @@ Deux familles de résultats, parce qu'elles ne s'ingèrent pas pareil :
     par le pipeline d'ingestion.
 
 Toutes les fonctions sont synchrones et bornées (nb de lignes, nb de pages) :
-les appeler via asyncio.to_thread pour ne pas bloquer la boucle d'événements.
+les appeler via asyncio.to_thread pour ne pas bloquer la boucle d'événements —
+ou, pour une lecture EN MASSE (synchronisation), par `en_lecture`, qui borne
+aussi le TEMPS et ne prend jamais les threads du reste de l'application.
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import csv
 import io
 import logging
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 logger = logging.getLogger("duret.ingestion.parsers")
@@ -36,6 +44,35 @@ SEUIL_TEXTE_PAR_PAGE = 40
 OCR_DPI = 200             # compromis lisibilité / mémoire pour le rendu des pages
 OCR_LANGUES = "fra+eng"   # documents FR, mais les CCTP contiennent souvent de l'anglais
 
+# ── L'OCR NE PREND JAMAIS TOUT LE SERVEUR (15/09) ───────────────────────────
+# Relevé en prod chez Duret : « Enrichir les documents » ouvrait les PDF scannés
+# du NAS, et l'application « se déconnectait puis revenait ». Sur le serveur :
+# DIX tesseract en même temps, certains depuis 39 minutes, charge 38 pour
+# 6 cœurs. La synchronisation attendait chaque lecture `wait_for(to_thread(…),
+# 180 s)` : passé le délai elle ABANDONNAIT L'ATTENTE, mais un thread ne se tue
+# pas — l'OCR continuait, le fichier suivant démarrait, et les lectures
+# fantômes s'empilaient jusqu'à remplir la réserve de threads PAR DÉFAUT de
+# Python (min(32, cœurs + 4) = 10 : exactement le nombre de tesseract vus).
+# Or cette réserve sert à TOUT le backend (test de la boîte mail, analyse du
+# chat, lectures de fichiers…) : tout faisait la queue derrière l'OCR.
+# Trois bornes, chacune suffisante contre une partie du défaut :
+#   * OCR_SIMULTANES tesseract au plus, quel que soit l'appelant ;
+#   * un délai PAR PAGE que tesseract respecte vraiment (pytesseract tue le
+#     processus) et une ÉCHÉANCE par document vérifiée entre les pages : une
+#     lecture trop longue S'ARRÊTE, elle ne continue pas en fond ;
+#   * `en_lecture` fait tourner les lectures en masse dans une réserve À PART.
+OCR_SIMULTANES = 2
+OCR_DELAI_PAGE_S = 60
+LECTEURS_SIMULTANES = 4
+# Tesseract peut paralléliser une page sur tous les cœurs (OpenMP) : avec deux
+# lectures de front, un cœur chacune suffit et laisse de l'air au reste.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
+_OCR_PORTE = threading.BoundedSemaphore(OCR_SIMULTANES)
+_ECHEANCE: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar("echeance_lecture", default=None)
+_LECTEURS: Optional[ThreadPoolExecutor] = None
+_LECTEURS_VERROU = threading.Lock()
+
 ENCODAGES = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
 
 EXT_TABULAIRE = (".csv", ".xlsx", ".xls", ".xlsm")
@@ -45,6 +82,71 @@ EXT_IMAGE = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 class FichierNonSupporte(Exception):
     """Extension inconnue ou dépendance de lecture absente."""
+
+
+class DelaiDepasse(TimeoutError):
+    """La lecture a dépassé son échéance : elle s'est ARRÊTÉE (rien ne tourne plus)."""
+
+
+def _verifier_echeance() -> None:
+    echeance = _ECHEANCE.get()
+    if echeance is not None and time.monotonic() >= echeance:
+        raise DelaiDepasse("délai de lecture dépassé")
+
+
+def _ocr(image) -> str:
+    """UN passage de tesseract, borné en nombre simultané et en durée.
+
+    L'attente d'une place respecte l'échéance du document : une lecture déjà
+    hors délai ne prend pas la place d'une autre. Une page qui dépasse son délai
+    rend vide (tesseract est tué) — la page d'après a sa chance.
+    """
+    import pytesseract
+    while not _OCR_PORTE.acquire(timeout=1):
+        _verifier_echeance()
+    try:
+        _verifier_echeance()
+        echeance = _ECHEANCE.get()
+        delai = OCR_DELAI_PAGE_S
+        if echeance is not None:
+            delai = max(1, min(delai, int(echeance - time.monotonic()) + 1))
+        try:
+            return pytesseract.image_to_string(image, lang=OCR_LANGUES, timeout=delai) or ""
+        except RuntimeError as e:           # « Tesseract process timeout » : le processus est tué
+            if "timeout" not in str(e).lower():
+                raise
+            logger.warning("OCR : page abandonnée après %d s", delai)
+            _verifier_echeance()
+            return ""
+    finally:
+        _OCR_PORTE.release()
+
+
+def _lecteurs() -> ThreadPoolExecutor:
+    global _LECTEURS
+    with _LECTEURS_VERROU:
+        if _LECTEURS is None:
+            _LECTEURS = ThreadPoolExecutor(max_workers=LECTEURS_SIMULTANES,
+                                           thread_name_prefix="lecture")
+        return _LECTEURS
+
+
+async def en_lecture(fonction, *args, delai: float):
+    """Exécute une lecture lourde (téléchargement, analyse, OCR) hors de la boucle,
+    dans la réserve DES LECTURES, avec une échéance que l'OCR respecte.
+
+    Contrairement à `wait_for(to_thread(…))`, on attend la FIN réelle du thread :
+    passé le délai il s'arrête de lui-même (au plus une page d'OCR plus tard), si
+    bien qu'aucune lecture ne survit à son abandon. Lève `DelaiDepasse`.
+    """
+    loop = asyncio.get_running_loop()
+    contexte = contextvars.copy_context()
+    contexte.run(_ECHEANCE.set, time.monotonic() + delai)
+    debut = time.monotonic()
+    resultat = await loop.run_in_executor(_lecteurs(), contexte.run, fonction, *args)
+    if time.monotonic() - debut > delai + OCR_DELAI_PAGE_S + 30:
+        logger.warning("Lecture rendue après %.0f s (délai %.0f s)", time.monotonic() - debut, delai)
+    return resultat
 
 
 def famille(nom: str) -> Optional[str]:
@@ -83,7 +185,9 @@ def ocr_image(brut: bytes) -> str:
         with Image.open(_io.BytesIO(brut)) as img:
             if img.mode not in ("L", "RGB"):        # CMJN / palette / alpha -> RGB
                 img = img.convert("RGB")
-            return (pytesseract.image_to_string(img, lang=OCR_LANGUES) or "").strip()
+            return _ocr(img).strip()
+    except DelaiDepasse:
+        raise
     except Exception as e:
         raise FichierNonSupporte(f"OCR de l'image impossible : {e}") from e
 
@@ -106,10 +210,11 @@ def ocr_pdf(brut: bytes) -> str:
         if len(doc) > MAX_PAGES_OCR:
             logger.warning("OCR limité aux %d premières pages (sur %d)", MAX_PAGES_OCR, len(doc))
         for i in range(total):
+            _verifier_echeance()
             page = doc[i]
             image = page.render(scale=OCR_DPI / 72).to_pil()
             try:
-                morceaux.append(pytesseract.image_to_string(image, lang=OCR_LANGUES) or "")
+                morceaux.append(_ocr(image))
             finally:
                 image.close()
     finally:

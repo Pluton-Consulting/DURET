@@ -335,9 +335,17 @@ class Settings(BaseSettings):
     # l'administrateur par le bouton « Admin » et son code. Le mécanisme reste
     # dans le code, coupé ici : `LIEN_MAGIQUE_ACTIF=true` le rallume.
     lien_magique_actif: bool = False
-    # Le code d'un administrateur qui n'en a pas encore posé (Paramètres → Mon
-    # code de connexion le remplace). ⚠️ Choix assumé : la porte est le VPN.
+    # LE CODE DE PREMIÈRE ENTRÉE d'un administrateur qui n'en a pas encore posé.
+    # Il ne sert QU'UNE FOIS (migration 044) et oblige à poser un vrai code :
+    # ce n'est pas un accès permanent (16/09, audit D-19). À poser par
+    # installation dans le `.env` (`CODE_ADMIN_DEFAUT`) ; ensuite, la reprise
+    # passe par `scripts/code_admin.py`, hors de l'interface.
     code_admin_defaut: str = "0000"
+    # La clé qui CHIFFRE les codes relisibles en administration (migration 042).
+    # Séparée du secret JWT (audit D-19) : les deux n'ont ni le même usage ni la
+    # même vie. Vide = ancienne dérivation depuis JWT_SECRET_KEY ; dès qu'elle
+    # est posée, tout code relu est réécrit avec elle (rotation sans perte).
+    code_chiffrement_cle: str = ""
     embedding_dimensions: int = 1536
     # Worker de vectorisation : draine embedding_jobs en tâche de fond (dans le backend).
     embedding_worker_enabled: bool = True

@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth"
 import { redirect } from "next/navigation"
 import EnTete from "@/components/nav/EnTete"
 import Corps from "@/components/nav/Corps"
+import CodeAPoser from "@/components/nav/CodeAPoser"
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth()
@@ -11,6 +12,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const role: string = user?.role || "terrain"
   const email: string = user?.email || ""
   const name: string = user?.name || email.split("@")[0]
+  // Le code de première entrée ne sert qu'une fois (audit D-19) : tant qu'un
+  // administrateur n'a pas posé le sien, le panneau se pose devant l'écran.
+  const jeton: string = (session as any).backendToken || ""
 
   return (
     // `100dvh` et non `100vh` : sur téléphone, `vh` compte la hauteur écran
@@ -22,6 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
          className="sym-hauteur-ecran">
       <EnTete role={role} email={email} name={name} />
       <Corps>{children}</Corps>
+      {role === "super_admin" && jeton && <CodeAPoser jeton={jeton} />}
     </div>
   )
 }

@@ -108,9 +108,21 @@ if profils is not None and hasattr(profils, "hacher_code"):
              and rsb("commercial", "Nathalie", False, TOUS, soi="n") is None)
 
     # controler_code contre une base doublée
-    LIGNE = {"code_pin_hash": h, "code_pin_echecs": 0, "code_pin_bloque_jusqu": None}
+    LIGNE = {"code_pin_hash": h, "code_pin_echecs": 0, "code_pin_bloque_jusqu": None,
+             "code_defaut_le": None}
 
     class _C:
+        def transaction(self):
+            # Le contrôle lit et écrit le compteur SOUS VERROU, dans une
+            # transaction (16/09, audit D-19) : la doublure en offre une.
+            class _T:
+                async def __aenter__(self_inner):
+                    return None
+
+                async def __aexit__(self_inner, *a):
+                    return False
+            return _T()
+
         async def fetchrow(self, sql, *a):
             return dict(LIGNE)
 
@@ -137,7 +149,7 @@ if profils is not None and hasattr(profils, "hacher_code"):
     dbmod.schema_incomplet = lambda e: False
     sys.modules["database"] = types.ModuleType("database")
     sys.modules["database.connection"] = dbmod
-    cc = lambda code: asyncio.run(profils.controler_code("d", code))  # noqa: E731
+    cc = lambda code: asyncio.run(profils.controler_code("d", code, exige=True)).raison  # noqa: E731
     verifier("sans code : code_requis", cc(None) == "code_requis")
     verifier("bon code : entrée", cc("4821") is None)
     reponses = [cc("0000") for _ in range(profils.ESSAIS_CODE_MAX)]

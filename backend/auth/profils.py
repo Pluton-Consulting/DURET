@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
-from typing import Optional
+from typing import NamedTuple, Optional
+
+logger = logging.getLogger("duret.auth.profils")
 
 # Les rôles qui ne partagent JAMAIS leur adresse — mêmes que ceux qui ouvrent
 # une boîte sur simple demande (`mail.authorization.ROLES_ACCES_SUR_DEMANDE`).
@@ -80,18 +83,36 @@ def code_correct(code: Optional[str], empreinte: Optional[str]) -> bool:
 
 # LE CODE SE RELIT (14/09, migration 042). Noa veut VOIR les codes depuis
 # l'administration. L'empreinte ne se relit pas : on garde donc aussi le code
-# chiffré (Fernet, clé dérivée du secret JWT). La vérification reste sur
-# l'empreinte — un secret changé rend le code illisible à l'écran, il continue
-# d'ouvrir la carte.
-def _fernet():
+# chiffré (Fernet). La vérification reste sur l'empreinte — une clé changée rend
+# le code illisible à l'écran, il continue d'ouvrir la carte.
+#
+# LA CLÉ EST SÉPARÉE DU SECRET JWT (16/09, audit D-19) : les deux n'ont ni le
+# même usage ni la même vie — changer le secret des sessions rendait illisibles
+# tous les codes, et une fuite de l'un donnait l'autre. `CODE_CHIFFREMENT_CLE`
+# porte désormais la clé ; sans elle, on retombe sur l'ancienne dérivation pour
+# ne rien perdre, et tout code relu est RÉÉCRIT avec la nouvelle clé
+# (`rechiffrer_si_besoin`) : la rotation se fait sans perte, sans migration.
+def _cles_fernet() -> list:
+    """La clé d'écriture d'abord, les anciennes ensuite (lecture seulement)."""
+    cles = []
     try:
         import base64
         from cryptography.fernet import Fernet
         from config import settings
-        cle = hashlib.sha256(b"pluton:code-carte:" + str(settings.jwt_secret_key).encode()).digest()
-        return Fernet(base64.urlsafe_b64encode(cle))
-    except Exception:  # noqa: BLE001 — sans bibliothèque ou sans secret : code non relisible
-        return None
+        propre = str(getattr(settings, "code_chiffrement_cle", "") or "").strip()
+        if propre:
+            graine = hashlib.sha256(b"pluton:code-carte:" + propre.encode()).digest()
+            cles.append(Fernet(base64.urlsafe_b64encode(graine)))
+        ancienne = hashlib.sha256(b"pluton:code-carte:" + str(settings.jwt_secret_key).encode()).digest()
+        cles.append(Fernet(base64.urlsafe_b64encode(ancienne)))
+    except Exception:  # noqa: BLE001 — sans bibliothèque ni secret : code non relisible
+        return []
+    return cles
+
+
+def _fernet():
+    cles = _cles_fernet()
+    return cles[0] if cles else None
 
 
 def chiffrer_code(code: Optional[str]) -> Optional[str]:
@@ -102,13 +123,30 @@ def chiffrer_code(code: Optional[str]) -> Optional[str]:
 
 
 def dechiffrer_code(chiffre: Optional[str]) -> Optional[str]:
-    f = _fernet()
-    if not chiffre or f is None:
+    """Le code en clair, lu avec la clé d'aujourd'hui ou celle d'hier."""
+    if not chiffre:
+        return None
+    for f in _cles_fernet():
+        try:
+            return f.decrypt(chiffre.encode()).decode()
+        except Exception:  # noqa: BLE001 — pas cette clé-là
+            continue
+    return None                      # clé perdue : illisible, pas une panne
+
+
+def rechiffre_avec_la_cle_du_jour(chiffre: Optional[str]) -> Optional[str]:
+    """Le même code, chiffré avec la clé d'écriture, ou None s'il l'est déjà
+    (ou s'il est illisible). Sert la rotation : on réécrit ce qu'on relit."""
+    cles = _cles_fernet()
+    if not chiffre or len(cles) < 2:
         return None
     try:
-        return f.decrypt(chiffre.encode()).decode()
-    except Exception:  # noqa: BLE001 — secret changé : illisible, pas une panne
-        return None
+        cles[0].decrypt(chiffre.encode())
+        return None                  # déjà à jour
+    except Exception:  # noqa: BLE001
+        pass
+    clair = dechiffrer_code(chiffre)
+    return chiffrer_code(clair) if clair else None
 
 
 def a_un_code(p: dict) -> bool:
@@ -318,50 +356,120 @@ def code_admin_defaut() -> str:
         return ""
 
 
-async def controler_code(user_id: str, code: Optional[str], defaut: Optional[str] = None) -> Optional[str]:
+class Verdict(NamedTuple):
+    """Ce que dit le contrôle d'un code. `ok` seul autorise l'entrée.
+
+    `raison` (quand on refuse) : « code_requis », « code_faux », « code_bloque »,
+    « code_a_poser » (le code de première entrée a déjà servi),
+    « indisponible » (schéma incomplet, profil inconnu, configuration illisible —
+    un défaut d'installation ne doit JAMAIS ouvrir la porte).
+    `doit_changer` : entré avec le code de première entrée — il faut en poser un.
+    """
+    ok: bool
+    raison: Optional[str] = None
+    doit_changer: bool = False
+
+
+AUTORISE = Verdict(True)
+
+
+async def _verdict_sous_verrou(conn, user_id: str, code: Optional[str], attendu: Optional[str],
+                               exige: bool, avec_044: bool, refus_technique: "Verdict",
+                               voie_admin: bool = False) -> "Verdict":
+    """Le contrôle lui-même, la ligne du profil VERROUILLÉE (`FOR UPDATE`) :
+    deux essais simultanés ne se recouvrent plus."""
+    from datetime import datetime, timedelta, timezone
+    colonne = "code_defaut_le" if avec_044 else "NULL::timestamptz AS code_defaut_le"
+    ligne = await conn.fetchrow(
+        f"SELECT code_pin_hash, code_pin_echecs, code_pin_bloque_jusqu, {colonne} "
+        "FROM users WHERE id = $1::uuid FOR UPDATE", str(user_id))
+    if ligne is None:
+        logger.warning("Code de carte : profil inconnu — entrée refusée.")
+        return refus_technique
+    empreinte = ligne["code_pin_hash"]
+    premiere_entree = empreinte is None and attendu is not None
+    if premiere_entree and not avec_044:
+        # Sans la 044, on ne saurait pas que le code de première entrée a déjà
+        # servi : il deviendrait un accès permanent. On refuse.
+        logger.warning("Migration 044 absente : le code de première entrée est refusé.")
+        return refus_technique
+    if premiere_entree and ligne["code_defaut_le"] is not None:
+        return Verdict(False, "code_a_poser")      # il a déjà servi : passer par le script
+    if empreinte is None and not premiere_entree:
+        if voie_admin:
+            # Aucun code posé, et aucun code de première entrée utilisable : la
+            # reprise passe par `scripts/code_admin.py`, sur le serveur.
+            logger.warning("Entrée administrateur : aucun code posé — reprise par le script.")
+            return Verdict(False, "code_a_poser")
+        if exige:
+            logger.warning("Code de carte exigé, aucune empreinte enregistrée — entrée refusée.")
+            return refus_technique
+        return AUTORISE                            # carte ordinaire, sans code : d'un clic
+    maintenant = datetime.now(timezone.utc)
+    if ligne["code_pin_bloque_jusqu"] and ligne["code_pin_bloque_jusqu"] > maintenant:
+        return Verdict(False, "code_bloque")
+    if not (code or "").strip():
+        return Verdict(False, "code_requis")
+    juste = (hmac.compare_digest((code or "").strip(), attendu or "") if premiere_entree
+             else code_correct(code, empreinte))
+    if juste:
+        if premiere_entree:
+            await conn.execute(
+                "UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = NULL, "
+                "code_defaut_le = $2 WHERE id = $1::uuid", str(user_id), maintenant)
+            return Verdict(True, None, doit_changer=True)
+        await conn.execute("UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = NULL "
+                           "WHERE id = $1::uuid", str(user_id))
+        return AUTORISE
+    echecs = int(ligne["code_pin_echecs"] or 0) + 1
+    if echecs >= ESSAIS_CODE_MAX:
+        await conn.execute(
+            "UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = $2 WHERE id = $1::uuid",
+            str(user_id), maintenant + timedelta(minutes=BLOCAGE_CODE_MINUTES))
+        return Verdict(False, "code_bloque")
+    await conn.execute("UPDATE users SET code_pin_echecs = $2 WHERE id = $1::uuid",
+                       str(user_id), echecs)
+    return Verdict(False, "code_faux")
+
+
+async def controler_code(user_id: str, code: Optional[str], defaut: Optional[str] = None,
+                         exige: bool = False) -> Verdict:
     """Vérifie le code d'une carte, compte les échecs, bloque au cinquième.
 
-    Rend None si l'entrée est permise (pas de code, ou le bon), sinon la
-    raison : « code_requis », « code_faux », « code_bloque ». Un code faux
-    n'apprend rien d'autre ; le blocage est dit, pour qu'on n'insiste pas.
+    FAIL-CLOSED (16/09, audit D-19). Avant, un schéma incomplet, un profil
+    inconnu ou une empreinte absente rendaient None — et None voulait dire
+    « entre ». Désormais, dès qu'un code est EXIGÉ (carte à code, entrée
+    administrateur), tout ce qui empêche de le vérifier REFUSE, avec la raison
+    « indisponible » : un défaut d'installation n'ouvre jamais la porte. Un
+    profil ordinaire volontairement sans code garde son entrée d'un clic.
+
+    `defaut` : le code de PREMIÈRE ENTRÉE d'un administrateur qui n'en a pas
+    encore posé. Il ne sert QU'UNE FOIS (colonne `code_defaut_le`, migration
+    044) et oblige à en poser un vrai ; ensuite, seul le script d'exploitation
+    `scripts/code_admin.py` peut en redonner un.
     """
-    from datetime import datetime, timedelta, timezone
     from database.connection import get_db, schema_incomplet
-    async with get_db() as conn:
+    refus_technique = Verdict(False, "indisponible") if (exige or defaut) else AUTORISE
+    attendu = defaut.strip() if (defaut and code_valide(defaut)) else None
+    # Deux tours au plus : avec la colonne de la 044, puis sans (une requête
+    # refusée annule toute la transaction — il faut en rouvrir une).
+    for avec_044 in (True, False):
         try:
-            ligne = await conn.fetchrow(
-                "SELECT code_pin_hash, code_pin_echecs, code_pin_bloque_jusqu "
-                "FROM users WHERE id = $1::uuid", str(user_id))
-        except Exception as e:  # noqa: BLE001
-            if schema_incomplet(e):
-                return None
+            async with get_db() as conn:
+                async with conn.transaction():
+                    return await _verdict_sous_verrou(conn, user_id, code, attendu, exige,
+                                                      avec_044, refus_technique,
+                                                      voie_admin=defaut is not None)
+        except Exception as e:  # noqa: BLE001 — une base muette ne doit pas ouvrir la porte
+            if schema_incomplet(e) and avec_044:
+                continue
+            logger.warning("Code de carte : contrôle impossible (%s) — entrée refusée.",
+                           type(e).__name__)
+            if exige or defaut:
+                return Verdict(False, "indisponible")
             raise
-        # Un administrateur SANS code posé entre avec le code par défaut, jamais
-        # sans code : `defaut` n'est passé que par l'entrée admin (15/09).
-        empreinte = (ligne["code_pin_hash"] if ligne else None) or (
-            hacher_code(defaut) if defaut and code_valide(defaut) else None)
-        if not ligne or not empreinte:
-            return None
-        maintenant = datetime.now(timezone.utc)
-        if ligne["code_pin_bloque_jusqu"] and ligne["code_pin_bloque_jusqu"] > maintenant:
-            return "code_bloque"
-        if not (code or "").strip():
-            return "code_requis"
-        if code_correct(code, empreinte):
-            await conn.execute(
-                "UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = NULL "
-                "WHERE id = $1::uuid", str(user_id))
-            return None
-        echecs = int(ligne["code_pin_echecs"] or 0) + 1
-        if echecs >= ESSAIS_CODE_MAX:
-            await conn.execute(
-                "UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = $2 "
-                "WHERE id = $1::uuid", str(user_id),
-                maintenant + timedelta(minutes=BLOCAGE_CODE_MINUTES))
-            return "code_bloque"
-        await conn.execute("UPDATE users SET code_pin_echecs = $2 WHERE id = $1::uuid",
-                           str(user_id), echecs)
-        return "code_faux"
+    logger.warning("Code de carte : schéma incomplet (migrations 041/042/044) — entrée refusée.")
+    return refus_technique
 
 
 async def adresse_partagee() -> Optional[str]:

@@ -9,6 +9,7 @@ from database.connection import get_db
 from auth import appareil
 from auth.jwt_handler import create_access_token, decode_access_token
 from auth.dependencies import get_current_user
+from security import tentatives
 from database.models import User
 from security.audit import log_action
 from emails.envoi import envoyer
@@ -40,21 +41,46 @@ class ChangerProfilRequest(BaseModel):
     code: str | None = None
 
 
-async def _exiger_code(profil: dict, code: str | None, action: str) -> None:
+# ── Les essais de code, PAR ORIGINE (16/09, audit D-19) ────────────────────
+# Le compteur par profil protège UNE carte, pas la boîte partagée d'un balayage
+# qui les essaie toutes. La borne par origine vit dans `security/tentatives.py`
+# (le banc l'exécute) ; ici on ne fait que lire la demande.
+def _origine(request: Request) -> str:
+    return tentatives.origine_de(request.headers.get("x-forwarded-for") or "",
+                                 getattr(request.client, "host", "") or "")
+
+
+def _refus_code(raison: str) -> HTTPException:
+    """Le refus, avec le bon code HTTP. « indisponible » et « code_a_poser » ne
+    sont pas des erreurs de la personne : ce sont des états du serveur."""
+    statut = {"code_bloque": status.HTTP_429_TOO_MANY_REQUESTS,
+              "origine_bloquee": status.HTTP_429_TOO_MANY_REQUESTS,
+              "indisponible": status.HTTP_503_SERVICE_UNAVAILABLE,
+              "code_a_poser": status.HTTP_503_SERVICE_UNAVAILABLE}.get(
+                  raison, status.HTTP_401_UNAUTHORIZED)
+    return HTTPException(status_code=statut, detail=raison)
+
+
+async def _exiger_code(profil: dict, code: str | None, action: str,
+                       request: Request | None = None) -> None:
     """Une carte à code ne s'ouvre qu'avec lui. Le refus porte une raison
-    courte que l'écran traduit : code_requis, code_faux, code_bloque."""
+    courte que l'écran traduit : code_requis, code_faux, code_bloque,
+    indisponible (le serveur ne peut pas vérifier — on n'entre pas)."""
     from auth import profils as _profils
     if not _profils.a_un_code(profil):
         return
-    raison = await _profils.controler_code(str(profil["id"]), code)
-    if raison is None:
+    if request is not None and tentatives.saturee(_origine(request)):
+        raise _refus_code("origine_bloquee")
+    verdict = await _profils.controler_code(str(profil["id"]), code, exige=True)
+    if verdict.ok:
+        if request is not None:
+            tentatives.oublier(_origine(request))
         return
+    if request is not None:
+        tentatives.noter_echec(_origine(request))
     await log_action(action=f"{action}_code_refuse", user_id=str(profil["id"]), success=False,
-                     error_message=raison)
-    raise HTTPException(
-        status_code=(status.HTTP_429_TOO_MANY_REQUESTS if raison == "code_bloque"
-                     else status.HTTP_401_UNAUTHORIZED),
-        detail=raison)
+                     error_message=verdict.raison)
+    raise _refus_code(verdict.raison or "code_faux")
 
 
 class RefreshRequest(BaseModel):
@@ -359,7 +385,7 @@ async def entrer_par_carte(body: ChangerProfilRequest, request: Request):
                          error_message="profil hors des cartes de connexion")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Ce profil ne s'ouvre pas depuis la page de connexion.")
-    await _exiger_code(retenu, body.code, "connexion_carte")
+    await _exiger_code(retenu, body.code, "connexion_carte", request)
     async with get_db() as conn:
         await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
                            datetime.now(timezone.utc), str(retenu["id"]))
@@ -385,9 +411,12 @@ async def entrer_en_admin(body: ChangerProfilRequest, request: Request):
     """Ouvre la session d'un administrateur par son CODE (15/09, Duret).
 
     Le lien magique est coupé : l'administrateur choisit sa carte derrière le
-    bouton « Admin » et tape son code — celui qu'il a posé dans Paramètres, ou
-    `code_admin_defaut` tant qu'il n'en a posé aucun. Mêmes gardes que les
-    cartes à code : cinq essais faux, quinze minutes de blocage, tout est tracé.
+    bouton « Admin » et tape son code — celui qu'il a posé dans Paramètres, ou,
+    tant qu'il n'en a posé aucun, le code de PREMIÈRE ENTRÉE du serveur, qui ne
+    sert QU'UNE FOIS et oblige aussitôt à en poser un vrai (16/09, audit D-19).
+    Gardes : cinq essais faux par carte, quinze minutes de blocage, une borne
+    par origine, tout est tracé — et si le serveur ne peut pas vérifier le code,
+    il REFUSE.
     """
     from auth import profils as _profils
     tous = await _profils.profils_tous()
@@ -398,24 +427,30 @@ async def entrer_en_admin(body: ChangerProfilRequest, request: Request):
                          error_message="profil hors des cartes admin")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Ce profil ne s'ouvre pas par le bouton Admin.")
-    raison = await _profils.controler_code(str(retenu["id"]), body.code,
-                                           defaut=_profils.code_admin_defaut())
-    if raison is not None:
+    if tentatives.saturee(_origine(request)):
+        raise _refus_code("origine_bloquee")
+    verdict = await _profils.controler_code(str(retenu["id"]), body.code, exige=True,
+                                            defaut=_profils.code_admin_defaut())
+    if not verdict.ok:
+        tentatives.noter_echec(_origine(request))
         await log_action(action="connexion_admin_code_refuse", user_id=str(retenu["id"]),
-                         success=False, error_message=raison)
-        raise HTTPException(
-            status_code=(status.HTTP_429_TOO_MANY_REQUESTS if raison == "code_bloque"
-                         else status.HTTP_401_UNAUTHORIZED),
-            detail=raison)
+                         success=False, error_message=verdict.raison)
+        raise _refus_code(verdict.raison or "code_faux")
     async with get_db() as conn:
         await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
                            datetime.now(timezone.utc), str(retenu["id"]))
-    await log_action(action="login", user_id=str(retenu["id"]), metadata={"par": "carte_admin"})
+    tentatives.oublier(_origine(request))
+    await log_action(action="login", user_id=str(retenu["id"]),
+                     metadata={"par": "carte_admin",
+                               "premiere_entree": bool(verdict.doit_changer)})
     access_token = create_access_token({"sub": str(retenu["id"]), "role": retenu["role"]})
     jeton_appareil = await appareil.creer(retenu["id"], request.headers.get("user-agent", ""))
     return {"access_token": access_token, "token_type": "bearer",
             "role": retenu["role"], "refresh_token": jeton_appareil,
-            "user_id": str(retenu["id"]), "nom": retenu.get("name")}
+            "user_id": str(retenu["id"]), "nom": retenu.get("name"),
+            # Entré avec le code de première entrée : il vient d'être consommé,
+            # l'écran fait poser un vrai code avant d'aller plus loin.
+            "code_a_changer": bool(verdict.doit_changer)}
 
 
 @router.get("/profils")
@@ -444,7 +479,7 @@ async def changer_de_profil(body: ChangerProfilRequest, request: Request,
     if not isinstance(retenu, dict):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Ce profil n'est pas accessible depuis ce compte.")
-    await _exiger_code(retenu, body.code, "changement_profil")
+    await _exiger_code(retenu, body.code, "changement_profil", request)
     async with get_db() as conn:
         await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
                            datetime.now(timezone.utc), str(retenu["id"]))

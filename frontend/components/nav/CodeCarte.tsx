@@ -14,6 +14,13 @@ export function messageCode(raison: string | undefined): string {
   if (raison === "code_bloque") return "Trop d'essais : cette carte est bloquée un quart d'heure."
   if (raison === "code_faux") return "Code incorrect."
   if (raison === "code_requis") return "Cette carte demande son code."
+  if (raison === "origine_bloquee") return "Trop d'essais depuis cet appareil : attendez un quart d'heure."
+  // (16/09, audit D-19) Le serveur ne peut pas vérifier le code : il refuse au
+  // lieu d'ouvrir. Ce n'est pas la faute de la personne, et on le dit.
+  if (raison === "code_a_poser") return ("Le code de première entrée a déjà servi : un administrateur doit "
+                                         + "en poser un nouveau depuis le serveur.")
+  if (raison === "indisponible") return ("La vérification du code est indisponible sur le serveur : "
+                                         + "prévenez un administrateur (mise à jour en cours ?).")
   return "Ce profil n'a pas pu être ouvert. Réessayez ; si cela persiste, prévenez un administrateur."
 }
 

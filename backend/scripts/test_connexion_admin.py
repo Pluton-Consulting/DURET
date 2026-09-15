@@ -43,14 +43,27 @@ LIGNES = {}
 
 
 class Conn:
+    def transaction(self):
+        # Le contrôle lit et écrit le compteur SOUS VERROU (16/09, audit D-19).
+        class _T:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, *a):
+                return False
+        return _T()
+
     async def fetchrow(self, sql, *a):
-        return LIGNES.get(str(a[0]))
+        ligne = LIGNES.get(str(a[0]))
+        return dict(ligne) if ligne is not None else None
 
     async def execute(self, sql, *a):
         ligne = LIGNES.get(str(a[0]))
         if ligne is None:
             return
-        if "code_pin_echecs = 0, code_pin_bloque_jusqu = NULL" in sql:
+        if "code_defaut_le = $2" in sql:
+            ligne.update(code_pin_echecs=0, code_pin_bloque_jusqu=None, code_defaut_le=a[1])
+        elif "code_pin_echecs = 0, code_pin_bloque_jusqu = NULL" in sql:
             ligne.update(code_pin_echecs=0, code_pin_bloque_jusqu=None)
         elif "code_pin_bloque_jusqu = $2" in sql:
             ligne.update(code_pin_echecs=0, code_pin_bloque_jusqu=a[1])
@@ -94,29 +107,40 @@ if P is not None:
              cartes == [{"id": "a1", "nom": "Noa", "code": True}], cartes)
     verifier("le code par défaut se lit dans la configuration", P.code_admin_defaut() == "0000")
 
-    LIGNES["a1"] = {"code_pin_hash": None, "code_pin_echecs": 0, "code_pin_bloque_jusqu": None}
+    # (16/09, audit D-19) Le code de PREMIÈRE ENTRÉE ne sert qu'une fois : le
+    # détail vit dans `test_code_admin.py`, ici on vérifie que la porte d'entrée
+    # admin s'en sert toujours correctement.
+    LIGNES["a1"] = {"code_pin_hash": None, "code_pin_echecs": 0, "code_pin_bloque_jusqu": None,
+                    "code_defaut_le": None}
     run = asyncio.run
-    verifier("sans code posé, « 0000 » ouvre le compte admin",
-             run(P.controler_code("a1", "0000", defaut="0000")) is None)
-    verifier("un autre code est refusé", run(P.controler_code("a1", "1234", defaut="0000")) == "code_faux")
+    raison = lambda *a, **k: run(P.controler_code(*a, **k)).raison  # noqa: E731
+    verifier("un autre code que celui de première entrée est refusé",
+             raison("a1", "1234", defaut="0000", exige=True) == "code_faux")
     verifier("… et compté", LIGNES["a1"]["code_pin_echecs"] == 1, LIGNES["a1"])
-    verifier("un code vide est requis", run(P.controler_code("a1", "", defaut="0000")) == "code_requis")
+    verifier("un code vide est requis", raison("a1", "", defaut="0000", exige=True) == "code_requis")
+    premiere = run(P.controler_code("a1", "0000", defaut="0000", exige=True))
+    verifier("sans code posé, le code de première entrée ouvre le compte admin UNE fois",
+             premiere.ok and premiere.doit_changer and LIGNES["a1"]["code_defaut_le"] is not None)
+    verifier("et il ne rouvre pas : il faut poser un vrai code",
+             raison("a1", "0000", defaut="0000", exige=True) == "code_a_poser")
     LIGNES["a1"]["code_pin_hash"] = P.hacher_code("4821")
-    verifier("un code POSÉ remplace le défaut : « 0000 » ne marche plus",
-             run(P.controler_code("a1", "0000", defaut="0000")) == "code_faux")
-    verifier("… et le code posé ouvre", run(P.controler_code("a1", "4821", defaut="0000")) is None)
-    LIGNES["t1"] = {"code_pin_hash": None, "code_pin_echecs": 0, "code_pin_bloque_jusqu": None}
+    verifier("un code POSÉ remplace celui de première entrée : « 0000 » ne marche plus",
+             raison("a1", "0000", defaut="0000", exige=True) == "code_faux")
+    verifier("… et le code posé ouvre", run(P.controler_code("a1", "4821", defaut="0000", exige=True)).ok)
+    LIGNES["t1"] = {"code_pin_hash": None, "code_pin_echecs": 0, "code_pin_bloque_jusqu": None,
+                    "code_defaut_le": None}
     verifier("une carte ordinaire sans code (pas de `defaut`) reste ouverte d'un clic",
-             run(P.controler_code("t1", None)) is None)
-    LIGNES["a1"].update(code_pin_hash=None, code_pin_echecs=0)
+             run(P.controler_code("t1", None)).ok)
+    LIGNES["a1"].update(code_pin_echecs=0)
     for _ in range(P.ESSAIS_CODE_MAX):
-        dernier = run(P.controler_code("a1", "9999", defaut="0000"))
+        dernier = raison("a1", "9999", defaut="0000", exige=True)
     verifier("cinq essais faux bloquent la carte admin", dernier == "code_bloque", dernier)
 
 print("2. La configuration et les routes")
 conf = (racine / "config.py").read_text(encoding="utf-8")
-verifier("le lien magique est coupé par défaut, le code admin vaut « 0000 »",
-         "lien_magique_actif: bool = False" in conf and 'code_admin_defaut: str = "0000"' in conf)
+verifier("le lien magique est coupé par défaut, et le code de première entrée est réglable",
+         "lien_magique_actif: bool = False" in conf and "code_admin_defaut: str" in conf
+         and "code_chiffrement_cle: str" in conf)
 auth = (racine / "routers" / "auth.py").read_text(encoding="utf-8")
 i = auth.index("async def request_magic_link")
 verifier("la demande de lien magique est refusée quand il est coupé",
@@ -124,7 +148,8 @@ verifier("la demande de lien magique est refusée quand il est coupé",
 verifier("les routes admin existent", '@router.get("/connexion/admins")' in auth and '@router.post("/connexion/admin")' in auth)
 j = auth.index("async def entrer_en_admin")
 verifier("l'entrée admin vérifie le code avec le défaut et ne passe que par les cartes admin",
-         "defaut=_profils.code_admin_defaut()" in auth[j:j + 2000] and "cartes_admin(tous)" in auth[j:j + 2000])
+         "defaut=_profils.code_admin_defaut()" in auth[j:j + 2500] and "cartes_admin(tous)" in auth[j:j + 2500]
+         and "if not verdict.ok:" in auth[j:j + 2500])
 users = (racine / "routers" / "users.py").read_text(encoding="utf-8")
 k = users.index("async def creer_lien_connexion")
 verifier("les liens d'accès sont refusés quand le lien magique est coupé", "lien_magique_actif" in users[k:k + 2500])

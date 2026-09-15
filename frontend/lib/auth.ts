@@ -46,7 +46,10 @@ async function rafraichir(jetonAppareil: string) {
  * l'écran (`signIn(...).code`) — « code faux » et « carte bloquée » ne
  * demandent pas le même geste. Rien d'autre ne passe par là.
  */
-const RAISONS_CODE = ["code_requis", "code_faux", "code_bloque"]
+const RAISONS_CODE = ["code_requis", "code_faux", "code_bloque", "origine_bloquee",
+                      // (16/09, audit D-19) Le serveur refuse faute de pouvoir vérifier :
+                      // l'écran doit le DIRE, pas afficher « identifiants refusés ».
+                      "code_a_poser", "indisponible"]
 class CodeRefuse extends CredentialsSignin {
   constructor(raison: string) {
     super(raison)

@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -17,6 +18,7 @@ from security.rbac import (
 from security.audit import log_action
 
 router = APIRouter()
+logger = logging.getLogger("duret.routers.users")
 
 # Ce que chaque niveau peut créer
 DIRECTION_CREATABLE_ROLES   = {"commercial", "bureau_etudes", "conducteur", "administratif", "terrain"}
@@ -251,12 +253,23 @@ async def list_users(current_user: User = Depends(get_current_user)):
                 raise
 
     result = []
+    codes_lus: list[str] = []
+    a_rechiffrer: dict = {}
     for row in rows:
         d = dict(row)
         d["a_code"] = str(d["id"]) in avec_code
         lisible = (str(d["id"]) == str(current_user.id)
                    or peut_ouvrir_pour(current_user.role, d["role"]))
         d["code"] = _profils.dechiffrer_code(chiffres.get(str(d["id"]))) if lisible and d["a_code"] else None
+        if d["code"] and str(d["id"]) != str(current_user.id):
+            codes_lus.append(str(d["id"]))
+        # ROTATION DE LA CLÉ (16/09, audit D-19) : un code encore chiffré avec
+        # l'ancienne clé (dérivée du secret JWT) est réécrit avec la clé
+        # dédiée, dès qu'on le relit. Aucune migration, aucune perte.
+        if d["code"]:
+            neuf = _profils.rechiffre_avec_la_cle_du_jour(chiffres.get(str(d["id"])))
+            if neuf:
+                a_rechiffrer[str(d["id"])] = neuf
         explicit = {
             a: d.pop(f"explicit_{a}")
             for a in AGENTS
@@ -267,6 +280,21 @@ async def list_users(current_user: User = Depends(get_current_user)):
             d.pop(f"explicit_{a}", None)
         d["agent_permissions"] = _effective_permissions(d["role"], explicit)
         result.append(d)
+
+    # LIRE LE CODE DE QUELQU'UN D'AUTRE SE TRACE (16/09, audit D-19) : c'est un
+    # accès administratif, pas une lecture d'écran ordinaire. Jamais le code
+    # lui-même dans le journal — seulement combien, et pour qui.
+    if codes_lus:
+        await log_action(action="codes_cartes_consultes", user_id=str(current_user.id),
+                         metadata={"profils": len(codes_lus), "ids": codes_lus[:20]})
+    for user_id, chiffre in a_rechiffrer.items():
+        try:
+            async with get_db() as conn:
+                await conn.execute("UPDATE users SET code_pin_chiffre = $2 WHERE id = $1::uuid",
+                                   user_id, chiffre)
+        except Exception as e:  # noqa: BLE001 — la rotation ne casse jamais la liste
+            logger.warning("Code non rechiffré (%s)", type(e).__name__)
+            break
 
     return result
 

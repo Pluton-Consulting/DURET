@@ -17,7 +17,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-06 | Secours lexical quand les embeddings tombent | étape 1 faite (embedding et voie vectorielle isolés, diagnostic, panne ≠ absence) ; orchestrateur de sources et comparables NAS : lot 2 |
 | D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | étape 1 faite (jeton par origine, propriétaire noté au dépôt, route et pièces jointes contrôlées, pièce de mail résolue dans sa boîte, script de rattachement des anciens) ; registre PostgreSQL des ressources, médias DOCX, résultat structuré d'image manquante : lot suivant |
 | D-27 | Doublons NAS : plus d'exclusion sur nom+taille | étape 1 faite (copies lues en dernier et reconnues à leur contenu, « toujours apprendre », fichiers écartés retentés et repris à la main, écritures atomiques) ; écran détaillé du tri, budgets et baux, niveaux réactualisés, références et couverture de `nas_chercher` : lots 2 et 4 |
-| D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | à faire |
+| D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | fait (verdict typé fail-closed, verrou de ligne, code de première entrée à usage unique + migration 044, clé de chiffrement séparée, borne par origine, script de secours) ; réauthentification ciblée pour l'administration : lot suivant |
 | D-22 | Export CSV neutralisé, export borné, secrets dans les traces | à faire |
 | D-23 / D-26 / D-00 | Scripts de sauvegarde, de déploiement vérifié et procédure de recette | à faire |
 
@@ -69,3 +69,20 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   `test_tri_nas` (+28, dont la synchronisation réelle avec copies, fichier trop lent et purge) ;
   `test_enrichir_stockage` rend un contenu par fichier (doublure irréaliste : 251 fichiers aux
   octets identiques).
+- 16/09 — D-19 : `auth/profils.controler_code` rend un `Verdict` (ok, raison, doit_changer) et
+  REFUSE tout ce qu'elle ne peut pas vérifier — schéma incomplet, profil inconnu, empreinte
+  absente : avant, ces trois cas rendaient `None`, c'est-à-dire « entre ». Le compte des essais
+  et le blocage tiennent dans une transaction avec `FOR UPDATE` (essais simultanés). Le code de
+  PREMIÈRE ENTRÉE (`CODE_ADMIN_DEFAUT`, propre à l'installation) ne sert qu'une fois — migration
+  **044** `users.code_defaut_le`, refusé si la migration manque — et l'écran (`nav/CodeAPoser.tsx`,
+  posé devant l'application pour un super_admin sans code) fait poser un vrai code aussitôt ;
+  reprise hors interface par `scripts/code_admin.py`. `security/tentatives.py` borne les essais
+  ratés par origine (30 / 15 min, oubliés à l'entrée réussie) sans fermer la boîte partagée. La
+  clé qui chiffre les codes relisibles est séparée du secret JWT (`CODE_CHIFFREMENT_CLE`), les
+  anciens chiffrés restent lisibles et se réécrivent à la lecture ; lire le code d'un autre est
+  journalisé. Refus techniques en 503, blocages en 429, tous dits en français. Bancs
+  `test_code_admin` (40) ; `test_connexion_admin` et `test_droits_par_profil` remis sur le
+  nouveau contrat.
+  ⚠️ Au déploiement : appliquer la 044 AVANT de redémarrer, sinon l'entrée par le code de
+  première entrée est refusée (c'est voulu) ; poser `CODE_ADMIN_DEFAUT` et `CODE_CHIFFREMENT_CLE`
+  dans le `.env` du VPS.

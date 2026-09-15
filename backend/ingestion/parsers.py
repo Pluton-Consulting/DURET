@@ -129,12 +129,28 @@ def _ocr(image) -> str:
         _OCR_PORTE.release()
 
 
+# LES LECTURES PASSENT APRÈS LE CHAT (15/09, Noa : « sans que ça bouche ou
+# sature le CPU »). Sous Linux, la priorité (nice) se règle PAR THREAD : les
+# threads de lecture — et l'OCR qu'ils lancent, qui hérite de leur priorité —
+# passent à 15. Quand le serveur est libre ils vont aussi vite ; quand une
+# réponse du chat a besoin du processeur, c'est elle qui l'obtient.
+PRIORITE_LECTURE = 15
+
+
+def _basse_priorite() -> None:
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), PRIORITE_LECTURE)
+    except Exception:  # noqa: BLE001 — hors Linux, ou sans droit : on lit quand même
+        pass
+
+
 def _lecteurs() -> ThreadPoolExecutor:
     global _LECTEURS
     with _LECTEURS_VERROU:
         if _LECTEURS is None:
             _LECTEURS = ThreadPoolExecutor(max_workers=LECTEURS_SIMULTANES,
-                                           thread_name_prefix="lecture")
+                                           thread_name_prefix="lecture",
+                                           initializer=_basse_priorite)
         return _LECTEURS
 
 

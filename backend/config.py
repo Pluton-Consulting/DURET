@@ -315,6 +315,14 @@ class Settings(BaseSettings):
     nas_tri_age_ans: int = 3
     nas_ocr_nuit_debut: int = 21
     nas_ocr_nuit_fin: int = 6
+    # PAR PALIERS (15/09, Noa : « 9 000 fichiers prennent plusieurs jours ; il
+    # faudrait des paliers en minutes sans boucher ni saturer le CPU »). La
+    # lecture travaille `nas_palier_minutes`, souffle `nas_pause_minutes`, et
+    # attend dès que la charge du serveur dépasse `nas_charge_max` (charge
+    # moyenne sur une minute rapportée au nombre de cœurs). La nuit, pas de pause.
+    nas_palier_minutes: int = 10
+    nas_pause_minutes: int = 3
+    nas_charge_max: float = 0.75
     # LA CONNEXION DE DURET N'A PLUS DE LIEN MAGIQUE (15/09, Noa : « enlève le
     # système magic link même en admin »). Les profils entrent par leur carte,
     # l'administrateur par le bouton « Admin » et son code. Le mécanisme reste

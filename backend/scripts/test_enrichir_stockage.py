@@ -551,6 +551,62 @@ else:
     verifier("relancée, elle ne rouvre RIEN d'inchangé (ni la photo)",
              TELECHARGES == [] and res2.get("inchangés") == 251 and res2.get("photos") == 1,
              (len(TELECHARGES), res2))
+    # 15/09 — PAR PALIERS, SANS SATURER LE SERVEUR. Noa : « 9 000 fichiers
+    # prennent plusieurs jours, il faudrait des paliers en minutes sans que ça
+    # bouche ou sature le CPU ». Horloge doublée : chaque lecture de l'horloge
+    # avance de 7 s ; les pauses sont ENREGISTRÉES, pas dormies.
+    print("\n5 bis. Par paliers, et jamais sur un serveur chargé")
+    import time as _vrai_temps
+    horloge = [1000.0]
+    ancienne_monotonic = _vrai_temps.monotonic
+
+    def _fausse_monotonic():
+        horloge[0] += 7
+        return horloge[0]
+    PAUSES = []
+
+    async def _fausse_pause(sec):
+        PAUSES.append(sec)
+        horloge[0] += sec
+    async def _rien_d_ingere():
+        return {}
+    sys.modules["config"].settings.nas_palier_minutes = 1
+    sys.modules["config"].settings.nas_pause_minutes = 2
+    sys.modules["config"].settings.nas_charge_max = 0.75
+    charges = [0.95, 0.95, 0.40]
+    synology._charge = lambda: (charges.pop(0) if charges else 0.30)
+    synology._dates_ingerees = _rien_d_ingere
+    synology._lire_ecartes = lambda: {}
+    sys.modules["nas.tri"].fenetre_de_nuit = lambda heure=None: False
+    vrai_sleep = synology._asyncio.sleep
+    synology._asyncio = types.SimpleNamespace(**{k: getattr(asyncio, k) for k in dir(asyncio) if not k.startswith("__")})
+    synology._asyncio.sleep = _fausse_pause
+    ETAPES = []
+
+    async def _noter(t, total, etape):
+        ETAPES.append(etape)
+    _vrai_temps.monotonic = _fausse_monotonic
+    try:
+        acces._CATALOGUE["construit_le"] = horloge[0] + 10 ** 6
+        res3 = asyncio.run(synology.sync(avancer=_noter))
+    finally:
+        _vrai_temps.monotonic = ancienne_monotonic
+    verifier("un serveur chargé fait ATTENDRE la lecture suivante (et le dit)",
+             PAUSES[0] == synology.ATTENTE_CHARGE_S
+             and any("serveur chargé" in e for e in ETAPES), (PAUSES[:3], ETAPES[:2]))
+    verifier("au bout d'un palier, une PAUSE de souffle, annoncée avec l'heure de reprise",
+             120 in PAUSES and any("palier 1 terminé" in e and "reprise vers" in e for e in ETAPES),
+             [e for e in ETAPES if "palier" in e][:1])
+    verifier("tout est quand même lu, palier après palier", res3.get("ingérés") == 251, res3)
+    verifier("l'écran dit le rythme et le temps restant", any("fichier(s)/min" in e and "reste ~" in e for e in ETAPES))
+    verifier("le compte rendu dit où passe le temps (NAS, lecture, base)",
+             set(res3.get("temps_moyen_s") or {}) == {"telechargement", "lecture", "base"}, res3)
+    parsers_src = (BACKEND / "ingestion" / "parsers.py").read_text(encoding="utf-8")
+    verifier("les threads de lecture (et l'OCR qu'ils lancent) passent APRÈS le chat (nice 15)",
+             "initializer=_basse_priorite" in parsers_src and "os.setpriority" in parsers_src)
+    verifier("le jour, un fichier trop long à lire est remis à la NUIT au lieu d'être perdu",
+             "lourds_remis_à_la_nuit" in CONNECTEUR_NAS.read_text(encoding="utf-8"))
+
     src_nas = CONNECTEUR_NAS.read_text(encoding="utf-8")
     verifier("l'ancien parcours maison a disparu (une seule façon de voir le NAS)",
              "_lister_recursif" not in src_nas and "catalogue_attendu" in src_nas)

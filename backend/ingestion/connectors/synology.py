@@ -401,6 +401,29 @@ import asyncio as _asyncio
 # Quatre fichiers de front : assez pour ne pas attendre le réseau fichier par
 # fichier, pas assez pour saturer le NAS ni l'OCR (CPU) du serveur.
 SYNC_DE_FRONT = 4
+# Le jour, un fichier dont la lecture dépasse une minute est remis à la NUIT
+# (comme un scan) au lieu de tenir un lecteur trois minutes ; la nuit, il a ses
+# trois minutes.
+DELAI_LECTURE_JOUR_S = 60
+# Un paquet de fichiers entre deux regards sur l'horloge du palier.
+PAQUET = 8
+ATTENTE_CHARGE_S = 15
+ATTENTE_CHARGE_MAX_S = 600
+
+
+def _charge() -> float:
+    """La charge du serveur rapportée à ses cœurs (1.0 = tous occupés)."""
+    import os
+    try:
+        return os.getloadavg()[0] / float(os.cpu_count() or 1)
+    except (OSError, AttributeError):
+        return 0.0
+
+
+def _duree(secondes: float) -> str:
+    secondes = int(max(0, secondes))
+    h, m = divmod(secondes // 60, 60)
+    return f"{h} h {m:02d} min" if h else f"{max(1, m)} min"
 # Un fichier pathologique (PDF de 400 pages scanné) ne bloque pas la
 # synchronisation : passé ce délai, il est écarté et MÉMORISÉ.
 DELAI_LECTURE_S = 180
@@ -622,15 +645,54 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                     + ("" if a_lire else " · rien de nouveau à ouvrir"))
     compte = {"traites": 0, "ingeres": 0, "erreurs": 0}
     porte = _asyncio.Semaphore(SYNC_DE_FRONT)
+    import time as _time
+    # OÙ PASSE LE TEMPS, mesuré : réseau du NAS, lecture, écriture en base.
+    temps = {"telechargement": 0.0, "lecture": 0.0, "base": 0.0, "n": 0}
+    debut_sync = _time.monotonic()
+    pause_totale = [0.0]
+
+    def _rythme() -> str:
+        """« 12 fichiers/min · reste ~3 h 10 min » — sur le temps de TRAVAIL."""
+        travail = max(1.0, _time.monotonic() - debut_sync - pause_totale[0])
+        par_min = compte["traites"] / (travail / 60)
+        if not compte["traites"]:
+            return ""
+        reste = len(a_lire) - compte["traites"]
+        texte = f" · {par_min:.1f} fichier(s)/min"
+        if reste > 0 and par_min > 0:
+            texte += f" · reste ~{_duree(reste / par_min * 60)}"
+        if temps["n"]:
+            n = temps["n"]
+            texte += (f" · moyenne : NAS {temps['telechargement'] / n:.1f} s, lecture "
+                      f"{temps['lecture'] / n:.1f} s, base {temps['base'] / n:.1f} s")
+        return texte
+
+    async def _respirer():
+        """Le jour, on n'ajoute pas une lecture à un serveur déjà chargé."""
+        if tri.fenetre_de_nuit():
+            return
+        seuil = float(getattr(settings, "nas_charge_max", 0.75) or 0.75)
+        attendu = 0.0
+        while _charge() > seuil and attendu < ATTENTE_CHARGE_MAX_S:
+            if attendu == 0:
+                await _prevenir(compte["traites"], len(a_lire),
+                                f"serveur chargé ({_charge():.0%}) : j'attends qu'il se libère · "
+                                f"{compte['ingeres']} lu(s)")
+            await _asyncio.sleep(ATTENTE_CHARGE_S)
+            attendu += ATTENTE_CHARGE_S
+        pause_totale[0] += attendu
 
     def _ecarter(f):
         ecartes[f["chemin"]] = f.get("modifie")
 
     async def _un(f, nom):
         async with porte:
+            await _respirer()
             try:
+                t0 = _time.monotonic()
                 async with acces.connexion() as (client, base, sid):
                     brut, raison = await _telecharger_ou_raison(client, base, sid, f["chemin"])
+                t1 = _time.monotonic()
                 if not brut:
                     compte["erreurs"] += 1
                     logger.info("NAS : %s non téléchargé (%s)", f["chemin"], raison)
@@ -639,14 +701,22 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                     # `en_lecture`, pas `wait_for(to_thread(…))` (15/09) : l'ancienne
                     # forme abandonnait l'attente sans arrêter l'OCR, et les lectures
                     # fantômes ont occupé tout le serveur (voir `parsers.en_lecture`).
-                    structure = await en_lecture(analyser, nom, brut, delai=DELAI_LECTURE_S,
-                                                 ocr=tri.fenetre_de_nuit())
+                    nuit = tri.fenetre_de_nuit()
+                    structure = await en_lecture(analyser, nom, brut,
+                                                 delai=DELAI_LECTURE_S if nuit else DELAI_LECTURE_JOUR_S,
+                                                 ocr=nuit)
+                    t2 = _time.monotonic()
                     differes.pop(f["chemin"], None)
                 except OcrReporte:
                     bilan["scans_remis_à_la_nuit"] += 1
                     differes[f["chemin"]] = f.get("modifie")
                     return
                 except (_asyncio.TimeoutError, TimeoutError):
+                    if not nuit:
+                        # Le jour, un fichier lourd attend la nuit : il n'est pas perdu.
+                        bilan["lourds_remis_à_la_nuit"] = bilan.get("lourds_remis_à_la_nuit", 0) + 1
+                        differes[f["chemin"]] = f.get("modifie")
+                        return
                     bilan["trop_lents"] += 1
                     _ecarter(f)
                     return
@@ -671,6 +741,10 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                     compte["ingeres"] += 1
                 else:
                     compte["erreurs"] += 1
+                temps["telechargement"] += t1 - t0
+                temps["lecture"] += t2 - t1
+                temps["base"] += _time.monotonic() - t2
+                temps["n"] += 1
             except Exception as e:  # noqa: BLE001 — un fichier ne doit pas tout arrêter
                 compte["erreurs"] += 1
                 logger.warning("NAS : lecture de %s impossible : %s", f["chemin"], e)
@@ -679,15 +753,35 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
                 await _prevenir(compte["traites"], len(a_lire),
                                 f"j'ouvre {nom[:60]} · {compte['ingeres']} lu(s), "
                                 f"{compte['erreurs']} en échec, "
-                                f"{bilan['sans_texte'] + bilan['trop_lents']} sans texte")
+                                f"{bilan['sans_texte'] + bilan['trop_lents']} sans texte"
+                                + _rythme())
 
     try:
         # Par paquets : la mémoire des écartés est écrite au fil de l'eau — un
         # redémarrage au milieu ne fait pas tout reperdre.
-        for i in range(0, len(a_lire), 40):
-            await _asyncio.gather(*[_un(f, nom) for f, nom in a_lire[i:i + 40]])
+        # PAR PALIERS : `nas_palier_minutes` de travail, puis `nas_pause_minutes`
+        # de souffle (le jour seulement). La reprise continue où elle en était ;
+        # un redémarrage entre deux paliers ne perd rien (lecture incrémentale).
+        palier_s = max(1, int(getattr(settings, "nas_palier_minutes", 10) or 10)) * 60
+        pause_s = max(0, int(getattr(settings, "nas_pause_minutes", 3) or 0)) * 60
+        debut_palier, palier = _time.monotonic(), 1
+        for i in range(0, len(a_lire), PAQUET):
+            await _asyncio.gather(*[_un(f, nom) for f, nom in a_lire[i:i + PAQUET]])
             _ecrire_ecartes(ecartes)
             tri.ecrire_ocr_differe(differes)
+            reste = len(a_lire) - (i + PAQUET)
+            if (reste > 0 and pause_s and not tri.fenetre_de_nuit()
+                    and _time.monotonic() - debut_palier >= palier_s):
+                reprise = __import__("datetime").datetime.now() + __import__("datetime").timedelta(seconds=pause_s)
+                await _prevenir(compte["traites"], len(a_lire),
+                                f"palier {palier} terminé · {compte['ingeres']} lu(s) · pause de "
+                                f"{pause_s // 60} min pour laisser le serveur au chat, reprise vers "
+                                f"{reprise:%H:%M}" + _rythme())
+                logger.info("NAS : palier %d terminé (%d traités), pause %d s", palier,
+                            compte["traites"], pause_s)
+                await _asyncio.sleep(pause_s)
+                pause_totale[0] += pause_s
+                debut_palier, palier = _time.monotonic(), palier + 1
     finally:
         _ecrire_ecartes(ecartes)
         # Un scan lu (ou disparu du NAS) quitte la liste de la nuit.
@@ -697,6 +791,9 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None) -> dict:
     resultat = {"fichiers": total, "ouverts": compte["traites"],
                 "ingérés": compte["ingeres"], "erreurs": compte["erreurs"],
                 **{k: v for k, v in bilan.items() if v}}
+    if temps["n"]:
+        resultat["temps_moyen_s"] = {k: round(temps[k] / temps["n"], 2)
+                                     for k in ("telechargement", "lecture", "base")}
     if racines_vides:
         resultat["racines_introuvables"] = ", ".join(racines_vides)
     if not complet:

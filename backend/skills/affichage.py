@@ -207,9 +207,21 @@ def garantir_recherche(resultat: dict, motif: str, ouvreur: str | None = None) -
                   + ".")
     resultat["message_final"] = compte
     geste = f"`{ouvreur}`" if ouvreur else "le geste d'ouverture"
+    # UN DOSSIER QUI PORTE LE NOM DE CE QU'ON CHERCHE EST SON RANGEMENT (15/09,
+    # Duret) : « ouvre un mémoire technique au hasard » a trouvé un fichier et un
+    # dossier « MEMOIRES TECHNIQUES » — et rouvert le fichier déjà montré, sans
+    # jamais lister le dossier où les mémoires sont rangés.
+    rangement = (
+        "UN DOSSIER DONT LE NOM EST CE QUE TU CHERCHES (« MEMOIRES TECHNIQUES » "
+        "pour un mémoire) est l'endroit où ces documents sont RANGÉS : liste-le "
+        "(geste de listage) et choisis un fichier DEDANS — c'est la voie pour « un "
+        "au hasard », « un autre », « des exemples ». Ne rouvre pas un fichier déjà "
+        "montré dans cette conversation quand on te demande d'en trouver un. "
+        if dossiers else "")
     resultat["a_faire"] = (
         "Les résultats sont DÉJÀ affichés à l'écran par un bloc mécanique : ne "
         "les recopie pas, n'écris aucun bloc doc ou fichier pour eux. "
+        + rangement +
         "SI LA DEMANDE DE CE TOUR EST D'OUVRIR OU DE LIRE UN DOCUMENT (« ouvre un "
         "devis », « un au hasard », « le plus récent », « trouve X et ouvre-le ») : "
         f"enchaîne MAINTENANT avec {geste} sur le NOM EXACT d'une ligne de type "

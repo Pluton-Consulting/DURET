@@ -88,6 +88,8 @@ if V:
     verifier("la rédaction reprise reçoit ce que le relecteur a vu", "RELECTEUR" in txt and "a" in txt and "dis-le" in txt)
     c = V.consigne("apprends ma signature", "1. apprendre_signature() → ok", "- apprendre_signature : …",
                    "La signature a bien été apprise.", ["keyvalue · Signature"], lecons="- Quand …")
+    verifier("la consigne relève un livrable CREUX présenté comme fait (15/09 : une page de titres)",
+             "LIVRABLE CREUX" in c and "reproduire_document" in c)
     verifier("la consigne borne le relecteur (pas le style, dans le doute ok) et porte les leçons",
              "Ne relève PAS : le style" in c and "Dans le doute, le verdict est « ok »" in c and "LEÇONS" in c)
 
@@ -190,6 +192,17 @@ if "verifier_node" in esp:
                                        "llm_response": "Le mémoire est prêt, sa carte s'affiche sous cette réponse."}))
     verifier("le relecteur voit les cartes que le serveur posera",
              APPELS and "MEMOIRE TECHNIQUE.docx" in APPELS[-1] and "posé par le serveur" in APPELS[-1])
+    # 15/09, 17:25 : le relecteur contestait un dossier « MEMOIRES TECHNIQUES »
+    # que seul le tableau de la recherche portait (ses lignes lui étaient cachées).
+    APPELS.clear()
+    recherche = {"skill": "nas_chercher", "ok": True, "args": {"motif": "memoire"},
+                 "resultat_masque": json.dumps({"nombre": 2, "bloc_ui": {
+                     "type": "table", "titre": "Recherche — memoire", "columns": ["Nom", "Type", "Emplacement"],
+                     "rows": [["MEMOIRES TECHNIQUES", "Dossier", "/home/Drive/01-Administatif/MEMOIRES TECHNIQUES"]]}})}
+    asyncio.run(esp["verifier_node"]({"query": "trouve un mémoire", "tool_results": [recherche],
+                                       "llm_response": "J'ai repéré un dossier MEMOIRES TECHNIQUES."}))
+    verifier("le relecteur voit les LIGNES des tableaux posés par le serveur",
+             APPELS and "MEMOIRES TECHNIQUES | Dossier" in APPELS[-1], APPELS[-1:] and APPELS[-1][-600:])
     _LLM.panne = True
     r6 = asyncio.run(esp["verifier_node"](etat))
     _LLM.panne = False

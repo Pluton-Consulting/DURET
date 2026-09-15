@@ -354,5 +354,14 @@ if not nas_cote and drive_py.exists():
     verifier("le prompt dit : « ouvre un devis / un au hasard » → cherche ou liste, puis OUVRE sans demander",
              "puis OUVRE un fichier sans demander lequel" in agent1 and "`drive_lister`" in agent1)
 
+# 15/09, Duret : « ouvre un mémoire technique au hasard » a rouvert le fichier
+# déjà montré sans lister le dossier « MEMOIRES TECHNIQUES » trouvé à côté.
+_aff = (pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend") / "skills" / "affichage.py").read_text(encoding="utf-8")
+verifier("un dossier nommé comme ce qu'on cherche se LISTE avant d'ouvrir, sans rouvrir le fichier déjà montré",
+         "UN DOSSIER DONT LE NOM EST CE QUE TU CHERCHES" in _aff and "Ne rouvre pas un fichier déjà" in _aff)
+trames_src = (pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend") / "skills" / "trames.py").read_text(encoding="utf-8")
+verifier("« en partant d'un exemple » : `reproduire_document`, pas une réécriture de zéro",
+         "EN PARTANT d'un exemple" in trames_src)
+
 print(f"\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ tous les contrôles passent'}\n")
 sys.exit(1 if echecs else 0)

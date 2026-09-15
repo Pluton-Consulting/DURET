@@ -4093,8 +4093,15 @@ async def verifier_node(state: AgentState, config=None) -> dict:
             d = None
         if isinstance(d, dict):
             for b in _blocs_de(d.get("bloc_ui")):
+                # Les LIGNES d'un tableau aussi (15/09) : la recherche du NAS range
+                # ses résultats dans le tableau et les retire du résultat — le
+                # relecteur contestait un dossier « MEMOIRES TECHNIQUES » que
+                # seul ce tableau portait.
+                lignes = "; ".join(" | ".join(str(c) for c in l[:3]) for l in (b.get("rows") or [])[:12]
+                                   if isinstance(l, list))
                 blocs.append(" · ".join(str(x) for x in (
-                    b.get("type"), b.get("titre") or b.get("nom"), "(posé par le serveur)") if x))
+                    b.get("type"), b.get("titre") or b.get("nom"), "(posé par le serveur)",
+                    lignes and f"lignes : {lignes}") if x))
     resume_resultats = "\n".join(
         f"- {r.get('skill') or '?'} ({'réussi' if r.get('ok') else 'ÉCHEC'}) : "
         f"{_essentiel(str(r.get('resultat_masque') or ''), 1500)}" for r in resultats[-12:])

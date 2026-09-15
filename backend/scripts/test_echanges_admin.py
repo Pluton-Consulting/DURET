@@ -346,12 +346,116 @@ verifier("un tour en attente d'accord n'est pas journalisé comme un échec",
 verifier("la réponse d'un tour est la première réponse NON VIDE (celle d'après l'accord)",
          "btrim(a.content) <> ''" in dash_src)
 verifier("le détail du tour ne prend que les lignes de sa personne",
-         'str(x.get("user_id")) == str(d["utilisateur_id"])' in dash_src)
+         'par_personne.get(qui, [])' in dash_src)
 verifier("une réponse d'après l'accord efface le vieux « aucune réponse finale »",
          '== "aucune réponse finale"' in dash_src)
 val_src = (BACKEND / "routers" / "validation.py").read_text(encoding="utf-8")
 verifier("la décision « Approuver » porte le fil du tour qu'elle clôt",
          'trigger_type="validation", trigger_id=fil or None' in val_src)
+
+# 15/09 — L'EXPORT DEPUIS LE TOUT DÉBUT. Noa : « qu'on puisse exporter le
+# journal du bas, où il y a les requêtes et les réponses, depuis le tout début ».
+# La route est EXÉCUTÉE contre une base doublée : pages de 500, du plus ancien
+# au plus récent, CSV pour Excel et JSON complet.
+import ast
+import asyncio
+import csv as _csv
+import io as _io
+import json as _json
+import uuid as _uuid
+from contextlib import asynccontextmanager
+
+arbre = ast.parse(dash_src)
+noms = {"get_echanges", "_lire_echanges", "_detail_du_fil", "_ligne_csv", "exporter_echanges", "_cible_et_recherche",
+        "_exiger_super_admin", "EXPORT_PAQUET", "EXPORT_TOUT_JOURS", "_SQL_ECHANGES"}
+gardes = [n for n in arbre.body if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in noms)
+          or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in noms for t in n.targets))]
+for n in gardes:
+    n.decorator_list = []
+    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for a in n.args.defaults + n.args.kw_defaults:
+            pass
+QUESTIONS = [{"id": _uuid.uuid4(), "question": f"question {i}", "quand": datetime.datetime(2026, 8, 1) + datetime.timedelta(hours=i),
+              "fil": "f1", "agent_type": "agent1", "utilisateur_id": "u1", "email": "a@exemple.fr", "name": "Anna",
+              "utilisateur_role": "direction", "reponse": f"réponse {i}; « guillemets »\nligne 2",
+              "quand_reponse": datetime.datetime(2026, 8, 1) + datetime.timedelta(hours=i, seconds=5)} for i in range(1203)]
+REQUETES = []
+
+
+class _Conn:
+    async def fetch(self, sql, *args):
+        if "FROM messages m" in sql:
+            REQUETES.append((sql, args))
+            ordre = sorted(QUESTIONS, key=lambda r: r["quand"], reverse="created_at DESC" in sql.split("ORDER BY")[-1])
+            return ordre[args[4]:args[4] + args[3]]
+        if "FROM audit_log" in sql:
+            return [{"id": 1, "user_id": "u1", "action": "chat_request", "agent_id": "agent1", "model_used": "m",
+                     "tokens_in": 10, "tokens_out": 5, "cost_eur": 0.001, "duration_ms": 1200, "success": True,
+                     "error_message": None, "created_at": args[0] + datetime.timedelta(seconds=3),
+                     "metadata": '{"trigger_id": "f1", "gestes": [{"skill": "lire_mails", "ok": true}]}'}]
+        return []
+
+
+@asynccontextmanager
+async def _get_db():
+    yield _Conn()
+
+
+class _Http(Exception):
+    def __init__(self, status_code=None, detail=None):
+        self.status_code, self.detail = status_code, detail
+
+
+class _Flux:
+    def __init__(self, gen, media_type=None, headers=None):
+        self.gen, self.media_type, self.headers = gen, media_type, headers
+
+
+sys.modules.setdefault("fastapi", types.ModuleType("fastapi"))
+sys.modules["fastapi.responses"] = types.SimpleNamespace(StreamingResponse=_Flux)
+esp = {"get_db": _get_db, "json": _json, "datetime": datetime, "uuid": _uuid, "HTTPException": _Http,
+       "status": types.SimpleNamespace(HTTP_403_FORBIDDEN=403, HTTP_400_BAD_REQUEST=400),
+       "_exiger": lambda role, f: None, "Optional": __import__("typing").Optional,
+       "User": object, "Depends": lambda x=None: None, "get_current_user": None, "Query": lambda *a, **k: None}
+exec(compile(ast.Module(body=gardes, type_ignores=[]), "dashboard", "exec"), esp)
+admin = types.SimpleNamespace(role="super_admin")
+
+
+async def _lire(reponse):
+    return "".join([bout async for bout in reponse.gen])
+
+rep_csv = asyncio.run(esp["exporter_echanges"](current_user=admin, format="csv", utilisateur=None, q=None))
+texte = asyncio.run(_lire(rep_csv))
+lignes = list(_csv.reader(_io.StringIO(texte.lstrip("\ufeff")), delimiter=";"))
+verifier("export CSV : TOUT l'historique (1 203 échanges, lus par pages de 500)",
+         len(lignes) == 1204 and [(a[3], a[4]) for s_, a in REQUETES] == [(500, 0), (500, 500), (500, 1000)],
+         (len(lignes), [(a[3], a[4]) for s_, a in REQUETES]))
+verifier("… depuis le tout début, du plus ancien au plus récent",
+         lignes[1][6] == "question 0" and lignes[-1][6] == "question 1202"
+         and all("ASC" in s_.split("ORDER BY")[-1] and a[0] == esp["EXPORT_TOUT_JOURS"] for s_, a in REQUETES[-3:]))
+verifier("… lisible par Excel (BOM, point-virgule), réponses multi-lignes et guillemets intacts",
+         texte.startswith("\ufeff") and lignes[1][7] == "réponse 0; « guillemets »\nligne 2"
+         and lignes[1][8] == "lire_mails:ok" and lignes[1][9] == "m")
+verifier("… en pièce à télécharger, datée", 'attachment; filename="echanges_depuis_le_debut_' in rep_csv.headers["Content-Disposition"])
+REQUETES.clear()
+rep_json = asyncio.run(esp["exporter_echanges"](current_user=admin, format="json", utilisateur=None, q=None))
+donnees = _json.loads(asyncio.run(_lire(rep_json)))
+verifier("export JSON : complet, détail technique compris", len(donnees) == 1203 and donnees[0]["detail"]
+         and donnees[0]["question"] == "question 0")
+try:
+    asyncio.run(esp["exporter_echanges"](current_user=types.SimpleNamespace(role="direction"), format="csv",
+                                         utilisateur=None, q=None))
+    verifier("l'export est réservé au super-administrateur", False)
+except _Http as e:
+    verifier("l'export est réservé au super-administrateur", e.status_code == 403)
+REQUETES.clear()
+vue = asyncio.run(esp["get_echanges"](current_user=admin, jours=7, limite=40, page=2, utilisateur=None, q=None))
+verifier("la console elle-même : une page de 40, du plus récent au plus ancien, avec le détail rapproché",
+         len(vue["echanges"]) == 40 and vue["echanges"][0]["question"] == "question 1162"
+         and vue["echanges"][-1]["modele"] == "m" and REQUETES[0][1][4] == 40, vue["echanges"][-1])
+tsx_src = (FRONTEND / "components" / "dashboard" / "Echanges.tsx").read_text(encoding="utf-8")
+verifier("la console porte les boutons d'export (CSV et JSON)",
+         "/api/dashboard/echanges/export" in tsx_src and "Exporter" in tsx_src)
 
 print()
 if echecs:

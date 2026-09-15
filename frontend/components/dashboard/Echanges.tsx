@@ -104,6 +104,7 @@ export default function Echanges({ apiUrl, token, C }: Props) {
   const [ouverts, setOuverts] = useState<Record<string, boolean>>({})
   const [charge, setCharge] = useState(false)
   const [err, setErr] = useState("")
+  const [exporte, setExporte] = useState<"" | "csv" | "json">("")
 
   const LIMITE = 40
 
@@ -136,6 +137,34 @@ export default function Echanges({ apiUrl, token, C }: Props) {
     background: C.panel2, color: C.text, border: `1px solid ${C.border}`,
     borderRadius: 6, padding: "5px 9px", fontFamily: C.mono, fontSize: 12,
   } as const
+
+  /** TOUT L'HISTORIQUE, DEPUIS LE PREMIER ÉCHANGE (15/09). La période affichée
+   *  ne compte pas ; la personne et la recherche choisies, si. Le fichier est
+   *  produit par le serveur, page après page, puis téléchargé ici. */
+  async function exporter(format: "csv" | "json") {
+    setErr(""); setExporte(format)
+    try {
+      const p = new URLSearchParams({ format })
+      if (personne) p.set("utilisateur", personne)
+      if (recherche) p.set("q", recherche)
+      const res = await fetch(`${apiUrl}/api/dashboard/echanges/export?${p}`,
+                              { headers: { Authorization: `Bearer ${token}` } })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.detail || `HTTP ${res.status}`)
+      }
+      const blob = await res.blob()
+      const nom = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1]
+                  || `echanges.${format}`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url; a.download = nom
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 5000)
+    } catch (e: any) {
+      setErr(`Export impossible : ${e?.message || "erreur réseau"}`)
+    } finally { setExporte("") }
+  }
 
   return (
     <div className="sym-in" style={{
@@ -170,6 +199,15 @@ export default function Echanges({ apiUrl, token, C }: Props) {
                  placeholder="chercher dans les mots…" aria-label="Chercher dans les échanges"
                  style={{ ...champ, width: 190 }} />
         </form>
+
+        <button type="button" onClick={() => exporter("csv")} disabled={!!exporte} style={{ ...champ, cursor: exporte ? "wait" : "pointer" }}
+                title={`Tout l'historique depuis le premier échange${personne || recherche ? " (personne / recherche choisies)" : ""}, pour Excel`}>
+          {exporte === "csv" ? "export…" : "⤓ Exporter tout (Excel)"}
+        </button>
+        <button type="button" onClick={() => exporter("json")} disabled={!!exporte} style={{ ...champ, cursor: exporte ? "wait" : "pointer" }}
+                title="Tout l'historique, détail technique compris (JSON)">
+          {exporte === "json" ? "export…" : "JSON"}
+        </button>
       </div>
 
       {err && <div style={{ padding: "10px 14px", color: C.red, fontSize: 12 }}>⚠ {err}</div>}

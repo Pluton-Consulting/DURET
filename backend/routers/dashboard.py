@@ -176,7 +176,7 @@ WHERE m.role = 'user'
   AND ($2::uuid IS NULL OR u.id = $2::uuid)
   AND ($3::text IS NULL OR m.content ILIKE '%' || $3::text || '%'
                         OR COALESCE(r.content, '') ILIKE '%' || $3::text || '%')
-ORDER BY m.created_at DESC
+ORDER BY m.created_at DESC, m.id DESC
 LIMIT $4 OFFSET $5
 """
 
@@ -230,13 +230,30 @@ async def get_echanges(
     super_admin ; élargir à la direction est une décision à prendre, pas un
     effet de bord.
     """
+    _exiger_super_admin(current_user)
+    jours = max(1, min(int(jours or 7), 365))
+    limite = max(1, min(int(limite or 40), 200))
+    page = max(1, int(page or 1))
+    cible, recherche = _cible_et_recherche(utilisateur, q)
+    echanges, gens = await _lire_echanges(jours, cible, recherche, limite, (page - 1) * limite,
+                                          avec_gens=True)
+    return {
+        "echanges": echanges,
+        "page": page,
+        "limite": limite,
+        "jours": jours,
+        "utilisateurs": gens,
+    }
+
+
+def _exiger_super_admin(current_user) -> None:
     _exiger(current_user.role, "view_audit_log")
     if (current_user.role or "").strip().lower() != "super_admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Réservé au super-administrateur.")
-    jours = max(1, min(int(jours or 7), 365))
-    limite = max(1, min(int(limite or 40), 200))
-    page = max(1, int(page or 1))
+
+
+def _cible_et_recherche(utilisateur, q):
     cible = None
     if utilisateur:
         try:
@@ -244,29 +261,42 @@ async def get_echanges(
         except (ValueError, AttributeError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="Identifiant d'utilisateur invalide.")
-    recherche = (q or "").strip() or None
+    return cible, ((q or "").strip() or None)
 
+
+async def _lire_echanges(jours: int, cible, recherche, limite: int, decalage: int,
+                         avec_gens: bool = False, croissant: bool = False) -> tuple[list, list]:
+    """Une page d'échanges, avec leur détail technique rapproché.
+
+    Le technique n'est lu que sur la FENÊTRE DE TEMPS de la page (15/09) : lire
+    tout le journal de la période ne tenait plus pour un export depuis le tout
+    début — des dizaines de milliers de lignes d'audit pour une page de 500.
+    """
     async with get_db() as conn:
-        lignes = await conn.fetch(_SQL_ECHANGES, jours, cible, recherche,
-                                  limite, (page - 1) * limite)
-        # Le technique de la période, en UNE requête : rapprocher en Python
-        # coûte moins qu'une requête par échange.
-        techniques = await conn.fetch(
-            "SELECT id, user_id, action, agent_id, model_used, tokens_in, tokens_out, "
-            "cost_eur, duration_ms, success, error_message, metadata, created_at "
-            "FROM audit_log "
-            "WHERE created_at > NOW() - ($1::int * INTERVAL '1 day') "
-            "  AND ($2::uuid IS NULL OR user_id = $2::uuid) "
-            "ORDER BY created_at ASC",
-            jours, cible)
-        gens = await conn.fetch(
-            "SELECT DISTINCT u.id, u.email, u.name, u.role "
-            "FROM users u JOIN threads t ON t.user_id = u.id "
-            "JOIN messages m ON m.thread_id = t.id "
-            "WHERE m.created_at > NOW() - ($1::int * INTERVAL '1 day') "
-            "ORDER BY u.name NULLS LAST, u.email",
-            jours)
-
+        sql = (_SQL_ECHANGES.replace("ORDER BY m.created_at DESC, m.id DESC", "ORDER BY m.created_at ASC, m.id ASC")
+               if croissant else _SQL_ECHANGES)
+        lignes = await conn.fetch(sql, jours, cible, recherche, limite, decalage)
+        techniques = []
+        if lignes:
+            bornes = [r["quand"] for r in lignes] + [r["quand_reponse"] for r in lignes if r["quand_reponse"]]
+            techniques = await conn.fetch(
+                "SELECT id, user_id, action, agent_id, model_used, tokens_in, tokens_out, "
+                "cost_eur, duration_ms, success, error_message, metadata, created_at "
+                "FROM audit_log "
+                "WHERE created_at BETWEEN $1 AND $2 "
+                "  AND ($3::uuid IS NULL OR user_id = $3::uuid) "
+                "ORDER BY created_at ASC",
+                min(bornes) - datetime.timedelta(seconds=2),
+                max(bornes) + datetime.timedelta(seconds=30), cible)
+        gens = []
+        if avec_gens:
+            gens = await conn.fetch(
+                "SELECT DISTINCT u.id, u.email, u.name, u.role "
+                "FROM users u JOIN threads t ON t.user_id = u.id "
+                "JOIN messages m ON m.thread_id = t.id "
+                "WHERE m.created_at > NOW() - ($1::int * INTERVAL '1 day') "
+                "ORDER BY u.name NULLS LAST, u.email",
+                jours)
     techs = []
     for row in techniques:
         d = dict(row)
@@ -279,18 +309,30 @@ async def get_echanges(
         d["metadata"] = d.get("metadata") or {}
         techs.append(d)
 
+    # Par personne, triées par heure : chaque échange ne regarde que SA tranche
+    # (bisect), au lieu de parcourir tout le journal de la page à chaque fois.
+    import bisect
+    par_personne: dict = {}
+    for x in techs:
+        par_personne.setdefault(str(x.get("user_id")), []).append(x)
+    heures = {k: [x["created_at"] for x in v] for k, v in par_personne.items()}
+
     echanges = []
     for row in lignes:
         d = dict(row)
         quand = d["quand"]
         fin = d.get("quand_reponse") or quand
+        qui = str(d["utilisateur_id"])
+        les_siennes = par_personne.get(qui, [])
+        tranche = les_siennes[bisect.bisect_left(heures.get(qui, []), quand - datetime.timedelta(seconds=2)):
+                              bisect.bisect_right(heures.get(qui, []), fin + datetime.timedelta(seconds=30))]
         # Une marge : la ligne d'audit est écrite APRÈS la réponse, et la
         # réponse elle-même est persistée avant le journal.
         # LES LIGNES DE CETTE PERSONNE SEULEMENT : depuis que la fenêtre court
         # jusqu'à la réponse d'après l'accord (parfois un quart d'heure), elle
         # attrapait les lignes sans fil d'un autre compte actif au même moment.
         detail, exact = _detail_du_fil(
-            [x for x in techs if str(x.get("user_id")) == str(d["utilisateur_id"])],
+            tranche,
             d.get("fil"),
             quand - datetime.timedelta(seconds=2),
             fin + datetime.timedelta(seconds=30))
@@ -302,7 +344,7 @@ async def get_echanges(
         principal = next((x for x in detail if x["action"] == "chat_request"), None)
         if principal is None:
             principal = next(
-                (x for x in techs
+                (x for x in tranche
                  if x["action"] == "chat_request"
                  and quand - datetime.timedelta(seconds=2) <= x["created_at"]
                  <= fin + datetime.timedelta(seconds=30)), None)
@@ -344,14 +386,94 @@ async def get_echanges(
             "detail_exact": exact,
         })
 
-    return {
-        "echanges": echanges,
-        "page": page,
-        "limite": limite,
-        "jours": jours,
-        "utilisateurs": [{"id": str(g["id"]), "email": g["email"],
-                          "nom": g["name"], "role": g["role"]} for g in gens],
-    }
+    return echanges, [{"id": str(g["id"]), "email": g["email"],
+                       "nom": g["name"], "role": g["role"]} for g in gens]
+
+
+# ── L'EXPORT DEPUIS LE TOUT DÉBUT (15/09) ───────────────────────────────────
+# Noa : « qu'on puisse exporter le journal du bas, où il y a les requêtes et
+# les réponses, depuis le tout début ». Tout l'historique, par pages de 500
+# lues et écrites au fil de l'eau (jamais tout en mémoire), en CSV lisible par
+# Excel (point-virgule, BOM UTF-8) ou en JSON complet (détail technique inclus).
+EXPORT_PAQUET = 500
+EXPORT_TOUT_JOURS = 36500
+
+
+def _ligne_csv(e: dict) -> list:
+    gestes = " | ".join(f"{g.get('skill')}:{'ok' if g.get('ok') else 'échec'}"
+                        for g in (e.get("gestes") or []) if isinstance(g, dict))
+    u = e.get("utilisateur") or {}
+    quand = e.get("quand")
+    return [quand.isoformat() if hasattr(quand, "isoformat") else str(quand or ""),
+            u.get("nom") or "", u.get("email") or "", u.get("role") or "",
+            e.get("fil") or "", e.get("expert") or "",
+            e.get("question") or "", e.get("reponse") or "", gestes,
+            e.get("modele") or "", round((e.get("duree_ms") or 0) / 1000, 1),
+            e.get("jetons") or 0, e.get("cout_eur") or 0,
+            "oui" if e.get("succes") else "non", e.get("erreur") or ""]
+
+
+@router.get("/echanges/export")
+async def exporter_echanges(
+    current_user: User = Depends(get_current_user),
+    format: str = "csv",
+    utilisateur: Optional[str] = None,
+    q: Optional[str] = None,
+):
+    """Tous les échanges depuis le premier, du plus ancien au plus récent."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    _exiger_super_admin(current_user)
+    cible, recherche = _cible_et_recherche(utilisateur, q)
+    fmt = "json" if (format or "").lower() == "json" else "csv"
+    maintenant = datetime.datetime.now().strftime("%Y-%m-%d_%Hh%M")
+
+    async def _pages():
+        decalage = 0
+        while True:
+            echanges, _ = await _lire_echanges(EXPORT_TOUT_JOURS, cible, recherche,
+                                               EXPORT_PAQUET, decalage, croissant=True)
+            if not echanges:
+                return
+            yield echanges
+            if len(echanges) < EXPORT_PAQUET:
+                return
+            decalage += EXPORT_PAQUET
+
+    def _defaut(v):
+        return v.isoformat() if hasattr(v, "isoformat") else str(v)
+
+    async def _flux():
+        # Du plus ancien au plus récent, page après page, écrit au fil de l'eau.
+        if fmt == "csv":
+            yield "\ufeff"
+            tampon = io.StringIO()
+            w = csv.writer(tampon, delimiter=";")
+            w.writerow(["date", "personne", "email", "rôle", "fil", "expert", "question",
+                        "réponse", "gestes", "modèle", "durée (s)", "jetons", "coût (€)",
+                        "réussi", "erreur"])
+            yield tampon.getvalue()
+            async for page in _pages():
+                tampon = io.StringIO()
+                w = csv.writer(tampon, delimiter=";")
+                for e in page:
+                    w.writerow(_ligne_csv(e))
+                yield tampon.getvalue()
+        else:
+            yield "["
+            premier = True
+            async for page in _pages():
+                for e in page:
+                    yield ("" if premier else ",\n") + json.dumps(e, ensure_ascii=False, default=_defaut)
+                    premier = False
+            yield "]"
+
+    nom = f"echanges_depuis_le_debut_{maintenant}.{fmt}"
+    return StreamingResponse(
+        _flux(), media_type="text/csv; charset=utf-8" if fmt == "csv" else "application/json",
+        headers={"Content-Disposition": f'attachment; filename="{nom}"'})
 
 
 @router.get("/token-usage")

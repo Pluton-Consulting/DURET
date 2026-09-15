@@ -78,6 +78,26 @@ def ton_de(etape: int) -> str:
     return TONS.get(max(int(etape or 1), 1), TONS[3])
 
 
+# LE JOUR SE COMPTE À L'HEURE DE PARIS (16/09). La date de la dernière relance
+# est enregistrée en UTC ; lue par `.date()`, une relance faite à 23 h 30 à
+# Paris tombait la veille, et entre minuit et deux heures « relancée à
+# l'instant » devenait « il y a 1 jour ». Aujourd'hui et les instants datés sont
+# ramenés au même fuseau avant d'être comparés.
+FUSEAU = "Europe/Paris"
+
+
+def aujourd_hui_local() -> date:
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(FUSEAU)).date()
+
+
+def _jour_local(instant: datetime) -> date:
+    if instant.tzinfo is None:
+        return instant.date()
+    from zoneinfo import ZoneInfo
+    return instant.astimezone(ZoneInfo(FUSEAU)).date()
+
+
 def _date(valeur) -> Optional[date]:
     if isinstance(valeur, datetime):
         return valeur.date()
@@ -109,7 +129,7 @@ def relance_due(facture: dict, aujourd_hui: Optional[date] = None,
     Oui si : elle n'est ni réglée ni close, son échéance est passée, et la
     dernière relance date d'au moins `intervalle_jours` (ou n'a jamais eu lieu).
     """
-    aujourd_hui = aujourd_hui or date.today()
+    aujourd_hui = aujourd_hui or aujourd_hui_local()
     statut = _nu(facture.get("statut") or "en_cours")
     if statut in ("reglee", "payee", "close", "cloturee"):
         return False, f"facture {statut}"
@@ -120,7 +140,14 @@ def relance_due(facture: dict, aujourd_hui: Optional[date] = None,
         return False, f"pas encore échue (échéance le {echeance:%d/%m/%Y})"
     derniere = facture.get("derniere_relance")
     if derniere:
-        d = derniere.date() if isinstance(derniere, datetime) else _date(derniere)
+        if isinstance(derniere, str) and "T" in derniere:
+            # Relue de la base puis sérialisée (« 2026-09-15T22:16:00+00:00 ») :
+            # l'instant garde son fuseau, il se ramène à Paris comme un datetime.
+            try:
+                derniere = datetime.fromisoformat(derniere)
+            except ValueError:
+                pass
+        d = _jour_local(derniere) if isinstance(derniere, datetime) else _date(derniere)
         if d and (aujourd_hui - d).days < intervalle_jours:
             return False, (f"relancée il y a {(aujourd_hui - d).days} jour(s), "
                            f"prochaine possible le {d + timedelta(days=intervalle_jours):%d/%m/%Y}")
@@ -130,7 +157,7 @@ def relance_due(facture: dict, aujourd_hui: Optional[date] = None,
 def relances_dues(factures: list, aujourd_hui: Optional[date] = None,
                   intervalle_jours: int = INTERVALLE_JOURS) -> tuple[list, list]:
     """(à relancer, écartées avec leur raison), du plus grand retard au plus petit."""
-    aujourd_hui = aujourd_hui or date.today()
+    aujourd_hui = aujourd_hui or aujourd_hui_local()
     a_relancer, ecartees = [], []
     for f in factures or []:
         due, raison = relance_due(f, aujourd_hui, intervalle_jours)
@@ -150,7 +177,7 @@ def corps_de_relance(facture: dict, etape: int, role: str, entreprise: str,
     montant = _montant(facture.get("montant")) if facture.get("montant") not in (None, "") else ""
     echeance = _date(facture.get("echeance"))
     ech = f"{echeance:%d/%m/%Y}" if echeance else "(échéance non renseignée)"
-    retard = (date.today() - echeance).days if echeance else 0
+    retard = (aujourd_hui_local() - echeance).days if echeance else 0
     chantier = str(facture.get("chantier") or facture.get("objet") or "").strip()
     qui = ROLES.get(role, role)
     titre = f"Relance {etape} — facture {ref}" + (f" — {client}" if client else "")

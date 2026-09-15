@@ -98,6 +98,16 @@ verifier("relance 3 à l'architecte : la mise en demeure est annoncée, pas enga
 _, cp = rel.corps_de_relance({**F, "client": "M. Martin"}, 2, "client", "Duret & Sols")
 verifier("privé, relance 2 : ferme, échéancier proposé", "sous huit jours" in cp and "échéancier" in cp)
 
+# 16/09 — LE JOUR SE COMPTE À PARIS. Une relance enregistrée à 22 h 30 UTC (00 h 30
+# à Paris le 16) n'est pas « d'hier » : entre minuit et deux heures, le banc tombait.
+from datetime import date as _d  # noqa: E402
+verifier("une relance faite à 00 h 30 à Paris (22 h 30 UTC la veille) date bien du jour",
+         rel.relance_due({"echeance": "2026-08-01", "derniere_relance": "2026-09-15T22:30:00+00:00"},
+                         _d(2026, 9, 16))[1].startswith("relancée il y a 0 jour")
+         and rel.relance_due({"echeance": "2026-08-01",
+                              "derniere_relance": datetime(2026, 9, 15, 22, 30, tzinfo=timezone.utc)},
+                             _d(2026, 9, 16))[1].startswith("relancée il y a 0 jour"))
+
 # ── Les skills, contre une base doublée ──
 print("— les skills")
 LIGNES: dict = {}

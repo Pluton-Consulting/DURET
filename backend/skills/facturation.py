@@ -23,7 +23,7 @@ import logging
 from datetime import date
 
 from database.connection import get_db
-from facturation.relances import (INTERVALLE_JOURS, ROLES, corps_de_relance, destinataire_de,
+from facturation.relances import (INTERVALLE_JOURS, ROLES, aujourd_hui_local, corps_de_relance, destinataire_de,
                                   maintenant_utc, regime_de, relances_dues, ton_de)
 from skills.registre import Declaration
 
@@ -142,7 +142,7 @@ async def factures_suivies(data: dict, user) -> dict:
         return {"factures": [], "nombre": 0,
                 "message_final": "Aucune facture suivie" + ("" if tout else " en cours") + ".",
                 "a_faire": "Dis-le, et propose d'en suivre une (`suivre_facture` : référence, client, échéance, régime, contacts)."}
-    dues, ecartees = relances_dues(factures, date.today())
+    dues, ecartees = relances_dues(factures, aujourd_hui_local())
     dues_refs = {f["id"] for f in dues}
     lignes = []
     for f in factures:
@@ -174,7 +174,7 @@ async def relancer_factures(data: dict, user) -> dict:
         return {"cartes": [], "nombre": 0,
                 "message_final": ("Aucune facture suivie" + (f" pour « {reference} »" if reference else " en cours") + "."),
                 "a_faire": "Dis-le. Pour suivre une facture : `suivre_facture` (référence, client, échéance, régime, contacts)."}
-    aujourd_hui = date.today()
+    aujourd_hui = aujourd_hui_local()
     if forcer:
         dues, ecartees = [dict(f, raison="relance demandée explicitement") for f in factures], []
     else:

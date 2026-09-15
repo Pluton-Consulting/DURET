@@ -16,7 +16,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-05 | Échecs métier jamais présentés comme réussis | étape 1 faite (normaliseur, exécuteur, boucle, reprise) ; reçus avant « créé/envoyé » et preuves par requête : lot suivant |
 | D-06 | Secours lexical quand les embeddings tombent | étape 1 faite (embedding et voie vectorielle isolés, diagnostic, panne ≠ absence) ; orchestrateur de sources et comparables NAS : lot 2 |
 | D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | étape 1 faite (jeton par origine, propriétaire noté au dépôt, route et pièces jointes contrôlées, pièce de mail résolue dans sa boîte, script de rattachement des anciens) ; registre PostgreSQL des ressources, médias DOCX, résultat structuré d'image manquante : lot suivant |
-| D-27 | Doublons NAS : plus d'exclusion sur nom+taille | à faire |
+| D-27 | Doublons NAS : plus d'exclusion sur nom+taille | étape 1 faite (copies lues en dernier et reconnues à leur contenu, « toujours apprendre », fichiers écartés retentés et repris à la main, écritures atomiques) ; écran détaillé du tri, budgets et baux, niveaux réactualisés, références et couverture de `nas_chercher` : lots 2 et 4 |
 | D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | à faire |
 | D-22 | Export CSV neutralisé, export borné, secrets dans les traces | à faire |
 | D-23 / D-26 / D-00 | Scripts de sauvegarde, de déploiement vérifié et procédure de recette | à faire |
@@ -52,3 +52,20 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   dans le volume des documents plutôt qu'une migration (D-23 doit sauvegarder ce volume). Banc
   `test_visuels_proprietaire` ; `test_pieces_multiples` charge le vrai contexte du lecteur ;
   `test_resultats_normalises` dit sa section sautée sous Python < 3.10.
+- 16/09 — D-27 (étape 1) : `nas/tri.py` — `copies_possibles` remplace `doublons` : une copie
+  possible (même nom, même taille) n'est plus écartée, elle est lue APRÈS les originaux, dans
+  des paquets à part (sinon les quatre lectures de front liraient l'original et sa copie en même
+  temps) ; une vraie copie se reconnaît à l'empreinte SHA-256 de son contenu
+  (`nas_empreintes.json`) et reprend les morceaux et vecteurs de l'original
+  (`vectorstore.copier_source`, `ingestion.pipeline.copier_document`) sous SA source, SON nom et
+  SON niveau d'accès — deux affaires ne fusionnent pas leurs droits ; une copie dont l'original
+  n'a plus ses morceaux est relue. Décision « toujours apprendre » (âge sans effet, réservée à
+  l'administrateur : l'IA ne la propose pas). Un fichier écarté porte une fiche (motif, essais,
+  prochain essai) : « trop lent » est retenté à 1, 3, 7 puis 30 jours, « sans texte » attend que
+  le fichier change, et `POST /api/nas-tri/reprendre` (bouton « Réessayer ces fichiers ») relance
+  tout de suite. Les trois mémoires (écartés, scans de nuit, empreintes) vivent dans `nas/tri.py`
+  et s'écrivent atomiquement ; une disparition n'est conclue que sur un relevé COMPLET et non
+  restreint à un dossier (avant, un essai sur un dossier vidait la liste de la nuit). Bancs
+  `test_tri_nas` (+28, dont la synchronisation réelle avec copies, fichier trop lent et purge) ;
+  `test_enrichir_stockage` rend un contenu par fichier (doublure irréaliste : 251 fichiers aux
+  octets identiques).

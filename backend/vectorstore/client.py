@@ -250,6 +250,45 @@ class VectorStoreClient:
 
                 return doc_id
 
+    async def copier_source(self, source_id_origine: str, source_type: str, source_id: str,
+                            source_filename: Optional[str] = None, access_level: str = "all") -> int:
+        """Reprend les morceaux d'une source au contenu IDENTIQUE sous une autre
+        source (16/09, audit D-27) : même texte et mêmes vecteurs, mais le nom
+        de fichier et le NIVEAU D'ACCÈS de la copie — un même CCTP dans deux
+        affaires ne fusionne pas leurs droits. Un morceau pas encore vectorisé
+        reçoit son job. Rend le nombre de morceaux repris ; 0 si l'original n'en
+        a plus (l'appelant relit alors le fichier)."""
+        if not source_id_origine or source_id_origine == source_id:
+            return 0
+        async with get_db() as conn:
+            async with conn.transaction():
+                existe = await conn.fetchval(
+                    "SELECT count(*) FROM documents WHERE source_id = $1 AND source_type = $2",
+                    source_id_origine, source_type)
+                if not existe:
+                    return 0
+                await conn.execute("DELETE FROM documents WHERE source_id = $1 AND source_type = $2",
+                                   source_id, source_type)
+                lignes = await conn.fetch("""
+                    INSERT INTO documents (
+                        content, content_tokens, embedding, source_type, source_id,
+                        source_filename, access_level, contains_pii, is_anonymized,
+                        chunk_index, chunk_total
+                    )
+                    SELECT content, content_tokens, embedding, source_type, $3,
+                           $4, $5, contains_pii, is_anonymized, chunk_index, chunk_total
+                      FROM documents
+                     WHERE source_id = $1 AND source_type = $2
+                     ORDER BY chunk_index
+                    RETURNING id, (embedding IS NULL) AS a_vectoriser
+                """, source_id_origine, source_type, source_id, source_filename, access_level)
+                a_vectoriser = [l["id"] for l in lignes if l["a_vectoriser"]]
+                if a_vectoriser:
+                    await conn.execute(
+                        "INSERT INTO embedding_jobs (document_id, status) "
+                        "SELECT unnest($1::uuid[]), 'pending'", a_vectoriser)
+                return len(lignes)
+
     async def delete_by_source(self, source_id: str, source_type: str) -> int:
         """Supprime tous les chunks d'une source (pour ré-ingestion après modification)."""
         async with get_db() as conn:

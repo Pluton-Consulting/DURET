@@ -8,23 +8,30 @@ import { useEffect, useRef, useState } from "react"
  * genoux. Ici l'administrateur fait PROPOSER un tri par l'IA — elle juge les
  * dossiers sur leurs noms, sans rien ouvrir —, corrige, puis valide. La
  * synchronisation suivante n'ouvre plus que ce qui est « à apprendre », les
- * affaires récentes d'abord, et remet les PDF scannés à la nuit. Photos,
- * doublons et fichiers trop anciens sont écartés sans IA. Rien n'est supprimé.
+ * affaires récentes d'abord, et remet les PDF scannés à la nuit. Photos et
+ * fichiers trop anciens sont écartés sans IA ; une COPIE POSSIBLE (même nom,
+ * même taille) est lue en dernier et reconnue à son contenu (16/09, audit
+ * D-27). Rien n'est supprimé.
  */
 
-type Decision = "apprendre" | "demande" | "ignorer"
+type Decision = "apprendre" | "toujours" | "demande" | "ignorer"
 interface Ligne { chemin: string; decision: Decision; raison?: string; fichiers?: number; annee?: number | null; degre?: number }
-interface Estimation { total: number; a_lire: number; demande: number; ignorer: number; photo: number; ancien: number; doublon: number; format_non_lu: number }
+interface Estimation { total: number; a_lire: number; demande: number; ignorer: number; photo: number; ancien: number; doublon: number; format_non_lu: number; toujours?: number }
+interface Ecartes { total: number; sans_texte: number; a_retenter: number; prets: number; prochain: number | null
+                    exemples: { chemin: string; raison: string; tentatives: number }[] }
 interface Etat {
   regles: Ligne[]; age_ans: number; estimation: Estimation | null; catalogue: string | null
   ocr_differe: number; nuit: { debut: number; fin: number }
+  ecartes?: Ecartes; reprise_demandee?: { le: number; tout: boolean } | null
   continu?: { active: boolean; prochain: number | null; dernier: number | null; rien_a_lire: boolean
               cycle_minutes: number; palier_minutes: number }
   proposition: { en_cours: boolean; avancement?: string | null; date?: number; appels?: number;
                  dossiers?: Ligne[]; erreur?: string | null; non_juges?: number; estimation?: Estimation }
 }
 
-const LIBELLES: Record<Decision, string> = { apprendre: "À apprendre", demande: "À la demande", ignorer: "Ignorer" }
+const LIBELLES: Record<Decision, string> = {
+  apprendre: "À apprendre", toujours: "Toujours apprendre", demande: "À la demande", ignorer: "Ignorer",
+}
 const nb = (n: number | undefined) => (n ?? 0).toLocaleString("fr-FR")
 
 export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
@@ -35,6 +42,7 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
   const [erreur, setErreur] = useState("")
   const [bilan, setBilan] = useState("")
   const [enCours, setEnCours] = useState(false)
+  const [toutReprendre, setToutReprendre] = useState(false)
   const minuterie = useRef<ReturnType<typeof setTimeout> | null>(null)
   const entetes = { "Content-Type": "application/json", Authorization: `Bearer ${backendToken}` }
 
@@ -72,6 +80,19 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
     const r = await fetch(`${apiUrl}/api/nas-tri/continu`, { method: "PUT", headers: entetes, body: JSON.stringify({ active }) })
     const d = await r.json().catch(() => ({}))
     if (!r.ok) { setErreur(d.detail || "Le réglage n'a pas pu être enregistré."); return }
+    await charger(true)
+  }
+
+  /** Réessayer les fichiers écartés (audit D-27) : un délai ponctuel ne doit
+   *  pas exclure un document pour toujours. Appliqué au prochain palier. */
+  async function reprendre() {
+    setErreur(""); setBilan("")
+    const r = await fetch(`${apiUrl}/api/nas-tri/reprendre`, {
+      method: "POST", headers: entetes, body: JSON.stringify({ tout: toutReprendre }),
+    })
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) { setErreur(d.detail || "La reprise n'a pas pu être demandée."); return }
+    setBilan("Reprise demandée : ces fichiers seront rouverts dès la prochaine synchronisation.")
     await charger(true)
   }
 
@@ -113,7 +134,9 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
       <p style={{ fontSize: 13, color: "var(--marque-text-body)", margin: "0 0 14px", maxWidth: 760 }}>
         Au lieu d'ouvrir tout le serveur, l'IA propose un tri des <b>dossiers</b> d'après leurs noms, sans rien lire :
         à apprendre, à la demande (l'assistant l'ouvre seulement si on le lui demande), ou à ignorer. Vous corrigez, puis
-        validez. Les photos, les copies d'un même fichier et les fichiers trop anciens sont écartés sans IA, et les PDF
+        validez. <b>Toujours apprendre</b> lit le dossier quel que soit l'âge des fichiers (trames, procédures,
+        référentiels). Les photos et les fichiers trop anciens sont écartés sans IA ; une copie possible (même nom, même
+        taille) est lue <b>après</b> les originaux et reconnue à son contenu — elle garde son dossier et ses droits. Les PDF
         scannés sont lus la nuit ({etat ? `${etat.nuit.debut} h – ${etat.nuit.fin} h` : "…"}). Rien n'est supprimé.
       </p>
 
@@ -121,7 +144,9 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
         <div data-testid="tri-estimation" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14, fontSize: 12.5 }}>
           {[
             [`${nb(e.a_lire)} à lire`, true], [`${nb(e.demande)} à la demande`, false], [`${nb(e.ignorer)} ignorés`, false],
-            [`${nb(e.photo)} photos`, false], [`${nb(e.ancien)} anciens`, false], [`${nb(e.doublon)} doublons`, false],
+            [`${nb(e.photo)} photos`, false], [`${nb(e.ancien)} anciens`, false],
+            [`${nb(e.doublon)} copies possibles, lues en dernier`, false],
+            ...(e.toujours ? [[`${nb(e.toujours)} toujours appris`, false] as [string, boolean]] : []),
             [`${nb(e.total)} fichiers au total`, false],
           ].map(([t, fort]) => (
             <span key={String(t)} style={{ padding: "4px 10px", borderRadius: "var(--marque-radius-pill)", border: "1px solid var(--marque-border)",
@@ -148,6 +173,27 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
                    : etat.continu.prochain ? `Prochain palier vers ${new Date(etat.continu.prochain * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}.` : "Premier palier dans quelques minutes.")
               : "Coupée : le NAS n'est lu que lorsque vous lancez la synchronisation."}
           </span>
+        </div>
+      )}
+      {etat?.ecartes && etat.ecartes.total > 0 && (
+        <div data-testid="tri-ecartes" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10,
+                                                margin: "0 0 14px", padding: "10px 12px",
+                                                border: "1px solid var(--marque-border)", borderRadius: 10 }}>
+          <span style={{ fontSize: 12.5, color: "var(--marque-text-body)" }}>
+            <b>{nb(etat.ecartes.total)} fichier(s) écarté(s)</b> — {nb(etat.ecartes.sans_texte)} sans texte lisible
+            (relus seulement s'ils changent), {nb(etat.ecartes.a_retenter)} à réessayer
+            {etat.ecartes.prets > 0 ? ` dont ${nb(etat.ecartes.prets)} au prochain palier` : ""}
+            {etat.ecartes.prochain
+              ? `, le suivant le ${new Date(etat.ecartes.prochain * 1000).toLocaleDateString("fr-FR")}` : ""}.
+            {etat.reprise_demandee ? " Une reprise est déjà demandée : elle s'applique au prochain palier." : ""}
+          </span>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
+            <input type="checkbox" checked={toutReprendre} onChange={(ev) => setToutReprendre(ev.target.checked)} />
+            y compris ceux sans texte
+          </label>
+          <button type="button" className="sym-tap" onClick={reprendre} style={bouton(false)} data-testid="tri-reprendre">
+            Réessayer ces fichiers
+          </button>
         </div>
       )}
       {etat && !etat.estimation && (

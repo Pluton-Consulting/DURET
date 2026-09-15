@@ -397,6 +397,7 @@ async def _telecharger(client, base: str, sid: str, chemin: str) -> Optional[byt
 # une seule façon de voir le NAS, pas deux qui divergent.
 
 import asyncio as _asyncio
+import hashlib as _hashlib
 
 # Quatre fichiers de front : assez pour ne pas attendre le réseau fichier par
 # fichier, pas assez pour saturer le NAS ni l'OCR (CPU) du serveur.
@@ -431,7 +432,6 @@ DELAI_LECTURE_S = 180
 # NAS peut dépasser. Au-delà, l'identifiant garde une empreinte stable du
 # chemin complet et sa FIN (le nom du fichier reste lisible).
 MAX_SOURCE_ID = 255
-FICHIER_ECARTES = "nas_ecartes.json"
 
 
 def _niveau_nas(chemin: str) -> str:
@@ -476,30 +476,17 @@ def _inchange(entree: dict, derniere_ingestion) -> bool:
     return d >= modifie
 
 
-def _chemin_ecartes():
-    """Les fichiers écartés vivent dans le volume des documents : la mémoire
-    survit au redéploiement, c'est tout son intérêt."""
-    import os
-    import pathlib
-    return pathlib.Path(os.environ.get("DOCUMENTS_DIR", "/tmp/duret-documents")) / FICHIER_ECARTES
-
-
 def _lire_ecartes() -> dict:
-    import json
-    try:
-        return dict(json.loads(_chemin_ecartes().read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return {}
+    """Les fichiers écartés et pourquoi. La mémoire vit dans le volume des
+    documents (`nas/tri.py`) : elle survit au redéploiement, c'est tout son
+    intérêt, et s'écrit atomiquement."""
+    from nas import tri
+    return tri.lire_ecartes()
 
 
 def _ecrire_ecartes(ecartes: dict) -> None:
-    import json
-    try:
-        chemin = _chemin_ecartes()
-        chemin.parent.mkdir(parents=True, exist_ok=True)
-        chemin.write_text(json.dumps(ecartes, ensure_ascii=False), encoding="utf-8")
-    except OSError as e:  # noqa: BLE001 — une mémoire d'appoint ne casse pas une synchro
-        logger.warning("NAS : mémoire des fichiers écartés non écrite : %s", e)
+    from nas import tri
+    tri.ecrire_ecartes(ecartes)
 
 
 async def _dates_ingerees() -> dict:
@@ -587,19 +574,24 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
 
     connus = await _dates_ingerees()
     ecartes = _lire_ecartes()
+    # UNE REPRISE DEMANDÉE À L'ÉCRAN (16/09, audit D-27) s'applique ici, avant
+    # le tri : la synchronisation qui tournait pendant la demande l'aurait écrasée.
+    repris = tri.appliquer_reprise(ecartes)
+    empreintes = tri.lire_empreintes()
+    index_empreintes = tri.index_des_empreintes(empreintes)
     # LE TRI AVANT LA LECTURE (15/09, `nas/tri.py`) : ce que l'administrateur a
-    # validé (« à la demande », « ignorer ») n'est pas ouvert ; les photos, les
-    # copies d'un même fichier et ce qui a plus de `nas_tri_age_ans` ans non plus.
+    # validé (« à la demande », « ignorer ») n'est pas ouvert ; les photos et ce
+    # qui a plus de `nas_tri_age_ans` ans non plus (sauf « toujours apprendre »).
     # Les PDF scannés attendent la nuit : l'OCR de jour a déjà mis l'application
     # à genoux.
     regles_tri, age_max, maintenant = tri.regles(), tri.age_ans(), __import__("time").time()
-    en_double = tri.doublons(fichiers)
     differes = tri.ocr_differe()
     de_nuit = tri.fenetre_de_nuit()
     bilan = {"format_non_lu": 0, "trop_volumineux": 0, "inchangés": 0,
              "déjà_écartés": 0, "sans_texte": 0, "trop_lents": 0,
-             "à_la_demande": 0, "ignorés": 0, "photos": 0, "anciens": 0, "doublons": 0,
-             "scans_remis_à_la_nuit": 0}
+             "à_la_demande": 0, "ignorés": 0, "photos": 0, "anciens": 0,
+             "scans_remis_à_la_nuit": 0, "copies_possibles": 0, "copies_reconnues": 0,
+             "retentés": 0, "repris_à_la_main": repris}
     a_lire = []
     for f in fichiers:
         nom = str(f.get("nom") or f["chemin"].rsplit("/", 1)[-1])
@@ -610,12 +602,9 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
         if decision == "ignorer":
             bilan["ignorés"] += 1
             continue
-        raison_tri = tri.ecarte_sans_ia(f, maintenant, age_max)
+        raison_tri = tri.ecarte_sans_ia(f, maintenant, tri.age_applicable(decision, age_max))
         if raison_tri:
             bilan["photos" if raison_tri == "photo" else "anciens"] += 1
-            continue
-        if f["chemin"] in en_double:
-            bilan["doublons"] += 1
             continue
         if not de_nuit and f["chemin"] in differes and differes[f["chemin"]] == f.get("modifie"):
             bilan["scans_remis_à_la_nuit"] += 1   # déjà repéré : il attend la nuit
@@ -629,20 +618,43 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
         if _inchange(f, connus.get(_source_id(f["chemin"]))):
             bilan["inchangés"] += 1
             continue
-        if ecartes.get(f["chemin"]) and ecartes[f["chemin"]] == f.get("modifie"):
-            bilan["déjà_écartés"] += 1            # écarté à un passage précédent, inchangé depuis
+        deja_ecarte = ecartes.get(f["chemin"])
+        if tri.reste_ecarte(deja_ecarte, f.get("modifie"), maintenant):
+            bilan["déjà_écartés"] += 1            # écarté, inchangé, son prochain essai n'est pas venu
             continue
+        if deja_ecarte is not None and tri.fiche_ecartee(deja_ecarte).get("modifie") == f.get("modifie"):
+            bilan["retentés"] += 1                # écarté pour un motif passager : son essai est venu
         a_lire.append((f, nom))
     # Les plus récents d'abord : une synchro interrompue a au moins lu les
-    # affaires en cours.
-    a_lire.sort(key=lambda fn: float(fn[0].get("modifie") or 0), reverse=True)
+    # affaires en cours. Les COPIES POSSIBLES (même nom, même taille qu'un
+    # fichier plus récent) passent en dernier : l'original une fois lu, une
+    # vraie copie se reconnaît à son empreinte et ne coûte qu'un téléchargement.
+    copies = tri.copies_possibles([f for f, _ in a_lire])
+    par_date = lambda fn: -float(fn[0].get("modifie") or 0)  # noqa: E731
+    originaux = sorted((fn for fn in a_lire if fn[0]["chemin"] not in copies), key=par_date)
+    copies_a_lire = sorted((fn for fn in a_lire if fn[0]["chemin"] in copies), key=par_date)
+    bilan["copies_possibles"] = len(copies_a_lire)
+    a_lire = originaux + copies_a_lire
+    # DEUX GROUPES DE PAQUETS, jamais mélangés : quatre fichiers sont lus de
+    # front, et une copie logée dans le même paquet que son original serait lue
+    # en même temps que lui — elle ne pourrait pas reconnaître un contenu pas
+    # encore rangé, et le travail serait fait deux fois.
+    lots = ([originaux[i:i + PAQUET] for i in range(0, len(originaux), PAQUET)]
+            + [copies_a_lire[i:i + PAQUET] for i in range(0, len(copies_a_lire), PAQUET)])
 
     logger.info("NAS : %d fichier(s) au catalogue, %d à lire (%s)", total, len(a_lire), bilan)
     # ÉTAPE 2 / 2 — LE TRI, puis l'ouverture : ce qui sera ouvert, et pourquoi
     # le reste ne l'est pas, dit AVANT le premier fichier.
-    ecartes_txt = " · ".join(f"{n} {k.replace('_', ' ')}" for k, n in bilan.items() if n)
+    dans_la_file = ("copies_possibles", "copies_reconnues", "retentés", "repris_à_la_main")
+    ecartes_txt = " · ".join(f"{n} {k.replace('_', ' ')}" for k, n in bilan.items()
+                             if n and k not in dans_la_file)
+    dont = [texte for texte, n in (
+        (f"{bilan['copies_possibles']} copie(s) possible(s), lue(s) en dernier", bilan["copies_possibles"]),
+        (f"{bilan['retentés']} fichier(s) écarté(s) retenté(s)", bilan["retentés"]),
+        (f"{repris} fichier(s) repris à la demande de l'écran", repris)) if n]
     await _prevenir(0, len(a_lire),
                     f"{total} fichiers au catalogue · {len(a_lire)} à ouvrir"
+                    + (f" (dont {' ; '.join(dont)})" if dont else "")
                     + (f" · {ecartes_txt}" if ecartes_txt else "")
                     + ("" if a_lire else " · rien de nouveau à ouvrir"))
     compte = {"traites": 0, "ingeres": 0, "erreurs": 0}
@@ -684,8 +696,11 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
             attendu += ATTENTE_CHARGE_S
         pause_totale[0] += attendu
 
-    def _ecarter(f):
-        ecartes[f["chemin"]] = f.get("modifie")
+    def _ecarter(f, raison):
+        # Une FICHE, plus une simple date (audit D-27) : le motif, le compte des
+        # essais et le prochain — un délai ponctuel n'écarte plus pour toujours.
+        ecartes[f["chemin"]] = tri.noter_ecarte(ecartes.get(f["chemin"]), f.get("modifie"),
+                                                raison, _time.time())
 
     async def _un(f, nom):
         async with porte:
@@ -699,6 +714,38 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
                     compte["erreurs"] += 1
                     logger.info("NAS : %s non téléchargé (%s)", f["chemin"], raison)
                     return
+                source_id = _source_id(f["chemin"])
+                empreinte = _hashlib.sha256(brut).hexdigest()
+                origine = index_empreintes.get(empreinte)
+                if origine and origine[0] != source_id:
+                    # UNE VRAIE COPIE (16/09, audit D-27) : le même contenu qu'une
+                    # source déjà lue. Elle garde SA source, SON nom et SON niveau
+                    # d'accès — un même CCTP dans deux affaires ne fusionne pas
+                    # leurs droits —, sans relecture ni nouvel embedding.
+                    if origine[1] == tri.MOTIF_STABLE:
+                        bilan["sans_texte"] += 1
+                        bilan["copies_reconnues"] += 1
+                        _ecarter(f, tri.MOTIF_STABLE)
+                        tri.noter_empreinte(empreintes, index_empreintes, source_id, empreinte,
+                                            tri.MOTIF_STABLE)
+                        return
+                    morceaux = 0
+                    try:
+                        from ingestion.pipeline import copier_document
+                        morceaux = await copier_document(origine[0], settings.synology_source_type,
+                                                         source_id, nom, _niveau_nas(f["chemin"]))
+                    except Exception as e:  # noqa: BLE001 — une copie ratée se rattrape en relisant
+                        logger.info("NAS : copie de %s non reprise (%s) — relecture", f["chemin"], e)
+                    if morceaux:
+                        compte["ingeres"] += 1
+                        bilan["copies_reconnues"] += 1
+                        ecartes.pop(f["chemin"], None)
+                        differes.pop(f["chemin"], None)
+                        tri.noter_empreinte(empreintes, index_empreintes, source_id, empreinte, "ingere")
+                        return
+                    # L'original n'a plus ses morceaux en base : l'index ne vaut
+                    # plus rien pour ce contenu, on relit le fichier.
+                    index_empreintes.pop(empreinte, None)
                 try:
                     # `en_lecture`, pas `wait_for(to_thread(…))` (15/09) : l'ancienne
                     # forme abandonnait l'attente sans arrêter l'OCR, et les lectures
@@ -720,11 +767,12 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
                         differes[f["chemin"]] = f.get("modifie")
                         return
                     bilan["trop_lents"] += 1
-                    _ecarter(f)
+                    _ecarter(f, "trop_lent")
                     return
                 except FichierNonSupporte:
                     bilan["sans_texte"] += 1          # image sans texte, PDF vide…
-                    _ecarter(f)
+                    _ecarter(f, tri.MOTIF_STABLE)
+                    tri.noter_empreinte(empreintes, index_empreintes, source_id, empreinte, tri.MOTIF_STABLE)
                     return
                 if structure["kind"] == "tabulaire":
                     texte = "\n\n".join(ligne_en_texte(l) for l in structure["rows"])
@@ -732,15 +780,18 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
                     texte = structure.get("text") or ""
                 if not texte.strip():
                     bilan["sans_texte"] += 1
-                    _ecarter(f)
+                    _ecarter(f, tri.MOTIF_STABLE)
+                    tri.noter_empreinte(empreintes, index_empreintes, source_id, empreinte, tri.MOTIF_STABLE)
                     return
                 if await ingest_document(
                         text=texte, source_type=settings.synology_source_type,
-                        source_id=_source_id(f["chemin"]), source_filename=nom,
+                        source_id=source_id, source_filename=nom,
                         # Le niveau de SON dossier (Paramètres, 13/09), plus un
                         # niveau unique pour tout le serveur.
                         access_level=_niveau_nas(f["chemin"])):
                     compte["ingeres"] += 1
+                    ecartes.pop(f["chemin"], None)
+                    tri.noter_empreinte(empreintes, index_empreintes, source_id, empreinte, "ingere")
                 else:
                     compte["erreurs"] += 1
                 temps["telechargement"] += t1 - t0
@@ -766,12 +817,14 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
         # un redémarrage entre deux paliers ne perd rien (lecture incrémentale).
         palier_s = max(1, int(getattr(settings, "nas_palier_minutes", 10) or 10)) * 60
         pause_s = max(0, int(getattr(settings, "nas_pause_minutes", 3) or 0)) * 60
-        debut_palier, palier = _time.monotonic(), 1
-        for i in range(0, len(a_lire), PAQUET):
-            await _asyncio.gather(*[_un(f, nom) for f, nom in a_lire[i:i + PAQUET]])
+        debut_palier, palier, faits = _time.monotonic(), 1, 0
+        for lot in lots:
+            await _asyncio.gather(*[_un(f, nom) for f, nom in lot])
+            faits += len(lot)
             _ecrire_ecartes(ecartes)
             tri.ecrire_ocr_differe(differes)
-            reste = len(a_lire) - (i + PAQUET)
+            tri.ecrire_empreintes(empreintes)
+            reste = len(a_lire) - faits
             # UN PALIER AUTOMATIQUE S'ARRÊTE À SON TEMPS (`budget_s`) : ce qui est
             # lu est déjà rangé en base, la suite viendra au palier suivant.
             if budget_s and reste > 0 and _time.monotonic() - debut_sync >= budget_s:
@@ -790,10 +843,19 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
                 pause_totale[0] += pause_s
                 debut_palier, palier = _time.monotonic(), palier + 1
     finally:
+        # Un fichier DISPARU du NAS quitte les listes — mais seulement sur un
+        # relevé COMPLET de tout le serveur (16/09, audit D-27) : un parcours
+        # interrompu, ou restreint à un dossier, ne prouve aucune disparition.
+        # (Avant, un essai sur un seul dossier vidait la liste de la nuit.)
+        if complet and not dossiers:
+            presents = {f["chemin"] for f in fichiers}
+            sources_presentes = {_source_id(c) for c in presents}
+            differes = {c: m for c, m in differes.items() if c in presents}
+            ecartes = {c: v for c, v in ecartes.items() if c in presents}
+            empreintes = {sid: v for sid, v in empreintes.items() if sid in sources_presentes}
         _ecrire_ecartes(ecartes)
-        # Un scan lu (ou disparu du NAS) quitte la liste de la nuit.
-        presents = {f["chemin"] for f in fichiers}
-        tri.ecrire_ocr_differe({c: m for c, m in differes.items() if c in presents})
+        tri.ecrire_ocr_differe(differes)
+        tri.ecrire_empreintes(empreintes)
 
     resultat = {"fichiers": total, "ouverts": compte["traites"],
                 "ingérés": compte["ingeres"], "erreurs": compte["erreurs"],

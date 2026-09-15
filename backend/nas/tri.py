@@ -10,15 +10,21 @@ l'OUVERTURE : faire lire un fichier à l'IA pour juger s'il est utile, c'est
 déjà l'avoir payé. On trie donc sur ce qui ne coûte rien à lire : les noms.
 
 TROIS FILTRES, du moins cher au plus cher :
-  1. SANS IA — photos (pas de texte à apprendre), doublons (même nom, même
-     taille : on n'en lit qu'un, le plus récent), fichiers plus vieux que
-     `nas_tri_age_ans` (3 ans par défaut, 0 = aucune limite) ;
+  1. SANS IA — photos (pas de texte à apprendre), fichiers plus vieux que
+     `nas_tri_age_ans` (3 ans par défaut, 0 = aucune limite ; un dossier
+     « toujours apprendre » y échappe). Les COPIES POSSIBLES (même nom, même
+     taille) ne sont plus écartées (16/09, audit D-27) : deux CCTP différents
+     peuvent partager nom et taille. Elles sont lues APRÈS les originaux, et
+     une vraie copie se reconnaît à l'EMPREINTE de son contenu : ses morceaux
+     sont repris sans relecture, sous SA source et à SON niveau d'accès ;
   2. L'IA JUGE LES DOSSIERS, pas les fichiers : leur chemin, leurs sous-
      dossiers, quelques noms de fichiers, leur date la plus récente. Par lots,
      du premier degré vers le bas : « apprendre », « à la demande »,
      « ignorer », ou « détailler » (ses sous-dossiers seront jugés à leur tour).
      Quelques dizaines d'appels au lieu de milliers. C'est une PROPOSITION :
-     l'administrateur la valide dans Paramètres → Synchronisations ;
+     l'administrateur la valide dans Paramètres → Synchronisations, et peut
+     choisir « toujours apprendre » (trames, procédures, référentiels : lus
+     quel que soit leur âge — ce choix n'appartient qu'à lui, jamais à l'IA) ;
   3. LA LECTURE (connecteur `synology`) ne porte plus que sur « apprendre »,
      les affaires récentes d'abord ; un PDF scanné est remis à la NUIT, où
      l'OCR ne gêne personne.
@@ -48,7 +54,11 @@ logger = logging.getLogger("duret.nas.tri")
 
 REGLAGE = "nas_tri"
 REGLAGE_AGE = "nas_tri_age_ans"
-DECISIONS = ("apprendre", "demande", "ignorer")
+# « toujours » : à apprendre QUEL QUE SOIT L'ÂGE (16/09, audit D-27) — une
+# trame de 2019 encore en service ne doit pas tomber sous le filtre des 3 ans.
+DECISIONS = ("apprendre", "toujours", "demande", "ignorer")
+# Ce que l'IA peut proposer : « toujours » est un choix d'administrateur.
+DECISIONS_IA = ("apprendre", "demande", "ignorer")
 DECISION_DEFAUT = "apprendre"
 MAX_REGLES = 2000
 
@@ -122,10 +132,20 @@ def ecarte_sans_ia(entree: dict, maintenant: float, age_ans: int) -> Optional[st
     return None
 
 
-def doublons(fichiers: list[dict]) -> set:
-    """Les chemins à NE PAS lire parce qu'une copie identique (même nom, même
-    taille) est lue ailleurs — on garde la plus récente. Sans taille connue,
-    rien n'est tenu pour doublon : deux « CCTP.pdf » ne sont pas le même."""
+def age_applicable(decision: str, age_ans: int) -> int:
+    """L'âge maximal qui s'applique sous cette décision : aucun pour « toujours »."""
+    return 0 if decision == "toujours" else age_ans
+
+
+def copies_possibles(fichiers: list[dict]) -> set:
+    """Les chemins qui PEUVENT être la copie d'un fichier plus récent : même
+    nom, même taille. UN SOUPÇON, JAMAIS UNE PREUVE (16/09, audit D-27) —
+    l'ancien filtre écartait ces fichiers pour de bon, et deux CCTP différents
+    de même nom et de même taille faisaient perdre l'un des deux. Ils sont
+    désormais lus APRÈS les originaux ; la synchronisation reconnaît une vraie
+    copie à l'empreinte de son contenu. Sans taille connue, aucun soupçon.
+    À appeler sur les fichiers QUI SERONT LUS : un « original » écarté par le
+    tri ne doit pas faire passer sa copie en fin de file."""
     groupes: dict[tuple, list[dict]] = {}
     for f in fichiers:
         taille = f.get("octets")
@@ -241,7 +261,7 @@ def lire_decisions(brut, lot_chemins: list[str]) -> dict:
         decision = str(item.get("decision") or "").strip().lower().replace("é", "e")
         if decision == "a la demande":
             decision = "demande"
-        if not vrai or decision not in DECISIONS + ("detailler",):
+        if not vrai or decision not in DECISIONS_IA + ("detailler",):
             continue
         sortie[vrai] = (decision, str(item.get("raison") or "").strip()[:160])
     return sortie
@@ -249,29 +269,33 @@ def lire_decisions(brut, lot_chemins: list[str]) -> dict:
 
 def estimer(entrees: list[dict], regles: list[dict], age_ans: int, maintenant: float) -> dict:
     """Combien de fichiers seraient lus, laissés à la demande, ignorés, écartés
-    sans IA — sur le catalogue, sans rien ouvrir. Sert l'écran."""
+    sans IA — sur le catalogue, sans rien ouvrir. Sert l'écran.
+    `doublon` compte, PARMI les fichiers à lire, les copies possibles : elles
+    sont lues en dernier, plus écartées (audit D-27)."""
     from ingestion.parsers import famille
     fichiers = [e for e in entrees if not e.get("dossier") and e.get("chemin")]
     compte = {"a_lire": 0, "demande": 0, "ignorer": 0, "photo": 0, "ancien": 0,
-              "doublon": 0, "format_non_lu": 0}
-    en_double = doublons(fichiers)
+              "doublon": 0, "format_non_lu": 0, "toujours": 0}
+    lisibles = []
     for f in fichiers:
         decision = decision_du_chemin(f["chemin"], regles)
-        if decision != "apprendre":
+        if decision in ("demande", "ignorer"):
             compte[decision] += 1
             continue
         nom = str(f.get("nom") or f["chemin"].rsplit("/", 1)[-1])
         if famille(nom) is None:
             compte["format_non_lu"] += 1
             continue
-        raison = ecarte_sans_ia(f, maintenant, age_ans)
+        raison = ecarte_sans_ia(f, maintenant, age_applicable(decision, age_ans))
         if raison:
             compte[raison] += 1
             continue
-        if f["chemin"] in en_double:
-            compte["doublon"] += 1
-            continue
-        compte["a_lire"] += 1
+        if decision == "toujours":
+            compte["toujours"] += 1
+        lisibles.append(f)
+    copies = copies_possibles(lisibles)
+    compte["a_lire"] = len(lisibles)
+    compte["doublon"] = sum(1 for f in lisibles if f["chemin"] in copies)
     compte["total"] = len(fichiers)
     return compte
 
@@ -334,10 +358,15 @@ def lire_json(nom: str, defaut):
 
 
 def ecrire_json(nom: str, contenu) -> None:
+    """Écriture ATOMIQUE (16/09, audit D-27) : un fichier temporaire puis un
+    renommage. Un arrêt au milieu d'une écriture laissait un JSON tronqué, relu
+    ensuite comme vide — toute la mémoire des scans remis à la nuit perdue."""
     try:
         f = _fichier(nom)
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(contenu, ensure_ascii=False), encoding="utf-8")
+        temporaire = f.with_name(f"{f.name}.{os.getpid()}.tmp")
+        temporaire.write_text(json.dumps(contenu, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporaire, f)
     except OSError as e:  # noqa: BLE001
         logger.warning("NAS : %s non écrit : %s", nom, e)
 
@@ -460,6 +489,187 @@ async def boucle_de_nuit() -> None:
         except Exception as e:  # noqa: BLE001 — la boucle ne meurt jamais
             logger.warning("NAS : passage de nuit impossible : %s", e)
         await asyncio.sleep(900)
+
+
+# ── LES FICHIERS ÉCARTÉS SE RETENTENT (16/09, audit D-27) ──────────────────
+# Un fichier « trop lent » la nuit restait écarté tant que sa date ne changeait
+# pas : un NAS saturé un soir suffisait à perdre un CCTP pour toujours. Il est
+# désormais retenté après 1, 3, 7 puis tous les 30 jours, avec le compte des
+# essais, et l'écran permet de le reprendre à la main. « Sans texte » (image
+# sans texte, PDF vide) est un motif STABLE : pas de nouvel essai tant que le
+# fichier ne change pas — sauf reprise demandée pour tout.
+DELAIS_REESSAI_J = (1, 3, 7, 30)
+MOTIF_STABLE = "sans_texte"
+FICHIER_REPRISE = "nas_reprise_demandee.json"
+# La mémoire des écartés vit ici avec les autres (une seule écriture atomique,
+# un seul endroit qui connaît le volume des documents) ; le connecteur la lit
+# par `_lire_ecartes`, l'écran par `resume_ecartes`.
+FICHIER_ECARTES = "nas_ecartes.json"
+
+
+def lire_ecartes() -> dict:
+    brut = lire_json(FICHIER_ECARTES, {})
+    return dict(brut) if isinstance(brut, dict) else {}
+
+
+def ecrire_ecartes(ecartes: dict) -> None:
+    ecrire_json(FICHIER_ECARTES, ecartes)
+
+
+def fiche_ecartee(valeur) -> dict:
+    """La fiche d'un fichier écarté. L'ancien format (la seule date de
+    modification) ne disait pas le motif : vrai « sans texte » ou délai
+    ponctuel ? Dans le doute, la fiche est à RETENTER une fois."""
+    if isinstance(valeur, dict):
+        return valeur
+    return {"modifie": valeur, "raison": "inconnue", "tentatives": 0, "prochain": 0}
+
+
+def reste_ecarte(valeur, modifie, maintenant: float) -> bool:
+    """Ce fichier écarté doit-il encore attendre ? Fonction PURE."""
+    if valeur is None:
+        return False
+    fiche = fiche_ecartee(valeur)
+    if fiche.get("modifie") != modifie:
+        return False                      # le fichier a changé : on le relit
+    if fiche.get("raison") == MOTIF_STABLE:
+        return True
+    try:
+        return maintenant < float(fiche.get("prochain") or 0)
+    except (TypeError, ValueError):
+        return False
+
+
+def noter_ecarte(ancienne, modifie, raison: str, maintenant: float) -> dict:
+    """La fiche après un échec : le compte des essais et la date du prochain."""
+    fiche = fiche_ecartee(ancienne) if ancienne is not None else {}
+    meme_fichier = fiche.get("modifie") == modifie
+    tentatives = (int(fiche.get("tentatives") or 0) if meme_fichier else 0) + 1
+    delai = DELAIS_REESSAI_J[min(tentatives, len(DELAIS_REESSAI_J)) - 1] * 86400
+    return {"modifie": modifie, "raison": raison, "tentatives": tentatives, "dernier": maintenant,
+            "prochain": 0 if raison == MOTIF_STABLE else maintenant + delai}
+
+
+def resume_ecartes(ecartes: dict, maintenant: float) -> dict:
+    """Ce que l'écran montre des fichiers écartés : combien, pourquoi, et le
+    prochain essai. Quelques exemples, jamais la liste entière."""
+    resume = {"total": 0, "sans_texte": 0, "a_retenter": 0, "prets": 0, "prochain": None, "exemples": []}
+    for chemin, valeur in (ecartes or {}).items():
+        fiche = fiche_ecartee(valeur)
+        resume["total"] += 1
+        if fiche.get("raison") == MOTIF_STABLE:
+            resume["sans_texte"] += 1
+            continue
+        resume["a_retenter"] += 1
+        try:
+            prochain = float(fiche.get("prochain") or 0)
+        except (TypeError, ValueError):
+            prochain = 0.0
+        if prochain <= maintenant:
+            resume["prets"] += 1
+        elif resume["prochain"] is None or prochain < resume["prochain"]:
+            resume["prochain"] = prochain
+        if len(resume["exemples"]) < 5:
+            resume["exemples"].append({"chemin": chemin, "raison": fiche.get("raison"),
+                                       "tentatives": fiche.get("tentatives", 0)})
+    return resume
+
+
+def demander_reprise(tout: bool = False) -> dict:
+    """Enregistre une reprise à la main. Elle s'applique au DÉBUT de la
+    prochaine synchronisation : celle qui tourne garde sa liste en mémoire et
+    l'écraserait en l'écrivant."""
+    demande = {"le": time.time(), "tout": bool(tout)}
+    ecrire_json(FICHIER_REPRISE, demande)
+    _CONTINU["rien_a_lire"] = False
+    return demande
+
+
+def reprise_en_attente() -> Optional[dict]:
+    demande = lire_json(FICHIER_REPRISE, None)
+    return demande if isinstance(demande, dict) else None
+
+
+def appliquer_reprise(ecartes: dict) -> int:
+    """Applique la reprise demandée, s'il y en a une, et l'efface. Les fichiers
+    à retenter le sont tout de suite ; avec « tout », les « sans texte » aussi
+    (leur fiche disparaît : le fichier redevient un fichier ordinaire)."""
+    demande = reprise_en_attente()
+    if not demande:
+        return 0
+    repris = 0
+    for chemin, valeur in list(ecartes.items()):
+        fiche = fiche_ecartee(valeur)
+        if fiche.get("raison") == MOTIF_STABLE:
+            if demande.get("tout"):
+                ecartes.pop(chemin, None)
+                repris += 1
+            continue
+        ecartes[chemin] = {**fiche, "prochain": 0}
+        repris += 1
+    try:
+        _fichier(FICHIER_REPRISE).unlink()
+    except OSError:
+        pass
+    return repris
+
+
+# ── L'EMPREINTE DU CONTENU (16/09, audit D-27) ─────────────────────────────
+# Une copie ne se reconnaît pas à son nom : elle se reconnaît à ses octets.
+# `nas_empreintes.json` retient, pour chaque source lue, l'empreinte SHA-256 de
+# ce qui a été lu et son issue (« ingere » : ses morceaux sont en base ;
+# « sans_texte »). Une source relue avec un autre contenu remplace sa fiche :
+# l'index ne désigne jamais une source dont la base porte autre chose.
+FICHIER_EMPREINTES = "nas_empreintes.json"
+ISSUES_EMPREINTE = ("ingere", "sans_texte")
+
+
+def lire_empreintes() -> dict:
+    """source_id → [empreinte, issue]."""
+    brut = lire_json(FICHIER_EMPREINTES, {})
+    return brut if isinstance(brut, dict) else {}
+
+
+def ecrire_empreintes(empreintes: dict) -> None:
+    ecrire_json(FICHIER_EMPREINTES, empreintes)
+
+
+def _fiche_empreinte(valeur) -> Optional[tuple]:
+    if isinstance(valeur, list) and len(valeur) == 2 and valeur[1] in ISSUES_EMPREINTE and valeur[0]:
+        return str(valeur[0]), str(valeur[1])
+    return None
+
+
+def _indexer(index: dict, empreinte: str, source_id: str, issue: str) -> None:
+    deja = index.get(empreinte)
+    # Une source LUE l'emporte sur une « sans texte » : c'est elle qu'on recopie.
+    if deja is None or (issue == "ingere" and deja[1] != "ingere"):
+        index[empreinte] = (source_id, issue)
+
+
+def index_des_empreintes(empreintes: dict) -> dict:
+    """empreinte → (source_id, issue). Fonction PURE."""
+    index: dict = {}
+    for source_id, valeur in (empreintes or {}).items():
+        fiche = _fiche_empreinte(valeur)
+        if fiche:
+            _indexer(index, fiche[0], source_id, fiche[1])
+    return index
+
+
+def noter_empreinte(empreintes: dict, index: dict, source_id: str, empreinte: str, issue: str) -> None:
+    """Retient ce qu'une source porte désormais. Si elle portait autre chose,
+    l'ancienne empreinte ne la désigne plus : une autre source identique
+    reprend sa place dans l'index, ou l'entrée disparaît."""
+    ancienne = _fiche_empreinte(empreintes.get(source_id))
+    empreintes[source_id] = [empreinte, issue]
+    if ancienne and ancienne[0] != empreinte and (index.get(ancienne[0]) or (None,))[0] == source_id:
+        index.pop(ancienne[0], None)
+        for autre, valeur in empreintes.items():
+            fiche = _fiche_empreinte(valeur)
+            if autre != source_id and fiche and fiche[0] == ancienne[0]:
+                _indexer(index, fiche[0], autre, fiche[1])
+    _indexer(index, empreinte, source_id, issue)
 
 
 # ── L'INTÉGRATION CONTINUE : un palier toutes les 10 minutes (15/09) ───────

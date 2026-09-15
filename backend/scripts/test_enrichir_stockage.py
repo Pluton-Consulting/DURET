@@ -477,7 +477,10 @@ else:
 
     async def _telecharger_ou_raison(client, base, sid, chemin):
         TELECHARGES.append(chemin)
-        return b"contenu", ""
+        # Un contenu PAR fichier (16/09, audit D-27) : la synchronisation
+        # reconnaît désormais une copie à son empreinte, et 251 fichiers aux
+        # octets identiques y passeraient pour 250 copies d'un seul.
+        return f"contenu de {chemin}".encode("utf-8"), ""
 
     poser("config", settings=types.SimpleNamespace(
         synology_folders="/home,/Drive", synology_access_level="all",

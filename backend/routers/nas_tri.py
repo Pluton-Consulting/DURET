@@ -64,6 +64,11 @@ async def lire(current_user: User = Depends(get_current_user)):
         "estimation": tri.estimer(cat, regles, tri.age_ans(), time.time()) if cat else None,
         "catalogue": _CATALOGUE.get("etat"),
         "ocr_differe": len(tri.ocr_differe()),
+        # Les fichiers écartés et POURQUOI (16/09, audit D-27) : un « sans
+        # texte » attend un changement du fichier, un « trop lent » attend son
+        # prochain essai — et l'écran permet de le reprendre tout de suite.
+        "ecartes": tri.resume_ecartes(tri.lire_ecartes(), time.time()),
+        "reprise_demandee": tri.reprise_en_attente(),
         "continu": {**tri.etat_continu(),
                     "cycle_minutes": int(getattr(settings, "nas_cycle_minutes", 10)),
                     "palier_minutes": int(getattr(settings, "nas_palier_lecture_minutes", 8))},
@@ -88,6 +93,24 @@ async def proposer(current_user: User = Depends(get_current_user)):
 
 class ContinuBody(BaseModel):
     active: bool
+
+
+class RepriseBody(BaseModel):
+    tout: bool = False
+
+
+@router.post("/reprendre")
+async def reprendre(body: RepriseBody, current_user: User = Depends(get_current_user)):
+    """Réessayer les fichiers écartés. La demande est ENREGISTRÉE et appliquée
+    au début de la prochaine synchronisation : celle qui tourne garde sa liste
+    en mémoire et l'écraserait. Rien n'est supprimé ; « tout » rouvre aussi les
+    fichiers restés sans texte."""
+    _exiger(current_user)
+    from nas import tri
+    demande = tri.demander_reprise(bool(body.tout))
+    await log_action(action="nas_reprise_ecartes", user_id=str(current_user.id),
+                     metadata={"tout": bool(body.tout)})
+    return {"demandee": demande, "ecartes": tri.resume_ecartes(tri.lire_ecartes(), time.time())}
 
 
 @router.put("/continu")

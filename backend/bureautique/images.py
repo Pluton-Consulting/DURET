@@ -108,7 +108,7 @@ def _aire(rect) -> float:
         return 0.0
 
 
-def logo_du_pdf(octets: bytes, nom: str) -> tuple[bytes, str, str]:
+def logo_du_pdf(octets: bytes, nom: str, place: str = "") -> tuple[bytes, str, str]:
     """(octets, mime, nom) du logo d'un PDF : la plus grande image d'en-tête ou de pied.
 
     Lève `ImageRefusee` avec une raison lisible quand le PDF n'en porte pas —
@@ -162,16 +162,112 @@ def logo_du_pdf(octets: bytes, nom: str) -> tuple[bytes, str, str]:
         doc.close()
 
     if not candidats:
-        raise ImageRefusee(
-            f"« {nom} » ne porte aucune image d'en-tête ou de pied de page "
-            "exploitable (PDF de texte, ou page scannée d'un seul tenant). "
-            "Reprends son en-tête en TEXTE, ou donne le fichier du logo.")
-    candidats.sort(key=lambda c: -c[0])
-    _, donnees, mime, place = candidats[0]
-    return donnees, mime, f"{nom} ({place})"
+        # PAS D'IMAGE INTÉGRÉE : ON DESSINE LA PAGE (15/09). Deux cas vus en prod,
+        # refusés jusqu'ici : le logo de la maison livré en PDF VECTORIEL
+        # (« SYMBIOSE Paysage coul.pdf » — des tracés, aucune image) et le devis
+        # SCANNÉ dont on veut « récupérer l'en-tête et le pied de page ». La page
+        # est rendue en image et recadrée : sur le logo, tout ce qui est encré ;
+        # sur une page pleine, la bande du haut (en-tête) ou du bas (pied).
+        return rendu_du_pdf(octets, nom, place)
+    # La bande demandée d'abord (le pied pour un pied de page), puis la plus grande.
+    voulue = "pied de page" if place == "pied" else "en-tête"
+    candidats.sort(key=lambda c: (0 if c[3] == voulue else 1, -c[0]))
+    _, donnees, mime, place_trouvee = candidats[0]
+    return donnees, mime, f"{nom} ({place_trouvee})"
 
 
-async def resoudre(designation: str, user) -> tuple[bytes, str, str]:
+# Au-delà de cette part de la page, le contenu encré n'est pas un logo seul mais
+# une page de document : on n'en garde que la bande demandée.
+_PART_LOGO = 0.45
+_BANDE_MAX = 0.24       # une bande d'en-tête ou de pied ne dépasse pas ce quart
+_BLANC = 235            # au-dessus de ce gris, un pixel est du papier
+
+
+def _lignes_encrees(img) -> list[bool]:
+    """Pour chaque ligne de pixels, porte-t-elle de l'encre ?"""
+    largeur, hauteur = img.size
+    donnees = img.load()
+    pas = max(1, largeur // 400)
+    return [any(donnees[x, y] < _BLANC for x in range(0, largeur, pas)) for y in range(hauteur)]
+
+
+def _recadrer(img, boite, marge: int = 12):
+    x0, y0, x1, y1 = boite
+    return img.crop((max(0, x0 - marge), max(0, y0 - marge),
+                     min(img.size[0], x1 + marge), min(img.size[1], y1 + marge)))
+
+
+def rendu_du_pdf(octets: bytes, nom: str, place: str = "") -> tuple[bytes, str, str]:
+    """(octets PNG, mime, nom) : la page 1 du PDF dessinée et recadrée.
+
+    `place` : « pied » prend la bande du BAS d'une page pleine ; sinon celle du
+    HAUT. Un logo seul (peu d'encre sur la page) est rendu en entier, recadré.
+    """
+    try:
+        import fitz  # PyMuPDF
+        from PIL import Image, ImageOps
+    except ImportError as e:  # pragma: no cover — présents dans l'image
+        raise ImageRefusee(f"« {nom} » est un PDF, et son rendu est indisponible sur ce serveur") from e
+    import io
+    try:
+        doc = fitz.open(stream=octets, filetype="pdf")
+        page = doc[0]
+        pix = page.get_pixmap(dpi=200, alpha=False)
+        img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+        doc.close()
+    except Exception as e:  # noqa: BLE001
+        raise ImageRefusee(f"« {nom} » ne se dessine pas comme un PDF") from e
+    gris = ImageOps.grayscale(img)
+    boite = ImageOps.invert(gris).point(lambda v: 255 if v > 255 - _BLANC else 0).getbbox()
+    if not boite:
+        raise ImageRefusee(f"« {nom} » : la première page est blanche")
+    largeur, hauteur = img.size
+    part = ((boite[2] - boite[0]) * (boite[3] - boite[1])) / float(largeur * hauteur)
+    if part <= _PART_LOGO:
+        sortie, ou = _recadrer(img, boite), "logo"
+    else:
+        lignes = _lignes_encrees(gris)
+        limite = int(hauteur * _BANDE_MAX)
+        ordre = range(hauteur - 1, -1, -1) if place == "pied" else range(hauteur)
+        debut = fin = None
+        vide = 0
+        ferme = False
+        saut = max(8, int(hauteur * 0.012))     # un blanc de ~1,2 % de page ferme la bande
+        for n, y in enumerate(ordre):
+            if n > limite:
+                break
+            if lignes[y]:
+                if debut is None:
+                    debut = y
+                fin, vide = y, 0
+            elif debut is not None:
+                vide += 1
+                if vide >= saut:
+                    ferme = True
+                    break
+        bande_nom = "de pied" if place == "pied" else "d'en-tête"
+        if debut is not None and not ferme:
+            # Pas un blanc sous la bande : une page d'un seul tenant (un scan
+            # grisé, une photo pleine page). Il n'y a pas d'en-tête distinct à
+            # prendre, et coller une tranche de scan serait pire que rien.
+            raise ImageRefusee(
+                f"« {nom} » est une page d'un seul tenant, sans bande "
+                f"{bande_nom} distincte : reprends son en-tête "
+                "en TEXTE, ou donne le fichier du logo")
+        if debut is None:
+            raise ImageRefusee(f"« {nom} » : rien d'encré dans la bande "
+                               f"{'du bas' if place == 'pied' else 'du haut'} de la première page")
+        y0, y1 = sorted((debut, fin))
+        bande = gris.crop((0, y0, largeur, y1 + 1))
+        bx = ImageOps.invert(bande).point(lambda v: 255 if v > 255 - _BLANC else 0).getbbox() or (0, 0, largeur, 1)
+        sortie = _recadrer(img, (bx[0], y0, bx[2], y1 + 1))
+        ou = "pied de page" if place == "pied" else "en-tête"
+    tampon = io.BytesIO()
+    sortie.save(tampon, format="PNG", optimize=True)
+    return tampon.getvalue(), "image/png", f"{nom} ({ou}, dessiné)"
+
+
+async def resoudre(designation: str, user, place: str = "") -> tuple[bytes, str, str]:
     """(octets, extension, nom) d'une image désignée par le modèle.
 
     La résolution est CELLE DES PIÈCES JOINTES (`mail/attaches.resoudre`) :
@@ -194,7 +290,7 @@ async def resoudre(designation: str, user) -> tuple[bytes, str, str]:
         # nous demande de reprendre. On l'en extrait plutôt que de renvoyer le
         # modèle recopier l'en-tête à la main, en texte (09/09).
         if _est_un_pdf(nom, mime):
-            octets, mime, nom = await asyncio.to_thread(logo_du_pdf, octets, nom)
+            octets, mime, nom = await asyncio.to_thread(logo_du_pdf, octets, nom, place)
         else:
             raise ImageRefusee(f"« {nom} » n'est pas une image ({mime or 'type inconnu'}) : "
                                "seule une image (PNG, JPEG, WebP, GIF, BMP, TIFF) peut être insérée")
@@ -206,10 +302,14 @@ async def resoudre(designation: str, user) -> tuple[bytes, str, str]:
 
 
 def _est_un_bloc_image(e) -> bool:
+    """Un bloc qui porte une image à résoudre : `image`, ou `colonnes` (texte + photo)."""
     if not isinstance(e, dict):
         return False
     demande = str(e.get("bloc") or e.get("type") or e.get("kind") or "").strip().lower()
-    return _TYPES.get(demande) == "image"
+    genre = _TYPES.get(demande)
+    if genre == "colonnes":
+        return any(isinstance(e.get(c), str) and e.get(c).strip() for c in ("image", "photo", "ref", "cle", "nom"))
+    return genre == "image"
 
 
 async def preparer(jeton: str, proprietaire: str, elements: list, entete: dict, user) -> tuple[list, dict, list]:
@@ -227,8 +327,8 @@ async def preparer(jeton: str, proprietaire: str, elements: list, entete: dict, 
     if fiche(jeton, proprietaire) is None:
         return list(elements or []), dict(entete or {}), refus
 
-    async def _ranger(ref: str) -> str:
-        octets, ext, _ = await resoudre(ref, user)
+    async def _ranger(ref: str, place: str = "") -> str:
+        octets, ext, _ = await resoudre(ref, user, place)
         return ranger_image(jeton, proprietaire, octets, ext)
 
     prets: list = []
@@ -245,17 +345,18 @@ async def preparer(jeton: str, proprietaire: str, elements: list, entete: dict, 
         except Exception as err:  # noqa: BLE001 — un refus est une donnée, pas un plantage
             refus.append(f"« {ref[:60]} » : {str(err)[:200]}")
             continue
-        prets.append({**e, "bloc": "image", "fichier": fichier})
+        genre = _TYPES.get(str(e.get("bloc") or e.get("type") or e.get("kind") or "").strip().lower())
+        prets.append({**e, "bloc": "colonnes" if genre == "colonnes" else "image", "fichier": fichier})
 
     entete = dict(entete or {})
-    for cle in ("entete_image", "pied_image"):
+    for cle in ("entete_image", "pied_image", "image_couverture"):
         ref = str(entete.get(cle) or "").strip()
         if not ref or RE_IMAGE_RANGEE.match(str(entete.get(cle + "_fichier") or "")):
             continue
         try:
-            entete[cle + "_fichier"] = await _ranger(ref)
+            entete[cle + "_fichier"] = await _ranger(ref, "pied" if cle == "pied_image" else "")
         except Exception as err:  # noqa: BLE001
-            refus.append(f"{'en-tête' if cle == 'entete_image' else 'pied de page'} « {ref[:60]} » : {str(err)[:200]}")
+            refus.append(f"{ {'entete_image': 'en-tête', 'pied_image': 'pied de page'}.get(cle, 'couverture') } « {ref[:60]} » : {str(err)[:200]}")
             entete[cle] = ""
     return prets, entete, refus
 

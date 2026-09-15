@@ -321,6 +321,13 @@ async def _lister_ouvert(client, base, sid, chemin: str, tout: bool = False) -> 
 
     entrees = []
     for f in (bruts if tout else bruts[:MAX_ENTREES]):
+        # LES FICHIERS PARASITES D'UN MAC OU DE WINDOWS (15/09, relevé chez
+        # Symbiose) : « ._logo.png » (métadonnées macOS de 176 octets) listé
+        # devant le vrai logo, pris pour lui, ouvert à sa place. Ni listés, ni
+        # catalogués, ni cherchés.
+        nom_f = str(f.get("name") or "")
+        if nom_f.startswith("._") or nom_f in (".DS_Store", "__MACOSX", "Thumbs.db", "desktop.ini"):
+            continue
         add = f.get("additional") or {}
         entrees.append({
             "nom": f.get("name"), "chemin": f.get("path"),

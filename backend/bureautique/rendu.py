@@ -102,7 +102,65 @@ def _police(style_ou_run, nom: str = POLICE) -> None:
         polices.set(qn(attr), nom)
 
 
-def _styles_maison(doc, charte: str, charte_fond: str) -> None:
+def _teinte(hexa: str, part_blanc: float = 0.88) -> str:
+    """La couleur de la maison éclaircie : le fond d'un encadré, jamais criard."""
+    try:
+        r, v, b = (int(hexa[i:i + 2], 16) for i in (0, 2, 4))
+    except (ValueError, TypeError):
+        return "EEF2F6"
+    m = lambda c: int(c + (255 - c) * part_blanc)  # noqa: E731
+    return f"{m(r):02X}{m(v):02X}{m(b):02X}"
+
+
+def _ombrer(cellule, couleur: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    fond = OxmlElement("w:shd")
+    for k, v in (("w:val", "clear"), ("w:color", "auto"), ("w:fill", couleur)):
+        fond.set(qn(k), v)
+    cellule._tc.get_or_add_tcPr().append(fond)
+
+
+def _bordure_cellule(cellule, cote: str, couleur: str, epaisseur: int = 24) -> None:
+    """Un trait sur UN côté d'une cellule (le filet gauche d'un encadré)."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    tcpr = cellule._tc.get_or_add_tcPr()
+    bords = tcpr.find(qn("w:tcBorders"))
+    if bords is None:
+        bords = OxmlElement("w:tcBorders")
+        # À SA PLACE dans le schéma : tcW, gridSpan, vMerge, tcBorders, shd…
+        ombre = tcpr.find(qn("w:shd"))
+        if ombre is not None:
+            ombre.addprevious(bords)
+        else:
+            tcpr.append(bords)
+    trait = OxmlElement(f"w:{cote}")
+    for k, v in (("w:val", "single"), ("w:sz", str(epaisseur)), ("w:space", "0"), ("w:color", couleur)):
+        trait.set(qn(k), v)
+    bords.append(trait)
+
+
+def _filet_paragraphe(paragraphe, cote: str, couleur: str, epaisseur: int = 12) -> None:
+    """Un filet sous (ou à gauche d') un paragraphe, posé À SA PLACE dans pPr."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    ppr = paragraphe._p.get_or_add_pPr()
+    bordure = OxmlElement("w:pBdr")
+    trait = OxmlElement(f"w:{cote}")
+    for k, v in (("w:val", "single"), ("w:sz", str(epaisseur)), ("w:space", "4"), ("w:color", couleur)):
+        trait.set(qn(k), v)
+    bordure.append(trait)
+    apres = [qn("w:" + n) for n in ("shd", "tabs", "suppressAutoHyphens", "spacing", "ind", "jc",
+                                     "outlineLvl", "rPr")]
+    for enfant in ppr:
+        if enfant.tag in apres:
+            enfant.addprevious(bordure)
+            return
+    ppr.append(bordure)
+
+
+def _styles_maison(doc, charte: str, charte_fond: str, style: str = "classique") -> None:
     from docx.enum.text import WD_LINE_SPACING
     from docx.shared import Pt, RGBColor
     styles = doc.styles
@@ -125,12 +183,30 @@ def _styles_maison(doc, charte: str, charte_fond: str) -> None:
         f.keep_with_next = garder_avec_suivant
         return s
 
-    regler("Normal", 10.5)
-    regler("Title", 24, charte_fond, gras=True, apres=4, interligne=1.0)
+    # LA MÊME CHARTE, QUATRE ALLURES (15/09) : les tailles et les couleurs des
+    # titres changent avec le style — c'est ce qui se voit au premier coup d'œil.
+    h1 = {"epure": ("262626", 14), "moderne": (charte, 17), "plaquette": (charte, 18)}.get(style, (charte, 15))
+    h2 = {"epure": ("404040", 12), "plaquette": (charte_fond, 13.5)}.get(style, (charte, 12.5))
+    regler("Normal", 10.5 if style != "plaquette" else 11, interligne=1.15 if style != "epure" else 1.3)
+    regler("Title", {"plaquette": 34, "moderne": 28, "epure": 22}.get(style, 24),
+           "262626" if style == "epure" else charte_fond, gras=True, apres=4, interligne=1.0)
+    # Le gabarit de python-docx souligne le style « Title » d'un filet BLEU :
+    # chaque page de garde le portait, quelle que soit la charte. Retiré ; le
+    # filet voulu est posé par le rendu, à la couleur de la maison.
+    try:
+        from docx.oxml.ns import qn
+        ppr_titre = styles["Title"].element.pPr
+        if ppr_titre is not None:
+            for b in ppr_titre.findall(qn("w:pBdr")):
+                ppr_titre.remove(b)
+    except KeyError:
+        pass
     regler("Subtitle", 13, "595959", apres=12)
-    regler("Heading 1", 15, charte, gras=True, avant=18, apres=6, interligne=1.0, garder_avec_suivant=True)
-    regler("Heading 2", 12.5, charte, gras=True, avant=12, apres=4, interligne=1.0, garder_avec_suivant=True)
-    regler("Heading 3", 11, charte_fond, gras=True, avant=10, apres=3, interligne=1.0, garder_avec_suivant=True)
+    regler("Heading 1", h1[1], h1[0], gras=True, avant=18 if style != "epure" else 22, apres=6,
+           interligne=1.0, garder_avec_suivant=True)
+    regler("Heading 2", h2[1], h2[0], gras=True, avant=12, apres=4, interligne=1.0, garder_avec_suivant=True)
+    regler("Heading 3", 11, charte_fond if style != "epure" else "595959", gras=True, avant=10, apres=3,
+           interligne=1.0, garder_avec_suivant=True)
     regler("Heading 4", 10.5, "404040", gras=True, avant=8, apres=2, interligne=1.0, garder_avec_suivant=True)
     for nom in ("List Bullet", "List Number"):
         regler(nom, 10.5, apres=3)
@@ -175,7 +251,32 @@ def _paragraphe_docx(doc, e: dict) -> None:
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
-def _page_de_garde(doc, entete: dict, charte: str) -> None:
+def _bandeau(doc, entete: dict, charte: str) -> None:
+    """Couverture « moderne » : un bandeau plein à la couleur de la maison."""
+    from docx.shared import Cm, Pt, RGBColor
+    section = doc.sections[-1]
+    utile = section.page_width - section.left_margin - section.right_margin
+    table = doc.add_table(rows=1, cols=1)
+    _largeur_table(table, int(utile))
+    table.autofit = False
+    table.columns[0].width = utile
+    cellule = table.rows[0].cells[0]
+    cellule.width = utile
+    _ombrer(cellule, charte)
+    p = cellule.paragraphs[0]
+    p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(36), Pt(4)
+    r = p.add_run(entete["titre"])
+    r.font.size, r.font.bold, r.font.color.rgb = Pt(28), True, RGBColor.from_string("FFFFFF")
+    if entete.get("sous_titre"):
+        q = cellule.add_paragraph()
+        q.paragraph_format.space_after = Pt(30)
+        r = q.add_run(entete["sous_titre"])
+        r.font.size, r.font.color.rgb = Pt(13), RGBColor.from_string("FFFFFF")
+    else:
+        p.paragraph_format.space_after = Pt(36)
+
+
+def _page_de_garde(doc, entete: dict, charte: str, style: str = "classique") -> None:
     import datetime
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
@@ -183,12 +284,52 @@ def _page_de_garde(doc, entete: dict, charte: str) -> None:
     from docx.shared import Cm, Pt, RGBColor
 
     logo = _image(entete.get("entete_image_fichier"))
+    couverture = _image(entete.get("image_couverture_fichier"))
+    maintenant = datetime.date.today()
+    date = " · ".join(x for x in (entete.get("entete"), f"{_MOIS[maintenant.month - 1]} {maintenant.year}") if x)
+    if style in ("moderne", "plaquette"):
+        if logo:
+            haut = doc.add_paragraph()
+            haut.alignment = WD_ALIGN_PARAGRAPH.LEFT if style == "moderne" else WD_ALIGN_PARAGRAPH.CENTER
+            haut.add_run().add_picture(logo, height=Cm(2.2))
+            haut.paragraph_format.space_after = Pt(18)
+        if style == "moderne":
+            _bandeau(doc, entete, charte)
+            if couverture:
+                img = doc.add_paragraph()
+                img.paragraph_format.space_before = Pt(18)
+                img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                img.add_run().add_picture(couverture, width=Cm(16.4))
+        else:
+            if couverture:
+                img = doc.add_paragraph()
+                img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                img.add_run().add_picture(couverture, width=Cm(16.4))
+            else:
+                _bandeau(doc, {"titre": " ", "sous_titre": ""}, charte)
+            titre = doc.add_paragraph(style="Title")
+            titre.paragraph_format.space_before = Pt(24)
+            titre.add_run(entete["titre"])
+            if entete.get("sous_titre"):
+                doc.add_paragraph(entete["sous_titre"], style="Subtitle")
+        pied = doc.add_paragraph()
+        pied.paragraph_format.space_before = Pt(40 if couverture else 160)
+        run = pied.add_run(date)
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor.from_string("595959")
+        doc.add_page_break()
+        return
     haut = doc.add_paragraph()
     haut.paragraph_format.space_before = Pt(90 if not logo else 40)
     if logo:
         haut.alignment = WD_ALIGN_PARAGRAPH.CENTER
         haut.add_run().add_picture(logo, height=Cm(3))
-        doc.add_paragraph().paragraph_format.space_after = Pt(60)
+        doc.add_paragraph().paragraph_format.space_after = Pt(60 if not couverture else 20)
+    if couverture:
+        img = doc.add_paragraph()
+        img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        img.add_run().add_picture(couverture, width=Cm(14))
+        img.paragraph_format.space_after = Pt(24)
     titre = doc.add_paragraph(style="Title")
     # Un filet de la couleur de la maison sous le titre. L'ORDRE DES ÉLÉMENTS
     # COMPTE (schéma WordprocessingML : pStyle … pBdr … jc) : un filet posé
@@ -209,11 +350,9 @@ def _page_de_garde(doc, entete: dict, charte: str) -> None:
     titre.add_run(entete["titre"])
     if entete.get("sous_titre"):
         doc.add_paragraph(entete["sous_titre"], style="Subtitle")
-    maintenant = datetime.date.today()
     bas_de_page = doc.add_paragraph()
-    bas_de_page.paragraph_format.space_before = Pt(200)
-    run = bas_de_page.add_run(" · ".join(x for x in (entete.get("entete"),
-                                                    f"{_MOIS[maintenant.month - 1]} {maintenant.year}") if x))
+    bas_de_page.paragraph_format.space_before = Pt(200 if not couverture else 60)
+    run = bas_de_page.add_run(date)
     run.font.size = Pt(10)
     run.font.color.rgb = RGBColor.from_string("595959")
     doc.add_page_break()
@@ -267,8 +406,9 @@ def _docx(entete: dict, elements, sortie: str) -> str:
     charte_fond = COULEURS.get("charte_fond") or charte
     if charte in ("000000",):
         charte = "1F3864"
+    style = entete.get("style") or "classique"
     doc = Document()
-    _styles_maison(doc, charte, charte_fond)
+    _styles_maison(doc, charte, charte_fond, style)
     section = doc.sections[0]
     if entete.get("paysage"):
         section.orientation = WD_ORIENT.LANDSCAPE
@@ -280,7 +420,10 @@ def _docx(entete: dict, elements, sortie: str) -> str:
 
     titres = sum(1 for e in elements if e.get("bloc") == "titre" and int(e.get("niveau") or 1) <= 2)
     garde = entete.get("page_de_garde")
-    garde = (len(elements) >= SEUIL_PAGE_DE_GARDE) if garde is None else bool(garde)
+    if garde is None:
+        garde = {"moderne": True, "plaquette": True, "epure": False}.get(
+            style, len(elements) >= SEUIL_PAGE_DE_GARDE)
+    garde = bool(garde)
     # La page de garde n'a ni en-tête ni pied : ils commencent à la page 2.
     section.different_first_page_header_footer = garde
 
@@ -293,7 +436,9 @@ def _docx(entete: dict, elements, sortie: str) -> str:
         if entete.get("entete"):
             r = p.add_run(("   " if logo_haut else "") + entete["entete"])
             r.font.size, r.font.color.rgb = Pt(8.5), gris
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT if style in ("moderne", "plaquette") else WD_ALIGN_PARAGRAPH.RIGHT
+        if style == "moderne":
+            _filet_paragraphe(p, "bottom", charte, 8)
 
     if entete.get("pied") or entete.get("numeroter") or logo_bas:
         p = section.footer.paragraphs[0]
@@ -313,14 +458,20 @@ def _docx(entete: dict, elements, sortie: str) -> str:
                 r.font.size, r.font.color.rgb = Pt(8.5), gris
 
     if garde:
-        _page_de_garde(doc, entete, charte)
+        _page_de_garde(doc, entete, charte, style)
         sommaire = entete.get("sommaire")
-        if (titres >= SEUIL_SOMMAIRE) if sommaire is None else sommaire:
+        if (titres >= SEUIL_SOMMAIRE and style != "plaquette") if sommaire is None else sommaire:
             _sommaire(doc)
     else:
-        doc.add_paragraph(entete["titre"], style="Title")
+        titre_doc = doc.add_paragraph(entete["titre"], style="Title")
+        if style == "epure":
+            _filet_paragraphe(titre_doc, "bottom", "BFBFBF", 6)
         if entete.get("sous_titre"):
             doc.add_paragraph(entete["sous_titre"], style="Subtitle")
+        if _image(entete.get("image_couverture_fichier")):
+            img = doc.add_paragraph()
+            img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            img.add_run().add_picture(_image(entete.get("image_couverture_fichier")), width=Cm(16))
 
     for e in elements:
         bloc = e["bloc"]
@@ -330,6 +481,9 @@ def _docx(entete: dict, elements, sortie: str) -> str:
             if e.get("couleur"):
                 for run in titre.runs:
                     run.font.color.rgb = RGBColor.from_string(COULEURS[e["couleur"]])
+            if niveau == 1 and style in ("moderne", "epure"):
+                _filet_paragraphe(titre, "bottom", charte if style == "moderne" else "D9D9D9",
+                                  12 if style == "moderne" else 4)
         elif bloc == "paragraphe":
             _paragraphe_docx(doc, e)
         elif bloc == "liste":
@@ -360,6 +514,14 @@ def _docx(entete: dict, elements, sortie: str) -> str:
                 p = doc.add_paragraph(_absente(e))
                 p.runs[0].font.italic = True
                 p.runs[0].font.color.rgb = RGBColor.from_string(COULEURS["gris"])
+        elif bloc == "encadre":
+            _encadre_docx(doc, e, charte)
+        elif bloc == "citation":
+            _citation_docx(doc, e, charte)
+        elif bloc == "chiffres":
+            _chiffres_docx(doc, e, charte)
+        elif bloc == "colonnes":
+            _colonnes_docx(doc, e, charte)
         elif bloc == "saut_page":
             doc.add_page_break()
         elif bloc == "separateur":
@@ -367,6 +529,122 @@ def _docx(entete: dict, elements, sortie: str) -> str:
 
     doc.save(sortie)
     return sortie
+
+
+def _largeur_utile(doc):
+    section = doc.sections[-1]
+    return section.page_width - section.left_margin - section.right_margin
+
+
+def _largeur_table(table, largeur_emu: int) -> None:
+    """La largeur du TABLEAU lui-même (tblW, en vingtièmes de point) : sans elle,
+    certains lecteurs (l'aperçu du chat, Pages) tassent un tableau « auto »."""
+    from docx.oxml.ns import qn
+    tblw = table._tbl.tblPr.find(qn("w:tblW"))
+    if tblw is not None:
+        tblw.set(qn("w:type"), "dxa")
+        tblw.set(qn("w:w"), str(int(largeur_emu / 635)))
+
+
+def _table_sans_bord(doc, colonnes: int, largeurs: list):
+    table = doc.add_table(rows=1, cols=colonnes)
+    _largeur_table(table, sum(int(l) for l in largeurs))
+    table.autofit = False
+    for i, l in enumerate(largeurs):
+        table.columns[i].width = l
+        table.rows[0].cells[i].width = l
+    return table
+
+
+def _encadre_docx(doc, e: dict, charte: str) -> None:
+    """Un encadré : fond teinté, filet gauche de la couleur du ton."""
+    from docx.shared import Pt, RGBColor
+    couleur = {"attention": "C0504D", "info": "4F81BD"}.get(e.get("ton"), charte)
+    table = _table_sans_bord(doc, 1, [_largeur_utile(doc)])
+    cellule = table.rows[0].cells[0]
+    _ombrer(cellule, _teinte(couleur))
+    _bordure_cellule(cellule, "left", couleur, 36)
+    premier = cellule.paragraphs[0]
+    if e.get("titre"):
+        r = premier.add_run(e["titre"])
+        r.font.bold, r.font.size, r.font.color.rgb = True, Pt(11), RGBColor.from_string(couleur)
+        premier = cellule.add_paragraph()
+    for i, ligne in enumerate(l for l in str(e.get("texte") or "").split("\n") if l.strip()):
+        p = premier if i == 0 else cellule.add_paragraph()
+        _ecrire_riche(p, ligne.strip())
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+
+
+def _citation_docx(doc, e: dict, charte: str) -> None:
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Cm, Pt, RGBColor
+    p = doc.add_paragraph()
+    p.paragraph_format.left_indent = Cm(1)
+    p.paragraph_format.space_before = Pt(8)
+    _filet_paragraphe(p, "left", charte, 24)
+    r = p.add_run(f"« {e['texte']} »")
+    r.font.italic, r.font.size, r.font.color.rgb = True, Pt(12.5), RGBColor.from_string("404040")
+    if e.get("auteur"):
+        a = doc.add_paragraph()
+        a.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        r = a.add_run("— " + e["auteur"])
+        r.font.size, r.font.color.rgb = Pt(9.5), RGBColor.from_string("7F7F7F")
+
+
+def _chiffres_docx(doc, e: dict, charte: str) -> None:
+    """Les chiffres clés en grand, côte à côte."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
+    items = e.get("items") or []
+    n = len(items)
+    table = _table_sans_bord(doc, n, [int(_largeur_utile(doc) / n)] * n)
+    for i, item in enumerate(items):
+        cellule = table.rows[0].cells[i]
+        _ombrer(cellule, _teinte(charte, 0.92))
+        p = cellule.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(8)
+        r = p.add_run(item["valeur"])
+        r.font.size, r.font.bold, r.font.color.rgb = Pt(24), True, RGBColor.from_string(charte)
+        if item.get("libelle"):
+            q = cellule.add_paragraph()
+            q.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            q.paragraph_format.space_after = Pt(8)
+            r = q.add_run(item["libelle"])
+            r.font.size, r.font.color.rgb = Pt(9), RGBColor.from_string("595959")
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+
+
+def _colonnes_docx(doc, e: dict, charte: str) -> None:
+    """Une photo À CÔTÉ de son texte."""
+    from docx.shared import Cm, Pt, RGBColor
+    utile = _largeur_utile(doc)
+    chemin = _image(e)
+    if not chemin:
+        if e.get("titre"):
+            doc.add_heading(e["titre"], 3)
+        if e.get("texte"):
+            _paragraphe_docx(doc, {"texte": e["texte"]})
+        if e.get("ref") or e.get("fichier"):
+            p = doc.add_paragraph(_absente(e))
+            p.runs[0].font.italic = True
+        return
+    large_img = int(Cm(7.2))
+    gauche = bool(e.get("image_a_gauche"))
+    largeurs = [large_img, utile - large_img] if gauche else [utile - large_img, large_img]
+    table = _table_sans_bord(doc, 2, largeurs)
+    c_img, c_txt = (table.rows[0].cells[0], table.rows[0].cells[1]) if gauche else \
+                   (table.rows[0].cells[1], table.rows[0].cells[0])
+    c_img.paragraphs[0].add_run().add_picture(chemin, width=Cm(6.8))
+    p = c_txt.paragraphs[0]
+    if e.get("titre"):
+        r = p.add_run(e["titre"])
+        r.font.bold, r.font.size, r.font.color.rgb = True, Pt(12), RGBColor.from_string(charte)
+        p = c_txt.add_paragraph()
+    for i, ligne in enumerate(l for l in str(e.get("texte") or "").split("\n") if l.strip()):
+        q = p if i == 0 else c_txt.add_paragraph()
+        _ecrire_riche(q, ligne.strip())
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
 
 def _champ_page(paragraphe) -> None:
@@ -501,7 +779,16 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
     flux = [Paragraph(entete["titre"], styles["Title"])]
     if entete.get("sous_titre"):
         flux.append(Paragraph(entete["sous_titre"], styles["Italic"]))
+    couverture = _image(entete.get("image_couverture_fichier"))
+    if couverture:
+        w, h = _dimensions(couverture)
+        largeur_img = format_page[0] - 4 * cm
+        flux.append(Spacer(1, 0.3 * cm))
+        flux.append(ImageFlowable(couverture, width=largeur_img, height=largeur_img * (h / w if w else 1)))
     flux.append(Spacer(1, 0.6 * cm))
+    from bureautique.modele import COULEURS as _COUL
+    charte_pdf = colors.HexColor("#" + (_COUL.get("charte") or "1F3864"))
+    utile_pdf = format_page[0] - 4 * cm
 
     for e in elements:
         bloc = e["bloc"]
@@ -542,6 +829,8 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
                 flux.append(Spacer(1, 0.3 * cm))
             else:
                 flux.append(Paragraph(_echapper(_absente(e)), petit))
+        elif bloc in ("encadre", "citation", "chiffres", "colonnes"):
+            flux.extend(_bloc_riche_pdf(e, styles, charte_pdf, utile_pdf))
         elif bloc == "saut_page":
             flux.append(PageBreak())
         elif bloc == "separateur":
@@ -552,6 +841,60 @@ def _pdf(entete: dict, elements, sortie: str) -> str:
     doc.build(flux, onFirstPage=decor, onLaterPages=decor)
     return sortie
 
+
+
+def _bloc_riche_pdf(e: dict, styles, charte, utile) -> list:
+    """Encadré, citation, chiffres, colonnes : au PDF, des tableaux habillés."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Image as ImageFlowable, Paragraph, Spacer, Table, TableStyle
+    corps = styles["BodyText"]
+    bloc = e["bloc"]
+    texte = _echapper(str(e.get("texte") or "")).replace("\n", "<br/>")
+    if bloc == "citation":
+        style = ParagraphStyle("citation", parent=corps, leftIndent=1 * cm, fontName="Helvetica-Oblique",
+                               fontSize=12, leading=15, borderPadding=(0, 0, 0, 6))
+        sortie = [Spacer(1, 0.2 * cm), Paragraph(f"« {texte} »", style)]
+        if e.get("auteur"):
+            sortie.append(Paragraph("— " + _echapper(e["auteur"]),
+                                    ParagraphStyle("auteur", parent=corps, alignment=2, fontSize=9,
+                                                   textColor=colors.grey)))
+        return sortie + [Spacer(1, 0.3 * cm)]
+    if bloc == "encadre":
+        contenu = (f"<b>{_echapper(e['titre'])}</b><br/>" if e.get("titre") else "") + texte
+        t = Table([[Paragraph(contenu, corps)]], colWidths=[utile])
+        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F1F4F8")),
+                               ("LINEBEFORE", (0, 0), (0, -1), 4, charte),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 10), ("TOPPADDING", (0, 0), (-1, -1), 8),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+        return [t, Spacer(1, 0.35 * cm)]
+    if bloc == "chiffres":
+        items = e.get("items") or []
+        grand = ParagraphStyle("chiffre", parent=corps, alignment=TA_CENTER, fontSize=22, leading=26,
+                               fontName="Helvetica-Bold", textColor=charte)
+        petit = ParagraphStyle("libelle", parent=corps, alignment=TA_CENTER, fontSize=9, textColor=colors.grey)
+        t = Table([[[Paragraph(_echapper(i["valeur"]), grand), Paragraph(_echapper(i.get("libelle") or ""), petit)]
+                    for i in items]], colWidths=[utile / max(1, len(items))] * len(items))
+        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F6F8")),
+                               ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 8),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+        return [t, Spacer(1, 0.35 * cm)]
+    # colonnes
+    chemin = _image(e)
+    cellule_txt = ([Paragraph(f"<b>{_echapper(e['titre'])}</b>", corps)] if e.get("titre") else []) + \
+                  [Paragraph(texte, corps)]
+    if not chemin:
+        return cellule_txt + [Spacer(1, 0.3 * cm)]
+    w, h = _dimensions(chemin)
+    largeur_img = 6.8 * cm
+    img = ImageFlowable(chemin, width=largeur_img, height=largeur_img * (h / w if w else 1))
+    rangee = [img, cellule_txt] if e.get("image_a_gauche") else [cellule_txt, img]
+    largeurs = [7.2 * cm, utile - 7.2 * cm] if e.get("image_a_gauche") else [utile - 7.2 * cm, 7.2 * cm]
+    t = Table([rangee], colWidths=largeurs)
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    return [t, Spacer(1, 0.35 * cm)]
 
 
 def _style_titre(e: dict, styles):
@@ -783,6 +1126,18 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
                 poser_image(chemin, largeur_cm=min(float(e.get("largeur_cm") or 12), 17))
             else:
                 ecrire([_absente(e)])
+        elif bloc in ("encadre", "citation"):
+            ecrire([(e.get("titre") + " — " if e.get("titre") else "") + e["texte"]
+                    + (f" — {e['auteur']}" if e.get("auteur") else "")])
+            feuille.cell(row=ligne_courante - 1, column=1).font = Font(italic=bloc == "citation", bold=bloc == "encadre")
+        elif bloc == "chiffres":
+            for item in e["items"]:
+                ecrire([item["valeur"], item.get("libelle") or ""])
+        elif bloc == "colonnes":
+            if e.get("titre") or e.get("texte"):
+                ecrire([(e.get("titre") + " — " if e.get("titre") else "") + (e.get("texte") or "")])
+            if _image(e):
+                poser_image(_image(e), largeur_cm=7)
         elif bloc in ("saut_page", "separateur"):
             ligne_courante += 1
 

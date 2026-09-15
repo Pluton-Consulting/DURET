@@ -137,7 +137,10 @@ async def produire_document(data: dict, user) -> dict:
             entete_image=str(data.get("entete_image") or data.get("logo_entete")
                              or data.get("logo") or "").strip(),
             pied_image=str(data.get("pied_image") or data.get("logo_pied") or "").strip(),
-            user=user)
+            user=user,
+            style=data.get("style"), sous_titre=data.get("sous_titre"),
+            image_couverture=data.get("image_couverture") or data.get("couverture"),
+            page_de_garde=data.get("page_de_garde"), sommaire=data.get("sommaire"))
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
 
@@ -239,19 +242,15 @@ SKILLS = {
             # COUP : il finalise, donc rien ne se rallonge apres.
             # 395 caracteres : le catalogue est injecte a CHAQUE tour, le
             # plafond de 400 par description n'est pas negociable.
-            "PRODUIT un document telechargeable (pdf, docx, xlsx) en UNE fois. "
-            "Mise en page soignee AUTOMATIQUE (page de garde, sommaire, charte) ; REDIGE en "
-            "paragraphes, une liste seulement pour enumerer. `blocs` : "
-            "{bloc:titre|paragraphe|liste|tableau|image|saut_page|feuille} ; "
-            "{bloc:image, image:<reference d'une image du fil ou nom d'un fichier "
-            "du stockage>}. `entete_image`/`pied_image` : logo sur chaque page (une "
-            "image, ou un PDF de la maison dont on tire le logo) ; couleur:'charte' "
-            "pour les couleurs de la maison. Si "
-            "COURT (~30 blocs) : ce geste FINALISE ; au-dela, "
+            "PRODUIT un document (pdf, docx, xlsx) en UNE fois. `style` : classique|moderne|"
+            "epure|plaquette, CHOISI selon le document. `blocs` : titre|paragraphe|liste|"
+            "tableau|image|colonnes (photo a cote du texte)|encadre|chiffres|citation|"
+            "saut_page|feuille. `entete_image`/`pied_image`/`image_couverture` : logo, "
+            "photo, ou PDF de la maison. couleur:'charte'. ~30 blocs max ; au-dela "
             "creer/ajouter/terminer_document. `mode_emploi` documents"),
         requis=["titre", "blocs"],
         optionnels=["format", "entete", "pied", "numeroter", "entete_image", "pied_image",
-                    "page_de_garde", "sommaire"],
+                    "page_de_garde", "sommaire", "style", "image_couverture", "sous_titre"],
         effet="ecriture_interne",
         libelle="je produis le document"),
     "mode_emploi": Declaration(

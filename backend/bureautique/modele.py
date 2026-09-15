@@ -82,7 +82,29 @@ BLOCS = {
     "image":       "image (référence : clé d'une image de la conversation, ou NOM "
                    "d'un fichier image du stockage), legende, largeur_cm (2 à 17), "
                    "centre (bool)",
+    # 15/09 (Noa : « il fait tout le temps la même trame de documents, c'est
+    # horrible »). Des blocs qui changent la PAGE, pas seulement le texte.
+    "encadre":     "texte, titre (facultatif), ton (charte|info|attention) — un "
+                   "encadré coloré pour ce qui doit sauter aux yeux",
+    "citation":    "texte, auteur (facultatif) — un témoignage, un engagement",
+    "chiffres":    "items[{valeur, libelle}] (2 à 4) — les chiffres clés en grand, côte à côte",
+    "colonnes":    "texte + image (référence, comme le bloc image), image_a_gauche "
+                   "(bool), titre (facultatif) — une photo À CÔTÉ de son texte",
 }
+
+# LE STYLE D'UN DOCUMENT (15/09) : la même charte, quatre allures. Le modèle le
+# choisit selon le document ; absent = « classique ».
+STYLES = {
+    "classique": "page de garde sobre, titres à la couleur de la maison — rapports, "
+                 "mémoires, cahiers des charges",
+    "moderne":   "bandeau de couleur en couverture, titres soulignés d'un filet, "
+                 "en-tête avec logo — offres, présentations de projet",
+    "epure":     "sans page de garde, beaucoup de blanc, titres gris foncé — courriers, "
+                 "notes, comptes rendus",
+    "plaquette": "grande image de couverture, titre en grand, photos mises en valeur — "
+                 "plaquettes, dossiers de présentation, références chantier",
+}
+TONS = ("charte", "info", "attention")
 
 # Les noms de champ sous lesquels le modèle écrit la référence d'une image.
 CLES_IMAGE = ("image", "ref", "reference", "cle", "fichier", "source", "url", "nom", "photo")
@@ -142,6 +164,12 @@ _TYPES = {
     "ligne_horizontale": "separateur",
     "image": "image", "img": "image", "photo": "image", "picture": "image",
     "figure": "image", "illustration": "image", "visuel": "image",
+    "encadre": "encadre", "encadré": "encadre", "callout": "encadre", "note": "encadre",
+    "alerte": "encadre", "box": "encadre",
+    "citation": "citation", "quote": "citation", "temoignage": "citation", "témoignage": "citation",
+    "chiffres": "chiffres", "chiffres_cles": "chiffres", "kpi": "chiffres", "stats": "chiffres",
+    "colonnes": "colonnes", "deux_colonnes": "colonnes", "texte_image": "colonnes",
+    "image_texte": "colonnes", "columns": "colonnes",
 }
 
 
@@ -210,6 +238,46 @@ def normaliser_element(brut) -> dict | None:
             return None
         sortie["ref"] = ref
         return sortie
+
+    if bloc == "encadre":
+        texte = _champ_texte(brut, lignes=True)
+        if not texte:
+            return None
+        ton = _texte(brut.get("ton") or brut.get("tone"), 12).lower()
+        return {"bloc": "encadre", "texte": texte, "titre": _texte(brut.get("titre") or brut.get("title"), 200),
+                "ton": ton if ton in TONS else "charte"}
+
+    if bloc == "citation":
+        texte = _champ_texte(brut, 2000)
+        return {"bloc": "citation", "texte": texte,
+                "auteur": _texte(brut.get("auteur") or brut.get("author"), 200)} if texte else None
+
+    if bloc == "chiffres":
+        items = []
+        for i in (brut.get("items") or brut.get("chiffres") or [])[:4]:
+            if isinstance(i, dict):
+                v, l = _texte(i.get("valeur") or i.get("value"), 30), _texte(i.get("libelle") or i.get("label"), 80)
+            elif isinstance(i, (list, tuple)) and len(i) >= 2:
+                v, l = _texte(i[0], 30), _texte(i[1], 80)
+            else:
+                continue
+            if v:
+                items.append({"valeur": v, "libelle": l})
+        return {"bloc": "chiffres", "items": items} if items else None
+
+    if bloc == "colonnes":
+        texte = _champ_texte(brut, lignes=True)
+        fichier = str(brut.get("fichier") or "").strip()
+        sortie = {"bloc": "colonnes", "texte": texte, "titre": _texte(brut.get("titre"), 200),
+                  "image_a_gauche": bool(brut.get("image_a_gauche", brut.get("image_gauche")))}
+        if RE_IMAGE_RANGEE.match(fichier):
+            sortie["fichier"] = fichier
+        else:
+            ref = next((v.strip()[:500] for c in ("image", "photo", "ref", "cle", "nom")
+                        if isinstance((v := brut.get(c)), str) and v.strip()), "")
+            if ref:
+                sortie["ref"] = ref
+        return sortie if (texte or sortie.get("fichier") or sortie.get("ref")) else None
 
     if bloc == "titre":
         texte = _champ_texte(brut, 500)
@@ -301,6 +369,14 @@ def normaliser_entete(brut: dict) -> dict:
         # modèle : lui demander « page 3 sur 47 » supposerait qu'il sache
         # combien de pages sortiront, ce qu'il ne peut pas savoir.
         "numeroter": brut.get("numeroter") is not False,
+        # (15/09) L'allure du document et son image de couverture.
+        "style": (lambda v: v if v in STYLES else "classique")(
+            _texte(brut.get("style") or brut.get("theme") or brut.get("gabarit"), 20).lower()
+            .replace("é", "e")),
+        "image_couverture": _texte(brut.get("image_couverture") or brut.get("couverture")
+                                   or brut.get("photo_couverture"), 500),
+        "image_couverture_fichier": (str(brut.get("image_couverture_fichier") or "")
+                                     if RE_IMAGE_RANGEE.match(str(brut.get("image_couverture_fichier") or "")) else ""),
         "paysage": bool(brut.get("paysage")),
         # (15/09) Word : page de garde et sommaire. Absents = décidés par le rendu
         # (un document long les reçoit) ; `false` les retire.

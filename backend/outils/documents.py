@@ -30,7 +30,7 @@ def _meme_titre(a: str, b: str) -> bool:
 async def produire(titre: str, blocs: list, proprietaire: str,
                    format: str = "pdf", entete: str = "", pied: str = "",
                    numeroter: bool = True, entete_image: str = "",
-                   pied_image: str = "", user=None) -> dict:
+                   pied_image: str = "", user=None, **presentation) -> dict:
     """Crée, remplit et finalise un document. Rend le lien de téléchargement.
 
     Le contenu est DÉCRIT, jamais programmé : une liste de blocs du vocabulaire
@@ -61,8 +61,16 @@ async def produire(titre: str, blocs: list, proprietaire: str,
     # `produire_document` est un geste en UN COUP : il finalise. Un document
     # fini ne se rallonge pas — c'est l'atelier qu'il faut, et c'est ici qu'on
     # peut le dire au bon moment, avec le document déjà produit sous les yeux.
+    voulue = {"entete_image": entete_image or "", "pied_image": pied_image or "",
+              "image_couverture": str(presentation.get("image_couverture") or ""),
+              "style": str(presentation.get("style") or "")}
     for d in termines(proprietaire)[:5]:
-        if _meme_titre(d.get("titre"), titre):
+        avant = d.get("presentation") or {}
+        # REFAIRE AVEC UN LOGO N'EST PAS RALLONGER (15/09, 18:43) : le document
+        # produit sans en-tête, puis le logo trouvé, le second appel qui l'ajoutait
+        # était refusé — et la réponse affirmait « logo en en-tête de chaque page ».
+        nouvelle_presentation = any(v and v != (avant.get(k) or "") for k, v in voulue.items())
+        if _meme_titre(d.get("titre"), titre) and not nouvelle_presentation:
             raise ValueError(
                 f"Un document « {d.get('titre')} » vient d'être produit "
                 f"({d.get('elements')} blocs, {d.get('pages_estimees') or '?'} "
@@ -78,7 +86,8 @@ async def produire(titre: str, blocs: list, proprietaire: str,
             "Pour un document de cette taille, ouvre-le avec `creer_document` "
             "et verse le contenu en plusieurs fois.")
 
-    en_tete = normaliser_entete({"titre": titre, "format": format,
+    en_tete = normaliser_entete({**{k: v for k, v in presentation.items() if v not in (None, "")},
+                                 "titre": titre, "format": format,
                                  "entete": entete, "pied": pied,
                                  "numeroter": numeroter,
                                  "entete_image": entete_image,
@@ -98,7 +107,8 @@ async def produire(titre: str, blocs: list, proprietaire: str,
         from bureautique.atelier import mettre_a_jour_entete
         from bureautique.images import preparer
         blocs, en_tete, refus_images = await preparer(jeton, proprietaire, blocs, en_tete, user)
-        if en_tete.get("entete_image_fichier") or en_tete.get("pied_image_fichier"):
+        if (en_tete.get("entete_image_fichier") or en_tete.get("pied_image_fichier")
+                or en_tete.get("image_couverture_fichier")):
             mettre_a_jour_entete(jeton, proprietaire, en_tete)
         retenus = ajouter(jeton, blocs, proprietaire)
         if not retenus:
@@ -115,7 +125,8 @@ async def produire(titre: str, blocs: list, proprietaire: str,
                 "Aucun bloc n'a été retenu : type de bloc inconnu ou contenu "
                 f"vide. Premier élément reçu : {recu}. Vocabulaire accepté : "
                 "titre, paragraphe (champ `texte`), liste (items[]), tableau "
-                "(entetes[], lignes[[]]), saut_page, feuille.")
+                "(entetes[], lignes[[]]), image, encadre, citation, chiffres, "
+                "colonnes, saut_page, feuille.")
         fiche = terminer(jeton, proprietaire)
     except BaseException:
         abandonner(jeton, proprietaire)

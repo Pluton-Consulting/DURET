@@ -3596,7 +3596,10 @@ def _consigne_images(state: AgentState) -> str:
               "{\"bloc\": \"image\", \"image\": <référence>} dans les blocs, ou "
               "`entete_image` / `pied_image` = la référence (creer_document, "
               "produire_document) ; une image du stockage se désigne par son NOM de "
-              "fichier. Ne dis jamais que c'est impossible.")
+              "fichier. Une photo À CÔTÉ d'un texte : {\"bloc\": \"colonnes\", \"texte\", "
+              "\"image\"} ; en couverture : `image_couverture`. Un document déjà ouvert "
+              "reçoit son logo par `ajouter_document` (`entete_image`). Ne dis jamais que "
+              "c'est impossible.")
     if not _retouche_disponible():
         # Sans moteur d'images : les références servent à REMONTRER une photo
         # (bloc `visuel`) ou à la joindre, jamais à la modifier — et la

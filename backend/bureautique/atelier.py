@@ -198,7 +198,11 @@ def termines(proprietaire: str) -> list[dict]:
                   "format": entete.get("format"),
                   "elements": int(f.get("elements") or 0),
                   "octets": int(f.get("octets") or 0),
-                  "pages_estimees": f.get("pages_estimees")}
+                  "pages_estimees": f.get("pages_estimees"),
+                  # Sa PRÉSENTATION (15/09) : refaire le même titre avec un logo,
+                  # une couverture ou un style de plus n'est pas « rallonger ».
+                  "presentation": {k: str(entete.get(k) or "") for k in
+                                   ("entete_image", "pied_image", "image_couverture", "style")}}
         debut = " ".join(str(f.get("extrait") or "").split())
         if debut:
             entree["contenu"] = (debut[:LONGUEUR_CONTENU] + "…") if len(debut) > LONGUEUR_CONTENU else debut
@@ -260,7 +264,8 @@ def texte_d_element(e: dict) -> str:
     if e.get("texte"):
         return str(e["texte"])
     if isinstance(e.get("items"), list):
-        return " ".join(str(x) for x in e["items"])
+        return " ".join((f"{x.get('valeur', '')} {x.get('libelle', '')}" if isinstance(x, dict) else str(x))
+                        for x in e["items"])
     if isinstance(e.get("lignes"), list):
         return " ".join(" ".join(map(str, l)) if isinstance(l, list) else str(l)
                         for l in e["lignes"])
@@ -419,6 +424,10 @@ def _extrait(jeton: str, limite: int = 900) -> str:
             t = f"[{bloc} : {len(e.get('lignes') or [])} ligne(s)]"
         elif bloc == "image":
             t = f"[image{' : ' + str(e.get('legende')) if e.get('legende') else ''}]"
+        elif bloc == "chiffres":
+            t = " · ".join(f"{i.get('valeur')} {i.get('libelle') or ''}".strip() for i in (e.get("items") or []))
+        elif bloc == "colonnes":
+            t = (str(e.get("titre") or "") + " " + t).strip() + " [photo]"
         elif bloc in ("saut_page", "separateur"):
             continue
         if not t:

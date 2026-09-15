@@ -24,6 +24,32 @@ N'écris donc ni page de garde ni sommaire en blocs.
 - un texte que tu écris avec des tirets en début de ligne devient une vraie
   liste, et « **gras** » du gras — mais préfère les blocs.
 
+## Chaque document a SA tête (15/09)
+
+« Il fait tout le temps la même trame de documents, c'est horrible » : un devis,
+une plaquette et un compte rendu ne se ressemblent pas. CHOISIS :
+
+| `style` | Pour | Ce que ça change |
+|---|---|---|
+| `classique` | rapport, mémoire technique, cahier des charges | page de garde sobre (logo, titre, filet), sommaire |
+| `moderne` | offre, proposition, présentation de projet | bandeau de couleur en couverture, titres soulignés, logo à gauche de l'en-tête |
+| `epure` | courrier, note, compte rendu, attestation | pas de page de garde, beaucoup de blanc, titres gris |
+| `plaquette` | dossier de présentation, références chantier | grande photo de couverture (`image_couverture`), titre en grand, pas de sommaire |
+
+Et la page elle-même se compose : un `encadre` pour ce qui doit sauter aux yeux
+(engagement, point d'attention), des `chiffres` clés côte à côte (surface,
+délai, garantie), une `citation` (témoignage client), des `colonnes` pour mettre
+une PHOTO du chantier À CÔTÉ de son texte. Une page qui n'est que titres et
+paragraphes, c'est la trame qu'on ne veut plus.
+
+**Le logo et les en-têtes.** `entete_image` / `pied_image` / `image_couverture`
+acceptent la clé d'une image de la conversation, le NOM d'un fichier image du
+Drive ou du NAS, ou le NOM d'un PDF : un logo vectoriel est dessiné et recadré,
+et sur un devis scanné on prend la bande du HAUT (en-tête) ou du BAS (pied).
+Un logo trouvé APRÈS avoir ouvert le document se pose avec `ajouter_document`
+(`entete_image`, sans `elements`). Ne dis JAMAIS qu'un logo est en en-tête si le
+résultat ne le dit pas (« Image posée en en-tête », `presentation_modifiee`).
+
 ## Le contenu se DÉCRIT
 
 On ne programme jamais la mise en page : on décrit des blocs, et le code de
@@ -38,6 +64,10 @@ rendu (écrit une fois, éprouvé) s'en charge pour les trois formats.
 | `saut_page` | aucun champ |
 | `feuille` | `nom`, `entetes[]`, `lignes[[]]` |
 | `image` | `image` (la référence), `legende`, `largeur_cm` (2 à 17), `centre` |
+| `colonnes` | `texte`, `image` (la référence), `image_a_gauche`, `titre` |
+| `encadre` | `texte`, `titre`, `ton` (charte, info, attention) |
+| `chiffres` | `items[{valeur, libelle}]` (2 à 4) |
+| `citation` | `texte`, `auteur` |
 
 **Images.** La référence d'un bloc `image` est ce qu'un geste a déjà rendu :
 la clé d'une image de la conversation (photo jointe, image ouverte, tirage),
@@ -50,9 +80,10 @@ résout pas est ÉCARTÉE avec sa raison, jamais insérée vide.
 
 **Reprendre la charte d'un document existant.** Un devis type de la maison
 est souvent un PDF : `entete_image` accepte son NOM et en tire le logo (la
-plus grande image de la bande haute ou basse de la page). Une page scannée
-d'un seul tenant est refusée en le disant — mieux vaut pas de logo qu'un
-scan de devis collé en en-tête. Pour les COULEURS, la couleur `charte` est
+plus grande image de la bande haute ou basse de la page). Sans image intégrée
+(logo vectoriel, page scannée), la page est dessinée et recadrée : le logo
+entier, ou la bande du haut pour `entete_image` et du bas pour `pied_image`.
+Pour les COULEURS, la couleur `charte` est
 celle de la maison : `{"bloc": "titre", "texte": "…", "couleur": "charte"}`.
 `charte_fond` est son ton foncé. Elles viennent de la charte du client, pas
 du modèle : ne les invente pas en hexadécimal.

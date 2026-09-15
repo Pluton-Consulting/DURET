@@ -430,15 +430,20 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "`pied_image` : une IMAGE (logo, photo) sur chaque page — la reference "
         "d'une image de la conversation, le NOM d'un fichier image du "
         "stockage, ou le NOM d'un PDF de la maison (devis type, plaquette) : "
-        "on en tire son logo. Pour les COULEURS de la maison, mets "
-        "couleur:'charte' sur un titre ou un paragraphe. MISE EN PAGE AUTOMATIQUE (Word) : "
-        "page de garde et sommaire pour un document long, titres a la couleur de la "
-        "maison — n'ecris ni page de garde ni sommaire toi-meme. REDIGE en paragraphes "
-        "(3 a 6 phrases) ; une liste seulement pour une vraie enumeration courte, "
-        "jamais une section faite QUE de puces. Ne produit aucun fichier",
+        "on en tire son logo, ou son EN-TETE / PIED dessine si c'est un scan. Pour les COULEURS de la maison, mets "
+        "couleur:'charte' sur un titre ou un paragraphe. `style` : classique "
+        "(rapport, memoire), moderne (offre, presentation de projet), epure (courrier, "
+        "note, compte rendu), plaquette (dossier de presentation, references) — CHOISIS-LE "
+        "selon le document, ne fais pas toujours le meme. `image_couverture` : une photo "
+        "du chantier ou du projet en couverture. MISE EN PAGE AUTOMATIQUE (Word) : "
+        "page de garde et sommaire selon le style — n'ecris ni page de garde ni sommaire "
+        "toi-meme. VARIE la page : encadre, chiffres, citation, colonnes (photo a cote du "
+        "texte), images des chantiers. REDIGE en paragraphes (3 a 6 phrases) ; une liste "
+        "seulement pour une vraie enumeration courte. Ne produit aucun fichier",
 
         ["titre"], ["format", "sous_titre", "entete", "pied", "paysage", "numeroter",
-                    "entete_image", "pied_image", "page_de_garde", "sommaire"]),
+                    "entete_image", "pied_image", "page_de_garde", "sommaire",
+                    "style", "image_couverture"]),
     "ajouter_document": (
         # LA TAILLE PAR APPEL MANQUAIT ICI. Le catalogue disait « autant de
         # fois qu'il le faut » sans jamais dire COMBIEN par fois : le modele a
@@ -447,11 +452,17 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         # etre a l'interieur.
         "VERSE du contenu dans un document ouvert. Meme vocabulaire de blocs que "
         "`produire_document` ; {bloc:image, image:<reference>, legende} insere "
-        "une image de la conversation ou du stockage dans le corps. MAXIMUM 12 "
+        "une image de la conversation ou du stockage dans le corps ; "
+        "{bloc:colonnes, texte, image} met une photo A COTE du texte ; {bloc:encadre, "
+        "titre, texte, ton}, {bloc:chiffres, items:[{valeur, libelle}]}, {bloc:citation, "
+        "texte, auteur}. Un logo trouve APRES l'ouverture se pose ICI : `entete_image`, "
+        "`pied_image`, `image_couverture`, `style` changent la presentation du document "
+        "ouvert (sans `elements` si rien a verser). MAXIMUM 12 "
         "blocs rediges par appel : au-dela ta sortie est COUPEE en plein milieu "
         "et l'appel est perdu. Rappelle-la autant de fois qu'il le faut, le "
         "contenu s'accumule",
-        ["document_id", "elements"], []),
+        ["document_id"], ["elements", "entete_image", "pied_image", "image_couverture",
+                          "style", "sous_titre", "entete", "pied"]),
     "terminer_document": (
         "FERME le document et rend le lien. Tant qu'il n'est pas appele, "
         "AUCUN fichier n'existe",

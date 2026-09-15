@@ -108,12 +108,13 @@ async def creer_document(data: dict, user) -> dict:
     # Les images d'en-tête et de pied (un logo) se résolvent et se rangent
     # MAINTENANT, sous le jeton : le rendu ne lit que des fichiers rangés.
     refus: list = []
-    if entete.get("entete_image") or entete.get("pied_image"):
+    if entete.get("entete_image") or entete.get("pied_image") or entete.get("image_couverture"):
         from bureautique.atelier import mettre_a_jour_entete
         from bureautique.images import preparer
         _, entete, refus = await preparer(jeton, proprio, [], entete, user)
         mettre_a_jour_entete(jeton, proprio, entete)
-    images_posees = [n for n, c in (("en-tête", "entete_image_fichier"), ("pied de page", "pied_image_fichier"))
+    images_posees = [n for n, c in (("en-tête", "entete_image_fichier"), ("pied de page", "pied_image_fichier"),
+                                    ("couverture", "image_couverture_fichier"))
                      if entete.get(c)]
     return {
         "document_id": jeton,
@@ -195,6 +196,43 @@ async def ajouter_document(data: dict, user) -> dict:
     # le versement, avec sa raison quand elle ne se résout pas.
     from bureautique.images import preparer
     elements, _, refus = await preparer(jeton, _proprietaire(user), elements[:MAX_PAR_APPEL], {}, user)
+
+    # LA PRÉSENTATION SE RÈGLE EN COURS DE ROUTE (15/09). Le logo se trouve
+    # souvent APRÈS l'ouverture du document (« récupère cette en-tête… ») :
+    # il n'y avait aucun moyen de le poser sans tout refaire. Tant que le
+    # document est ouvert, `entete_image`, `pied_image`, `image_couverture`,
+    # `style`, `sous_titre`, `entete` et `pied` se changent ici.
+    changes = {k: data.get(k) for k in ("entete_image", "pied_image", "image_couverture", "style",
+                                         "sous_titre", "entete", "pied", "page_de_garde", "sommaire")
+               if data.get(k) not in (None, "")}
+    presentation = []
+    if changes:
+        from bureautique.atelier import mettre_a_jour_entete
+        from bureautique.modele import normaliser_entete
+        actuelle = fiche(jeton, _proprietaire(user))
+        if actuelle is not None and not actuelle.get("fini"):
+            nouvelle = dict(actuelle.get("entete") or {})
+            for k in ("entete_image", "pied_image", "image_couverture"):
+                if changes.get(k):
+                    nouvelle.pop(k + "_fichier", None)
+            nouvelle = normaliser_entete({**nouvelle, **changes})
+            _, nouvelle, refus_entete = await preparer(jeton, _proprietaire(user), [], nouvelle, user)
+            refus += refus_entete
+            mettre_a_jour_entete(jeton, _proprietaire(user), nouvelle)
+            presentation = [k for k in changes
+                            if k not in ("entete_image", "pied_image", "image_couverture")
+                            or nouvelle.get(k + "_fichier")]
+    if changes and not elements:
+        f = fiche(jeton, _proprietaire(user)) or {}
+        if not f:
+            _echec("Document inconnu, expiré, ou ouvert par quelqu'un d'autre. "
+                   "Reprends le `document_id` EXACT rendu par `creer_document`.")
+        return {"document_id": jeton, "ajoutes": 0, "total": f.get("elements", 0),
+                "images_refusees": refus, "presentation_modifiee": presentation or None,
+                "plan_du_document": plan(jeton),
+                "note": ((f"Présentation mise à jour : {', '.join(presentation)}." if presentation
+                          else "Présentation inchangée.") + _note_refus(refus)
+                         + " Continue d'ajouter, ou appelle `terminer_document`.")}
     try:
         retenus = ajouter(jeton, elements, _proprietaire(user))
     except KeyError:
@@ -232,7 +270,9 @@ async def ajouter_document(data: dict, user) -> dict:
         # LA STRUCTURE DU DOCUMENT À CE STADE : ce qui y est déjà, pour que la
         # passe suivante verse la suite au lieu de recommencer le début.
         "plan_du_document": plan(jeton),
+        "presentation_modifiee": presentation or None,
         "note": (f"{retenus} élément(s) ajouté(s)."
+                 + (f" Présentation mise à jour : {', '.join(presentation)}." if presentation else "")
                  + (f" {ignores} écarté(s) : type de bloc inconnu ou contenu vide."
                     if ignores > 0 else "")
                  + _note_refus(refus)

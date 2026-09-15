@@ -588,6 +588,13 @@ async def ma_signature(data: dict, user) -> dict:
     """Remontre la signature en vigueur pour une boîte."""
     boite = await verifier_acces(user, data.get("mailbox")
                                  or await boite_par_defaut(user))
+    # MONTRER, C'EST D'ABORD AVOIR (15/09). « Affiche ma signature » sans
+    # signature enregistrée rendait « aucune » et une proposition d'aller la
+    # chercher : un tour de plus, et une minute de forçage. Aller la chercher
+    # dans les envoyés est une LECTURE ; elle se fait.
+    from mail.signature import enregistree, signature_vide
+    if signature_vide(await enregistree(boite)):
+        return await apprendre_signature(data, user)
     return await _fiche_signature(boite, appris=False)
 
 
@@ -597,9 +604,9 @@ async def _fiche_signature(boite: str, appris: bool, occurrences=None) -> dict:
     Le logo est redéposé pour être servi par `/api/visuels/{clé}` : le dépôt
     est adressé par le contenu, redéposer la même image ne crée pas de doublon.
     """
-    from mail.signature import _cles_deposees, enregistree
+    from mail.signature import _cles_deposees, enregistree, signature_vide
     signature = await enregistree(boite)
-    if not signature:
+    if signature_vide(signature):
         return {"boite": boite, "signature": None,
                 "message": "Aucune signature enregistrée pour cette boîte.",
                 "a_faire": ("Dis qu'il n'y en a pas, et propose "

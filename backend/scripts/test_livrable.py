@@ -349,8 +349,24 @@ espace2.update({
     "MAX_FORCAGES_PAR_TOUR": 2,
 })
 extraire(racine / "agents" / "agent1.py",
-         {"route_apres_llm", "_texte_visible", "_montre_un_fichier_du_fil"}, espace2)
+         {"route_apres_llm", "_texte_visible", "_montre_un_fichier_du_fil",
+          "_bloc_de_donnees_sans_lecture", "_TYPES_DE_DONNEES"}, espace2)
 route = espace2["route_apres_llm"]
+
+# 21bis. AFFICHER SANS RIEN LIRE (15/09, Symbiose, 15:42). « affiche la
+#        signature » → une fiche au texte et au téléphone INVENTÉS, sans geste.
+FICHE_INVENTEE = {"type": "keyvalue", "titre": "Signature de benjamin.durou@exemple-paysage.fr",
+                  "rows": [["Texte", "Benjamin Durou\nTél. : 06 12 34 56 78"], ["Images", "0"]]}
+verifier("« affiche la signature » + une fiche écrite sans aucun geste → FORCEUR",
+         route({"llm_response": bloc_ui(FICHE_INVENTEE), "query": "affiche la signature",
+                "tool_results": [], "forcages": 0, "messages": []}) == "forcer")
+verifier("la même fiche après `ma_signature` réussi ne force rien",
+         route({"llm_response": bloc_ui(FICHE_INVENTEE), "query": "affiche la signature",
+                "tool_results": [res("ma_signature", {"ok": True})], "forcages": 0,
+                "messages": []}) == "rehydrate")
+verifier("une fiche sans demande de montrer (« résume ») n'est pas visée par ce filet",
+         route({"llm_response": "Résumé.\n\n" + bloc_ui(FICHE_INVENTEE), "query": "résume ce qu'on a dit",
+                "tool_results": [], "forcages": 0, "messages": []}) == "rehydrate")
 
 # 22. Le tour exact : demande de production, prétention au passé, zéro action.
 verifier("« j'ai créé le document » sans production part au FORCEUR",

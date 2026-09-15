@@ -168,10 +168,11 @@ routeur = source(BACKEND / "routers" / "google_perso.py")
 verifier("routeur : le refresh token ne sort jamais par l'API",
          "refresh_token" not in routeur.replace('infos["refresh_token"]', ""))
 ecran = source(FRONTEND / "app" / "(app)" / "parametres" / "SettingsClient.tsx")
-# 14/09 (Noa, Duret) : les profils métier partagent la boîte de l'entreprise,
-# ils n'ont plus l'onglet Google (ils ont « Mon code de connexion » à la place).
-verifier("écran : l'onglet Mon compte Google existe pour l'administration et la direction",
-         '{ key: "google", label: "Mon compte Google", roles: ["super_admin", "direction"] }' in ecran)
+# 15/09 (Noa, Duret) : l'onglet « Mon compte Google » a quitté Paramètres — la
+# messagerie passe par la boîte IMAP, l'agenda se relie depuis Clés API. Les
+# routes /api/google restent (le bouton « Relier l'agenda Google » s'en sert).
+verifier("écran : l'onglet Mon compte Google a quitté Paramètres",
+         'key: "google"' not in ecran)
 verifier("écran : la page Paramètres ne rejette plus les collaborateurs",
          '["super_admin", "direction"].includes' not in source(
              FRONTEND / "app" / "(app)" / "parametres" / "page.tsx"))

@@ -94,3 +94,32 @@ def deposer_octets(octets: bytes, mime: str = "image/png") -> str | None:
     except Exception as e:  # noqa: BLE001
         logger.warning("Dépôt du visuel impossible (%s)", type(e).__name__)
         return None
+
+
+# ── La filiation d'une retouche (15/09) ─────────────────────────────────────
+# « Mets le pied de la berlinoise au niveau du trait bleu » : le trait bleu,
+# tracé par le client, n'existe QUE sur sa photo d'origine. Dès la première
+# retouche il a disparu sous la berlinoise, et les suivantes partaient d'images
+# où le repère n'était plus : le moteur ne pouvait pas le trouver. Chaque rendu
+# retient donc la photo dont la chaîne est partie, dans un fichier voisin.
+
+def noter_origine(cle: str, origine: str) -> None:
+    """Retient que `cle` descend de la photo `origine` (best-effort)."""
+    if not (cle or "").isalnum() or not (origine or "").isalnum() or cle == origine:
+        return
+    try:
+        DOSSIER.mkdir(parents=True, exist_ok=True)
+        (DOSSIER / f"{cle}.origine").write_text(origine, encoding="utf-8")
+    except Exception as e:  # noqa: BLE001 — la filiation n'arrête jamais un rendu
+        logger.info("Filiation du visuel non notée (%s)", type(e).__name__)
+
+
+def origine_de(cle: str) -> str:
+    """La photo d'origine dont `cle` descend, ou "" si `cle` en est une."""
+    if not (cle or "").isalnum():
+        return ""
+    try:
+        valeur = (DOSSIER / f"{cle}.origine").read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+    return valeur if valeur.isalnum() and _chemin(valeur) else ""

@@ -328,6 +328,14 @@ def _images_du_html(html_: str, pieces: list) -> list:
     return gardees
 
 
+def signature_vide(signature) -> bool:
+    """Absente, ou enregistrée sans texte ni image (apprise à tort avant le
+    15/09) : dans les deux cas, il n'y a rien à montrer ni à apposer."""
+    if not signature:
+        return True
+    return not str(signature.get("texte") or "").strip() and not (signature.get("images") or [])
+
+
 async def enregistree(boite: str):
     """La signature en vigueur pour cette boîte, ou None.
 
@@ -524,6 +532,22 @@ async def apprendre(boite: str, user, ref: str = "") -> dict:
                     logger.info("Image de signature non téléchargée (%s) : %s", cid, e)
     images = _images_du_html(retenue["html"], retenue["pieces"])
     texte = en_texte(retenue["html"])
+    # UNE SIGNATURE VIDE N'EST PAS APPRISE (15/09, Symbiose, 15:40). Une
+    # signature QU'IMAGE a été reconnue, ses images n'ont pas été récupérées,
+    # et l'on a enregistré « texte vide, 0 image » en répondant « apprise ».
+    # Au tour suivant, le modèle a INVENTÉ son contenu. On le dit, avec ce qui
+    # manque, et rien n'est écrit.
+    if not texte.strip() and not images:
+        from mail.pieces import cids_du_html
+        cids = cids_du_html(retenue["html"])
+        web = [m.group(2) for m in _RE_IMG_WEB.finditer(retenue["html"])]
+        logger.warning("Signature en image sans image récupérée pour %s : %d cid, %d adresse(s) web, "
+                       "%d pièce(s) du message", boite, len(cids), len(web), len(retenue["pieces"] or []))
+        return {"trouvee": False, "ecartes": None,
+                "message": (f"Une signature en image a été repérée ({retenue['source']}), mais aucune "
+                            f"de ses images n'a pu être récupérée ({len(cids)} image(s) en ligne, "
+                            f"{len(web)} image(s) hébergée(s), {len(retenue['pieces'] or [])} pièce(s) "
+                            "lue(s) dans le message). Rien n'a été enregistré.")}
     await enregistrer(boite, retenue["html"], texte, images,
                       retenue["source"], getattr(user, "id", None))
     logger.info("Signature apprise pour %s (%d occurrence(s), %d image(s))",
@@ -566,7 +590,9 @@ async def apposer(boite: str, corps: str, pieces: list, demandee=None) -> tuple:
     if demandee is False or str(demandee).lower() in ("false", "non", "0"):
         return corps, "", pieces
     signature = await enregistree(boite)
-    if not signature or not (signature.get("html") or signature.get("texte")):
+    # Une signature VIDE (html sans texte ni image, apprise à tort) ne part pas :
+    # elle collait un bloc invisible sous le message en se disant « apposée ».
+    if signature_vide(signature):
         return corps, "", pieces
     # Une signature enregistrée AVANT le 15/09 peut être celle d'un tiers (la
     # cliente dont la réponse avait été prise pour un envoi) : elle ne part pas.

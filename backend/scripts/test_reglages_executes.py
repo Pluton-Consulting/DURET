@@ -103,6 +103,9 @@ VALEURS = {
     "modele_vision": "ollama_cloud:qwen3.5:397b",
     "modele_embedding": "ollama_cloud:embeddinggemma",
     "nas_niveaux": '[{"chemin": "/home/Drive/Compta", "niveau": "direction_only"}]',
+    # 15/09 : le tri du NAS avant la lecture (`nas/tri.py`).
+    "nas_tri": '[{"chemin": "/home/Drive/Archives", "decision": "ignorer"}]',
+    "nas_tri_age_ans": "3",
 }
 verifier("le banc couvre TOUS les réglages déclarés (sinon il ne prouve rien)",
          set(reglages.REGLAGES_CONNUS) <= set(VALEURS),

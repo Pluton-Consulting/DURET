@@ -427,6 +427,69 @@ else:
              sig.sans_politesse_en_double("Bonjour,\n\nCordialement,", "Marie Dupont\nDirectrice")
              == "Bonjour,\n\nCordialement,")
 
+# ── 6. Une signature VIDE (15/09, Symbiose, 15:40 → 15:42) ─────────────────
+print("6. Une signature vide ne s'apprend pas, ne se montre pas, ne part pas")
+# Export du 15/09 : « apprise » avec texte vide et 0 image ; au tour suivant,
+# « affiche la signature » → une fiche au texte et au téléphone INVENTÉS.
+spec6 = importlib.util.spec_from_file_location("mail.signature", racine / "mail" / "signature.py")
+sig6 = importlib.util.module_from_spec(spec6)
+sys.modules["mail.signature"] = sig6
+spec6.loader.exec_module(sig6)
+if not hasattr(sig6, "signature_vide"):
+    verifier("signature.py porte `signature_vide`", False, "absent")
+else:
+    verifier("absente ou sans texte ni image : vide ; texte ou image : non",
+             sig6.signature_vide(None)
+             and sig6.signature_vide({"html": '<div><img src="cid:x"></div>', "texte": "", "images": []})
+             and not sig6.signature_vide({"texte": "Marie Dupont", "images": []})
+             and not sig6.signature_vide({"texte": "", "images": [{"cid": "x"}]}))
+    ENR6 = []
+
+    async def _enr6(*a, **k):
+        ENR6.append(a)
+    sig6.enregistrer = _enr6
+    MESSAGES["ref-envoi"]["pieces_jointes"] = []     # l'image n'a pas été lue
+    module("mail.lecture", lire_message=_lire_message, lire_boite=_lire_boite,
+           piece_connue=lambda ref, boite: None, telecharger_piece=_telecharger)
+    r = asyncio.run(sig6.apprendre(BOITE, user))
+    verifier("une signature QU'IMAGE dont l'image n'est pas récupérée n'est PAS enregistrée",
+             not r.get("trouvee") and not ENR6, (r, ENR6))
+    verifier("… et l'échec dit ce qui manque", "aucune de ses images" in r.get("message", ""), r)
+
+    async def _vide(boite):
+        return {"html": '<div><img src="cid:x"></div>', "texte": "", "images": []}
+    sig6.enregistree = _vide
+    corps6, html6, _ = asyncio.run(sig6.apposer(BOITE, "Bonjour", []))
+    verifier("une signature vide déjà en base ne part pas sous le message", corps6 == "Bonjour" and html6 == "",
+             (corps6, html6))
+
+    esp6 = {"MailSkillError": MailSkillError, "verifier_acces": _verifier_acces,
+            "boite_par_defaut": _boite_par_defaut}
+    manque6 = extraire(racine / "mail" / "skills.py",
+                       {"ma_signature", "apprendre_signature", "_fiche_signature"}, esp6)
+    verifier("ma_signature existe", not manque6, manque6)
+    if not manque6:
+        ETAT6 = {"sig": {"html": "", "texte": "", "images": []}}
+        APPRIS6 = []
+
+        async def _lue(boite):
+            return ETAT6["sig"]
+
+        async def _apprend(boite, user, ref=""):
+            APPRIS6.append(boite)
+            ETAT6["sig"] = {"html": "<div>Marie Dupont</div>", "texte": "Marie Dupont", "images": [],
+                            "source": "message « x »", "derniere_maj": "2026-09-15"}
+            return {"trouvee": True, "occurrences": 2}
+        sig6.enregistree, sig6.apprendre = _lue, _apprend
+        fiche6 = asyncio.run(esp6["ma_signature"]({}, user))
+        verifier("« affiche ma signature » sans signature utilisable va la chercher dans les envoyés",
+                 APPRIS6 == [BOITE] and fiche6.get("apprise") and fiche6["signature"]["texte"] == "Marie Dupont",
+                 fiche6)
+        APPRIS6.clear()
+        fiche6 = asyncio.run(esp6["ma_signature"]({}, user))
+        verifier("… et une signature en vigueur se montre sans réapprendre", not APPRIS6 and not fiche6.get("apprise"))
+    sys.modules["mail.signature"] = sig
+
 src_sup = (racine / "skills" / "suppression.py").read_text(encoding="utf-8")
 espace_sup = {"re": re}
 exec(compile(src_sup, "suppression", "exec"), espace_sup)

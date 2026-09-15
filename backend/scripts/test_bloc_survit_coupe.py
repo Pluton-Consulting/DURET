@@ -123,7 +123,8 @@ verifier("les nouveaux skills ont droit au plafond généreux",
                        '"nas_apercu"', '"preparer_envois"')))
 
 # ── 3. `_blocs_garantis` lit la voie sûre, MÊME si le résultat est coupé ─
-espace = {"_tracer_filet": lambda *a, **k: None, "AgentState": dict}
+espace = {"_tracer_filet": lambda *a, **k: None, "AgentState": dict,
+          "logger": __import__("logging").getLogger("banc")}
 extraire(BACKEND / "agents" / "agent1.py",
          {"_blocs_garantis", "_blocs_de", "_designe_le_meme", "_plat_nom",
           "_signature_bloc", "_re_livrables", "_BLOC_UI_RE"}, espace)

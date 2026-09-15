@@ -2769,6 +2769,36 @@ def _image_connue(cle: str, state) -> bool:
         return False
 
 
+# Les blocs qui PORTENT des données (et non une navigation ou une référence
+# vérifiée ailleurs) : écrits sans lecture, ils sont inventés.
+_TYPES_DE_DONNEES = {"keyvalue", "table", "list", "callout", "stats", "kpi",
+                     "timeline", "devis", "compte_rendu", "arbre", "email"}
+
+
+def _bloc_de_donnees_sans_lecture(texte: str, state) -> bool:
+    """La réponse montre-t-elle des DONNÉES sans qu'aucun geste les ait lues ?
+
+    Vrai quand aucun geste n'a réussi ce tour, que rien n'attend un accord, et
+    que la réponse porte un bloc de données (fiche, tableau, liste…). Un
+    fichier ou une photo du fil remontrés restent légitimes : leur référence
+    se vérifie (`_montre_un_fichier_du_fil`).
+    """
+    import json as _j
+    if state.get("pending_action") or any(
+            r.get("ok") for r in (state.get("tool_results") or [])):
+        return False
+    if _montre_un_fichier_du_fil(texte, state):
+        return False
+    for brut in _BLOC_UI_RE.findall(texte or ""):
+        try:
+            bloc = _j.loads(brut)
+        except ValueError:
+            continue
+        if isinstance(bloc, dict) and bloc.get("type") in _TYPES_DE_DONNEES:
+            return True
+    return False
+
+
 def _montre_un_fichier_du_fil(texte: str, state) -> bool:
     """La réponse remontre-t-elle un VRAI fichier de la conversation ?
 
@@ -3936,7 +3966,15 @@ def route_apres_llm(state: AgentState) -> str:
              # 08/09 : « a été ouvert, voici son contenu » sans qu'un seul
              # geste ait réussi = un contenu inventé → forceur (contexte neuf).
              or (decrit_un_contenu_lu(visible)
-                 and not any(r.get("ok") for r in (state.get("tool_results") or [])))))
+                 and not any(r.get("ok") for r in (state.get("tool_results") or [])))
+             # AFFICHER SANS RIEN LIRE (15/09, Symbiose, 15:42). « affiche la
+             # signature » → une fiche « Signature de … » avec un texte et un
+             # téléphone INVENTÉS (« 06 12 34 56 78 »), sans un seul geste : la
+             # signature enregistrée était vide. Montrer une donnée, c'est la
+             # LIRE ce tour-ci ; un bloc de données écrit de mémoire part au
+             # forceur, qui appelle le geste de lecture.
+             or (demande_de_montrer(demande)
+                 and _bloc_de_donnees_sans_lecture(visible, state))))
     if fantome:
         logger.info("Livraison fantôme : la réponse prétend livrer sans production — forçage")
         _tracer_filet(state, "livraison_fantome", "pretention_sans_production",

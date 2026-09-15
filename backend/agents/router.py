@@ -214,6 +214,10 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.warning("Échec de l'action %s : %s", action.get("skill"), e)
         erreur = str(getattr(e, "detail", None) or e)
+    # UN ÉCHEC MÉTIER APRÈS ACCORD EST UN ÉCHEC (16/09, audit D-05) : la sortie
+    # du geste le disait, le compte rendu annonçait pourtant l'action faite.
+    if erreur is None and isinstance(resultat, dict) and resultat.get("ok") is False:
+        erreur = str(resultat.get("error") or "l'action n'a pas abouti")
 
     # L'ACCORD AVANT CHAQUE ACTION (08/09) : le geste approuvé n'est pas la fin
     # du travail. Son résultat entre dans `tool_results` sous la forme exacte

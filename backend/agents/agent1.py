@@ -1714,11 +1714,20 @@ async def tools_node(state: AgentState, config=None) -> dict:
         plafond = (PLAFOND_RESULTAT_GENEREUX
                    if action["skill"] in RESULTATS_GENEREUX else PLAFOND_RESULTAT)
         contenu = _tailler_resultat(sortie, plafond)
-        ok = True
+        # LE RÉSULTAT MÉTIER, PAS LA FIN DE L'APPEL PYTHON (16/09, audit D-05) :
+        # une sortie qui dit elle-même l'échec compte comme un échec pour les
+        # filets, le journal et la console.
+        ok = bool(brut.get("ok", True))
+        issue = {k: brut.get(k) for k in ("outcome", "effect_status", "evidence_refs", "warnings")
+                 if brut.get(k) not in (None, [], "")}
+        if not ok:
+            contenu = f"ÉCHEC signalé par le geste : {brut.get('error') or 'l’action n’a pas abouti'}\n{contenu}"
     except SkillError as e:
-        contenu, ok, bloc_garanti = f"ERREUR : {e}", False, None
+        contenu, ok, bloc_garanti, issue = f"ERREUR : {e}", False, None, {"outcome": "failed"}
     except Exception as e:  # noqa: BLE001 - inclut le 403 de verifier_acces
-        contenu, ok, bloc_garanti = f"ERREUR : {getattr(e, 'detail', None) or e}", False, None
+        contenu, ok, bloc_garanti, issue = (f"ERREUR : {getattr(e, 'detail', None) or e}", False, None,
+                                            {"outcome": "denied" if getattr(e, "status_code", None) == 403
+                                             else "failed"})
 
     # Le résultat repart vers le modèle : il doit être masqué, avec la carte
     # cumulative du fil pour que les jetons restent cohérents.
@@ -1731,6 +1740,7 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # ce champ n'est pas reinjecte dans le prompt : il ne coute aucun jeton.
     entree, carte_maj = await resultat_de_geste(
         state, action["skill"], action.get("args") or {}, empreinte, contenu, ok, bloc_garanti)
+    entree.update(issue)
     resultats.append(entree)
     # UNE ACTION A ABOUTI : le drapeau de relance retombe, pour que le modele
     # puisse etre repris s'il cale de nouveau plus loin.

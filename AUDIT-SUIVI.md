@@ -13,7 +13,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | Fiche | Sujet | État |
 |---|---|---|
 | D-02 | Styles Word conservés au remplacement, contrôle du fichier produit | fait (bancs réels) |
-| D-05 | Échecs métier jamais présentés comme réussis | à faire |
+| D-05 | Échecs métier jamais présentés comme réussis | étape 1 faite (normaliseur, exécuteur, boucle, reprise) ; reçus avant « créé/envoyé » et preuves par requête : lot suivant |
 | D-06 | Secours lexical quand les embeddings tombent | à faire |
 | D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | à faire |
 | D-27 | Doublons NAS : plus d'exclusion sur nom+taille | à faire |
@@ -29,3 +29,8 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   réécrites ; `bureautique/controle.py` compare original et résultat rouvert. Bancs
   `test_trame_document` (+13), `test_reproduire_du_serveur`, `test_trame_pdf` verts avec
   python-docx/openpyxl/PyMuPDF réels.
+- 16/09 — D-05 (étape 1) : `skills/resultats.py` (outcome, ok, effect_status, evidence_refs,
+  warnings, retryable) ; `execute_skill` rend `ok` métier + champs d'avant, audit en échec ;
+  `tools_node` et la reprise après accord suivent `ok`. Banc `test_resultats_normalises`.
+- 16/09 — hors fiche (trouvé par la suite de bancs) : relances de facturation comptées au jour
+  UTC — entre minuit et 2 h « relancée à l'instant » devenait « il y a 1 jour ». Jour à Paris.

@@ -181,6 +181,12 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
         with au_nom_de(user):
             sortie = await executable(data or {}, user)
         duree = int((time.monotonic() - start) * 1000)
+        from skills.resultats import message_d_echec, normaliser_resultat
+        normalise = normaliser_resultat(sortie, effet_du_skill(name, ref))
+        if not normalise["contrat_reconnu"]:
+            logger.debug("Skill %s : sortie sans contrat reconnu (résultat non vérifié)", name)
+        elif not normalise["ok"]:
+            logger.info("Skill %s : échec métier signalé par sa sortie (%s)", name, normalise["outcome"])
         try:
             async with get_db() as conn:
                 await conn.execute(
@@ -198,14 +204,23 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
                 on_behalf_of=str(user.id), duration_ms=duree,
                 trigger_type=(trigger or {}).get("type", "chat"),
                 trigger_id=(trigger or {}).get("id"),
+                success=normalise["ok"],
                 metadata={"skill": name, "effet": effet_du_skill(name, ref),
-                          "mailbox": (sortie or {}).get("mailbox")},
+                          "mailbox": (sortie or {}).get("mailbox") if isinstance(sortie, dict) else None,
+                          "outcome": normalise["outcome"]},
             )
         except Exception:
             pass
 
-        return {"skill": name, "status": "native", "ok": True, "output": sortie,
-                "error": None, "execution_time_ms": duree, "sandbox_type": "natif"}
+        # `ok` DIT LE RÉSULTAT MÉTIER (16/09, audit D-05) : une sortie qui
+        # annonce elle-même l'échec n'est plus une réussite. Tous les champs
+        # d'avant restent (`output`, `error`…), les nouveaux s'y ajoutent.
+        return {"skill": name, "status": "native", "ok": normalise["ok"], "output": sortie,
+                "error": None if normalise["ok"] else message_d_echec(sortie),
+                "execution_time_ms": duree, "sandbox_type": "natif",
+                "outcome": normalise["outcome"], "effect_status": normalise["effect_status"],
+                "evidence_refs": normalise["evidence_refs"], "warnings": normalise["warnings"],
+                "retryable": normalise["retryable"]}
 
     async with get_db() as conn:
         row = await conn.fetchrow("SELECT code, status, enabled FROM skills WHERE name = $1", name)

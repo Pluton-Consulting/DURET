@@ -116,7 +116,7 @@ verifier("il est masqué DANS LE MÊME appel (une seule carte de jetons)",
 verifier("il est rangé à part dans le résultat (`bloc_garanti_masque`)",
          '"bloc_garanti_masque"' in agent1_src)
 verifier("un échec de skill ne laisse pas un bloc d'un appel précédent",
-         re.search(r"contenu, ok, bloc_garanti = f\"ERREUR", agent1_src))
+         re.search(r"contenu, ok, bloc_garanti(?:, issue)? = \(?f\"ERREUR", agent1_src))
 verifier("les nouveaux skills ont droit au plafond généreux",
          all(s in agent1_src.split("RESULTATS_GENEREUX")[1][:400]
              for s in ('"drive_chercher"', '"nas_chercher"', '"drive_apercu"',

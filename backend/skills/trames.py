@@ -92,6 +92,52 @@ def _ambigu(candidates: list[dict], designation: str) -> dict:
     }
 
 
+def _table(brut) -> dict:
+    """La table « texte cherché » → « texte à mettre », ou {}."""
+    if isinstance(brut, str):
+        try:
+            brut = json.loads(brut)
+        except ValueError:
+            raise TrameInvalide("Les remplacements doivent être une table "
+                                "« texte cherché » → « texte à mettre ».")
+    return {str(k): str(v) for k, v in brut.items() if str(k).strip()} if isinstance(brut, dict) else {}
+
+
+def _present(textes: list, cherche: str, approche: bool = False) -> bool:
+    """Le texte cherché est-il dans le document ? (casse et accents ignorés
+    pour un PDF, que le moteur remplace ainsi en dernier recours)."""
+    if any(cherche in t for t in textes):
+        return True
+    if not approche:
+        return False
+    from bureautique.trame import _sans_casse
+    cle = _sans_casse(cherche)
+    return any(cle in _sans_casse(t) for t in textes)
+
+
+def _rien_trouve(nom_fichier, remplacements: dict, textes: list) -> str:
+    """AUCUN texte cherché n'est dans le document — et ce qui y ressemble.
+
+    Le 14/09, « STUDIO » cherché dans un Word que le modèle venait d'écrire
+    lui-même (et qui portait déjà « Symbiose Paysage ») : quatre reprises à
+    l'identique, parce que la réponse disait seulement « reprenez
+    l'orthographe exacte ». On dit maintenant ce que le document CONTIENT de
+    plus proche, et qu'il ne sert à rien de relancer la même table.
+    """
+    from bureautique.trame import textes_proches
+    morceaux = []
+    for cherche in remplacements:
+        proches = textes_proches(textes, cherche)
+        morceaux.append(f"« {cherche} » : "
+                        + ("textes les plus proches dans le document — "
+                           + " ; ".join(f"« {p} »" for p in proches)
+                           if proches else "rien d'approchant dans le document"))
+    return (f"Aucun des textes cherchés n'a été trouvé dans « {nom_fichier} » ("
+            + " / ".join(morceaux) + "). Ne relance PAS ce geste avec la même table : "
+            "reprends un texte exactement présent, ou dis que ce texte n'existe pas "
+            "dans ce document.")
+
+
 # ── Enregistrer ──────────────────────────────────────────────────────────
 
 async def enregistrer_trame(parametres: dict, utilisateur) -> dict:
@@ -109,6 +155,9 @@ async def enregistrer_trame(parametres: dict, utilisateur) -> dict:
     texte = str(parametres.get("texte") or "").strip()
     description = str(parametres.get("description") or "").strip()
     reference = str(parametres.get("fichier") or "").strip()
+    remplacements = _table(parametres.get("remplacements"))
+    faits_trame = 0
+    introuvables: list = []
 
     octets: Optional[bytes] = None
     type_fichier = nom_fichier = None
@@ -128,7 +177,8 @@ async def enregistrer_trame(parametres: dict, utilisateur) -> dict:
         from mail.attaches import resoudre
 
         boite = str(getattr(utilisateur, "email", "") or "").lower()
-        pretes, refusees = await resoudre([reference], utilisateur, boite)
+        pretes, refusees = await resoudre([reference], utilisateur, boite,
+                                          plafond=moteur.MAX_OCTETS_PDF)
         if not pretes:
             pourquoi = (refusees[0].get("raison") if refusees
                         else "cette référence ne correspond à aucun fichier connu")
@@ -138,23 +188,43 @@ async def enregistrer_trame(parametres: dict, utilisateur) -> dict:
                 "du Drive), puis reprenez la référence qui vous est rendue.")
         piece = pretes[0]
         octets, nom_fichier = piece["octets"], piece["nom"]
-        if len(octets) > MAX_OCTETS:
+        plafond = moteur.plafond_octets(moteur.type_de(nom_fichier or "", piece.get("mime") or ""))
+        if len(octets) > plafond:
             raise TrameInvalide(
                 f"Ce fichier fait {len(octets) // 1024} ko, au-delà des "
-                f"{MAX_OCTETS // (1024 * 1024)} Mo admis pour une trame.")
+                f"{plafond // (1024 * 1024)} Mo admis pour une trame.")
 
         if genre == "document":
             type_fichier = moteur.type_de(nom_fichier or "", piece.get("mime") or "")
             if not type_fichier:
                 raise TrameInvalide(
-                    "Seuls les fichiers Word (.docx) et Excel (.xlsx) peuvent "
-                    "servir de trame à remplir : ce sont les seuls qu'on sache "
-                    "rouvrir sans rien perdre de leur mise en page. Un PDF se "
-                    "garde comme pièce, pas comme trame.")
-            apercu = moteur.analyser(octets, type_fichier)
+                    "Seuls les fichiers Word (.docx), Excel (.xlsx) et PDF peuvent "
+                    "servir de trame à remplir : ce sont ceux qu'on sait rouvrir "
+                    "sans rien perdre de leur mise en page.")
+            try:
+                apercu = moteur.analyser(octets, type_fichier)
+            except Exception as e:  # noqa: BLE001 — un fichier abîmé se DIT
+                raise TrameInvalide(f"Ce document n'a pas pu être ouvert : {str(e)[:160]}") from e
             ok, pourquoi = moteur.exploitable(apercu)
             if not ok:
                 raise TrameInvalide(pourquoi)
+            # « ENREGISTRE-LE, MAIS REMPLACE STUDIO PAR SYMBIOSE PAYSAGE » (14/09).
+            # La demande porte sur la trame ELLE-MÊME : ce qu'on retient est le
+            # document déjà corrigé. Sans ce paramètre, le modèle n'avait aucun
+            # geste pour le faire et en a fabriqué un autre document.
+            if remplacements:
+                try:
+                    octets, faits_trame = moteur.remplir(octets, type_fichier, remplacements)
+                except ValueError as e:
+                    raise TrameInvalide(str(e)) from e
+                introuvables = [k for k in remplacements
+                                if not _present(apercu.get("textes") or [], k,
+                                                approche=type_fichier == "pdf")]
+                if faits_trame == 0:
+                    raise TrameInvalide(_rien_trouve(nom_fichier, remplacements,
+                                                     apercu.get("textes") or [])
+                                        + " La trame n'a PAS été enregistrée.")
+                apercu = moteur.analyser(octets, type_fichier)
             variables = apercu.get("variables") or []
             # Le texte du document ne part PAS en base : il est déjà dans les
             # octets, et le stocker deux fois ferait diverger les deux copies.
@@ -195,12 +265,30 @@ async def enregistrer_trame(parametres: dict, utilisateur) -> dict:
     if variables:
         detail = (" Les valeurs à fournir à chaque reprise : "
                   + ", ".join(variables) + ".")
+    if faits_trame:
+        detail += (f" Avant de le retenir, {faits_trame} remplacement(s) y ont été "
+                   "faits (" + ", ".join(f"« {k} » → « {v} »" for k, v in remplacements.items()
+                                          if k not in introuvables) + ").")
+        if introuvables:
+            detail += (" Introuvable(s) dans le document : "
+                       + ", ".join(f"« {k} »" for k in introuvables) + ".")
+    if type_fichier == "pdf":
+        # L'HONNÊTETÉ SUR CE QU'UN PDF RETENU SAIT FAIRE : ses textes se
+        # remplacent, ses images (plans, visuels 3D, photos) restent celles du
+        # document d'origine. Le dire évite qu'un dossier « refait pour un autre
+        # client » parte avec les photos du précédent.
+        detail += (" C'est le PDF d'origine, mise en page comprise : à chaque "
+                   "reprise on n'en change que les TEXTES ; ses images restent "
+                   "celles du document retenu.")
     return {
         "enregistree": True, "nom": nom, "genre": genre,
+        "type": type_fichier, "remplacements": faits_trame or None,
         "variables": variables,
         "message_final": (f"{quoi} « {nom} » est retenu. Il suffira de le "
                           f"demander par son nom.{detail}"),
-        "a_faire": "Dis en une phrase que la trame est retenue, et sous quel nom.",
+        "a_faire": ("Dis en une phrase que la trame est retenue, sous quel nom, et "
+                    "ce qui y a été remplacé s'il y a lieu. Ne dis rien de plus "
+                    "que ce que ce résultat affirme."),
     }
 
 
@@ -288,14 +376,8 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
             f"« {t['nom']} » est un {t['genre']} : il se joint, il ne se remplit "
             "pas. Demandez-le en pièce jointe d'un envoi ou d'un document.")
 
-    remplacements = parametres.get("remplacements") or {}
-    if isinstance(remplacements, str):
-        try:
-            remplacements = json.loads(remplacements)
-        except ValueError:
-            raise TrameInvalide("Les remplacements doivent être une table "
-                                "« texte cherché » → « texte à mettre ».")
-    if not isinstance(remplacements, dict) or not remplacements:
+    remplacements = _table(parametres.get("remplacements"))
+    if not remplacements:
         variables = t["variables"]
         if isinstance(variables, str):
             variables = json.loads(variables or "[]")
@@ -304,8 +386,20 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
         raise TrameInvalide(
             f"Dites ce qu'il faut remplacer dans « {t['nom']} ».{manque}")
 
-    octets, faits = moteur.remplir(bytes(t["contenu"]), t["type_fichier"],
-                                   remplacements)
+    try:
+        octets, faits = moteur.remplir(bytes(t["contenu"]), t["type_fichier"],
+                                       remplacements)
+    except ValueError as e:
+        raise TrameInvalide(str(e)) from e
+    if faits == 0:
+        # RIEN N'A CHANGÉ : AUCUN FICHIER. Rendre une copie conforme posait une
+        # carte de plus à l'écran (deux cartes identiques et inutiles le 14/09)
+        # et invitait à relancer. On dit ce que le document contient de proche.
+        try:
+            textes = moteur.analyser(bytes(t["contenu"]), t["type_fichier"]).get("textes") or []
+        except Exception:  # noqa: BLE001
+            textes = []
+        raise TrameInvalide(_rien_trouve(t["nom"], remplacements, textes))
     base = (t["nom"] or "document").replace("/", "-")
     nom_sortie = f"{base}.{t['type_fichier']}"
     jeton = atelier.deposer_fichier(
@@ -316,18 +410,10 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
             "UPDATE trames SET usages = usages + 1 WHERE lower(nom) = lower($1)",
             t["nom"])
 
-    if faits == 0:
-        # RIEN N'A CHANGÉ, ET ON LE DIT. Rendre un document identique à
-        # l'original sans le signaler ferait croire au travail fait — c'est
-        # exactement le genre de silence qui part chez un client.
-        message = (f"Aucun des textes cherchés n'a été trouvé dans « {t['nom']} ». "
-                   "Le document est rendu tel quel : vérifiez l'orthographe "
-                   "exacte de ce qu'il fallait remplacer.")
-    else:
-        message = (f"« {t['nom']} » est repris avec {faits} remplacement(s). "
-                   "La mise en page, le logo et les styles d'origine sont "
-                   "conservés : c'est le fichier lui-même, pas une copie "
-                   "reconstruite.")
+    message = (f"« {t['nom']} » est repris avec {faits} remplacement(s). "
+               "La mise en page, le logo et les styles d'origine sont "
+               "conservés : c'est le fichier lui-même, pas une copie "
+               "reconstruite.")
     return {
         "nom": t["nom"], "remplacements": faits, "fichier": nom_sortie,
         "bloc_garanti": True,
@@ -384,7 +470,8 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
     from mail.attaches import resoudre
 
     boite = str(getattr(utilisateur, "email", "") or "").lower()
-    pretes, refusees = await resoudre([reference], utilisateur, boite)
+    pretes, refusees = await resoudre([reference], utilisateur, boite,
+                                      plafond=moteur.MAX_OCTETS_PDF)
     if not pretes:
         pourquoi = (refusees[0].get("raison") if refusees
                     else "cette référence ne correspond à aucun fichier connu")
@@ -395,18 +482,18 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
 
     piece = pretes[0]
     octets, nom_fichier = piece["octets"], piece["nom"]
-    if len(octets) > MAX_OCTETS:
+    genre = moteur.type_de(nom_fichier or "", piece.get("mime") or "")
+    plafond = moteur.plafond_octets(genre)
+    if len(octets) > plafond:
         raise TrameInvalide(
             f"Ce fichier fait {len(octets) // 1024} ko, au-delà des "
-            f"{MAX_OCTETS // (1024 * 1024)} Mo qu'on sait rouvrir.")
+            f"{plafond // (1024 * 1024)} Mo qu'on sait rouvrir.")
 
-    genre = moteur.type_de(nom_fichier or "", piece.get("mime") or "")
     if not genre:
         raise TrameInvalide(
-            "Seuls les fichiers Word (.docx) et Excel (.xlsx) se reproduisent "
-            "sans rien perdre de leur mise en page : ce sont les seuls qu'on "
-            "sache rouvrir. Un PDF ne se rouvre pas — il faudrait le "
-            "reconstruire, donc perdre ce qu'on cherche justement à garder.")
+            "Seuls les fichiers Word (.docx), Excel (.xlsx) et PDF se reproduisent "
+            "sans rien perdre de leur mise en page : ce sont ceux qu'on sait "
+            "rouvrir.")
 
     try:
         analyse = moteur.analyser(octets, genre)
@@ -417,16 +504,10 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
     if not bon:
         raise TrameInvalide(pourquoi)
 
-    remplacements = parametres.get("remplacements") or {}
-    if isinstance(remplacements, str):
-        try:
-            remplacements = json.loads(remplacements)
-        except ValueError:
-            raise TrameInvalide("Les remplacements doivent être une table "
-                                "« texte cherché » → « texte à mettre ».")
+    remplacements = _table(parametres.get("remplacements"))
 
     # ── Premier temps : la structure, pour savoir quoi remplacer ──
-    if not isinstance(remplacements, dict) or not remplacements:
+    if not remplacements:
         textes, total = [], 0
         for t in (analyse.get("textes") or []):
             if len(textes) >= MAX_TEXTES_MONTRES or total >= MAX_CARACTERES_STRUCTURE:
@@ -436,7 +517,9 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
         coupe = len(analyse.get("textes") or []) > len(textes)
         structure = {"nom": nom_fichier, "type": genre,
                      "variables": analyse.get("variables") or []}
-        if genre == "docx":
+        if genre == "pdf":
+            structure.update({"pages": analyse.get("pages"), "images": analyse.get("images")})
+        elif genre == "docx":
             structure.update({"paragraphes": analyse.get("paragraphes"),
                               "tableaux": analyse.get("tableaux"),
                               "images": analyse.get("images"),
@@ -469,6 +552,11 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
         produits, faits = moteur.remplir(octets, genre, remplacements)
     except ValueError as e:
         raise TrameInvalide(str(e)) from e
+    if faits == 0:
+        # Même règle que `utiliser_trame` : aucune copie conforme, aucune carte
+        # de plus, et ce que le document contient de proche.
+        raise TrameInvalide(_rien_trouve(nom_fichier, remplacements,
+                                         analyse.get("textes") or []))
 
     base = (nom_fichier or f"document.{genre}").rsplit(".", 1)[0]
     nom_sortie = f"{base} (repris).{genre}"
@@ -476,18 +564,10 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
         nom_sortie, produits, str(getattr(utilisateur, "id", "")),
         origine="reproduction")
 
-    if faits == 0:
-        # RIEN N'A CHANGÉ, ET ON LE DIT — même règle que `utiliser_trame` :
-        # rendre une copie conforme sans le signaler ferait croire au travail
-        # fait, et c'est ce document-là qui part chez un client.
-        message = (f"Aucun des textes cherchés n'a été trouvé dans "
-                   f"« {nom_fichier} ». Le document est rendu tel quel : "
-                   "reprenez l'orthographe exacte de ce qu'il fallait changer.")
-    else:
-        message = (f"« {nom_fichier} » est repris avec {faits} remplacement(s). "
-                   "La mise en page, le logo, les styles et les formules d'origine "
-                   "sont conservés : c'est le fichier lui-même, pas une copie "
-                   "reconstruite.")
+    message = (f"« {nom_fichier} » est repris avec {faits} remplacement(s). "
+               "La mise en page, le logo, les styles et les formules d'origine "
+               "sont conservés : c'est le fichier lui-même, pas une copie "
+               "reconstruite.")
     return {
         "fichier": nom_sortie, "source": nom_fichier, "remplacements": faits,
         "bloc_garanti": True,
@@ -545,7 +625,7 @@ SKILLS = {
         fonction=enregistrer_trame,
         description=(
             "RETIENT une trame que l'assistant reprendra a chaque fois : un "
-            "document type (.docx ou .xlsx), un logo, ou une methode de travail. "
+            "document type (.docx, .xlsx ou PDF), un logo, ou une methode de travail. "
             "`nom` : le nom court par lequel on la redemandera (« devis type »). "
             "`genre` : « document », « logo » ou « methode ». `fichier` : pour un "
             "document ou un logo, la REFERENCE que t'a rendue un geste precedent "
@@ -554,8 +634,13 @@ SKILLS = {
             "suivre. `description` : a quoi elle sert, en une phrase. Un document "
             "retenu garde SA mise en page, son logo et ses styles : le reprendre "
             "rouvre le fichier d'origine au lieu d'en fabriquer un nouveau. "
-            "Reenregistrer sous le meme nom REMPLACE"),
-        requis=["nom"], optionnels=["genre", "fichier", "texte", "description"],
+            "`remplacements` (optionnel) : la table « texte cherche » vers « texte "
+            "a mettre » a appliquer AVANT de le retenir (« enregistre-le en "
+            "remplacant STUDIO par Symbiose Paysage »). Si le fichier montre ne "
+            "peut pas etre retenu, DIS-LE : ne fabrique jamais un autre document "
+            "pour le retenir a sa place. Reenregistrer sous le meme nom REMPLACE"),
+        requis=["nom"], optionnels=["genre", "fichier", "texte", "description",
+                                    "remplacements"],
         # Retenir une trame ne produit rien hors de l'entreprise : c'est de la
         # meme famille que `retenir` et `enregistrer_procedure`.
         effet="ecriture_interne",
@@ -588,10 +673,11 @@ SKILLS = {
     "reproduire_document": Declaration(
         fonction=reproduire_document,
         description=(
-            "RECREE un document Word ou Excel EN REPRENANT LA PRESENTATION d'un "
+            "RECREE un document Word, Excel ou PDF EN REPRENANT LA PRESENTATION d'un "
             "document existant : on rouvre le fichier d'origine et on n'en change "
             "que le texte, donc le logo, les styles, les en-tetes, les largeurs "
-            "de colonnes et les formules sont conserves a l'identique. A utiliser "
+            "de colonnes et les formules sont conserves a l'identique (un PDF : "
+            "ses textes changent a leur place, ses images restent). A utiliser "
             "des qu'on demande « refais ce devis pour un autre client », « meme "
             "presentation que ce document », « reprends la trame de ce fichier ». "
             "`fichier` : la REFERENCE rendue par un geste precedent -- le `chemin` "

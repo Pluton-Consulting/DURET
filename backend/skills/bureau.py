@@ -181,7 +181,7 @@ async def abandonner_document(data: dict, user) -> dict:
 
 async def ajouter_document(data: dict, user) -> dict:
     """Verse des éléments dans un document ouvert."""
-    from bureautique.atelier import ajouter, fiche
+    from bureautique.atelier import DejaPresent, ajouter, fiche, plan
 
     jeton = (data.get("document_id") or "").strip()
     elements = data.get("elements") or data.get("contenu") or []
@@ -204,6 +204,18 @@ async def ajouter_document(data: dict, user) -> dict:
         _echec("Document inconnu, expiré, ou ouvert par quelqu'un d'autre. "
                "Reprends le `document_id` EXACT rendu par `creer_document`, "
                "ou rouvre un document.")
+    except DejaPresent as e:
+        # LE REJEU SE DIT, AVEC CE QUI EST DÉJÀ LÀ (14/09 : 159 versements du
+        # même devis). Un échec, pas un succès à zéro : trois refus d'affilée
+        # arrêtent la boucle (MAX_ECHECS_CONSECUTIFS), et le modèle lit POURQUOI.
+        titres = plan(jeton)
+        _echec(f"RIEN N'A ÉTÉ VERSÉ : ce contenu est DÉJÀ dans le document "
+               f"({e.presents} texte(s) sur {e.distinctifs} y figurent, par exemple "
+               + " ; ".join(f"« {x} »" for x in e.exemples)
+               + "). Ne le reverse pas. "
+               + (f"Structure actuelle du document : {' / '.join(titres)}. " if titres else "")
+               + "Verse la partie SUIVANTE qui manque, ou, si tout y est, appelle "
+               "`terminer_document` avec ce `document_id`.")
     except ValueError as e:
         _echec(str(e))
 
@@ -217,6 +229,9 @@ async def ajouter_document(data: dict, user) -> dict:
         # le document envoyé, c'est-à-dire trop tard.
         "ignores": ignores,
         "images_refusees": refus,
+        # LA STRUCTURE DU DOCUMENT À CE STADE : ce qui y est déjà, pour que la
+        # passe suivante verse la suite au lieu de recommencer le début.
+        "plan_du_document": plan(jeton),
         "note": (f"{retenus} élément(s) ajouté(s)."
                  + (f" {ignores} écarté(s) : type de bloc inconnu ou contenu vide."
                     if ignores > 0 else "")

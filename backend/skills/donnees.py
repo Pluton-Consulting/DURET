@@ -419,6 +419,8 @@ MAX_LIGNES_AGREGEES = 50000
 # et le CA le plus haut pouvait être dans la partie perdue. Les TOTAUX,
 # eux, portent toujours sur TOUS les groupes.
 MAX_GROUPES = 60
+# Au-delà, une valeur d'une ligne de facture ou de devis n'est pas un montant.
+SEUIL_ABERRANT = 1_000_000_000
 
 _OPERATIONS = {"somme": "sum", "total": "sum", "moyenne": "avg", "min": "min",
                "minimum": "min", "max": "max", "maximum": "max",
@@ -570,6 +572,14 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
 
     # ── Le calcul ──────────────────────────────────────────────────────────
     groupes: dict = {}
+    # UNE VALEUR IMPOSSIBLE N'ENTRE PAS DANS UN TOTAL (15/09). Le 14/09, « le
+    # chiffre d'affaires de septembre à août » a rendu 15 219 506 047 047,86 €
+    # : deux lignes du jeu « facture » portaient dans `montant_ht` un nombre à
+    # quatorze chiffres (la forme d'un SIRET), et la somme l'a pris. Le modèle
+    # a signalé l'anomalie, mais c'est le calcul qui doit la refuser. Au-delà
+    # d'un milliard, une ligne de facture de PME n'est pas un montant : elle
+    # est écartée, comptée, et citée.
+    aberrantes: list = []
     for ligne in retenues:
         cle = _groupe_de(ligne, par, colonne_date) if par else None
         g = groupes.setdefault(cle, {"enregistrements": 0, "valeurs": []})
@@ -577,7 +587,11 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
         if colonne:
             brut = _valeur_de(ligne, colonne)
             if est_un_nombre(brut):
-                g["valeurs"].append(lire_montant(brut))
+                valeur = lire_montant(brut)
+                if operation != "count" and abs(valeur) >= SEUIL_ABERRANT:
+                    aberrantes.append({"groupe": cle, "valeur": str(brut)[:30]})
+                    continue
+                g["valeurs"].append(valeur)
 
     def _resultat(g):
         v = g["valeurs"]
@@ -618,7 +632,8 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
               "annee": annee or None, "periode": libelle_periode,
               "filtres": filtres or None, "contient": fragments or None,
               "lignes_hors_periode": hors_periode or None,
-              "lignes_sans_date_lisible": sans_date or None}
+              "lignes_sans_date_lisible": sans_date or None,
+              "valeurs_aberrantes_ecartees": aberrantes[:5] or None}
     if not par:
         g = sortie_groupes[0]
         sortie = dict(commun, enregistrements=g["enregistrements"],
@@ -645,6 +660,10 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
             + ".") if par else "")
         + (f" {hors_periode} enregistrement(s) écarté(s) car hors période."
            if hors_periode else "")
+        + (f" ATTENTION : {len(aberrantes)} valeur(s) de « {colonne} » au-delà d'un "
+           "milliard ont été ÉCARTÉES du calcul (probablement un numéro — SIRET, "
+           "téléphone — lu comme un montant ; voir `valeurs_aberrantes_ecartees`) : "
+           "dis-le, et propose de vérifier ces lignes." if aberrantes else "")
         + (f" ATTENTION : {sans_date} enregistrement(s) n'ont AUCUNE date lisible dans "
            f"« {colonne_date} » et n'ont pas pu être comptés — dis-le, et propose de "
            f"vérifier la colonne de date." if sans_date else "")

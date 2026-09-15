@@ -776,13 +776,16 @@ async def llm_node(state: AgentState, config=None) -> dict:
         # déplacer la coupure, pas à la supprimer.
         plafond_bloc = (16000 if any((r.get("skill") or "") in RESULTATS_GENEREUX
                                      for r in resultats_outils) else 6000)
-        # `args` ne PART PAS vers le modèle. Il accompagne le résultat pour que
-        # l'écran puisse dire sur quoi portait l'action, mais le modèle, lui, a
-        # déjà écrit ces arguments : les lui renvoyer serait les payer deux fois,
-        # à chaque passage de la boucle. Ce filtre est ce qui rend le « sur quoi »
-        # affiché réellement gratuit.
-        pour_le_modele = [{c: v for c, v in r.items() if c != "args"}
-                          for r in resultats_outils]
+        # `args` BRUTS ne partent pas vers le modèle — mais leur RÉSUMÉ, si.
+        # On croyait que le modèle « avait déjà écrit ces arguments » : il les a
+        # écrits dans un appel qui n'existe plus, chaque passe repart d'un
+        # prompt neuf. Sans eux, il voyait « 6 élément(s) ajouté(s) » et rien de
+        # ce qu'il avait versé : le 14/09, 159 `ajouter_document` du même devis
+        # en trente et une minutes. Le journal (`agents/memoire_gestes.py`) dit
+        # chaque geste en une ligne, placé AVANT le détail des résultats.
+        from agents.memoire_gestes import journal_des_gestes, pour_le_modele as _pour_modele
+        journal_gestes = journal_des_gestes(resultats_outils)
+        pour_le_modele = [_pour_modele(r) for r in resultats_outils]
         # ON GARDE LES RÉSULTATS LES PLUS RÉCENTS, PAS LES PREMIERS.
         #
         # Tronquer la sérialisation entière par la fin coupait le bout le plus
@@ -809,10 +812,11 @@ async def llm_node(state: AgentState, config=None) -> dict:
         entete = ("Résultats des actions déjà exécutées pour cette demande (ne les "
                   "relance pas à l'identique)")
         if omis > 0:
-            entete += (f" — les {omis} plus anciens ne sont plus détaillés ici, "
-                       "mais ils ont bien abouti : ne les refais pas")
+            entete += (f" — les {omis} plus anciens ne sont plus détaillés ici "
+                       "(le journal ci-dessus les résume) : ne les refais pas")
         bloc_resultats = (
-            entete + " :\n"
+            journal_gestes
+            + entete + " :\n"
             + _json_out.dumps(gardes, ensure_ascii=False,
                               default=str)[:plafond_bloc]
             + "\n\n")
@@ -1359,7 +1363,11 @@ async def tools_node(state: AgentState, config=None) -> dict:
         return _sortir()
 
     debut = state.get("tour_debut")
-    if debut and iteration > 3 and (time.time() - float(debut)) > TOUR_DUREE_MAX_S:
+    # `len(resultats)`, PAS `iteration` : un versement qui écrit ne consomme pas
+    # le budget (`avance`), si bien que pendant une boucle de versements
+    # `iteration` restait à 1 — le 14/09, même avec `tour_debut` présent, ce
+    # garde n'aurait jamais été évalué pendant les 159 `ajouter_document`.
+    if debut and len(resultats) >= 3 and (time.time() - float(debut)) > TOUR_DUREE_MAX_S:
         return _sortir(f"le temps imparti à ce tour ({TOUR_DUREE_MAX_S // 60} minutes) est "
                        "écoulé sans que la demande ait abouti : il faut répondre avec ce qui "
                        "a été obtenu, dire ce qui n'a PAS été fait, et proposer de continuer "
@@ -1498,6 +1506,18 @@ async def tools_node(state: AgentState, config=None) -> dict:
     if est_une_suppression(action["skill"]) and not autorise_la_suppression(state.get("query") or ""):
         resultats.append({"skill": action["skill"], "ok": False, "payload_hash": empreinte,
                           "resultat_masque": raison_du_refus(action["skill"])})
+        return {"tool_results": resultats, "tool_iterations": iteration}
+
+    # ON NE RETIENT PAS À LA PLACE DE CE QU'ON A MONTRÉ (15/09). Le 14/09, la
+    # personne montre un dossier PDF et dit « enregistre-le » ; l'enregistrement
+    # échoue, le modèle FABRIQUE un Word de trois pages, le retient sous le
+    # même nom, et affirme au tour suivant que « le modèle est enregistré avec
+    # la structure du dossier ». Un refus mécanique, rendu comme un résultat :
+    # c'est le modèle qui dit pourquoi le vrai fichier n'a pas été retenu.
+    substitution = _trame_substituee(args, resultats) if action["skill"] == "enregistrer_trame" else None
+    if substitution:
+        resultats.append({"skill": action["skill"], "ok": False, "payload_hash": empreinte,
+                          "args": action.get("args") or {}, "resultat_masque": substitution})
         return {"tool_results": resultats, "tool_iterations": iteration}
 
     effet_declare = effet_du_skill(action["skill"])
@@ -3060,6 +3080,41 @@ async def resultat_de_geste(state: AgentState, skill: str, args: dict, empreinte
             carte_maj)
 
 
+_RE_JETON_ATELIER = _re_images.compile(r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{32})(?![A-Za-z0-9_-])")
+_GESTES_QUI_FABRIQUENT = frozenset({"creer_document", "produire_document"})
+
+
+def _trame_substituee(args: dict, resultats: list) -> "str | None":
+    """Le refus, si `enregistrer_trame` vise un document FABRIQUÉ dans ce tour
+    après l'échec d'un enregistrement portant sur un AUTRE fichier ; sinon None.
+
+    « Crée un devis type et retiens-le » reste possible : sans échec préalable
+    d'enregistrement, fabriquer puis retenir est la demande elle-même.
+    """
+    echecs = [r for r in (resultats or [])
+              if r.get("skill") == "enregistrer_trame" and not r.get("ok")]
+    if not echecs:
+        return None
+    reference = str((args or {}).get("fichier") or "")
+    vise = set(_RE_JETON_ATELIER.findall(reference))
+    if not vise:
+        return None
+    fabriques = set()
+    for r in resultats or []:
+        if r.get("skill") in _GESTES_QUI_FABRIQUENT and r.get("ok"):
+            fabriques |= set(_RE_JETON_ATELIER.findall(str(r.get("resultat_masque") or "")))
+    if not (vise & fabriques):
+        return None
+    premier = echecs[0]
+    montre = str((premier.get("args") or {}).get("fichier") or "le fichier demandé")
+    raison = str(premier.get("resultat_masque") or "").removeprefix("ERREUR :").strip()[:300]
+    return ("ERREUR : ce document vient d'être FABRIQUÉ dans ce tour : ce n'est pas "
+            f"« {montre} », le fichier qu'on t'a demandé de retenir. Il n'est PAS "
+            f"enregistré. La trame demandée n'a pas pu être retenue : {raison} "
+            "Dis-le tel quel à la personne, avec cette raison. Ne présente jamais un "
+            "document refait comme la trame demandée, ni maintenant ni plus tard.")
+
+
 def _question_deja_au_fil(messages, question: str) -> bool:
     """La question de ce tour est-elle déjà le DERNIER message humain du fil ?
 
@@ -3388,14 +3443,19 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
     # former : il a inventé un identifiant plausible, l'ajout a été refusé, et il
     # a rouvert un document en boucle. Un sélecteur d'actions à qui l'on cache ce
     # que les actions ont produit ne peut pas enchaîner.
+    # ET LE GESTE LUI-MÊME (15/09) : « drive_chercher : réussie » ne dit pas
+    # QUOI a été cherché. Le 14/09 à 12:50, le sélecteur a relancé la même
+    # recherche « Lavèze » déjà faite — quarante secondes pour un rejeu. La
+    # ligne du journal (`memoire_gestes.resume_geste`) dit l'essentiel des
+    # arguments.
+    from agents.memoire_gestes import resume_geste
     lignes = []
     for r in (state.get("tool_results") or []):
         brut = str(r.get("resultat_masque") or "")
         # Tronqué : ce nœud a besoin des identifiants (en tête des résultats),
         # pas du contenu entier — le modèle principal, lui, l'a déjà.
         extrait = _essentiel(brut, 2500)
-        lignes.append(f"- {r.get('skill') or '?'} : "
-                      f"{'réussie' if r.get('ok') else 'EN ÉCHEC'}\n"
+        lignes.append(f"- {resume_geste(r)}\n"
                       f"  résultat : {extrait}")
     faits = "\n".join(lignes) or "- aucune"
 
@@ -3691,7 +3751,15 @@ def route_apres_llm(state: AgentState) -> str:
                  and cles_images_du_fil(state) and "?" not in visible
                  and not remontre_a_bon_droit)
              or (pretend_avoir_livre(visible)
-                 and not _montre_un_fichier_du_fil(visible, state))
+                 and not _montre_un_fichier_du_fil(visible, state)
+                 # UN FICHIER RÉELLEMENT OUVERT CE TOUR n'est pas une
+                 # livraison fantôme (14/09, 12:50) : « j'ai bien retrouvé et
+                 # ouvert le fichier » après un `drive_ouvrir` RÉUSSI — mais
+                 # sans carte, le PDF dépassant la taille d'affichage — a été
+                 # envoyé au forceur, qui a relancé la recherche déjà faite :
+                 # cinquante secondes pour une réponse qui était juste.
+                 and not any(r.get("ok") and r.get("skill") in SKILLS_LECTURE_FICHIER
+                             for r in (state.get("tool_results") or [])))
              # 08/09 : « a été ouvert, voici son contenu » sans qu'un seul
              # geste ait réussi = un contenu inventé → forceur (contexte neuf).
              or (decrit_un_contenu_lu(visible)

@@ -320,6 +320,45 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
     return etat
 
 
+# Ce qu'une tâche en file reprend de sa conversation : assez pour qu'une suite
+# (« la palette végétale est simple », « pourquoi ce dossier ? ») se comprenne.
+MEMOIRE_REPRISE_MESSAGES = 20
+
+
+async def memoire_reprise(graph, fil_origine: Optional[str], fil: str, user_id: str) -> dict:
+    """La mémoire récente de `fil_origine`, à poser dans l'état initial d'un fil NEUF.
+
+    Seulement si le fil de la tâche n'a encore aucun message : une tâche
+    reprise après un accord a déjà la sienne, et la doubler l'embrouillerait.
+    Lecture du DERNIER checkpoint enregistré de la conversation : le tour qui
+    y tourne peut-être continue sans rien voir, rien n'y est écrit. Les
+    messages y sont déjà masqués ; la carte des jetons (`entity_map`) vient
+    avec, sans quoi un « [PER_1] » repris ne se réhydraterait pas. Ne lève
+    jamais : sans mémoire, la tâche tourne comme avant.
+    """
+    try:
+        propre = await graph.aget_state(_graph_config(fil, user_id))
+        if isinstance(propre.values, dict) and propre.values.get("messages"):
+            return {}
+        origine = await graph.aget_state(_graph_config(fil_origine, user_id))
+        valeurs = origine.values if isinstance(origine.values, dict) else {}
+        messages = list(valeurs.get("messages") or [])[-MEMOIRE_REPRISE_MESSAGES:]
+        if not messages:
+            return {}
+        reprise = {"messages": messages}
+        # Pas le résumé glissant : il compte des RANGS du fil d'origine, qui ne
+        # veulent rien dire dans celui de la tâche.
+        for cle in ("entity_map", "dernier_tableau"):
+            if valeurs.get(cle):
+                reprise[cle] = valeurs[cle]
+        logger.info("Tâche %s : mémoire reprise de %s (%d message(s))",
+                    fil, fil_origine, len(messages))
+        return reprise
+    except Exception as e:  # noqa: BLE001 — la mémoire est un plus, jamais une panne
+        logger.warning("Mémoire de la conversation non reprise pour %s : %s", fil, e)
+        return {}
+
+
 def _extract_interrupt(result: Any):
     """Récupère le payload d'interrupt (reason/payload/draft) s'il existe."""
     if isinstance(result, dict):
@@ -623,14 +662,20 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                       attachment_b64: Optional[str] = None, attachment_mime: Optional[str] = None,
                       attachment_name: Optional[str] = None, attachment_text: Optional[str] = None,
                       attachment_rows: Optional[dict] = None,
-                      attachments: Optional[list] = None) -> AsyncIterator[dict]:
+                      attachments: Optional[list] = None,
+                      historique_de: Optional[str] = None) -> AsyncIterator[dict]:
     """Streame l'exécution nœud-par-nœud (pour push WebSocket temps réel).
 
     Lève `FilOccupe` si un tour tourne déjà sur ce fil, ou s'il attend une
     décision humaine — même interdit que `run_turn`, même raison.
+
+    `historique_de` : le fil de conversation dont un fil NEUF (tâche en file
+    d'attente) reprend la mémoire récente, en lecture (`memoire_reprise`).
+    L'appelant a vérifié qu'il appartient à la personne.
     """
     graph = await get_graph()
     config = _graph_config(thread_id, user_id)
+    reprise = await memoire_reprise(graph, historique_de, thread_id, user_id) if historique_de else {}
 
     if await fil_suspendu(thread_id):
         raise FilOccupe(
@@ -658,9 +703,10 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
             # `attachment_rows` AUSSI par le flux (04/09) : la voie WebSocket est la
             # voie normale du chat, et elle ignorait le tableau joint — `@tableau`
             # ne marchait que par le repli POST, sans que rien ne le dise.
-            _initial_state(query, user_id, user_role, has_attachment, thread_id,
-                           attachment_b64, attachment_mime, attachment_name, attachment_text,
-                           attachment_rows=attachment_rows, attachments=attachments),
+            {**_initial_state(query, user_id, user_role, has_attachment, thread_id,
+                              attachment_b64, attachment_mime, attachment_name, attachment_text,
+                              attachment_rows=attachment_rows, attachments=attachments),
+             **reprise},
             config,
             stream_mode="updates",
             subgraphs=True,

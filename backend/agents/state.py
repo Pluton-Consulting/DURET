@@ -77,6 +77,14 @@ class AgentState(TypedDict):
     tool_results: Optional[List[dict]]   # résultats MASQUÉS des actions du tour
     tool_iterations: int                 # garde anti-boucle
     versements: int                      # ajouts à un document : exemptés du budget, mais bornés
+    # L'INSTANT OÙ LE TOUR A COMMENCÉ, pour le temps imparti (TOUR_DUREE_MAX_S).
+    # Absent de cette déclaration du 04/09 au 15/09 : LangGraph JETTE toute clé
+    # qu'un TypedDict ne déclare pas, `state.get("tour_debut")` valait donc
+    # toujours None et le garde des huit minutes n'a jamais tourné — le
+    # 14/09, un tour a versé 159 fois le même devis pendant trente et une
+    # minutes. `test_etat_declare.py` refuse désormais toute clé lue ou écrite
+    # qui n'est pas déclarée ici.
+    tour_debut: Optional[float]
     tool_repair_used: bool               # une seule tentative de réparation d'un bloc invalide
     tools_finished: bool                 # force la sortie de boucle
     note_sortie: Optional[str]           # pourquoi la boucle s'est arrêtée sans aboutir

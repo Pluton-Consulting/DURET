@@ -56,22 +56,46 @@ MIN_TEXTE_UTILE = 20
 MAX_OCTETS = 12 * 1024 * 1024
 MAX_REMPLACEMENTS = 200
 
-# Ce qu'on sait rouvrir et réécrire. Le PDF n'y est pas, et c'est volontaire :
-# on ne modifie pas un PDF sans le reconstruire, donc sans perdre ce qu'on
-# cherchait à garder. Un PDF se garde comme pièce, pas comme trame à remplir.
+# Ce qu'on sait rouvrir et réécrire.
+#
+# LE PDF Y EST ENTRÉ LE 15/09, et l'ancien refus disait vrai sur un point : on
+# ne RECONSTRUIT pas un PDF sans perdre ce qu'on voulait garder. On ne le
+# reconstruit donc pas : on EFFACE le texte cherché à sa place exacte (une
+# rédaction qui ne touche ni aux images ni aux tracés) et on REPOSE le nouveau
+# texte au même endroit, à la même taille, de la même couleur. Le reste de la
+# page — photos, plans, fonds, typographie de tout ce qu'on ne remplace pas —
+# est l'original, octet pour octet.
+#
+# Relevé du 14/09 (fil c9f5a00d) : « tu peux l'enregistrer mais tu devras
+# remplacer STUDIO par Symbiose Paysage dans la page de garde » sur un dossier
+# de présentation en PDF. Refusé (« un PDF se garde comme pièce »), le modèle a
+# FABRIQUÉ un Word de trois pages à la place, l'a enregistré comme trame, puis
+# a affirmé au tour suivant que « le modèle est enregistré avec la structure du
+# dossier ». La mise en page que la personne montrait n'a jamais été retenue.
 TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
 }
+# Un dossier de présentation porte des photos pleine page : 12 Mo ne tiennent
+# pas un seul d'entre eux. Le plafond d'un PDF est donc le sien.
+MAX_OCTETS_PDF = 60 * 1024 * 1024
+
+
+def plafond_octets(genre: Optional[str]) -> int:
+    """Ce qu'une trame de ce type peut peser."""
+    return MAX_OCTETS_PDF if genre == "pdf" else MAX_OCTETS
 
 
 def type_de(nom: str, mime: str = "") -> Optional[str]:
-    """« docx », « xlsx », ou None si ce n'est pas une trame remplissable."""
+    """« docx », « xlsx », « pdf », ou None si ce n'est pas une trame remplissable."""
     n = (nom or "").lower().strip()
     if n.endswith(".docx") or "wordprocessingml" in (mime or ""):
         return "docx"
     if n.endswith((".xlsx", ".xlsm")) or "spreadsheetml" in (mime or ""):
         return "xlsx"
+    if n.endswith(".pdf") or (mime or "").lower() == "application/pdf":
+        return "pdf"
     return None
 
 
@@ -172,7 +196,228 @@ def analyser(octets: bytes, genre: str) -> dict:
             "variables": _variables(textes),
         }
 
+    if genre == "pdf":
+        import fitz  # PyMuPDF, déjà dans requirements (rendu pour la vision)
+
+        doc = fitz.open(stream=octets, filetype="pdf")
+        try:
+            textes: list[str] = []
+            images = 0
+            for page in doc:
+                images += len(page.get_images(full=False))
+                for ligne in _lignes_pdf(page):
+                    t = "".join(g["c"] for g in ligne).strip()
+                    if t and t not in textes:
+                        textes.append(t)
+            return {"genre": "pdf", "pages": doc.page_count, "images": images,
+                    "textes": textes, "variables": _variables(textes)}
+        finally:
+            doc.close()
+
     raise ValueError(f"Type de trame non géré : {genre!r}")
+
+
+# ── Le PDF, glyphe par glyphe ────────────────────────────────────────────
+#
+# LE PIÈGE DES LETTRES EN DOUBLE. Un titre de page de garde est souvent dessiné
+# DEUX ou TROIS fois, décalé d'une fraction de point, pour épaissir le trait ou
+# poser un contour : l'extraction du Drive rendait « SSSTTTUUUDDDIIIOOO » et
+# « PPRROOJJEETT ». Chercher « STUDIO » dans ce texte ne trouve rien — le même
+# silence que les runs de Word. On regroupe donc les glyphes identiques qui se
+# CHEVAUCHENT (plus de la moitié de leur surface) en un seul, qui garde tous
+# ses rectangles : la recherche voit « STUDIO », la rédaction efface les trois
+# tracés.
+
+def _chevauche(a, b) -> bool:
+    import fitz
+    ra, rb = fitz.Rect(a), fitz.Rect(b)
+    inter = ra & rb
+    if inter.is_empty:
+        return False
+    plus_petite = min(abs(ra.width * ra.height), abs(rb.width * rb.height)) or 1.0
+    return abs(inter.width * inter.height) / plus_petite >= 0.5
+
+
+def _lignes_pdf(page) -> list[list[dict]]:
+    """Les lignes de la page, chacune une liste de glyphes UNIQUES :
+    {c, rects, origine, taille, couleur, police}."""
+    brut = page.get_text("rawdict")
+    lignes: list[list[dict]] = []
+    for bloc in brut.get("blocks", []):
+        if bloc.get("type") != 0:
+            continue
+        for ligne in bloc.get("lines", []):
+            glyphes: list[dict] = []
+            for span in ligne.get("spans", []):
+                for ch in span.get("chars", []):
+                    c = ch.get("c", "")
+                    if not c:
+                        continue
+                    precedent = glyphes[-1] if glyphes else None
+                    # Doublon interfolié (S S S T T T) : même lettre qui chevauche
+                    # la précédente.
+                    if precedent and precedent["c"] == c and _chevauche(precedent["rects"][0], ch["bbox"]):
+                        precedent["rects"].append(ch["bbox"])
+                        continue
+                    glyphes.append({"c": c, "rects": [ch["bbox"]], "origine": ch.get("origin"),
+                                    "taille": span.get("size", 11), "couleur": span.get("color", 0),
+                                    "police": span.get("font", ""), "drapeaux": span.get("flags", 0)})
+            if glyphes:
+                lignes.append(glyphes)
+    # Doublon en lignes entières (le titre dessiné trois fois comme trois
+    # objets) : une ligne dont chaque glyphe chevauche celui d'une ligne déjà
+    # vue, au même texte, est la même ligne.
+    uniques: list[list[dict]] = []
+    for ligne in lignes:
+        texte = "".join(g["c"] for g in ligne)
+        jumelle = next((u for u in uniques
+                        if "".join(g["c"] for g in u) == texte
+                        and all(_chevauche(a["rects"][0], b["rects"][0]) for a, b in zip(u, ligne))), None)
+        if jumelle is not None:
+            for a, b in zip(jumelle, ligne):
+                a["rects"].extend(b["rects"])
+            continue
+        uniques.append(ligne)
+    return uniques
+
+
+def _sans_casse(texte: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFKD", texte or "").encode("ascii", "ignore").decode()
+    return t.lower()
+
+
+def _occurrences_pdf(lignes, cherche: str, approche: bool):
+    """(ligne, début, fin) de chaque occurrence ; `approche` ignore casse et accents.
+
+    L'approche reste sûre sur un PDF : on compare glyphe à glyphe, donc les
+    indices trouvés désignent exactement les lettres à effacer.
+    """
+    trouves = []
+    for ligne in lignes:
+        if approche:
+            # Normaliser lettre par lettre garde l'alignement des indices :
+            # « É » donne « e », une seule lettre.
+            texte = "".join((_sans_casse(g["c"]) or g["c"])[:1] for g in ligne)
+            motif = "".join((_sans_casse(c) or c)[:1] for c in cherche)
+        else:
+            texte = "".join(g["c"] for g in ligne)
+            motif = cherche
+        depart = 0
+        while motif:
+            i = texte.find(motif, depart)
+            if i < 0:
+                break
+            trouves.append((ligne, i, i + len(motif)))
+            depart = i + len(motif)
+    return trouves
+
+
+def _police_pdf(glyphe: dict) -> str:
+    """La police de base la plus proche : grasse ou non, empattée ou non."""
+    nom = (glyphe.get("police") or "").lower()
+    gras = bool(glyphe.get("drapeaux", 0) & 16) or any(m in nom for m in ("bold", "black", "heavy", "semibold"))
+    empattee = any(m in nom for m in ("times", "serif", "garamond", "georgia", "roman")) and "sans" not in nom
+    if empattee:
+        return "tibo" if gras else "tiro"
+    return "hebo" if gras else "helv"
+
+
+def _remplir_pdf(octets: bytes, table: dict) -> tuple[bytes, int]:
+    import fitz
+
+    doc = fitz.open(stream=octets, filetype="pdf")
+    faits = 0
+    try:
+        # Exact d'abord, dans tout le document ; l'approché (casse, accents)
+        # seulement pour un texte introuvable tel quel — « studio » demandé,
+        # « STUDIO » imprimé.
+        par_page = [(_page, _lignes_pdf(_page)) for _page in doc]
+        approche = {}
+        for cherche in table:
+            approche[cherche] = not any(_occurrences_pdf(l, cherche, False) for _, l in par_page)
+
+        for page, lignes in par_page:
+            poses = []
+            for cherche, remplace in table.items():
+                for ligne, debut, fin in _occurrences_pdf(lignes, cherche, approche[cherche]):
+                    glyphes = ligne[debut:fin]
+                    rect = fitz.Rect(glyphes[0]["rects"][0])
+                    for g in glyphes:
+                        for r in g["rects"]:
+                            rect |= fitz.Rect(r)
+                    toute_la_ligne = "".join(g["c"] for g in ligne).strip() == "".join(
+                        g["c"] for g in glyphes).strip()
+                    suivant = ligne[fin] if fin < len(ligne) else None
+                    poses.append({"rect": rect, "texte": str(remplace), "modele": glyphes[0],
+                                  "entiere": toute_la_ligne,
+                                  "limite_droite": (fitz.Rect(suivant["rects"][0]).x0 if suivant
+                                                    else page.rect.width - page.rect.width * 0.04)})
+            if not poses:
+                continue
+            for p in poses:
+                # `fill=False` : AUCUN rectangle blanc. Sur une page de garde
+                # posée sur une photo, un cache blanc serait pire que le mot.
+                page.add_redact_annot(p["rect"], fill=False)
+            try:
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                                      graphics=getattr(fitz, "PDF_REDACT_LINE_ART_NONE", 0))
+            except TypeError:  # PyMuPDF plus ancien : pas de réglage des tracés
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+            for p in poses:
+                modele = p["modele"]
+                taille = float(modele.get("taille") or 11)
+                police = _police_pdf(modele)
+                couleur = int(modele.get("couleur") or 0)
+                rgb = (((couleur >> 16) & 255) / 255, ((couleur >> 8) & 255) / 255, (couleur & 255) / 255)
+                origine = modele.get("origine") or (p["rect"].x0, p["rect"].y1)
+                largeur = fitz.get_text_length(p["texte"], fontname=police, fontsize=taille)
+                if p["entiere"]:
+                    # Une ligne entière (titre de page de garde) garde son CENTRE :
+                    # « Symbiose Paysage » est plus long que « STUDIO », et
+                    # l'aligner à gauche décentrerait la page.
+                    centre = (p["rect"].x0 + p["rect"].x1) / 2
+                    marge = page.rect.width * 0.04
+                    dispo = 2 * min(centre - marge, page.rect.width - marge - centre)
+                    x = None
+                else:
+                    dispo = p["limite_droite"] - p["rect"].x0
+                    x = p["rect"].x0
+                if largeur > dispo > 0:
+                    taille = max(taille * dispo / largeur, taille * 0.5)
+                    largeur = fitz.get_text_length(p["texte"], fontname=police, fontsize=taille)
+                if x is None:
+                    x = (p["rect"].x0 + p["rect"].x1) / 2 - largeur / 2
+                page.insert_text((x, origine[1]), p["texte"], fontname=police,
+                                 fontsize=taille, color=rgb)
+                faits += 1
+        return doc.tobytes(garbage=3, deflate=True), faits
+    finally:
+        doc.close()
+
+
+def textes_proches(textes: list[str], cherche: str, nombre: int = 3) -> list[str]:
+    """Les textes du document qui ressemblent le plus à ce qui n'a pas été trouvé.
+
+    « STUDIO » cherché, « Studio Lavèze » imprimé : sans cette liste, le modèle
+    relance le même remplacement (quatre fois le 14/09) ; avec, il reprend
+    l'orthographe exacte, ou dit que le texte n'existe pas.
+    """
+    from difflib import get_close_matches
+    cle = _sans_casse(cherche).strip()
+    if not cle:
+        return []
+    uniques = []
+    for t in textes or []:
+        t = " ".join(str(t).split())
+        if t and t not in uniques:
+            uniques.append(t)
+    contenant = [t for t in uniques if cle in _sans_casse(t)]
+    if contenant:
+        return [t[:90] for t in contenant[:nombre]]
+    par_cle = {_sans_casse(t)[:120]: t for t in uniques}
+    proches = get_close_matches(cle, list(par_cle), n=nombre, cutoff=0.6)
+    return [par_cle[p][:90] for p in proches]
 
 
 def exploitable(analyse: dict) -> tuple[bool, str]:
@@ -297,5 +542,8 @@ def remplir(octets: bytes, genre: str, table: dict) -> tuple[bytes, int]:
                         faits += 1
         classeur.save(sortie)
         return sortie.getvalue(), faits
+
+    if genre == "pdf":
+        return _remplir_pdf(octets, propre)
 
     raise ValueError(f"Type de trame non géré : {genre!r}")

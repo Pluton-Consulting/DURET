@@ -626,7 +626,7 @@ async def ouvrir(nom_ou_chemin: str, proprietaire: str | None = None) -> dict:
 MAX_OCTETS_PIECE = 20 * 1024 * 1024
 
 
-async def octets(nom_ou_chemin: str) -> tuple:
+async def octets(nom_ou_chemin: str, plafond: int = MAX_OCTETS_PIECE) -> tuple:
     """(octets, nom réel, mime) d'un fichier du NAS, par son nom ou son chemin.
 
     Le pendant exact de `drive.octets()` chez le jumeau : même résolution que
@@ -668,10 +668,16 @@ async def octets(nom_ou_chemin: str) -> tuple:
 
     if not brut:
         raise NasRefuse(f"« {demande} » est introuvable ou vide sur le serveur.")
-    if len(brut) > MAX_OCTETS_PIECE:
+    if len(brut) > plafond:
+        # La raison dépend de l'appelant : un MAIL ne passe pas, une trame a
+        # son propre plafond. « Envoie plutôt le chemin » à qui voulait retenir
+        # une trame était faux, et le modèle le répétait (14/09, chez le jumeau).
         raise NasRefuse(
-            f"« {posixpath.basename(chemin)} » pèse trop lourd pour un message "
-            f"({len(brut) // (1024 * 1024)} Mo). Envoie plutôt le chemin.")
+            (f"« {posixpath.basename(chemin)} » pèse trop lourd pour un message "
+             f"({len(brut) // (1024 * 1024)} Mo). Envoie plutôt le chemin.")
+            if plafond == MAX_OCTETS_PIECE else
+            (f"« {posixpath.basename(chemin)} » pèse {len(brut) // (1024 * 1024)} Mo, "
+             f"au-delà des {plafond // (1024 * 1024)} Mo admis pour ce geste."))
     nom = posixpath.basename(chemin)
     devine, _ = mimetypes.guess_type(nom)
     return brut, nom, devine or "application/octet-stream"

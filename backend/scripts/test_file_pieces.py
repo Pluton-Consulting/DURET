@@ -68,8 +68,14 @@ verifier("un tour a un temps imparti (8 minutes)", "TOUR_DUREE_MAX_S = 8 * 60" i
 verifier("l'heure de départ est posée à chaque tour", 'etat["tour_debut"] = time.time()' in runtime)
 verifier("passé le délai, la boucle sort et la rédaction est forcée, en disant ce qui n'a pas été fait",
          "> TOUR_DUREE_MAX_S" in agent1 and "dire ce qui n'a PAS été fait" in agent1)
+# 15/09 : compté en gestes faits — `iteration` n'avance pas pendant des versements.
 verifier("le délai ne mord qu'après quelques actions (une première action lente n'est pas une boucle)",
-         "iteration > 3 and" in agent1)
+         "len(resultats) >= 3 and" in agent1)
+# LA LEÇON DU 14/09 : ce banc vérifiait que l'heure était POSÉE, jamais qu'elle
+# ARRIVAIT au nœud. Absente de l'AgentState, LangGraph la jetait (`test_etat_declare.py`).
+etat_src = (BACKEND / "agents" / "state.py").read_text(encoding="utf-8")
+verifier("l'heure de départ est DÉCLARÉE dans l'état (sinon LangGraph la jette)",
+         "tour_debut: Optional[float]" in etat_src)
 
 # ── 4. LE TABLEAU JOINT NE S'OUBLIE PAS ───────────────────────────────────
 verifier("le tableau joint est rappelé à chaque tour tant qu'il existe",

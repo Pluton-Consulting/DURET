@@ -125,7 +125,9 @@ verifier("le type MIME suffit quand le nom ne dit rien",
          tr.type_de("piece", tr.TYPES["docx"]) == "docx")
 # UN PDF N'EST PAS UNE TRAME REMPLISSABLE, et c'est volontaire : on ne modifie
 # pas un PDF sans le reconstruire, donc sans perdre ce qu'on voulait garder.
-verifier("un PDF n'est PAS une trame remplissable", tr.type_de("devis.pdf") is None)
+# 15/09 : un PDF EST une trame — ses textes se remplacent à leur place
+# (`test_trame_pdf.py`), le dossier de présentation du 14/09 l'exigeait.
+verifier("un PDF est une trame remplissable (texte remplacé à sa place)", tr.type_de("devis.pdf") == "pdf")
 verifier("ni une image", tr.type_de("logo.png") is None)
 
 # ── 2. ANALYSER : ce que la trame contient ───────────────────────────────
@@ -370,12 +372,18 @@ if charge:
     verifier("l'usage est compté (une trame jamais reprise est à retirer)",
              any("usages = usages + 1" in e for e in ECRITS))
 
-    # RIEN À REMPLACER SE DIT. Rendre un document identique sans le signaler
-    # ferait croire au travail fait — le genre de silence qui part chez un client.
-    r = asyncio.run(sk.utiliser_trame({"trame": "Devis terrasse",
+    # RIEN À REMPLACER SE DIT — et, depuis le 15/09, AUCUNE COPIE ne sort : une
+    # copie conforme posait une carte de plus et invitait le modèle à relancer
+    # (quatre fois le 14/09). Le refus nomme ce qui ressemble.
+    try:
+        asyncio.run(sk.utiliser_trame({"trame": "Devis terrasse",
                                        "remplacements": {"absent": "x"}}, _Moi()))
-    verifier("aucun texte trouvé : le document sort quand même, et on le DIT",
-             r["remplacements"] == 0 and "Aucun des textes cherchés" in r["message_final"])
+        refus_rien = None
+    except sk.TrameInvalide as e:
+        refus_rien = str(e)
+    verifier("aucun texte trouvé : un ÉCHEC qui le DIT, sans document",
+             refus_rien and "Aucun des textes cherchés" in refus_rien and "Ne relance PAS" in refus_rien,
+             refus_rien)
 
     # Une méthode se lit, elle ne se remplit pas.
     r = asyncio.run(sk.utiliser_trame({"trame": "Montage appel offres"}, _Moi()))

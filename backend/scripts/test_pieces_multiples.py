@@ -504,7 +504,7 @@ file_src = (BACKEND / "routers" / "file_attente.py").read_text(encoding="utf-8")
 debut = file_src.index("def _ranger_pieces(")
 fin = file_src.index("async def requalifier_interrompues")
 dossier = pathlib.Path(tempfile.mkdtemp())
-espace = {"Optional": type(None), "logger": types.SimpleNamespace(
+espace = {"Optional": __import__("typing").Optional, "logger": types.SimpleNamespace(
     warning=lambda *a, **k: None, info=lambda *a, **k: None),
     "_dossier_pieces": lambda: dossier, "__name__": "file_double"}
 exec(compile(file_src[debut:fin], "file_attente.py", "exec"), espace)
@@ -532,7 +532,7 @@ verifier("les fichiers d'une tâche finie ne dorment pas sur le disque",
          not list(dossier.glob("t1*")))
 
 verifier("le tour de la file reçoit la LISTE des visuels",
-         "attachments=visuels or None):" in file_src)
+         "attachments=visuels or None," in file_src)
 
 # ══════════════════════════════════════════════════════════════════════════
 # 7. L'ÉCRAN

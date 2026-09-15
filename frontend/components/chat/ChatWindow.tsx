@@ -1133,6 +1133,11 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
       const res = await apiRequest<{ tache_id: string }>(
         "/api/file/taches",
         { method: "POST", token, body: JSON.stringify({ query: text,
+          // La conversation d'où part la demande : la tâche en reprend la
+          // mémoire récente (15/09 — trois suites du 14/09 avaient tourné
+          // sans rien savoir de la conversation). Le serveur vérifie qu'elle
+          // est bien à cette personne.
+          fil_origine: threadIdRef.current || undefined,
           ...(corpsPieces(pieces) || {}) }) })
       tacheActiveRef.current = res.tache_id
       setTacheActive(res.tache_id)

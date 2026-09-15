@@ -119,6 +119,16 @@ class NouvelleTache(BaseModel):
     # restent acceptés : une tâche mise en file par un écran plus ancien ne
     # doit pas se casser au déploiement.
     attachments: Optional[list] = None
+    # LA CONVERSATION D'OÙ PART LA DEMANDE (15/09). Un message envoyé pendant
+    # qu'un tour tourne part en file, sur son propre fil `file:<id>` — et
+    # partait donc SANS MÉMOIRE. Le 14/09, trois suites de la même
+    # conversation (« la palette végétale est simple… », « maintenant que tu as
+    # tous les documents… », « pourquoi veux-tu le dossier Zerrouqui ? ») ont
+    # tourné sur un fil vide : la palette versée quatre fois, un client inventé
+    # parti chercher dans les mails, puis « la demande n'a pas pu être
+    # traitée ». Le fil d'origine donne à la tâche la mémoire récente de la
+    # conversation, en LECTURE : le fil de la tâche reste le sien.
+    fil_origine: Optional[str] = None
 
 
 def _dossier_pieces() -> "pathlib.Path":
@@ -187,6 +197,40 @@ def _reprendre_pieces(tache_id: str) -> list:
         pieces.append({"nom": f.get("nom") or "document", "mime": f.get("mime") or "",
                        "b64": base64.b64encode(octets).decode("ascii")})
     return pieces
+
+
+def _ranger_fil_origine(tache_id: str, fil: Optional[str]) -> None:
+    """Note, à côté des pièces, la conversation d'où part la tâche."""
+    if not fil:
+        return
+    (_dossier_pieces() / f"{tache_id}.fil").write_text(fil, encoding="utf-8")
+
+
+def _reprendre_fil_origine(tache_id: str) -> Optional[str]:
+    try:
+        fil = (_dossier_pieces() / f"{tache_id}.fil").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return fil or None
+
+
+async def fil_de_la_personne(fil: Optional[str], user_id) -> Optional[str]:
+    """Le fil d'origine, s'il appartient à CETTE personne ; sinon None.
+
+    Le `thread_id` vient de l'écran : sans ce contrôle, n'importe quel compte
+    ferait charger à sa tâche la mémoire de la conversation d'un autre (les
+    checkpoints n'ont ni RLS ni `user_id`). Même règle que `_claim_thread`, et
+    même filtre explicite sur `user_id` — la direction voit tous les fils,
+    elle n'en poursuit aucun.
+    """
+    fil = (fil or "").strip()
+    if not fil or fil.startswith(("file:", "task:")) or len(fil) > 200:
+        return None
+    async with get_db() as conn:
+        ok = await conn.fetchval(
+            "SELECT 1 FROM threads WHERE langgraph_thread_id = $1 AND user_id = $2",
+            fil, user_id)
+    return fil if ok else None
 
 
 def _oublier_piece(tache_id: str) -> None:
@@ -301,7 +345,8 @@ async def _derouler_tache(tache_id: str, user_id: str, query: str) -> None:
                     attachment_mime=tete.get("mime"),
                     attachment_name=tete.get("nom"),
                     attachment_text=texte_joint, attachment_rows=tableau_joint,
-                    attachments=visuels or None):
+                    attachments=visuels or None,
+                    historique_de=_reprendre_fil_origine(tache_id)):
                 t = ev.get("type")
                 if t == "node":
                     vivante = _VIVANTES.get(tache_id)
@@ -507,6 +552,7 @@ async def lancer_tache(body: NouvelleTache, current_user: User = Depends(get_cur
             "UPDATE taches_differees SET thread_id = $1 WHERE id = $2::uuid",
             f"file:{tache_id}", tache_id)
     # Sur le disque, hors transaction : un fichier ne se range pas dans Postgres.
+    _ranger_fil_origine(tache_id, await fil_de_la_personne(body.fil_origine, current_user.id))
     fiches = _ranger_pieces(tache_id, body)
     if fiches:
         logger.info("Tâche différée %s : %d pièce(s) jointe(s) rangée(s) — %s",

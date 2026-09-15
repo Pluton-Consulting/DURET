@@ -114,6 +114,19 @@ rs = asyncio.run(donnees.interroger_donnees(
     {"source_type": "devis", "agreger": {"operation": "somme", "colonne": "montant_ht"}}, user))
 verifier("sans `par`, rien ne change : un seul résultat global", rs.get("resultat") == sum((i + 1) * 100 for i in range(200)) + 50000)
 
+# UNE VALEUR IMPOSSIBLE N'ENTRE PAS DANS UN TOTAL (15/09) : le 14/09, deux lignes
+# « facture » portaient un nombre à quatorze chiffres dans `montant_ht` et le CA
+# annoncé valait 15 219 506 047 047,86 €.
+DEVIS.append({"Client": "Client-000", "Montant HT": "13054711115002.46", "Date": "2026-07-01"})
+rab = asyncio.run(donnees.interroger_donnees(
+    {"source_type": "devis", "agreger": {"operation": "somme", "colonne": "montant_ht"}}, user))
+DEVIS.pop()
+verifier("une valeur au-delà d'un milliard est ÉCARTÉE du total, qui reste juste",
+         rab.get("resultat") == rs.get("resultat"), str(rab.get("resultat")))
+verifier("… elle est citée et la note dit de le signaler",
+         rab.get("valeurs_aberrantes_ecartees") and "milliard" in rab.get("note", ""),
+         str(rab.get("valeurs_aberrantes_ecartees")))
+
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("le prompt porte la règle TOUT SIGNIFIE TOUT (enchaîner les pages ou produire le fichier)",
          "TOUT SIGNIFIE TOUT" in agent1 and "pour_continuer" in agent1 and "échantillon" in agent1)

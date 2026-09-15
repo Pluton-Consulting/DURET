@@ -104,7 +104,8 @@ SUIVI = suivi_excel()
 CHEMIN = "/home/Drive/03-Appel d'offres etudes/AFF 00 Dossier Modèle/devis type.docx"
 FICHIERS = {CHEMIN: (DEVIS, "devis type.docx"),
             "/home/Drive/03-Appel d'offres etudes/suivi.xlsx": (SUIVI, "suivi.xlsx"),
-            "/home/Drive/03-Appel d'offres etudes/plan.pdf": (b"%PDF-1.4 rien", "plan.pdf")}
+            "/home/Drive/03-Appel d'offres etudes/plan.pdf": (b"%PDF-1.4 rien", "plan.pdf"),
+            "/home/Drive/03-Appel d'offres etudes/plan.dwg": (b"AC1032 rien", "plan.dwg")}
 
 
 def _poser(nom, **attrs):
@@ -218,7 +219,7 @@ if SERVEUR_NAS:
 else:
     # Côté Drive : on double `outils.drive.octets`, seul point utilisé par
     # `mail/attaches.py` pour un fichier du serveur documentaire.
-    async def _octets(nom, perimetres=None, identite=None):
+    async def _octets(nom, perimetres=None, identite=None, plafond=None):
         for c, (o, n) in FICHIERS.items():
             if nom in (c, n):
                 return o, n, ""
@@ -335,13 +336,21 @@ if callable(getattr(sk, "reproduire_document", None)):
              (f["A2"].value, f["B3"].value, f.column_dimensions["A"].width))
 
     # ── 5. Les refus, et ce qu'ils disent ──
+    # 15/09 : un PDF se reproduit (texte remplacé à sa place, `test_trame_pdf.py`).
+    # Ce qui reste refusé : un format qu'on ne sait pas rouvrir, et un PDF abîmé.
+    try:
+        asyncio.run(sk.reproduire_document(
+            {"fichier": "/home/Drive/03-Appel d'offres etudes/plan.dwg"}, _Moi()))
+        verifier("un format qu'on ne rouvre pas est refusé, en disant pourquoi", False)
+    except sk.TrameInvalide as e:
+        verifier("un format qu'on ne rouvre pas est refusé, en disant pourquoi",
+                 "Word" in str(e) and "PDF" in str(e), str(e)[:160])
     try:
         asyncio.run(sk.reproduire_document(
             {"fichier": "/home/Drive/03-Appel d'offres etudes/plan.pdf"}, _Moi()))
-        verifier("un PDF est refusé, en disant pourquoi", False)
+        verifier("un PDF illisible est refusé, en le disant", False)
     except sk.TrameInvalide as e:
-        verifier("un PDF est refusé, en disant pourquoi (on ne le rouvre pas sans le reconstruire)",
-                 "PDF" in str(e) and "reconstruire" in str(e), str(e)[:120])
+        verifier("un PDF illisible est refusé, en le disant", "pas pu être ouvert" in str(e), str(e)[:160])
     try:
         asyncio.run(sk.reproduire_document({}, _Moi()))
         verifier("sans référence, le refus dit où prendre le chemin", False)

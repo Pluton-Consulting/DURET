@@ -318,7 +318,10 @@ if not nas_cote and drive_py.exists():
              "_garde_perimetre": lambda d, p: None, "_tout_le_drive": lambda p: True,
              "Optional": __import__("typing").Optional,
              "_MIME_DOSSIER": "application/vnd.google-apps.folder"}
-    extraire(drive_py, {"_resoudre_fichier", "asyncio"}, esp_r)
+    # 15/09 : le corps de la résolution par nom vit dans `_resoudre_fichier_par_nom`
+    # (`_resoudre_fichier` sert d'abord les identifiants déjà résolus pour cette identité).
+    extraire(drive_py, {"_resoudre_fichier_par_nom", "asyncio"}, esp_r)
+    esp_r["_resoudre_fichier"] = esp_r["_resoudre_fichier_par_nom"]
     f, _s, autres = asyncio.run(esp_r["_resoudre_fichier"]("DULUGAT/Devis/Devis 007.pdf", [(None, "all")]))
     verifier("« DULUGAT/Devis/Devis 007.pdf » ouvre LE fichier de ce dossier (exact, pas un homonyme d'ailleurs)",
              f["id"] == "p7" and not autres)

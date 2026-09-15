@@ -219,8 +219,99 @@ def fiche(jeton: str, proprietaire: str) -> dict | None:
     return f if f and f.get("proprietaire") == proprietaire else None
 
 
-def ajouter(jeton: str, elements: list[dict], proprietaire: str) -> int:
-    """Ajoute des éléments. Rend le nombre retenu."""
+# ── Un versement qui répète le document n'est pas un versement ───────────
+#
+# 14/09, fil c9f5a00d : « et voici le devis » → 159 `ajouter_document` en
+# trente et une minutes, 911 blocs, l'en-tête « Devis N° DV0001451 », le client
+# et l'objet réécrits à CHAQUE appel avec une ponctuation qui variait. Le
+# modèle ne voyait pas ce qu'il avait déjà versé (corrigé dans
+# `agents/memoire_gestes.py`), mais le document, lui, le savait : c'est ici que
+# la répétition se VOIT, quel que soit le modèle et quoi qu'il se rappelle.
+#
+# ON REFUSE LE VERSEMENT ENTIER, JAMAIS UN ÉLÉMENT ISOLÉ. Un titre « Aménagement
+# paysager » qui revient en tête de chaque section est légitime ; un versement
+# dont la plupart des textes sont DÉJÀ dans le document est un rejeu. On ne
+# regarde que les textes assez longs pour être distinctifs (25 caractères), et
+# « déjà là » veut dire identique à la casse, aux accents et à la ponctuation
+# près, ou quasi identique (ratio ≥ 0,9 : « — » au lieu de « , »).
+SEUIL_TEXTE_DISTINCTIF = 25
+PART_DEJA_PRESENTE = 0.6
+RATIO_QUASI_IDENTIQUE = 0.9
+
+
+class DejaPresent(ValueError):
+    """Le versement répète ce que le document contient déjà."""
+
+    def __init__(self, presents: int, distinctifs: int, exemples: list[str]):
+        self.presents, self.distinctifs, self.exemples = presents, distinctifs, exemples
+        super().__init__(f"{presents} élément(s) sur {distinctifs} déjà présents")
+
+
+def _aplati(texte: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texte or "")).encode("ascii", "ignore").decode()
+    return " ".join("".join(c if c.isalnum() else " " for c in t.lower()).split())
+
+
+def texte_d_element(e: dict) -> str:
+    """Le texte qui rend un élément reconnaissable (titre, paragraphe, liste, tableau)."""
+    if not isinstance(e, dict):
+        return ""
+    if e.get("texte"):
+        return str(e["texte"])
+    if isinstance(e.get("items"), list):
+        return " ".join(str(x) for x in e["items"])
+    if isinstance(e.get("lignes"), list):
+        return " ".join(" ".join(map(str, l)) if isinstance(l, list) else str(l)
+                        for l in e["lignes"])
+    return ""
+
+
+def deja_presents(jeton: str, nouveaux: list[dict]) -> tuple[int, int, list[str]]:
+    """(textes déjà dans le document, textes distinctifs du versement, exemples)."""
+    from difflib import SequenceMatcher
+
+    candidats = [(_aplati(texte_d_element(e)), texte_d_element(e)) for e in nouveaux]
+    candidats = [(a, brut) for a, brut in candidats if len(a) >= SEUIL_TEXTE_DISTINCTIF]
+    if not candidats:
+        return 0, 0, []
+    existants = {_aplati(texte_d_element(e)) for e in elements(jeton)}
+    existants.discard("")
+    presents, exemples = 0, []
+    for aplati, brut in candidats:
+        trouve = aplati in existants
+        if not trouve:
+            for ex in existants:
+                m = SequenceMatcher(None, aplati, ex)
+                if (m.real_quick_ratio() >= RATIO_QUASI_IDENTIQUE
+                        and m.quick_ratio() >= RATIO_QUASI_IDENTIQUE
+                        and m.ratio() >= RATIO_QUASI_IDENTIQUE):
+                    trouve = True
+                    break
+        if trouve:
+            presents += 1
+            if len(exemples) < 3:
+                exemples.append(" ".join(brut.split())[:70])
+    return presents, len(candidats), exemples
+
+
+def plan(jeton: str, limite: int = 30) -> list[str]:
+    """Les titres du document, dans l'ordre : sa structure, en une liste courte."""
+    titres = []
+    for e in elements(jeton):
+        if isinstance(e, dict) and e.get("bloc") == "titre" and e.get("texte"):
+            titres.append(" ".join(str(e["texte"]).split())[:60])
+    if len(titres) > limite:
+        return titres[: limite // 2] + [f"… {len(titres) - limite} titre(s) …"] + titres[-limite // 2:]
+    return titres
+
+
+def ajouter(jeton: str, elements: list[dict], proprietaire: str,
+            refuser_repetition: bool = True) -> int:
+    """Ajoute des éléments. Rend le nombre retenu.
+
+    Lève `DejaPresent` quand l'essentiel du versement est déjà dans le document.
+    """
     from bureautique.modele import normaliser_element, MAX_ELEMENTS
 
     f = fiche(jeton, proprietaire)
@@ -230,6 +321,10 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str) -> int:
         raise ValueError("document déjà terminé")
 
     retenus = [e for e in (normaliser_element(x) for x in (elements or [])) if e]
+    if refuser_repetition and int(f.get("elements") or 0) > 0:
+        presents, distinctifs, exemples = deja_presents(jeton, retenus)
+        if distinctifs and presents >= 2 and presents / distinctifs >= PART_DEJA_PRESENTE:
+            raise DejaPresent(presents, distinctifs, exemples)
     place = MAX_ELEMENTS - int(f.get("elements") or 0)
     if place <= 0:
         raise ValueError(f"document plein ({MAX_ELEMENTS} éléments)")

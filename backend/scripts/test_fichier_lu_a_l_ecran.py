@@ -257,7 +257,9 @@ else:
     verifier("le skill `drive_ouvrir` passe le propriétaire", "proprietaire=_proprietaire(user))" in outils_sk)
     # `_deposer_pour` exécutée contre un `_binaire` doublé
     src = drive[drive.find("async def _deposer_pour"):drive.find("async def ouvrir(")]
-    esp = {"MAX_OCTETS_PIECE": 20 * 1024 * 1024, "logger": types.SimpleNamespace(info=lambda *a, **k: None)}
+    # 15/09 : la carte d'un fichier ouvert a sa propre borne (MAX_OCTETS_AFFICHAGE,
+    # 60 Mo), plus celle d'une pièce de mail — un dossier de présentation passait au-dessus.
+    esp = {"MAX_OCTETS_PIECE": 20 * 1024 * 1024, "MAX_OCTETS_AFFICHAGE": 60 * 1024 * 1024, "logger": types.SimpleNamespace(info=lambda *a, **k: None)}
     async def _binaire(fichier, service, nom, mime):
         return b"%PDF" * 100, "Devis 2026.pdf", "application/pdf"
     esp["_binaire"] = _binaire
@@ -268,7 +270,7 @@ else:
     verifier("`_deposer_pour` dépose et pose la carte garantie, le contenu reste",
              (r.get("bloc_ui") or {}).get("type") == "fichier" and r.get("bloc_garanti") is True and r.get("contenu") == "texte"
              and DEPOSES and DEPOSES[0][0] == "Devis 2026.pdf", (r, DEPOSES))
-    r = asyncio.run(esp["_deposer_pour"]({"name": "gros.pdf", "size": str(50 * 1024 * 1024)}, None, "u1", {"contenu": "t"}))
+    r = asyncio.run(esp["_deposer_pour"]({"name": "gros.pdf", "size": str(80 * 1024 * 1024)}, None, "u1", {"contenu": "t"}))
     verifier("un fichier au-delà de la borne n'est pas déposé, la lecture reste", "bloc_ui" not in r and r.get("contenu") == "t")
 
 print(f"\n{'═' * 72}")

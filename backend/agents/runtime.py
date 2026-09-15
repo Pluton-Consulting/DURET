@@ -282,6 +282,11 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "reprise_apres_accord": False,
         "forcages": 0,
         "forcage_refuse": False,
+        # Relecture, leçons et familles d'outils : propres à CE tour.
+        "verification": None,
+        "lecons_du_tour": None,
+        "correction_signalee": False,
+        "familles_outils": None,
         "redaction_forcee": False,
         # LA PROVENANCE AUSSI. Ces trois champs survivaient au tour via le
         # checkpointer : un « Hello » affichait « 3 sources » — les pages web
@@ -533,6 +538,10 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
             "pieces": pieces_du_tour_persistables(state),
         }
 
+    # UNE CORRECTION ENSEIGNE (15/09, learning/lecons.py) : la leçon se tire
+    # en arrière-plan, la réponse n'attend pas.
+    from learning.lecons import apprendre_en_fond
+    apprendre_en_fond(state)
     return {
         "status": "completed",
         "thread_id": thread_id,
@@ -754,6 +763,9 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
                # routeur écrit l'échange quand le tour attend un accord.
                "pieces": pieces_du_tour_persistables(state)}
     else:
+        # UNE CORRECTION ENSEIGNE (15/09) : même geste que `run_turn`.
+        from learning.lecons import apprendre_en_fond
+        apprendre_en_fond(state)
         # L'ÉVÉNEMENT FINAL PORTE LA MESURE. Sans elle, le chemin WebSocket —
         # qui est le chemin NOMINAL, le POST n'étant qu'un repli — journalisait
         # zéro jeton, zéro euro et aucun modèle : les colonnes du pilotage

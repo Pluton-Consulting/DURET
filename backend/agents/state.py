@@ -85,6 +85,16 @@ class AgentState(TypedDict):
     # minutes. `test_etat_declare.py` refuse désormais toute clé lue ou écrite
     # qui n'est pas déclarée ici.
     tour_debut: Optional[float]
+    # LA RELECTURE DU TOUR (15/09, agents/verificateur.py) : le verdict du
+    # relecteur — statut ok | a_corriger | indisponible | deja_verifiee.
+    verification: Optional[dict]
+    # Les leçons tirées de corrections passées, rappelées pour CE tour
+    # (learning/lecons.py), et le signal qu'une correction vient d'être faite.
+    lecons_du_tour: Optional[str]
+    correction_signalee: bool
+    # Les familles d'outils utiles à la demande, choisies par le routeur
+    # (skills/familles.py). None : tout le catalogue.
+    familles_outils: Optional[List[str]]
     tool_repair_used: bool               # une seule tentative de réparation d'un bloc invalide
     tools_finished: bool                 # force la sortie de boucle
     note_sortie: Optional[str]           # pourquoi la boucle s'est arrêtée sans aboutir

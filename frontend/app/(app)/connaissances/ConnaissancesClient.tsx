@@ -2,6 +2,7 @@
 import { useState } from "react"
 import ValidationQueue from "@/components/validation/ValidationQueue"
 import DebriefApprentissage from "@/components/learning/DebriefApprentissage"
+import LeconsApprises from "@/components/learning/LeconsApprises"
 import SkillsClient from "@/app/(app)/skills/SkillsClient"
 
 /**
@@ -13,13 +14,14 @@ import SkillsClient from "@/app/(app)/skills/SkillsClient"
  * posé : ce qui attend votre décision, ce qu'il a appris, ce qu'il sait faire.
  */
 interface Props { apiUrl: string; token: string }
-type Volet = "a_valider" | "appris" | "savoir_faire"
+type Volet = "a_valider" | "appris" | "lecons" | "savoir_faire"
 
 export default function ConnaissancesClient({ apiUrl, token }: Props) {
   const [volet, setVolet] = useState<Volet>("a_valider")
   const volets: { key: Volet; label: string; sous: string }[] = [
     { key: "a_valider", label: "À valider", sous: "actions et compétences qui attendent votre décision" },
     { key: "appris", label: "Ce qu'il a appris", sous: "consignes retenues, connaissances acquises, corrections" },
+    { key: "lecons", label: "Leçons", sous: "ce qu'il a tiré des corrections qu'on lui a faites, rappelé quand la situation revient" },
     { key: "savoir_faire", label: "Savoir-faire", sous: "la liste de ses compétences, à activer ou désactiver" },
   ]
   return (
@@ -45,6 +47,7 @@ export default function ConnaissancesClient({ apiUrl, token }: Props) {
       <p className="sym-in" style={{ margin: "0 0 16px", fontSize: 13, color: "var(--marque-text-muted)" }}>{volets.find((v) => v.key === volet)?.sous}</p>
       {volet === "a_valider" && <ValidationQueue token={token} />}
       {volet === "appris" && <DebriefApprentissage token={token} />}
+      {volet === "lecons" && <LeconsApprises token={token} />}
       {volet === "savoir_faire" && <SkillsClient apiUrl={apiUrl} token={token} />}
     </div>
   )

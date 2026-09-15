@@ -419,3 +419,67 @@ async def construire_portrait(current_user: User = Depends(get_current_user)):
     """
     from learning.profil_utilisateur import construire
     return await construire(str(current_user.id))
+
+
+
+# ── LES LEÇONS TIRÉES DES CORRECTIONS (15/09, learning/lecons.py) ─────────
+#
+# Chacun voit les siennes ; qui administre (manage_system) voit toutes celles
+# de l'entreprise, peut en rendre une valable pour tous, ou la retirer. Retirer
+# ne détruit rien (`actif = false`) : une leçon retirée à tort se remet en base.
+
+def _administre(user: User) -> bool:
+    return has_permission(user.role, "manage_system")
+
+
+@router.get("/lecons")
+async def lister_lecons(current_user: User = Depends(get_current_user)):
+    tous = _administre(current_user)
+    async with get_db() as conn:
+        lignes = await conn.fetch(
+            """SELECT l.id, l.situation, l.erreur, l.conduite, l.portee, l.occurrences,
+                      l.rappels, l.cree_le, l.derniere_maj, COALESCE(u.name, u.email) AS auteur
+               FROM lecons l LEFT JOIN users u ON u.id = l.user_id
+               WHERE l.actif AND ($2::boolean OR l.user_id = $1 OR l.portee = 'entreprise')
+               ORDER BY l.derniere_maj DESC LIMIT 300""",
+            current_user.id, tous)
+    return {"administre": tous, "lecons": [
+        {**{k: l[k] for k in ("situation", "erreur", "conduite", "portee", "occurrences",
+                              "rappels", "auteur")},
+         "id": str(l["id"]), "cree_le": l["cree_le"].isoformat() if l["cree_le"] else None,
+         "derniere_maj": l["derniere_maj"].isoformat() if l["derniere_maj"] else None}
+        for l in lignes]}
+
+
+class PorteeBody(BaseModel):
+    entreprise: bool
+
+
+@router.post("/lecons/{lecon_id}/retirer")
+async def retirer_lecon(lecon_id: str, current_user: User = Depends(get_current_user)):
+    async with get_db() as conn:
+        n = await conn.fetchval(
+            """WITH maj AS (UPDATE lecons SET actif = false, derniere_maj = NOW()
+                            WHERE id = $1::uuid AND actif AND ($3::boolean OR user_id = $2)
+                            RETURNING 1)
+               SELECT COUNT(*) FROM maj""", lecon_id, current_user.id, _administre(current_user))
+    if not n:
+        raise HTTPException(status_code=http.HTTP_404_NOT_FOUND, detail="Leçon introuvable")
+    await log_action(action="lecon_retiree", user_id=str(current_user.id),
+                     metadata={"lecon": lecon_id})
+    return {"retiree": True}
+
+
+@router.post("/lecons/{lecon_id}/portee")
+async def changer_portee(lecon_id: str, body: PorteeBody,
+                         current_user: User = Depends(get_current_user)):
+    if not _administre(current_user):
+        raise HTTPException(status_code=http.HTTP_403_FORBIDDEN, detail="Réservé à l'administration")
+    async with get_db() as conn:
+        n = await conn.fetchval(
+            """WITH maj AS (UPDATE lecons SET portee = $2, derniere_maj = NOW()
+                            WHERE id = $1::uuid AND actif RETURNING 1)
+               SELECT COUNT(*) FROM maj""", lecon_id, "entreprise" if body.entreprise else "personne")
+    if not n:
+        raise HTTPException(status_code=http.HTTP_404_NOT_FOUND, detail="Leçon introuvable")
+    return {"portee": "entreprise" if body.entreprise else "personne"}

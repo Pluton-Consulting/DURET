@@ -883,16 +883,51 @@ async def rafraichir_catalogue(force: bool = False) -> int:
     return len(_EXTERNES)
 
 
-def instruction_actions(role: str | None = None) -> str:
+def _ligne_detaillee(nom: str, desc: str, requis, optionnels) -> str:
+    params = ", ".join([f"{p}*" for p in requis] + list(optionnels)) or "aucun"
+    return f'- {nom} : {desc}. Paramètres ({params}), * = obligatoire.'
+
+
+def _resume(desc: str, taille: int = 110) -> str:
+    """La première phrase d'une description, courte : de quoi reconnaître l'outil."""
+    import re as _re
+    texte = " ".join(str(desc or "").split())
+    premiere = _re.split(r"(?<=[.;:])\s|\s--\s|\s—\s", texte, maxsplit=1)[0]
+    return premiere if len(premiere) <= taille else premiere[: taille - 1].rstrip() + "…"
+
+
+def detail_actions(role: str | None, noms) -> str:
+    """LE DÉTAIL des actions utiles à CETTE demande (15/09, `skills/familles.py`).
+
+    Placé avec la question, pas dans le prompt système : le préfixe système
+    reste identique d'un tour à l'autre, et le cache du fournisseur (22 000
+    jetons relus à chaque passe, mesuré le 14/09) continue de servir.
+    """
+    cat = catalogue(role)
+    lignes = [_ligne_detaillee(n, *cat[n]) for n in cat if n in set(noms)]
+    if not lignes:
+        return ""
+    return ("DÉTAIL DES ACTIONS UTILES À CETTE DEMANDE (les autres sont dans l'index du "
+            "prompt ; tu peux en appeler une qui n'est pas détaillée ici — si ses paramètres "
+            "sont faux, son détail te sera rendu) :\n" + "\n".join(lignes) + "\n\n")
+
+
+def instruction_actions(role: str | None = None, compacte: bool = False) -> str:
     """Bloc à ajouter au prompt système.
 
     Le préfixe reste stable tant que le registre ne change pas, donc le cache de
     prompt du fournisseur continue de s'appliquer entre deux tours.
+
+    `compacte` (15/09) : un INDEX d'une ligne par outil au lieu du détail —
+    le détail des outils utiles à la demande arrive avec la question
+    (`detail_actions`). Sans `compacte`, tout est détaillé, comme avant.
     """
     lignes = []
     for nom, (desc, requis, optionnels) in catalogue(role).items():
-        params = ", ".join([f"{p}*" for p in requis] + list(optionnels)) or "aucun"
-        lignes.append(f'- {nom} : {desc}. Paramètres ({params}), * = obligatoire.')
+        if compacte:
+            lignes.append(f"- {nom} : {_resume(desc)}")
+        else:
+            lignes.append(_ligne_detaillee(nom, desc, requis, optionnels))
     return (
         # LE CONTRAT EST UNE BOUCLE, PAS UN ALLER-RETOUR.
         #
@@ -957,7 +992,9 @@ def instruction_actions(role: str | None = None) -> str:
         "N'ANNONCE JAMAIS UNE ACTION SANS L'ÉMETTRE. N'écris pas « je vais faire », "
         "« je commence par », « je crée maintenant » : ces phrases n'exécutent RIEN. "
         "Ne dis ce que tu as fait qu'APRÈS l'avoir fait.\n"
-        "Skills disponibles :\n" + "\n".join(lignes) +
+        + ("Skills disponibles (INDEX : une ligne par action ; le détail de celles qui servent "
+         "à la demande est donné avec la question) :\n" if compacte else "Skills disponibles :\n")
+        + "\n".join(lignes) +
         # L'exemple porte volontairement sur l'action SANS EFFET (une recherche) :
         # des modèles modestes recopient l'exemple mot pour mot et l'exécutent tel
         # quel. Observé en production avec l'ancien exemple : un brouillon de mail
@@ -1027,6 +1064,7 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
     if skill not in catalogue(role):
         return None, reste, (f"skill inconnu : {skill}. "
                              f"Choisis parmi : {', '.join(catalogue(role))}")
+    desc, _req, _opt = catalogue(role)[skill]
 
     args = data.get("args")
     if args is None:
@@ -1037,8 +1075,12 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
     requis = catalogue(role)[skill][1]
     manquants = [p for p in requis if not str(args.get(p) or "").strip()]
     if manquants:
+        # LE DÉTAIL DE L'OUTIL REVIENT AVEC L'ERREUR (15/09) : depuis que le
+        # catalogue ne détaille que les familles utiles, le modèle peut appeler
+        # un outil qu'il ne connaît que par l'index.
         return None, reste, (f"paramètres obligatoires manquants pour {skill} : "
-                             f"{', '.join(manquants)}")
+                             f"{', '.join(manquants)}. Détail de l'action : "
+                             + _ligne_detaillee(skill, desc, _req, _opt)[2:])
 
     return {"skill": skill, "args": args}, reste, None
 

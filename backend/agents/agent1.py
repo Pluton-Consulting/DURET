@@ -478,6 +478,7 @@ async def routeur_node(state: AgentState) -> dict:
     """
     from llm.router import get_llm, LLMTier as _T
     from langchain_core.messages import HumanMessage as _H
+    from skills.familles import familles_valides, liste_pour_le_routeur
     import json as _json
     import re as _re
 
@@ -545,8 +546,18 @@ async def routeur_node(state: AgentState) -> dict:
         "conversation. La grande majorité des cas.\n"
         '- "analyse" : il faut comparer, synthétiser, recouper plusieurs sources, '
         "expliquer un raisonnement, tirer des conclusions d'un ensemble de données.\n"
+        # LES FAMILLES D'OUTILS ET LA CORRECTION (15/09) : le même appel dit
+        # quels outils détailler (skills/familles.py) et si la personne corrige
+        # l'assistant (learning/lecons.py). Un modèle qui juge, pas une liste de mots.
+        "Dis AUSSI quelles FAMILLES d'outils la demande peut réclamer, suites évidentes "
+        "comprises (répondre à un mail = mails ; en faire un Word = documents) ; liste "
+        "vide pour une salutation ou une question générale :\n"
+        + liste_pour_le_routeur() + "\n"
+        "Et dis si la demande CORRIGE l'assistant : elle affirme que sa réponse ou son "
+        "action précédente était fausse, incomplète, ou pas ce qui était voulu.\n"
         'Réponds par un objet JSON seul : {"memoire": true|false, "requete": '
-        '"<mots-clés de recherche si true, sinon vide>", "effort": "simple|analyse"}\n\n'
+        '"<mots-clés de recherche si true, sinon vide>", "effort": "simple|analyse", '
+        '"outils": ["<famille>", …], "correction": true|false}\n\n'
         # LE ROUTEUR JUGEAIT À L'AVEUGLE. Sa grille ci-dessus contient la
         # catégorie « suite directe de la conversation » — impossible à
         # reconnaître sans savoir ce qui précède. Sur un « 1 » ou un « oui »,
@@ -570,14 +581,24 @@ async def routeur_node(state: AgentState) -> dict:
         effort = ("complex"
                   if str(decision.get("effort") or "").strip().lower().startswith("analyse")
                   else "standard")
+        # Une liste vide rendue par le routeur (« bonjour ») vaut « aucune
+        # famille » : le détail se réduit alors aux outils toujours détaillés.
+        # Une liste NON vide dont aucune famille n'est reconnue (« mail » au
+        # singulier…) vaut « tout détailler » : un choix illisible ne prive de rien.
+        brutes = decision.get("outils")
+        familles = (None if not isinstance(brutes, list)
+                    else [] if not brutes else familles_valides(brutes))
+        correction = decision.get("correction") is True or str(decision.get("correction")).lower() == "true"
     except Exception as e:  # noqa: BLE001
         # En cas d'échec, on CHERCHE : répondre « je n'ai rien » alors que la
         # mémoire contient la réponse est bien pire qu'une recherche inutile.
         logger.info("Routage indisponible (%s) — recherche par défaut", e)
-        besoin, requete, effort = True, question, "standard"
+        besoin, requete, effort, familles, correction = True, question, "standard", None, False
 
-    logger.debug("Routage : mémoire=%s, effort=%s", besoin, effort)
-    return {"besoin_memoire": besoin, "requete_memoire": requete, "llm_tier": effort}
+    logger.debug("Routage : mémoire=%s, effort=%s, familles=%s, correction=%s",
+                 besoin, effort, familles, correction)
+    return {"besoin_memoire": besoin, "requete_memoire": requete, "llm_tier": effort,
+            "familles_outils": familles, "correction_signalee": correction}
 
 
 async def recherche_node(state: AgentState) -> dict:
@@ -914,7 +935,30 @@ async def llm_node(state: AgentState, config=None) -> dict:
             "MAINTENANT, complètement, sans relancer les actions :" + chr(10)
             + _json_att.dumps(en_attente, ensure_ascii=False, default=str)[:8000] + chr(10) * 2)
         bloc_resultats = bloc_attente + bloc_resultats
-    human_content = bloc_memoire_txt + bloc_resultats + human_content
+    # LE DÉTAIL DES OUTILS UTILES À LA DEMANDE (15/09, skills/familles.py) :
+    # avec la question, pas dans le préfixe système qui reste en cache.
+    bloc_outils = ""
+    if state.get("familles_outils") is not None:
+        from skills.familles import a_detailler
+        from skills.protocol import catalogue as _catalogue, detail_actions
+        _role = state.get("user_role")
+        bloc_outils = detail_actions(_role, a_detailler(
+            _catalogue(_role).keys(), state.get("familles_outils"),
+            [r.get("skill") for r in resultats_outils if r.get("skill")]))
+    # LES LEÇONS DES CORRECTIONS PASSÉES (15/09, learning/lecons.py) :
+    # cherchées UNE fois par tour (« » = aucune), rappelées à chaque passe.
+    bloc_lecons = state.get("lecons_du_tour")
+    maj_lecons: dict = {}
+    if bloc_lecons is None:
+        try:
+            from learning.lecons import bloc_pour_le_prompt, pertinentes
+            bloc_lecons = bloc_pour_le_prompt(await pertinentes(
+                str(state.get("user_id") or ""), state.get("query") or ""))
+        except Exception as e:  # noqa: BLE001 — sans leçon, le tour continue
+            logger.info("Leçons non chargées : %s", str(e)[:120])
+            bloc_lecons = ""
+        maj_lecons = {"lecons_du_tour": bloc_lecons}
+    human_content = bloc_lecons + bloc_memoire_txt + bloc_resultats + bloc_outils + human_content
 
     # Composants visuels : l'instruction est TOUJOURS présente.
     # Elle était auparavant conditionnée à des mots-clés (« devis », « tableau »…) pour
@@ -977,7 +1021,8 @@ Exemple, pour présenter des mails : une carte PAR message.
 Voici les messages trouvés :
 ```ui
 {"type":"email","subject":"CONTACT architecte","from":"lb@lbbl-architectes.fr","date":"23/07/2026","preview":"Demande d'intervention sur un projet a Sainte-Eulalie..."}
-```""" + instruction_actions(state.get("user_role"))
+```""" + instruction_actions(state.get("user_role"),
+                               compacte=state.get("familles_outils") is not None)
 
     # CONSIGNES APPRISES, injectees a CHAQUE tour et non cherchees. Une regle de
     # comportement (« chez nous "le serveur" designe le NAS ») doit etre presente
@@ -1069,6 +1114,14 @@ Voici les messages trouvés :
                 "appelle une réponse (ref, de, objet, synthese, reponse), aucune "
                 "pour les messages automatiques. N'envoie rien : chaque envoi "
                 "repassera par sa validation.")
+        # LE RELECTEUR A RELEVÉ DES AFFIRMATIONS NON PROUVÉES (15/09) : la
+        # rédaction est reprise avec ce qu'il a vu, et la réponse relue.
+        from agents.verificateur import pour_la_redaction
+        _releve = pour_la_redaction(state.get("verification"))
+        if _releve:
+            redaction_a_reprendre = True
+            system_prompt += (_releve + "\nTa réponse précédente était :\n"
+                              + str((state.get("verification") or {}).get("reponse_relue") or "")[:3000])
         # La raison d'une sortie sans résultat est expliquée par le modèle, dans
         # ses mots : l'utilisateur mérite une phrase, pas un code d'erreur.
         note = state.get("note_sortie")
@@ -1094,6 +1147,7 @@ Voici les messages trouvés :
     usage = getattr(response, "usage_metadata", None) or {}
     return {
         **maj_memoire,
+        **maj_lecons,
         "redaction_forcee": redaction_a_reprendre,
         "llm_response": response.content,
         "tokens_in": usage.get("input_tokens", 0),
@@ -3559,6 +3613,12 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         f"« {(state.get('llm_response') or '').strip()[:400]} »\n\n"
         "Produis le bloc ```action de la PROCHAINE action à exécuter."
     ) + _consigne_images(state) + _consigne_plan(state)
+    # LE RELECTEUR A NOMMÉ LE GESTE MANQUANT (15/09).
+    _verif = state.get("verification") or {}
+    if _verif.get("statut") == "a_corriger" and _verif.get("action_manquante"):
+        demande += (f"\n\nUn relecteur a constaté que la réponse affirmait un résultat que rien ne "
+                    f"prouve ({'; '.join(str(p.get('raison') or '')[:160] for p in _verif.get('problemes') or [])}). "
+                    f"Le geste qui manque est probablement `{_verif['action_manquante']}`.")
 
     # Quand un travail est resté OUVERT, on ne laisse pas deviner : dire quelle
     # fermeture manque évite qu'un document déjà rempli soit rouvert une fois de
@@ -3970,6 +4030,86 @@ def route_apres_llm(state: AgentState) -> str:
     return "rehydrate"
 
 
+async def verifier_node(state: AgentState, config=None) -> dict:
+    """LA RELECTURE AVANT L'ÉCRAN (15/09, `agents/verificateur.py`).
+
+    Le modèle puissant compare la réponse prévue à ce qui s'est réellement
+    passé dans le tour. Une seule relecture par tour : la seconde arrivée ici
+    (après une rédaction reprise ou un geste forcé) laisse passer.
+    Ne lève jamais : un relecteur indisponible n'empêche pas de répondre.
+    """
+    import asyncio as _aio
+    import json as _json_v
+    from agents import verificateur as V
+    from agents.memoire_gestes import journal_des_gestes
+    from config import settings as _s
+
+    deja = state.get("verification")
+    if deja:
+        return {"verification": {**deja, "statut": "deja_verifiee"}}
+    if not getattr(_s, "verifier_reponses", True):
+        return {}
+    texte = state.get("llm_response") or ""
+    visible = _texte_visible(texte)
+    resultats = state.get("tool_results") or []
+    if not V.a_verifier(_BLOC_UI_RE.sub("", visible), bool(resultats), False,
+                        bool(state.get("pending_action"))):
+        return {}
+
+    blocs = []
+    for brut in _BLOC_UI_RE.findall(visible):
+        try:
+            b = _json_v.loads(brut)
+        except ValueError:
+            continue
+        if isinstance(b, dict):
+            blocs.append(" · ".join(str(x) for x in (
+                b.get("type"), b.get("titre") or b.get("title") or b.get("nom") or b.get("name")
+                or b.get("subject"), b.get("url")) if x))
+    resume_resultats = "\n".join(
+        f"- {r.get('skill') or '?'} ({'réussi' if r.get('ok') else 'ÉCHEC'}) : "
+        f"{_essentiel(str(r.get('resultat_masque') or ''), 1500)}" for r in resultats[-12:])
+    invite = V.consigne(
+        demande=state.get("anonymized_query") or state.get("query") or "",
+        journal=journal_des_gestes(resultats), resultats=resume_resultats,
+        reponse=_BLOC_UI_RE.sub("", visible).strip(), blocs=blocs,
+        contexte="\n".join(str(c) for c in (state.get("anonymized_chunks") or []))[:3000],
+        lecons=state.get("lecons_du_tour") or "")
+    try:
+        llm = get_llm(LLMTier.COMPLEX)
+        reponse = await _aio.wait_for(
+            llm.ainvoke([HumanMessage(content=invite)], config=config),
+            timeout=float(getattr(_s, "verificateur_delai_s", 60)))
+        verdict = V.lire_verdict(reponse.content)
+    except Exception as e:  # noqa: BLE001 — un relecteur en panne ne bloque pas
+        logger.info("Relecture indisponible (%s) : la réponse passe telle quelle", str(e)[:120])
+        return {"verification": {"statut": "indisponible"}}
+    if verdict is None:
+        return {"verification": {"statut": "indisponible"}}
+    if verdict["statut"] == "a_corriger":
+        logger.info("Relecture : %d affirmation(s) non prouvée(s), action manquante=%s",
+                    len(verdict["problemes"]), verdict["action_manquante"] or "-")
+        _tracer_filet(state, "verificateur", "affirmation_non_prouvee",
+                      problemes=len(verdict["problemes"]),
+                      action_manquante=verdict["action_manquante"] or None)
+    verdict["reponse_relue"] = _BLOC_UI_RE.sub("", visible).strip()[:3000]
+    return {"verification": verdict}
+
+
+def route_apres_verifier(state: AgentState) -> str:
+    """rehydrate | rediger | forcer — selon le verdict du relecteur."""
+    from agents.verificateur import suite
+    v = state.get("verification")
+    if not v or v.get("statut") != "a_corriger":
+        return "rehydrate"
+    try:
+        from skills.protocol import catalogue
+        connus = set(catalogue(state.get("user_role")))
+    except Exception:  # noqa: BLE001
+        connus = set()
+    return suite(v, connus, int(state.get("forcages") or 0), MAX_FORCAGES_PAR_TOUR, False)
+
+
 def route_apres_tools(state: AgentState) -> str:
     """Après une action : rendre la main au modèle, ou terminer le tour.
 
@@ -4015,14 +4155,21 @@ def build_agent1_graph():
     # dans un appel dédié, puis on l'exécute.
     graph.add_node("forcer", forcer_action_node)
     graph.add_node("rediger", rediger_node)
+    # LA RELECTURE (15/09) : toute réponse qui s'apprête à partir vers l'écran
+    # passe par le vérificateur. Il laisse passer sans appel ce qui n'a rien
+    # à vérifier, et une seule fois par tour.
+    graph.add_node("verifier", verifier_node)
     graph.add_conditional_edges("llm", route_apres_llm,
                                 {"tools": "tools", "forcer": "forcer",
-                                 "rediger": "rediger", "rehydrate": "rehydrate"})
+                                 "rediger": "rediger", "rehydrate": "verifier"})
+    graph.add_conditional_edges("verifier", route_apres_verifier,
+                                {"rehydrate": "rehydrate", "rediger": "rediger",
+                                 "forcer": "forcer"})
     graph.add_edge("rediger", "llm")
     graph.add_conditional_edges("forcer", route_apres_forcage,
                                 {"tools": "tools", "rehydrate": "rehydrate"})
     graph.add_conditional_edges("tools", route_apres_tools,
-                                {"llm": "llm", "rehydrate": "rehydrate"})
+                                {"llm": "llm", "rehydrate": "verifier"})
     graph.add_edge("rehydrate", "validation_check")
     graph.add_conditional_edges("validation_check", should_validate)
 

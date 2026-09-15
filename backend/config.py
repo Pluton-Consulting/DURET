@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     allowed_hosts: str = "100.64.0.1"
     # Sécurité transverse
     max_body_mb: int = 10                          # limite de taille du corps HTTP (anti-DoS mémoire)
+    # LA RELECTURE AVANT L'ÉCRAN (15/09, agents/verificateur.py) : le modèle
+    # puissant vérifie qu'une réponse n'affirme rien que le tour ne prouve.
+    # Un appel de plus, seulement quand il y a quelque chose à vérifier.
+    verifier_reponses: bool = True
+    verificateur_delai_s: int = 60
     block_external_llm_without_ner: bool = True    # refuse l'envoi aux LLM externes si l'anonymiseur NER est HS (RGPD)
     # Anonymisation PII : « active » ou « desactivee ». DÉSACTIVÉE PAR DÉFAUT
     # depuis le 31/08/2026, décision de Noa (« fluidifier de A à Z les

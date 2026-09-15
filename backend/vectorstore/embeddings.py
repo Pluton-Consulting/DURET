@@ -161,6 +161,82 @@ def embed_stats() -> dict:
     return _gemini_throttle.stats()
 
 
+# ── La clé, lue comme partout ailleurs : Paramètres d'abord, `.env` ensuite ──
+#
+# CE MODULE LISAIT `settings.google_api_key` (15/09, relevé de Noa chez Duret :
+# « le bouton re-vectoriser le corpus marche pas », 0 morceau vectorisé sur
+# 36 795). Une clé Google saisie dans Paramètres → Clés API — dont la ligne dit
+# pourtant « Embeddings de la mémoire d'entreprise » — n'atteignait JAMAIS les
+# embeddings : seul le `.env` comptait, et celui du VPS de Duret porte une clé
+# que Google refuse. La cascade de texte et la vision passaient par
+# `llm.cles`, pas la mémoire vectorielle. C'est le bug du §4.6, un module plus
+# loin.
+def _cle(nom: str) -> str:
+    try:
+        from llm.cles import valeur
+        return str(valeur(nom) or "").strip()
+    except Exception:  # noqa: BLE001 — sans module de clés, la configuration
+        return str(getattr(settings, nom, "") or "").strip()
+
+
+# ── Ce que le fournisseur a répondu la dernière fois qu'il a refusé ─────────
+#
+# « Le modèle n'a rendu aucun vecteur. Vérifiez la clé du fournisseur et le nom
+# du modèle » s'affichait QUOI QU'IL ARRIVE : clé refusée par Google, modèle de
+# conversation choisi pour vectoriser, API non activée sur le projet — trois
+# gestes différents, un seul message. La réponse du fournisseur était là, et on
+# n'en gardait que le nom de l'exception. Elle est désormais retenue, SANS
+# L'ADRESSE appelée (celle de Google porte la clé en clair), et
+# `raison_du_silence` la rend.
+_DERNIER_REFUS: dict[str, tuple[float, str]] = {}
+_REFUS_VALIDE_S = 600.0
+
+
+def _noter_refus(fournisseur: str, raison: str) -> None:
+    _DERNIER_REFUS[fournisseur] = (time.monotonic(), raison)
+
+
+def _effacer_refus(fournisseur: str) -> None:
+    _DERNIER_REFUS.pop(fournisseur, None)
+
+
+def _sans_secret(texte: str) -> str:
+    import re
+    texte = re.sub(r"AIza[0-9A-Za-z_\-]{10,}", "…", texte)
+    texte = re.sub(r"(key|token)\s*[=:]\s*[^\s&\"',]+", r"\1=…", texte, flags=re.I)
+    texte = re.sub(r"bearer\s+[^\s&\"',]+", "Bearer …", texte, flags=re.I)
+    return texte
+
+
+def _refus_http(service: str, r) -> str:
+    """« Google refuse la requête (HTTP 400 : API key not valid…) », lisible et
+    sans secret. Jamais `str(exception)` : httpx y met l'URL, donc la clé."""
+    message = ""
+    try:
+        data = r.json()
+        err = data.get("error") if isinstance(data, dict) else None
+        if isinstance(err, dict):
+            message = str(err.get("message") or err.get("status") or "")
+        elif isinstance(err, str):
+            message = err
+    except ValueError:
+        message = str(getattr(r, "text", "") or "")
+    message = _sans_secret(" ".join(message.split()))[:180]
+    bas = message.lower()
+    code = getattr(r, "status_code", 0)
+    if service == "Google" and ("api key" in bas or "api_key" in bas):
+        conseil = " — la clé Google est refusée : posez une clé valide dans Paramètres → Clés API"
+    elif service == "Google" and code == 403 and ("not been used" in bas or "disabled" in bas):
+        conseil = " — l'API « Generative Language » n'est pas activée sur le projet Google de la clé"
+    elif code in (401, 403):
+        conseil = " — la clé est refusée"
+    elif code == 404 or "not found" in bas or "not support" in bas or "does not" in bas:
+        conseil = " — ce modèle ne produit pas d'embeddings chez ce fournisseur"
+    else:
+        conseil = ""
+    return f"{service} refuse la requête (HTTP {code}{' : ' + message if message else ''}){conseil}"
+
+
 # ── OpenAI ────────────────────────────────────────────────────────────────
 _openai_client = None
 
@@ -169,11 +245,12 @@ def _openai():
     global _openai_client
     if _openai_client is not None:
         return _openai_client
-    if not settings.openai_api_key:
+    cle = _cle("openai_api_key")
+    if not cle:
         return None
     try:
         from openai import AsyncOpenAI
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _openai_client = AsyncOpenAI(api_key=cle)
         return _openai_client
     except Exception as e:
         logger.warning("Client OpenAI indisponible (%s)", type(e).__name__)
@@ -201,15 +278,18 @@ async def _embed_openai(texts: list[str], modele: str = "") -> list[Optional[lis
     try:
         resp = await client.embeddings.create(
             model=modele or settings.embedding_model, input=texts)
+        _effacer_refus("openai")
         return [d.embedding for d in resp.data]
     except Exception as e:
+        _noter_refus("openai", f"OpenAI refuse la requête ({type(e).__name__})")
         logger.warning("Échec embeddings OpenAI (%s) — mode dégradé", type(e).__name__)
         return [None] * len(texts)
 
 
 # ── Gemini (Google AI Studio, REST) ───────────────────────────────────────
 async def _embed_gemini(texts: list[str], modele: str = "") -> list[Optional[list[float]]]:
-    if not settings.google_api_key:
+    cle = _cle("google_api_key")
+    if not cle:
         _warn_once("GOOGLE_API_KEY absente : embeddings gemini désactivés (dégradation pg_trgm).")
         return [None] * len(texts)
 
@@ -229,7 +309,7 @@ async def _embed_gemini(texts: list[str], modele: str = "") -> list[Optional[lis
         pass
     max_chars = settings.embedding_max_chars
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{model}:batchEmbedContents?key={settings.google_api_key}")
+           f"{model}:batchEmbedContents?key={cle}")
     body = {
         "requests": [
             {
@@ -253,8 +333,13 @@ async def _embed_gemini(texts: list[str], modele: str = "") -> list[Optional[lis
             logger.warning("Gemini 429 (%s) — pause %.0f s, cadence %.1f s, backlog conservé",
                            diag, pause, _gemini_throttle.cadence)
             return [None] * len(texts)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raison = _refus_http("Google", r)
+            _noter_refus("gemini", raison)
+            logger.warning("Échec embeddings Gemini : %s — mode dégradé", raison)
+            return [None] * len(texts)
         data = r.json()
+        _effacer_refus("gemini")
         await _gemini_throttle.succes()
         embeddings = data.get("embeddings", [])
         out: list[Optional[list[float]]] = []
@@ -266,6 +351,7 @@ async def _embed_gemini(texts: list[str], modele: str = "") -> list[Optional[lis
             out.append(None)
         return out
     except Exception as e:
+        _noter_refus("gemini", f"Google ne répond pas ({type(e).__name__})")
         logger.warning("Échec embeddings Gemini (%s) — mode dégradé", type(e).__name__)
         return [None] * len(texts)
 
@@ -302,21 +388,33 @@ async def _embed_ollama(texts: list[str], modele: str = "") -> list[Optional[lis
 # saisie dans Paramètres prime sur le `.env`, et le cache est rafraîchi au
 # démarrage (piège du §4.6).
 async def _embed_ollama_cloud(texts: list[str], modele: str = "") -> list[Optional[list[float]]]:
-    from llm.cles import valeur as _cle_valeur
-    cle = _cle_valeur("ollama_cloud_api_key") or ""
+    cle = _cle("ollama_cloud_api_key")
     if not cle:
+        _noter_refus("ollama_cloud", "aucune clé Ollama Cloud n'est posée")
         _warn_once("Clé Ollama Cloud absente : embeddings désactivés "
                    "(la recherche reste servie par la voie lexicale).")
         return [None] * len(texts)
     nom = modele or settings.ollama_cloud_embedding_model
     base = (settings.ollama_cloud_base_url or "").rstrip("/")
     max_chars = settings.embedding_max_chars
-    try:
-        r = await _client().post(
-            f"{base}/embeddings",
-            headers={"Authorization": f"Bearer {cle}"},
-            json={"model": nom, "input": [t[:max_chars] for t in texts]})
-        r.raise_for_status()
+    entetes = {"Authorization": f"Bearer {cle}"}
+    courts = [t[:max_chars] for t in texts]
+    refus: list[str] = []
+
+    # DEUX ROUTES, PARCE QUE LA PREMIÈRE N'EXISTE PAS TOUJOURS. Mesuré en
+    # production le 02/09 sur l'abonnement de Noa : `POST /v1/embeddings` rend
+    # « path "/v1/embeddings" not found » — un 404 sur le CHEMIN, pas sur le
+    # modèle. La façade compatible OpenAI d'Ollama Cloud ne couvre que la
+    # complétion ; les embeddings, quand ils existent, passent par l'API native
+    # `/api/embed`. On essaie donc l'une puis l'autre, et un refus sur la
+    # première ne compte pas comme une panne tant que la seconde n'a pas parlé.
+    # (Duret n'avait que la première route : trou de parité fermé le 15/09.)
+    async def _openai_like():
+        r = await _client().post(f"{base}/embeddings", headers=entetes,
+                                 json={"model": nom, "input": courts})
+        if r.status_code >= 400:
+            refus.append(_refus_http("Ollama Cloud", r))
+            return None
         # L'ordre de `data` suit celui de l'entrée, mais le contrat OpenAI
         # porte un `index` : on s'y fie plutôt qu'à la position, sans quoi
         # une réponse réordonnée collerait les vecteurs aux mauvais textes.
@@ -326,7 +424,38 @@ async def _embed_ollama_cloud(texts: list[str], modele: str = "") -> list[Option
             if isinstance(i, int) and 0 <= i < len(texts):
                 out[i] = item.get("embedding") or None
         return out
+
+    async def _native():
+        # `/api/embed` vit à la RACINE du domaine, pas sous /v1 : on retire le
+        # suffixe de version plutôt que de le concaténer.
+        racine = base[:-3].rstrip("/") if base.endswith("/v1") else base
+        r = await _client().post(f"{racine}/api/embed", headers=entetes,
+                                 json={"model": nom, "input": courts})
+        if r.status_code >= 400:
+            refus.append(_refus_http("Ollama Cloud", r))
+            return None
+        vecteurs = r.json().get("embeddings") or []
+        return [(vecteurs[i] if i < len(vecteurs) else None)
+                for i in range(len(texts))]
+
+    try:
+        for tentative in (_openai_like, _native):
+            resultat = await tentative()
+            if resultat is not None and any(resultat):
+                _effacer_refus("ollama_cloud")
+                return resultat
+        # Le DERNIER refus est le plus parlant : la route native dit si le
+        # modèle existe, la façade OpenAI ne dit souvent que « chemin absent ».
+        _noter_refus("ollama_cloud", refus[-1] if refus else
+                     f"Ollama Cloud n'a rendu aucun vecteur pour « {nom} »")
+        _warn_once(
+            "Ollama Cloud ne rend pas d'embeddings pour ce modèle : ni "
+            "« /v1/embeddings » ni « /api/embed » n'ont produit de vecteur. "
+            "Choisissez un autre fournisseur pour la mémoire vectorielle "
+            "(Google ou OpenAI).")
+        return [None] * len(texts)
     except Exception as e:  # noqa: BLE001 — jamais d'exception vers l'appelant
+        _noter_refus("ollama_cloud", f"Ollama Cloud ne répond pas ({type(e).__name__})")
         logger.warning("Échec embeddings Ollama Cloud (%s) — mode dégradé",
                        type(e).__name__)
         return [None] * len(texts)
@@ -371,11 +500,11 @@ def raison_du_silence(modele_force: str = "") -> str:
     n'est pas la clé : c'est Gemini en PAUSE DE QUOTA, prise par le worker qui
     vectorise en fond — la mesure part pendant la pause et ne sort jamais.
     Chaîne vide quand rien de précis n'est connu."""
-    nom, _ = fournisseur_choisi(modele_force)
+    nom, modele = fournisseur_choisi(modele_force)
     if nom not in _PROVIDERS:
         return f"le fournisseur d'embeddings « {nom} » est inconnu"
     if nom in ("gemini", "google"):
-        if not settings.google_api_key:
+        if not _cle("google_api_key"):
             return "aucune clé Google n'est posée"
         reste = _gemini_throttle._cooldown_until - time.monotonic()
         if reste > 0:
@@ -385,7 +514,26 @@ def raison_du_silence(modele_force: str = "") -> str:
                     + " — la mesure refonctionnera après, ou choisissez un autre modèle")
         if _gemini_throttle._count >= settings.embedding_daily_request_cap:
             return "le plafond quotidien de requêtes Gemini est atteint (reprise demain)"
-    return ""
+    # CE QUE LE FOURNISSEUR A RÉPONDU (15/09) — la cause la plus sûre, puisque
+    # c'est lui qui refuse. Un refus vieux de dix minutes ne dit plus rien.
+    raison = ""
+    quand_raison = _DERNIER_REFUS.get("gemini" if nom == "google" else nom)
+    if quand_raison and time.monotonic() - quand_raison[0] < _REFUS_VALIDE_S:
+        raison = quand_raison[1]
+    # UN MODÈLE DE CONVERSATION NE VECTORISE PAS. Relevé chez Duret le 15/09 :
+    # « ollama_cloud:deepseek-v4-flash:0731 » posé sur la ligne des embeddings.
+    # L'usage se déduit du nom (heuristique de `llm/router.py`) : on le dit en
+    # complément, jamais à la place de ce que le fournisseur a répondu.
+    try:
+        from llm.router import usage_du_modele
+        if modele and usage_du_modele(modele) != "embedding":
+            doute = (f"« {modele} » ressemble à un modèle de conversation, pas "
+                     "à un modèle d'embedding : choisissez-en un qui vectorise "
+                     "(par exemple google:gemini-embedding-001)")
+            raison = f"{raison} ; {doute}" if raison else doute
+    except Exception:  # noqa: BLE001 — sans heuristique, la réponse du fournisseur suffit
+        pass
+    return raison
 
 
 async def embed_texts(texts: list[str],

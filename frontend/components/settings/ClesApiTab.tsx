@@ -220,9 +220,16 @@ function LigneModele({ titre, aide, actuel, fiches: toutesFiches, busy, onChoisi
       const sansEmbedding = f.modeles.filter((m) => m.usage !== "embedding")
       const gardes = usage ? f.modeles.filter((m) => m.usage === usage) : sansEmbedding
       if (gardes.length) return { ...f, modeles: gardes }
+      // SAUF SUR LA LIGNE DES EMBEDDINGS (15/09, relevé chez Duret) : la liste
+      // entière d'Ollama Cloud, faite de modèles de conversation, y était
+      // proposée faute d'embedding reconnu — et « deepseek-v4-flash » a été
+      // choisi pour vectoriser. Toute la mémoire s'est arrêtée. Ici un menu
+      // vide dit la vérité ; le champ libre reste ouvert, et le serveur
+      // mesure le modèle avant de l'accepter.
+      if (usage === "embedding") return { ...f, modeles: [] }
       // Rien de reconnu : la liste entière (l'heuristique peut se tromper),
       // mais jamais un modèle d'embedding sur une ligne qui doit répondre.
-      return { ...f, modeles: usage === "embedding" || !sansEmbedding.length ? f.modeles : sansEmbedding }
+      return { ...f, modeles: !sansEmbedding.length ? f.modeles : sansEmbedding }
     })
   }, [toutesFiches, usage])
   const [fournisseur, setFournisseur] = useState("")
@@ -284,6 +291,9 @@ function LigneModele({ titre, aide, actuel, fiches: toutesFiches, busy, onChoisi
         </select>
         <select value={modele} disabled={busy || !fiche} style={{ ...champ, minWidth: 230 }}
           onChange={(e) => { setModele(e.target.value); setAutre("") }}>
+          {fiche && fiche.modeles.length === 0 && (
+            <option value="">{usage === "embedding" ? "aucun modèle d'embedding connu chez ce fournisseur" : "aucun modèle connu chez ce fournisseur"}</option>
+          )}
           {(fiche?.modeles || []).map((m) => (
             <option key={m.id} value={m.id}>{m.id}{m.ecarte ? ` — écarté (${m.raison})` : ""}</option>
           ))}

@@ -347,10 +347,16 @@ verifier("les lignes Vision et Embeddings ne proposent que leurs modèles",
 # peut se tromper, et un menu vide empêcherait de choisir un modèle qu'on sait
 # bon. Un fournisseur sans correspondance garde donc sa liste entière.
 # (11/09) La liste est mémorisée, et une ligne qui doit RÉPONDRE écarte les
-# modèles d'embedding de ce repli ; la ligne des embeddings garde tout.
-verifier("un fournisseur sans modèle correspondant garde sa liste entière",
+# modèles d'embedding de ce repli.
+# (15/09) SAUF la ligne des embeddings : son repli y proposait les modèles de
+# CONVERSATION d'Ollama Cloud, et « deepseek-v4-flash » a été posé chez Duret —
+# plus rien ne se vectorisait. Là, le menu reste vide, le champ libre reste
+# ouvert, et le serveur mesure le modèle avant de l'accepter
+# (test_cause_embeddings).
+verifier("un fournisseur sans modèle correspondant garde sa liste entière (hors embeddings)",
          "if (gardes.length) return { ...f, modeles: gardes }" in ecran
-         and 'usage === "embedding" || !sansEmbedding.length ? f.modeles : sansEmbedding' in ecran)
+         and 'if (usage === "embedding") return { ...f, modeles: [] }' in ecran
+         and "!sansEmbedding.length ? f.modeles : sansEmbedding" in ecran)
 
 carte = (BACKEND.resolve().parent / "frontend" / "components" / "settings"
          / "RevectorisationCarte.tsx").read_text(encoding="utf-8")
@@ -358,6 +364,24 @@ verifier("l'écran sait demander la liste des modèles et leurs dimensions",
          "embeddings/catalogue" in carte)
 verifier("il dit que les dimensions sont MESURÉES, pas déduites d'une liste",
          "pas déduites" in carte)
+
+# ── 7. CE QU'OLLAMA CLOUD PROPOSE VRAIMENT (mesuré en production) ───────
+# Sondé le 02/09 sur l'abonnement réel : 19 modèles, TOUS de texte, et
+# `POST /v1/embeddings` rend « path "/v1/embeddings" not found » — un 404 sur le
+# CHEMIN, pas sur le modèle. La façade compatible OpenAI d'Ollama Cloud ne
+# couvre que la complétion. Le fournisseur doit donc essayer la route native
+# avant de conclure, et dire quoi faire s'il n'y en a aucune.
+verifier("le fournisseur essaie la route NATIVE quand /v1/embeddings est absent",
+         "/api/embed" in emb)
+# (15/09) Le refus de chaque route est désormais RETENU (sa réponse devient la
+# cause affichée) au lieu d'être jeté ; la route suivante est essayée quand même.
+verifier("un refus sur la première route n'est pas compté comme une panne",
+         emb.count('refus.append(_refus_http("Ollama Cloud", r))') >= 2
+         and "for tentative in (_openai_like, _native):" in emb)
+verifier("`/api/embed` vit à la racine : le suffixe /v1 est RETIRÉ, pas ajouté",
+         'racine = base[:-3].rstrip("/") if base.endswith("/v1") else base' in emb)
+verifier("et si aucune route ne répond, le message dit vers quoi se tourner",
+         "Choisissez un autre fournisseur" in emb)
 
 arbre = ast.parse((BACKEND / "vectorstore" / "revectorisation.py").read_text(encoding="utf-8"))
 noms = {n.name for n in arbre.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}

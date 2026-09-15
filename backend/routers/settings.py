@@ -212,6 +212,35 @@ async def lire_reglages(current_user: User = Depends(get_current_user)):
     return await etat()
 
 
+async def _refus_du_modele_embedding(cle: str, brut: Optional[str]) -> str:
+    """Un modèle d'embedding se MESURE avant d'être posé (15/09).
+
+    Relevé chez Duret : « ollama_cloud:deepseek-v4-flash:0731 », un modèle de
+    conversation, avait été accepté sur la ligne des embeddings. L'écriture ne
+    vérifiait que la forme « fournisseur:modele » ; toute la mémoire
+    vectorielle s'est arrêtée sans bruit, et le bouton « Re-vectoriser » est
+    resté grisé. On demande donc UN vecteur au modèle avant de l'écrire : s'il
+    n'en rend pas, rien ne change et la raison est dite.
+
+    Une PAUSE DE QUOTA n'est pas un refus : le modèle est bon, il attend. Le
+    bloquer empêcherait de revenir à Gemini justement quand il est sollicité.
+    """
+    v = (brut or "").strip()
+    if cle != "modele_embedding" or ":" not in v:
+        return ""
+    from vectorstore.revectorisation import mesurer_dimension
+    try:
+        dimension, detail = await mesurer_dimension(v)
+    except Exception as e:  # noqa: BLE001 — une mesure qui plante ne bloque pas le choix
+        import logging
+        logging.getLogger(__name__).warning(
+            "Mesure du modèle d'embedding impossible (%s)", type(e).__name__)
+        return ""
+    if dimension is not None or "pause de quota" in detail or "plafond quotidien" in detail:
+        return ""
+    return f"Rien n'a changé : « {v} » ne peut pas servir aux embeddings. {detail}"
+
+
 @router.put("/reglages")
 async def ecrire_reglage(body: ReglageBody, current_user: User = Depends(get_current_user)):
     """Enregistre ou efface un réglage. Effet immédiat, sans redéploiement."""
@@ -221,6 +250,9 @@ async def ecrire_reglage(body: ReglageBody, current_user: User = Depends(get_cur
     if body.cle not in REGLAGES_CONNUS:
         raise HTTPException(status_code=422,
                             detail=f"Réglage inconnu. Attendu : {', '.join(REGLAGES_CONNUS)}")
+    refus = await _refus_du_modele_embedding(body.cle, body.valeur)
+    if refus:
+        raise HTTPException(status_code=422, detail=refus)
     try:
         effective = await enregistrer(body.cle, body.valeur, str(current_user.id))
     except ValueError as e:

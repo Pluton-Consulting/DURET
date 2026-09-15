@@ -133,7 +133,15 @@ MAX_APPELS_MEME_SKILL = 10
 SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
 # Les gestes à qui le SERVEUR donne la conversation en cours (`_fil`).
 SKILLS_QUI_CONNAISSENT_LE_FIL = frozenset({"creer_tache_agent", "redaction_email",
-                                           "deposer_brouillon"})
+                                           "deposer_brouillon",
+                                           # (16/09, audit D-04) Un livrable sait de QUELLE
+                                           # conversation il vient : « le dernier document »
+                                           # rendait celui d'un autre fil.
+                                           "creer_document", "produire_document",
+                                           "compte_rendu_reunion",
+                                           # (audit D-01) Le document de référence
+                                           # choisi vaut pour CETTE conversation.
+                                           "reproduire_document", "utiliser_trame"})
 # LES GESTES QUI LISENT UN FICHIER. Quand la demande visait UN document et
 # que l'un d'eux a rendu un contenu, le but est atteint : le tour passe à la
 # rédaction au lieu de repartir lister (08/09, 11:09 : neuf listages et une

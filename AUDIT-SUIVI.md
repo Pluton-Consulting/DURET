@@ -21,6 +21,17 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-22 | Export CSV neutralisé, export borné, secrets dans les traces | étape 1 faite (cellules inertes, fin bornée + pagination par clé + manifeste, ticket de téléchargement, filtre des secrets sur les handlers et les traces) ; carte des sorties, modes de confidentialité et rétention par type : lot 4 |
 | D-23 / D-26 / D-00 | Scripts de sauvegarde, de déploiement vérifié et procédure de recette | fait (backup.sh complet et vérifié, restaurer.sh isolé, deploy.sh réordonné avec ligne de base vérifiée, readiness séparée de la liveness, RECETTE-LOT1.md) ; exercice de restauration réel : à jouer par Noa |
 
+## Lot 2 — documents durables, sources retrouvables, droits et recherche
+
+| Fiche | Sujet | État |
+|---|---|---|
+| D-04 | Versions de documents et atelier durables | fait (verrou, écriture atomique, compteur réconcilié, lignée et manifeste, purge par groupe, quota qui refuse au lieu d'effacer) |
+| D-07 | Références de sources stables | étape 1 faite (registre durable des messages et pièces, relu après redémarrage) ; couverture des recherches et registre en base : lots suivants |
+| D-01 | Choisir et réutiliser le bon document de référence | fait (référence du travail mémorisée, remplacements déjà donnés repris, original modifié signalé) |
+| D-09 | Droits appliqués avant les résultats et les comptes | à faire |
+| D-08 | Réindexer sans effacer prématurément | à faire |
+| D-10 | Lire complètement les mails | à faire |
+
 ## Journal
 
 - 16/09 — D-02 : `bureautique/trame.py` réécrit le remplacement Word nœud `w:t` par nœud
@@ -113,3 +124,16 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   de `/api/ready` (base, schéma complet, checkpointer durable, commit livré ; 503 sinon).
   `RECETTE-LOT1.md` : la procédure de Noa, fiche par fiche, avec le retour arrière et ce que le lot
   ne prouve pas. Banc `test_deploiement` (34, dont `backup.sh` EXÉCUTÉ contre un docker doublé).
+- 16/09 — D-04 / D-07 / D-01 : `bureautique/atelier.py` — verrou par document, fiche écrite
+  atomiquement (temporaire propre à chaque écrivain : deux fils se marchaient dessus), compteur
+  RÉCONCILIÉ sur le contenu réel, lignée (`document_id`, `revision`, `parent_revision`, `fil`,
+  `source_ref`) et `manifeste` par rendu (empreinte, blocs, images, à compléter), `nouvelle_revision`,
+  `revisions`, `dernier_livrable_du_fil` (plus de tri global qui rendait le document d'une autre
+  conversation), purge PAR GROUPE (un brouillon rempli vit sept jours, les images d'un rendu partent
+  avec lui), quota qui REFUSE en nommant les documents au lieu d'effacer un brouillon rempli.
+  `ressources/registre.py` (nouveau) retient les références de messages et de pièces jointes dans le
+  volume des documents : un accord en attente les retrouve après un redéploiement — jamais leur
+  contenu. `skills/trames.py` mémorise la référence choisie ET les remplacements déjà donnés pour la
+  conversation : « refais-le pour Madame Martin » ne redemande plus le fichier, et un original qui a
+  changé depuis le choix est dit. Le serveur donne le fil aux gestes de documents et de trames.
+  Banc `test_versions_documents` (29, atelier et registre exécutés, concurrence réelle).

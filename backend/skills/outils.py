@@ -137,7 +137,7 @@ async def produire_document(data: dict, user) -> dict:
             entete_image=str(data.get("entete_image") or data.get("logo_entete")
                              or data.get("logo") or "").strip(),
             pied_image=str(data.get("pied_image") or data.get("logo_pied") or "").strip(),
-            user=user,
+            user=user, fil=data.get("_fil"),
             style=data.get("style"), sous_titre=data.get("sous_titre"),
             image_couverture=data.get("image_couverture") or data.get("couverture"),
             page_de_garde=data.get("page_de_garde"), sommaire=data.get("sommaire"))

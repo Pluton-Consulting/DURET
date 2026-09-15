@@ -357,7 +357,7 @@ def _entete(data: dict) -> tuple[str, str]:
     return titre, date
 
 
-async def _en_document(cr: dict, titre: str, date: str, user) -> Optional[dict]:
+async def _en_document(cr: dict, titre: str, date: str, user, fil=None) -> Optional[dict]:
     """Le compte rendu en .docx, produit par l'atelier. Rend son bloc `fichier`.
 
     Mécanique de bout en bout : le modèle n'écrit pas une ligne du document, il
@@ -389,7 +389,7 @@ async def _en_document(cr: dict, titre: str, date: str, user) -> Optional[dict]:
                                     for a in cr["actions"]]})
 
     def _produire():
-        jeton = ouvrir(entete, proprio)
+        jeton = ouvrir(entete, proprio, fil=fil)
         ajouter(jeton, elements, proprio)
         return jeton, terminer(jeton, proprio)
 
@@ -514,7 +514,7 @@ async def compte_rendu_reunion(data: dict, user) -> dict:
     sous_titre = date + " · " + " · ".join(contexte)
 
     blocs: list[dict] = [construire_bloc(cr, titre, sous_titre)]
-    fichier = await _en_document(cr, titre, date, user) if veut_fichier else None
+    fichier = await _en_document(cr, titre, date, user, fil=data.get("_fil")) if veut_fichier else None
     if fichier:
         blocs.append(fichier)
     blocs.append(_suites(bool(fichier), bool(cr["actions"])))

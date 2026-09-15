@@ -54,7 +54,7 @@ def _meme_titre(a: str, b: str) -> bool:
 
 async def creer_document(data: dict, user) -> dict:
     """Ouvre un document. Ne produit encore aucun fichier."""
-    from bureautique.atelier import ouvrir, ouverts
+    from bureautique.atelier import TropDeDocuments, ouvrir, ouverts
     from bureautique.modele import normaliser_entete, BLOCS, FORMATS
 
     proprio = _proprietaire(user)
@@ -104,7 +104,11 @@ async def creer_document(data: dict, user) -> dict:
                          "serait perdre le contenu déjà écrit."),
             }
 
-    jeton = ouvrir(entete, proprio)
+    try:
+        jeton = ouvrir(entete, proprio, fil=(data or {}).get("_fil"))
+    except TropDeDocuments as e:
+        # Le quota ne détruit plus un brouillon rempli (audit D-04) : on le DIT.
+        _echec(str(e))
     # Les images d'en-tête et de pied (un logo) se résolvent et se rangent
     # MAINTENANT, sous le jeton : le rendu ne lit que des fichiers rangés.
     refus: list = []

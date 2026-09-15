@@ -180,12 +180,27 @@ def _ref(identifiant: str) -> str:
     return hashlib.sha256((identifiant or "").encode("utf-8")).hexdigest()[:16]
 
 
+def _registre():
+    """Le registre durable des références (16/09, audit D-07), ou None si le
+    module n'est pas là (bancs qui doublent le paquet)."""
+    try:
+        from ressources import registre
+        return registre
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _memoriser(identifiant: str, boite: str) -> str:
     ref = _ref(identifiant)
     if len(_REFS) >= _MAX_REFS:
         for ancien in list(_REFS)[: _MAX_REFS // 10]:
             _REFS.pop(ancien, None)
     _REFS[ref] = ((boite or "").lower(), identifiant)
+    # ET SUR LE DISQUE : un accord en attente depuis la veille doit encore
+    # pouvoir rouvrir ce message après un redéploiement (audit D-07).
+    registre = _registre()
+    if registre:
+        registre.noter("message", ref, {"boite": (boite or "").lower(), "identifiant": identifiant})
     return ref
 
 
@@ -199,6 +214,12 @@ def _resoudre(ref: str, boite: str) -> Optional[str]:
     connu = _REFS.get(ref)
     if connu and connu[0] == (boite or "").lower():
         return connu[1]
+    registre = _registre()
+    fiche = registre.lire("message", ref) if registre else None
+    if fiche and str(fiche.get("boite") or "") == (boite or "").lower():
+        # Retrouvée sur le disque après un redémarrage : on la remet en mémoire.
+        _REFS[ref] = (str(fiche["boite"]), str(fiche.get("identifiant") or ""))
+        return _REFS[ref][1] or None
     if len(ref) > 24:
         return ref
     return None
@@ -875,6 +896,12 @@ def _memoriser_piece(boite: str, message_id: str, piece: dict) -> str:
         for ancien in list(_PIECES)[: _MAX_REFS // 10]:
             _PIECES.pop(ancien, None)
     _PIECES[ref] = {"boite": (boite or "").lower(), "message": message_id, **piece}
+    registre = _registre()
+    if registre:
+        # De quoi la ROUVRIR — jamais ses octets (audit D-07).
+        registre.noter("piece", ref, {"boite": (boite or "").lower(), "message": message_id,
+                                      "id": piece.get("id"), "nom": piece.get("nom"),
+                                      "mime": piece.get("mime"), "octets_taille": piece.get("taille")})
     return ref
 
 
@@ -883,15 +910,30 @@ def _memoriser_piece(boite: str, message_id: str, piece: dict) -> str:
 MAX_INLINE_RELUS = 8
 
 
+def _piece_memorisee(ref: str) -> Optional[dict]:
+    """La pièce, en mémoire du processus ou dans le registre durable."""
+    ref = (ref or "").strip()
+    info = _PIECES.get(ref)
+    if info:
+        return info
+    registre = _registre()
+    fiche = registre.lire("piece", ref) if registre else None
+    if fiche and fiche.get("boite"):
+        info = {k: v for k, v in fiche.items() if k != "vu_le"}
+        _PIECES[ref] = info
+        return info
+    return None
+
+
 def boite_de_piece(ref: str) -> Optional[str]:
     """La boîte d'où vient une pièce connue, SANS en donner l'accès (audit D-03) :
     l'appelant doit ensuite vérifier les droits sur cette boîte."""
-    info = _PIECES.get((ref or "").strip())
+    info = _piece_memorisee(ref)
     return info["boite"] if info else None
 
 
 def piece_connue(ref: str, boite: str) -> Optional[dict]:
-    info = _PIECES.get((ref or "").strip())
+    info = _piece_memorisee(ref)
     return info if info and info["boite"] == (boite or "").lower() else None
 
 

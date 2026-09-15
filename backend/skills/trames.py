@@ -115,6 +115,44 @@ def _present(textes: list, cherche: str, approche: bool = False) -> bool:
     return any(cle in _sans_casse(t) for t in textes)
 
 
+# ── LE DOCUMENT DE RÉFÉRENCE DU TRAVAIL EN COURS (16/09, audit D-01) ───────
+# « Refais ce devis pour Madame Martin » : la référence est donnée une fois, et
+# la conversation continue. Sans mémoire, le deuxième appel n'avait plus de
+# fichier — le geste répondait « indiquez le document », et la personne
+# redonnait ce qu'elle venait de dire. On retient donc, PAR PERSONNE ET PAR
+# CONVERSATION : la référence choisie, son nom, son type, son empreinte, la
+# raison du choix, et les remplacements déjà donnés.
+#
+# ORDRE DE CHOIX, explicite : référence fournie dans le tour > référence déjà
+# choisie dans ce travail > (rien : on demande, on ne devine pas).
+TYPE_TRAVAIL = "reference_travail"
+
+
+def _cle_travail(utilisateur, fil) -> str:
+    return f"{str(getattr(utilisateur, 'id', '') or '')}|{str(fil or '')}"
+
+
+def _registre():
+    try:
+        from ressources import registre
+        return registre
+    except Exception:  # noqa: BLE001 — sans registre, on garde le comportement d'avant
+        return None
+
+
+def travail_en_cours(utilisateur, fil) -> dict:
+    registre = _registre()
+    return (registre.lire(TYPE_TRAVAIL, _cle_travail(utilisateur, fil)) if registre else None) or {}
+
+
+def noter_travail(utilisateur, fil, **champs) -> None:
+    registre = _registre()
+    if not registre:
+        return
+    registre.noter(TYPE_TRAVAIL, _cle_travail(utilisateur, fil),
+                   {**travail_en_cours(utilisateur, fil), **champs})
+
+
 def _rien_trouve(nom_fichier, remplacements: dict, textes: list) -> str:
     """AUCUN texte cherché n'est dans le document — et ce qui y ressemble.
 
@@ -463,8 +501,16 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
     """
     from bureautique import atelier, trame as moteur
 
+    fil = parametres.get("_fil")
+    travail = travail_en_cours(utilisateur, fil)
     reference = str(parametres.get("fichier") or parametres.get("chemin")
                     or parametres.get("document") or "").strip()
+    repris_du_travail = False
+    if not reference and travail.get("source_ref"):
+        # La référence déjà choisie dans CE travail (audit D-01) : on ne
+        # redemande pas ce que la conversation a déjà dit.
+        reference = str(travail["source_ref"])
+        repris_du_travail = True
     if not reference:
         raise TrameInvalide(
             "Indiquez le document à reproduire, par la référence qu'un geste "
@@ -491,6 +537,16 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
     piece = pretes[0]
     octets, nom_fichier = piece["octets"], piece["nom"]
     genre = moteur.type_de(nom_fichier or "", piece.get("mime") or "")
+    import hashlib as _hashlib
+    empreinte = _hashlib.sha256(octets).hexdigest()[:32]
+    if travail.get("source_ref") == reference and travail.get("empreinte") not in (None, empreinte):
+        # L'ORIGINAL A CHANGÉ depuis qu'on l'a choisi (audit D-07) : on ne
+        # substitue pas en silence, on le dit — et l'on repart du fichier actuel.
+        logger.info("Reproduction : « %s » a changé depuis le choix initial", nom_fichier)
+    noter_travail(utilisateur, fil, source_ref=reference, nom=nom_fichier, type=genre,
+                  empreinte=empreinte, mime=piece.get("mime") or "",
+                  raison=("référence donnée dans le tour" if not repris_du_travail
+                          else "référence déjà choisie dans ce travail"))
     plafond = moteur.plafond_octets(genre)
     if len(octets) > plafond:
         raise TrameInvalide(
@@ -513,6 +569,20 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
         raise TrameInvalide(pourquoi)
 
     remplacements = _table(parametres.get("remplacements"))
+    remplacements_repris = False
+    if not remplacements and travail.get("remplacements") and travail.get("source_ref") == reference:
+        # DÉJÀ DONNÉS (audit D-01) : ce sont ceux de ce travail, sur ce même
+        # document. Les redemander ferait répéter à la personne ce qu'elle
+        # vient de dire — et c'est exactement ce qu'on a vu en production.
+        try:
+            repris = json.loads(travail["remplacements"])
+        except (TypeError, ValueError):
+            repris = {}
+        remplacements = _table(repris)
+        remplacements_repris = bool(remplacements)
+    if remplacements:
+        noter_travail(utilisateur, fil,
+                      remplacements=json.dumps(remplacements, ensure_ascii=False))
 
     # ── Premier temps : la structure, pour savoir quoi remplacer ──
     if not remplacements:
@@ -576,7 +646,10 @@ async def reproduire_document(parametres: dict, utilisateur) -> dict:
     message = (f"« {nom_fichier} » est repris avec {faits} remplacement(s). "
                "La mise en page, le logo, les styles et les formules d'origine "
                "sont conservés : c'est le fichier lui-même, pas une copie "
-               "reconstruite." + _dire_limites(detail))
+               "reconstruite."
+               + (" Les changements demandés plus tôt dans cette conversation ont été repris."
+                  if remplacements_repris else "")
+               + _dire_limites(detail))
     return {
         "fichier": nom_sortie, "source": nom_fichier, "remplacements": faits,
         "limites": detail.get("limites") or None,

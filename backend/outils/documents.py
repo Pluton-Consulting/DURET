@@ -30,7 +30,7 @@ def _meme_titre(a: str, b: str) -> bool:
 async def produire(titre: str, blocs: list, proprietaire: str,
                    format: str = "pdf", entete: str = "", pied: str = "",
                    numeroter: bool = True, entete_image: str = "",
-                   pied_image: str = "", user=None, **presentation) -> dict:
+                   pied_image: str = "", user=None, fil=None, **presentation) -> dict:
     """Crée, remplit et finalise un document. Rend le lien de téléchargement.
 
     Le contenu est DÉCRIT, jamais programmé : une liste de blocs du vocabulaire
@@ -92,7 +92,7 @@ async def produire(titre: str, blocs: list, proprietaire: str,
                                  "numeroter": numeroter,
                                  "entete_image": entete_image,
                                  "pied_image": pied_image})
-    jeton = ouvrir(en_tete, proprietaire)
+    jeton = ouvrir(en_tete, proprietaire, fil=fil)
     refus_images: list = []
 
     # UN PRODUIRE QUI ÉCHOUE NE LAISSE PAS DE FANTÔME. `ouvrir` a déjà créé la

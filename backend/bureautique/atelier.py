@@ -16,10 +16,12 @@ brouillon de rapport n'a pas à être lisible par un tiers sous prétexte de rô
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import secrets
+import threading
 import time
 
 logger = logging.getLogger("duret.bureautique.atelier")
@@ -31,7 +33,47 @@ DOSSIER = os.environ.get("DOCUMENTS_DIR", "/tmp/duret-documents")
 # Un document non téléchargé finit par disparaître : ce sont des données
 # d'entreprise, elles ne doivent pas s'accumuler indéfiniment sur le disque.
 DUREE_VIE_S = 24 * 3600
+# UN BROUILLON REMPLI VIT PLUS LONGTEMPS (16/09, audit D-04). La purge
+# balayait les fichiers un par un, à l'ancienneté : elle pouvait emporter le
+# `.jsonl` d'un document ouvert, ou les images d'un rendu encore cité par un
+# brouillon de mail, et laisser une fiche qui promet un fichier disparu. On
+# purge désormais par GROUPE (fiche + contenu + rendu + images), et jamais un
+# document ouvert qui porte du travail avant ce délai-là.
+DUREE_VIE_BROUILLON_S = 7 * 24 * 3600
 MAX_OUVERTS_PAR_PERSONNE = 5
+
+
+class TropDeDocuments(ValueError):
+    """Quota atteint, et AUCUN document vide à fermer à la place.
+
+    Avant, on fermait « le plus ancien » — donc parfois le seul document
+    REMPLI. Un brouillon qui porte du travail ne s'efface pas tout seul : on
+    le dit, et la personne choisit lequel terminer ou abandonner.
+    """
+
+    def __init__(self, ouverts_: list):
+        self.ouverts = ouverts_
+        noms = ", ".join(f"« {d.get('titre') or d['document_id'][:8]} » ({d.get('elements', 0)} élément(s))"
+                         for d in ouverts_)
+        super().__init__(
+            f"{len(ouverts_)} documents sont déjà ouverts et contiennent du travail : {noms}. "
+            "Termine-en un (`terminer_document`) ou abandonne-le explicitement avant d'en ouvrir un autre.")
+
+
+# UN VERROU PAR DOCUMENT (16/09, audit D-04). La fiche JSON et le contenu JSONL
+# sont deux écritures : deux versements simultanés pouvaient entrelacer le
+# compteur et le contenu. Le verrou tient le couple ; la réconciliation
+# (`_reconcilier`) rattrape ce qu'une interruption aurait laissé de travers.
+_VERROUS: dict = {}
+_VERROU_DES_VERROUS = threading.Lock()
+
+
+def _verrou(jeton: str) -> threading.RLock:
+    with _VERROU_DES_VERROUS:
+        if len(_VERROUS) > 500:                 # mémoire d'appoint bornée
+            for cle in [c for c in list(_VERROUS) if c != jeton][:400]:
+                _VERROUS.pop(cle, None)
+        return _VERROUS.setdefault(jeton, threading.RLock())
 
 
 def _chemin(jeton: str, suffixe: str) -> str:
@@ -47,30 +89,126 @@ def _lire_fiche(jeton: str) -> dict | None:
 
 
 def _ecrire_fiche(jeton: str, fiche: dict) -> None:
-    with open(_chemin(jeton, "json"), "w", encoding="utf-8") as f:
+    """Écriture ATOMIQUE (16/09, audit D-04) : fichier temporaire puis
+    remplacement. Une coupure au milieu laissait une fiche tronquée — le
+    document devenait introuvable, et son contenu avec lui."""
+    chemin = _chemin(jeton, "json")
+    # Un temporaire PAR ÉCRIVAIN : deux fils qui écrivent la même fiche
+    # partageaient le même nom, et le second renommait un fichier déjà déplacé.
+    temporaire = f"{chemin}.{os.getpid()}.{threading.get_ident()}.tmp"
+    with open(temporaire, "w", encoding="utf-8") as f:
         json.dump(fiche, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temporaire, chemin)
+
+
+def _compter_elements(jeton: str) -> int:
+    """Le nombre RÉEL d'éléments écrits, lu dans le contenu."""
+    n = 0
+    try:
+        with open(_chemin(jeton, "jsonl"), encoding="utf-8") as f:
+            for ligne in f:
+                if ligne.strip():
+                    n += 1
+    except OSError:
+        return 0
+    return n
+
+
+def _reconcilier(jeton: str, fiche_: dict) -> dict:
+    """LE CONTENU FAIT FOI (audit D-04). Si un processus s'est arrêté entre
+    l'écriture du contenu et celle de la fiche, le compteur ment : on le remet
+    sur ce que le fichier porte vraiment, et on le réécrit."""
+    if fiche_.get("fini"):
+        return fiche_
+    reel = _compter_elements(jeton)
+    if reel != int(fiche_.get("elements") or 0):
+        logger.info("Document %s : compteur réconcilié (%s → %d)", jeton[:8],
+                    fiche_.get("elements"), reel)
+        fiche_["elements"] = reel
+        try:
+            _ecrire_fiche(jeton, fiche_)
+        except OSError:
+            pass
+    return fiche_
+
+
+def _groupe(jeton: str) -> list:
+    """Tous les fichiers d'un document : fiche, contenu, rendu, images."""
+    fichiers = []
+    try:
+        for nom in os.listdir(DOSSIER):
+            if nom == jeton or nom.startswith(f"{jeton}."):
+                fichiers.append(os.path.join(DOSSIER, nom))
+    except OSError:
+        pass
+    return fichiers
 
 
 def purger() -> int:
-    """Supprime ce qui a dépassé sa durée de vie. Ne lève jamais."""
+    """Supprime les documents dont personne n'a plus besoin, PAR GROUPE.
+
+    (16/09, audit D-04) Avant, la purge balayait les FICHIERS un par un, à
+    l'ancienneté : elle pouvait retirer les images d'un document encore cité
+    par un brouillon de mail, ou le contenu d'un document ouvert, en laissant
+    la fiche promettre un fichier disparu. On ne retire plus qu'un document
+    ENTIER, et seulement : fini depuis plus de 24 h, ou ouvert et VIDE depuis
+    plus de 24 h, ou ouvert avec du travail depuis plus de sept jours. Les
+    fichiers orphelins (sans fiche) suivent l'ancienne règle.
+    Ne lève jamais."""
     retires = 0
+    maintenant = time.time()
     try:
-        limite = time.time() - DUREE_VIE_S
-        for nom in os.listdir(DOSSIER):
-            chemin = os.path.join(DOSSIER, nom)
+        noms = os.listdir(DOSSIER)
+    except OSError:
+        return 0
+    jetons = {n[:-5] for n in noms if n.endswith(".json")}
+    for jeton in jetons:
+        f = _lire_fiche(jeton)
+        if not f:
+            continue
+        rempli = int(f.get("elements") or 0) > 0
+        age = maintenant - float(f.get("termine") or f.get("ouvert") or maintenant)
+        if f.get("fini"):
+            perime = age > DUREE_VIE_S
+        elif rempli:
+            perime = age > DUREE_VIE_BROUILLON_S
+        else:
+            perime = age > DUREE_VIE_S
+        if not perime:
+            continue
+        for chemin in _groupe(jeton):
             try:
-                if os.path.getmtime(chemin) < limite:
-                    os.remove(chemin)
-                    retires += 1
+                os.remove(chemin)
+                retires += 1
             except OSError:
                 continue
-    except OSError:
-        pass
+    # Les orphelins : un fichier dont plus aucune fiche ne parle.
+    for nom in noms:
+        racine = nom.split(".")[0]
+        if racine in jetons or nom.endswith(".json"):
+            continue
+        chemin = os.path.join(DOSSIER, nom)
+        try:
+            if os.path.isfile(chemin) and os.path.getmtime(chemin) < maintenant - DUREE_VIE_S:
+                os.remove(chemin)
+                retires += 1
+        except OSError:
+            continue
     return retires
 
 
-def ouvrir(entete: dict, proprietaire: str) -> str:
-    """Ouvre un document et rend son jeton. Le jeton EST le droit d'accès."""
+def ouvrir(entete: dict, proprietaire: str, fil: str | None = None,
+           source_ref: str | None = None, document_id: str | None = None,
+           parent_revision: str | None = None) -> str:
+    """Ouvre un document et rend son jeton. Le jeton EST le droit d'accès.
+
+    (16/09, audit D-04) La fiche porte désormais sa LIGNÉE : `document_id`
+    stable, `revision` (le jeton), `parent_revision`, le fil de travail et la
+    référence de la source dont il est repris. Une retouche n'est plus un
+    document sans parent : c'est une révision de plus du même document.
+    """
     os.makedirs(DOSSIER, exist_ok=True)
     purger()
 
@@ -86,17 +224,29 @@ def ouvrir(entete: dict, proprietaire: str) -> str:
         # quota détruisait précisément ce qu'il devait protéger. Un document
         # vide ne coûte rien à perdre ; un document rempli coûte tout le
         # travail versé.
+        # (16/09, audit D-04) ET SI AUCUN N'EST VIDE, ON NE DÉTRUIT RIEN : on
+        # refuse en nommant les documents ouverts. Effacer un brouillon rempli
+        # pour faire de la place, c'est perdre le travail qu'on protégeait.
         vides = [j for j in ouverts
                  if not int((_lire_fiche(j) or {}).get("elements") or 0)]
-        candidats = vides or ouverts
-        vieux = min(candidats, key=lambda j: (_lire_fiche(j) or {}).get("ouvert", 0))
+        if not vides:
+            raise TropDeDocuments([{"document_id": j,
+                                    "titre": ((_lire_fiche(j) or {}).get("entete") or {}).get("titre"),
+                                    "elements": int((_lire_fiche(j) or {}).get("elements") or 0)}
+                                   for j in ouverts])
+        vieux = min(vides, key=lambda j: (_lire_fiche(j) or {}).get("ouvert", 0))
         abandonner(vieux, proprietaire)
 
     # Jeton imprévisible : il sert de clé de téléchargement, il ne doit pas se
     # deviner à partir d'un autre.
     jeton = secrets.token_urlsafe(24)
     _ecrire_fiche(jeton, {"entete": entete, "proprietaire": proprietaire,
-                          "ouvert": time.time(), "elements": 0, "fini": False})
+                          "ouvert": time.time(), "elements": 0, "fini": False,
+                          # La lignée : le jeton EST l'identifiant de révision ;
+                          # `document_id` traverse les révisions.
+                          "document_id": document_id or jeton, "revision": jeton,
+                          "parent_revision": parent_revision, "fil": fil,
+                          "source_ref": source_ref})
     open(_chemin(jeton, "jsonl"), "w", encoding="utf-8").close()
     logger.info("Document %s ouvert (%s)", jeton[:8], entete.get("format"))
     return jeton
@@ -220,7 +370,9 @@ def fiche(jeton: str, proprietaire: str) -> dict | None:
     n'est pas à vous » confirmerait l'existence d'un jeton à qui le devine.
     """
     f = _lire_fiche(jeton)
-    return f if f and f.get("proprietaire") == proprietaire else None
+    if not f or f.get("proprietaire") != proprietaire:
+        return None
+    return _reconcilier(jeton, f)
 
 
 # ── Un versement qui répète le document n'est pas un versement ───────────
@@ -335,12 +487,19 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str,
         raise ValueError(f"document plein ({MAX_ELEMENTS} éléments)")
     retenus = retenus[:place]
 
-    with open(_chemin(jeton, "jsonl"), "a", encoding="utf-8") as fichier:
-        for e in retenus:
-            fichier.write(json.dumps(e, ensure_ascii=False) + "\n")
-
-    f["elements"] = int(f.get("elements") or 0) + len(retenus)
-    _ecrire_fiche(jeton, f)
+    # SOUS VERROU, ET LE CONTENU EST POSÉ AVANT LE COMPTEUR (audit D-04) :
+    # deux versements simultanés ne s'entrelacent plus, et une coupure entre
+    # les deux écritures laisse un compteur en retard — jamais en avance —,
+    # que `_reconcilier` remet d'aplomb à la lecture suivante.
+    with _verrou(jeton):
+        with open(_chemin(jeton, "jsonl"), "a", encoding="utf-8") as fichier:
+            for e in retenus:
+                fichier.write(json.dumps(e, ensure_ascii=False) + "\n")
+            fichier.flush()
+            os.fsync(fichier.fileno())
+        f = _lire_fiche(jeton) or f
+        f["elements"] = _compter_elements(jeton)
+        _ecrire_fiche(jeton, f)
     return len(retenus)
 
 
@@ -480,13 +639,19 @@ def terminer(jeton: str, proprietaire: str) -> dict:
     entete = f["entete"]
     extension = entete.get("format", "docx")
     sortie = _chemin(jeton, extension)
-    rendre(entete, elements(jeton), sortie)
-
-    f.update({"fini": True, "fichier": os.path.basename(sortie),
-              "octets": os.path.getsize(sortie), "termine": time.time(),
-              "extrait": _extrait(jeton),
-              "pages_estimees": _pages_estimees(jeton, extension)})
-    _ecrire_fiche(jeton, f)
+    with _verrou(jeton):
+        rendre(entete, elements(jeton), sortie)
+        # L'EMPREINTE DU RENDU (16/09, audit D-04) : une révision terminée ne
+        # change plus sous le même identifiant. On sait dire, plus tard, si le
+        # fichier qu'on tient est bien celui qui a été validé.
+        empreinte = hashlib.sha256(open(sortie, "rb").read()).hexdigest()[:32]
+        f.update({"fini": True, "fichier": os.path.basename(sortie),
+                  "octets": os.path.getsize(sortie), "termine": time.time(),
+                  "extrait": _extrait(jeton),
+                  "pages_estimees": _pages_estimees(jeton, extension),
+                  "empreinte": empreinte,
+                  "manifeste": manifeste(jeton, f, extension, empreinte)})
+        _ecrire_fiche(jeton, f)
     logger.info("Document %s rendu : %s, %d octets, %d éléments",
                 jeton[:8], extension, f["octets"], f["elements"])
     return f
@@ -539,3 +704,80 @@ def chemin_fichier(jeton: str, proprietaire: str) -> str | None:
         return None
     chemin = _chemin(jeton, f["entete"].get("format", "docx"))
     return chemin if os.path.exists(chemin) else None
+
+
+# ── LE MANIFESTE D'UN LIVRABLE (16/09, audit D-04) ─────────────────────────
+# « Le dernier document de la personne » n'est pas « le dernier livrable de ce
+# fil » : l'atelier est par personne, toutes conversations confondues, et un
+# tri global rendait le document d'une AUTRE conversation. Chaque rendu porte
+# donc ce qu'il faut pour être choisi sciemment : d'où il vient, quelle
+# révision il est, ce qu'il contient, ce qui reste à compléter.
+def manifeste(jeton: str, fiche_: dict, extension: str, empreinte: str) -> dict:
+    """Ce qu'on peut dire d'un livrable sans le rouvrir."""
+    images, a_completer, blocs = 0, 0, 0
+    for e in elements(jeton):
+        if not isinstance(e, dict):
+            continue
+        blocs += 1
+        if e.get("bloc") == "image" or e.get("image"):
+            images += 1
+        if "[À COMPLÉTER]" in json.dumps(e, ensure_ascii=False):
+            a_completer += 1
+    entete = fiche_.get("entete") or {}
+    for cle in ("entete_image", "pied_image", "image_couverture"):
+        if entete.get(cle):
+            images += 1
+    return {"document_id": fiche_.get("document_id") or jeton,
+            "revision": jeton, "parent_revision": fiche_.get("parent_revision"),
+            "fil": fiche_.get("fil"), "source_ref": fiche_.get("source_ref"),
+            "format": extension, "empreinte": empreinte,
+            "titre": entete.get("titre"), "blocs": blocs, "images": images,
+            "a_completer": a_completer, "origine": fiche_.get("origine") or "",
+            "termine_le": fiche_.get("termine") or time.time()}
+
+
+def nouvelle_revision(jeton: str, proprietaire: str, entete: dict | None = None) -> str:
+    """Ouvre la révision SUIVANTE d'un document (même `document_id`, ce rendu
+    pour parent). C'est ce qui fait qu'une retouche reste le même document."""
+    precedent = fiche(jeton, proprietaire)
+    if precedent is None:
+        raise KeyError("document inconnu")
+    return ouvrir(entete or precedent.get("entete") or {}, proprietaire,
+                  fil=precedent.get("fil"), source_ref=precedent.get("source_ref"),
+                  document_id=precedent.get("document_id") or jeton,
+                  parent_revision=jeton)
+
+
+def revisions(proprietaire: str, document_id: str) -> list[dict]:
+    """Toutes les révisions connues d'un document, de la plus ancienne à la
+    plus récente. Rien n'est supprimé par une nouvelle révision : l'ancienne
+    reste téléchargeable, elle n'est simplement plus « la » version."""
+    sortie = []
+    try:
+        noms = os.listdir(DOSSIER)
+    except OSError:
+        return sortie
+    for nom in noms:
+        if not nom.endswith(".json"):
+            continue
+        f = _lire_fiche(nom[:-5])
+        if f and f.get("proprietaire") == proprietaire and (f.get("document_id") or "") == document_id:
+            sortie.append({"revision": nom[:-5], "parent_revision": f.get("parent_revision"),
+                           "fini": bool(f.get("fini")), "termine": f.get("termine"),
+                           "empreinte": f.get("empreinte"), "manifeste": f.get("manifeste")})
+    sortie.sort(key=lambda d: d.get("termine") or 0)
+    return sortie
+
+
+def dernier_livrable_du_fil(proprietaire: str, fil: str | None) -> dict | None:
+    """Le dernier livrable DE CE FIL, choisi sur les manifestes — pas sur un
+    tri global des fichiers de la personne (audit D-04). Sans fil connu, rien :
+    mieux vaut ne rien désigner que désigner le document d'une autre
+    conversation."""
+    if not fil:
+        return None
+    candidats = [d for d in termines(proprietaire)
+                 if ((_lire_fiche(d["document_id"]) or {}).get("fil") or "") == str(fil)]
+    if not candidats:
+        return None
+    return max(candidats, key=lambda d: (_lire_fiche(d["document_id"]) or {}).get("termine", 0))

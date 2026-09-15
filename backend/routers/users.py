@@ -153,8 +153,11 @@ async def mon_code(current_user: User = Depends(get_current_user)):
     return {"a_code": bool(ligne["code_pin_hash"]),
             "code": _profils.dechiffrer_code(ligne["code_pin_chiffre"]),
             "obligatoire": await _profils.code_obligatoire(ligne["role"], ligne["email"]),
-            # Le super_admin n'a jamais de carte : un code ne lui servirait à rien.
-            "possible": ligne["role"] not in _profils.ROLES_JAMAIS_EN_CARTE}
+            # (15/09) Chacun change le sien, l'administrateur compris : c'est
+            # son code qui ouvre le bouton « Admin » depuis que le lien est coupé.
+            "possible": True,
+            "code_par_defaut": (ligne["role"] in _profils.ROLES_CARTE_ADMIN
+                                and not ligne["code_pin_hash"])}
 
 
 @router.put("/me/code")
@@ -167,9 +170,10 @@ async def changer_mon_code(body: MonCodeRequest, current_user: User = Depends(ge
     if code and not _profils.code_valide(code):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Le code fait 4 à 6 chiffres.")
-    if current_user.role in _profils.ROLES_JAMAIS_EN_CARTE:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="Un super administrateur n'a pas de carte : il n'a pas de code.")
+    if not code and current_user.role in _profils.ROLES_CARTE_ADMIN:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=(
+            "Un administrateur entre par son code : changez-le plutôt que de le retirer "
+            "(sans code posé, c'est le code par défaut qui l'ouvre)."))
     async with get_db() as conn:
         moi = await conn.fetchrow("SELECT email, role FROM users WHERE id = $1", current_user.id)
     if not code and moi and await _profils.code_obligatoire(moi["role"], moi["email"]):
@@ -549,6 +553,11 @@ async def creer_lien_connexion(
     """
     if not has_permission(current_user.role, "manage_users"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+    # C'est aussi un lien magique : coupé avec lui (15/09). Un profil entre par
+    # sa carte, et son code se règle dans la colonne Code.
+    if not getattr(settings, "lien_magique_actif", True):
+        raise HTTPException(status_code=status.HTTP_410_GONE,
+                            detail="Les liens de connexion sont désactivés : chaque profil entre par sa carte.")
 
     async with get_db() as conn:
         cible = await conn.fetchrow(

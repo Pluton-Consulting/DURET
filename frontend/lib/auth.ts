@@ -73,11 +73,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         carte: { type: "text" },
         // Le code d'une carte protégée (direction, ou profil qui en a posé un).
         code: { type: "text" },
+        // LA CARTE DU BOUTON « ADMIN » (15/09, Duret) : le lien magique est
+        // coupé, l'administrateur entre par son code.
+        admin: { type: "text" },
       },
-      async authorize({ token, email, user_id, bascule, carte, code }) {
+      async authorize({ token, email, user_id, bascule, carte, code, admin }) {
         let refus = ""
         try {
-          const res = carte
+          const res = admin
+            ? await fetch(`${API_URL}/api/auth/connexion/admin`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id, code: code || null }),
+              })
+            : carte
             ? await fetch(`${API_URL}/api/auth/connexion/profil`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

@@ -96,6 +96,10 @@ async def request_magic_link(body: MagicLinkRequest):
     Génère un token et envoie un lien de connexion par email.
     Retourne toujours le même message pour ne pas révéler si l'email existe.
     """
+    if not getattr(settings, "lien_magique_actif", True):
+        raise HTTPException(status_code=status.HTTP_410_GONE,
+                            detail="La connexion par lien magique est désactivée : entrez par votre "
+                                   "carte, ou par le bouton « Admin » et votre code.")
     async with get_db() as conn:
         # Insensible à la casse, et plusieurs comptes possibles sur l'adresse
         # (profils d'une boîte partagée, 040) : il suffit qu'UN soit actif.
@@ -361,6 +365,52 @@ async def entrer_par_carte(body: ChangerProfilRequest, request: Request):
                            datetime.now(timezone.utc), str(retenu["id"]))
     await log_action(action="login", user_id=str(retenu["id"]),
                      metadata={"par": "carte_profil"})
+    access_token = create_access_token({"sub": str(retenu["id"]), "role": retenu["role"]})
+    jeton_appareil = await appareil.creer(retenu["id"], request.headers.get("user-agent", ""))
+    return {"access_token": access_token, "token_type": "bearer",
+            "role": retenu["role"], "refresh_token": jeton_appareil,
+            "user_id": str(retenu["id"]), "nom": retenu.get("name")}
+
+
+@router.get("/connexion/admins")
+async def admins_de_connexion():
+    """Les cartes du bouton « Admin » (15/09, Duret) : le nom seul, jamais le rôle
+    ni l'adresse. Sans authentification, comme les cartes : la porte est le VPN."""
+    from auth import profils as _profils
+    return {"profils": _profils.cartes_admin(await _profils.profils_tous())}
+
+
+@router.post("/connexion/admin")
+async def entrer_en_admin(body: ChangerProfilRequest, request: Request):
+    """Ouvre la session d'un administrateur par son CODE (15/09, Duret).
+
+    Le lien magique est coupé : l'administrateur choisit sa carte derrière le
+    bouton « Admin » et tape son code — celui qu'il a posé dans Paramètres, ou
+    `code_admin_defaut` tant qu'il n'en a posé aucun. Mêmes gardes que les
+    cartes à code : cinq essais faux, quinze minutes de blocage, tout est tracé.
+    """
+    from auth import profils as _profils
+    tous = await _profils.profils_tous()
+    ids = {c["id"] for c in _profils.cartes_admin(tous)}
+    retenu = next((p for p in tous if str(p["id"]) == str(body.user_id or "")), None)
+    if retenu is None or str(retenu["id"]) not in ids:
+        await log_action(action="connexion_admin_refusee", success=False,
+                         error_message="profil hors des cartes admin")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Ce profil ne s'ouvre pas par le bouton Admin.")
+    raison = await _profils.controler_code(str(retenu["id"]), body.code,
+                                           defaut=_profils.code_admin_defaut())
+    if raison is not None:
+        await log_action(action="connexion_admin_code_refuse", user_id=str(retenu["id"]),
+                         success=False, error_message=raison)
+        raise HTTPException(
+            status_code=(status.HTTP_429_TOO_MANY_REQUESTS if raison == "code_bloque"
+                         else status.HTTP_401_UNAUTHORIZED),
+            detail=raison)
+    async with get_db() as conn:
+        await conn.execute("UPDATE users SET last_login = $1 WHERE id = $2::uuid",
+                           datetime.now(timezone.utc), str(retenu["id"]))
+    await log_action(action="login", user_id=str(retenu["id"]), metadata={"par": "carte_admin"})
     access_token = create_access_token({"sub": str(retenu["id"]), "role": retenu["role"]})
     jeton_appareil = await appareil.creer(retenu["id"], request.headers.get("user-agent", ""))
     return {"access_token": access_token, "token_type": "bearer",

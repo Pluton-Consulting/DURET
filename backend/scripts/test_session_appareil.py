@@ -295,10 +295,9 @@ verifier("un 401 dans un onglet ouvert tente la reprise AVANT de renvoyer à /lo
          and chat.find("const frais = await jetonFrais()") < chat.find('window.location.assign("/login")'))
 
 login = (FRONTEND / "app" / "(auth)" / "login" / "page.tsx").read_text(encoding="utf-8")
-verifier("l'écran de connexion pré-remplit la dernière adresse",
-         "CLE_DERNIER_EMAIL" in login and "localStorage.getItem" in login)
-verifier("« utiliser un autre email » vide vraiment le champ",
-         "changerDAdresse" in login and "removeItem(CLE_DERNIER_EMAIL)" in login)
+# 15/09 (Duret) : plus de lien magique, donc plus d'adresse à saisir ni à
+# pré-remplir — la page est un choix de carte, l'administration un code.
+verifier("la page de connexion ne demande plus d'adresse", "magic-link/request" not in login)
 
 reglages_ecran = (FRONTEND / "app" / "(app)" / "parametres" / "SettingsClient.tsx").read_text(encoding="utf-8")
 # 03/09 soir : l'onglet « Mes appareils » a été RETIRÉ à la demande de Noa

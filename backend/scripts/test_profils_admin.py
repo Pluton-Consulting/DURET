@@ -315,7 +315,10 @@ if {"supprimer_utilisateur", "modifier_utilisateur", "mon_code", "changer_mon_co
     verifier("la direction sur une adresse partagée ne retire pas son code",
              isinstance(r, HTTPException) and r.status_code == 409, r)
     r = appel(changer(types.SimpleNamespace(code="1234"), qui("sa", "super_admin")))
-    verifier("le super_admin n'a pas de carte, donc pas de code", isinstance(r, HTTPException) and r.status_code == 409)
+    # 15/09 : le lien magique est coupé, l'administrateur entre par son code —
+    # il le change lui-même (test_connexion_admin.py).
+    verifier("le super_admin change son code (il ouvre le bouton Admin)",
+             not isinstance(r, HTTPException), r)
 
 # ── Contrats de source ───────────────────────────────────────────────────
 print("— Contrats")

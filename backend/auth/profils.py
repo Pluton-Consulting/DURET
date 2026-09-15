@@ -43,8 +43,11 @@ def est_admin(role: Optional[str]) -> bool:
 
 # ── Le code d'une carte (13/09) ──────────────────────────────────────────
 # La direction peut avoir sa carte sur la page de connexion, derrière un code.
-# Le super_admin, jamais : c'est le compte du développeur, il garde le lien.
+# Le super_admin n'est jamais une carte de la PAGE : depuis que le lien magique
+# est coupé (15/09), il entre par le bouton « Admin » et son code
+# (`cartes_admin`, `/api/auth/connexion/admin`).
 ROLES_JAMAIS_EN_CARTE = frozenset({"super_admin"})
+ROLES_CARTE_ADMIN = frozenset({"super_admin"})
 ROLES_CODE_OBLIGATOIRE = frozenset({"direction"})
 ESSAIS_CODE_MAX = 5
 BLOCAGE_CODE_MINUTES = 15
@@ -299,7 +302,23 @@ async def code_obligatoire(role: Optional[str], email: Optional[str]) -> bool:
     return len(await profils_de(email or "", actifs=False)) > 1
 
 
-async def controler_code(user_id: str, code: Optional[str]) -> Optional[str]:
+def cartes_admin(profils: list[dict]) -> list[dict]:
+    """Les cartes du bouton « Admin » : les super_admin actifs, TOUJOURS à code."""
+    return [{"id": str(p["id"]), "nom": (p.get("name") or "Administrateur").strip() or "Administrateur",
+             "code": True}
+            for p in profils
+            if (p.get("role") or "").strip().lower() in ROLES_CARTE_ADMIN and p.get("actif", True)]
+
+
+def code_admin_defaut() -> str:
+    try:
+        from config import settings
+        return str(getattr(settings, "code_admin_defaut", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def controler_code(user_id: str, code: Optional[str], defaut: Optional[str] = None) -> Optional[str]:
     """Vérifie le code d'une carte, compte les échecs, bloque au cinquième.
 
     Rend None si l'entrée est permise (pas de code, ou le bon), sinon la
@@ -317,14 +336,18 @@ async def controler_code(user_id: str, code: Optional[str]) -> Optional[str]:
             if schema_incomplet(e):
                 return None
             raise
-        if not ligne or not ligne["code_pin_hash"]:
+        # Un administrateur SANS code posé entre avec le code par défaut, jamais
+        # sans code : `defaut` n'est passé que par l'entrée admin (15/09).
+        empreinte = (ligne["code_pin_hash"] if ligne else None) or (
+            hacher_code(defaut) if defaut and code_valide(defaut) else None)
+        if not ligne or not empreinte:
             return None
         maintenant = datetime.now(timezone.utc)
         if ligne["code_pin_bloque_jusqu"] and ligne["code_pin_bloque_jusqu"] > maintenant:
             return "code_bloque"
         if not (code or "").strip():
             return "code_requis"
-        if code_correct(code, ligne["code_pin_hash"]):
+        if code_correct(code, empreinte):
             await conn.execute(
                 "UPDATE users SET code_pin_echecs = 0, code_pin_bloque_jusqu = NULL "
                 "WHERE id = $1::uuid", str(user_id))

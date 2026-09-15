@@ -10,7 +10,7 @@ import { useEffect, useState } from "react"
  * prouve déjà la personne ; la direction sur une adresse partagée garde
  * toujours un code.
  */
-type EtatCode = { a_code: boolean; code: string | null; obligatoire: boolean; possible: boolean }
+type EtatCode = { a_code: boolean; code: string | null; obligatoire: boolean; possible: boolean; code_par_defaut?: boolean }
 
 export default function MonCode({ jeton }: { jeton: string }) {
   const api = process.env.NEXT_PUBLIC_API_URL || ""
@@ -61,6 +61,11 @@ export default function MonCode({ jeton }: { jeton: string }) {
         4 à 6 chiffres, demandés quand on clique sur votre carte à la connexion.
         {etat.obligatoire ? " Votre profil en garde toujours un." : " Sans code, la carte s'ouvre d'un clic."}
       </p>
+      {etat.code_par_defaut && (
+        <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--marque-error-text)" }}>
+          Aucun code posé : le bouton « Admin » de la page de connexion s'ouvre avec le code par défaut. Posez le vôtre.
+        </p>
+      )}
       {etat.a_code && !etat.code && (
         <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--marque-text-muted)" }}>
           Un code est posé mais ne peut pas être affiché (posé avant le 14/09) : un nouveau le remplace.

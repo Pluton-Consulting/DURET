@@ -236,15 +236,17 @@ page = lire("frontend/app/(auth)/login/page.tsx")
 verifier("les cartes viennent de /api/auth/connexion/profils", "/api/auth/connexion/profils" in page)
 verifier("les cartes sont l'écran d'arrivée (ChoixProfil)", "<ChoixProfil" in page and 'vue === "cartes"' in page)
 verifier("un clic ouvre la session sans lien magique", 'signIn("credentials", { carte: "1", user_id: id' in page)
-verifier("le petit bouton Admin ouvre le lien magique", 'data-testid="bouton-admin"' in page and 'setVue("admin")' in page)
-verifier("retour aux profils depuis le lien magique", "Retour aux profils" in page)
+# 15/09 : le lien magique est coupé, le bouton Admin ouvre les cartes à code
+# (voir test_connexion_admin.py).
+verifier("le petit bouton Admin ouvre les cartes administrateur", 'data-testid="bouton-admin"' in page and 'setVue("admin")' in page)
+verifier("retour aux profils depuis la vue Admin", "Retour aux profils" in page)
 # 13/09 soir, relevé de Noa : la page basculait seule sur le lien magique quand
 # aucune carte n'existait. L'arrivée est TOUJOURS l'écran des cartes.
 verifier("l'arrivée est toujours l'écran des cartes, jamais le lien magique d'office",
          'chargerCartes().then(() => setVue("cartes"))' in page and 'setVue(liste.length > 0 ? "cartes" : "admin")' not in page
          and 'if (liste.length === 0) setVue("admin")' not in page)
 verifier("sans carte : l'écran dit ce qui manque, le bouton Admin reste",
-         'data-testid="cartes-vides"' in page and "boite_absente" in page and "/api/auth/magic-link/request" in page)
+         'data-testid="cartes-vides"' in page and "boite_absente" in page and 'data-testid="bouton-admin"' in page)
 auth_ts = lire("frontend/lib/auth.ts")
 verifier("next-auth sait ouvrir une carte", "carte: { type:" in auth_ts and "/api/auth/connexion/profil`" in auth_ts)
 

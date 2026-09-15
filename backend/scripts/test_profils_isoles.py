@@ -123,11 +123,12 @@ verifier("le chat écarte un contexte destiné à un autre profil",
 
 print("— Paramètres")
 reglages = lire("frontend/app/(app)/parametres/SettingsClient.tsx")
-verifier("« Mon code de connexion » pour les profils métier",
-         '{ key: "code", label: "Mon code de connexion", roles: ["commercial", "bureau_etudes", "conducteur", "administratif", "terrain"] }' in reglages
+# 15/09 : « chaque personne doit pouvoir changer son propre mot de passe ».
+verifier("« Mon code de connexion » pour TOUS les rôles",
+         '{ key: "code", label: "Mon code de connexion" }' in reglages
          and "<MonCode jeton={backendToken} />" in reglages)
-verifier("« Mon compte Google » pour l'administration et la direction seulement",
-         '{ key: "google", label: "Mon compte Google", roles: ["super_admin", "direction"] }' in reglages)
+# 15/09 : la boîte passe par un mot de passe d'application, l'onglet est retiré.
+verifier("« Mon compte Google » a quitté les Paramètres", "GoogleTab" not in reglages)
 composant = lire("frontend/components/settings/MonCode.tsx")
 verifier("le composant lit et change SON code (/api/users/me/code)",
          "/api/users/me/code" in composant and 'method: "PUT"' in composant)

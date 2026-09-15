@@ -5,10 +5,9 @@ import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
 import NiveauxNas from "@/components/settings/NiveauxNas"
 import ClesApiTab from "@/components/settings/ClesApiTab"
-import GoogleTab from "@/components/settings/GoogleTab"
 import MonCode from "@/components/settings/MonCode"
 
-type SubTab = "code" | "google" | "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
+type SubTab = "code" | "utilisateurs" | "plages" | "rbac" | "agents" | "quotas" | "services" | "import" | "synchro" | "cles"
 type Role = "super_admin" | "direction" | "commercial" | "bureau_etudes" | "conducteur" | "administratif" | "terrain"
 type Agent = "agent1" | "agent2" | "agent3"
 
@@ -55,12 +54,12 @@ function canTogglePerm(mgr: string, _agent: Agent, target: Role): boolean {
 // quatre premiers, jadis sans restriction, ne l'étaient que parce que la PAGE
 // filtrait à l'entrée (super_admin/direction) — la restriction descend ici.
 const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[]; permission?: string }[] = [
-  // (14/09, Duret, demande de Noa) LES PROFILS MÉTIER changent leur code de
-  // connexion ici, et ne voient PAS le compte Google : ils partagent la boîte
-  // de l'entreprise, relier un compte personnel n'a pas de sens pour eux.
-  // L'administration et la direction gardent l'onglet Google.
-  { key: "code", label: "Mon code de connexion", roles: ["commercial", "bureau_etudes", "conducteur", "administratif", "terrain"] },
-  { key: "google", label: "Mon compte Google", roles: ["super_admin", "direction"] },
+  // (15/09, Duret, demande de Noa) « CHAQUE PERSONNE DOIT POUVOIR CHANGER SON
+  // PROPRE MOT DE PASSE » : l'onglet du code est à tous les rôles, administrateur
+  // compris — c'est son code qui ouvre le bouton « Admin » depuis que le lien
+  // magique est coupé. L'onglet « Mon compte Google » est retiré : la boîte de
+  // l'entreprise passe par un mot de passe d'application, il ne servait plus.
+  { key: "code", label: "Mon code de connexion" },
   // L'onglet « Mes appareils » a existé une journée (03/09) puis a été retiré
   // à la demande de Noa (« inutile ») : « Se déconnecter » ferme l'appareil
   // courant, et les routes /api/auth/appareils restent pour l'administration.
@@ -846,20 +845,8 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                         connexion n'arrive pas. Même hiérarchie que la
                         désactivation — la direction n'atteint pas un
                         super_admin, et le serveur le revérifie de toute façon. */}
-                    {user.actif && (currentRole === "super_admin" || METIER_ROLES.includes(user.role)) && (
-                      <button onClick={() => { setLienAcces(null); setLienErreur(""); setUtilisations(1)
-                                               setLienPour({ id: user.id, nom: user.name, email: user.email }) }}
-                        disabled={lienEnCours === user.id}
-                        className="sym-tap" title="Créer un lien de connexion à lui transmettre"
-                        style={{
-                          background: "none", border: "1px solid var(--marque-border)",
-                          borderRadius: "var(--marque-radius-pill)", padding: "5px 14px", fontSize: 12,
-                          cursor: lienEnCours === user.id ? "wait" : "pointer",
-                          color: "var(--marque-text-body)", fontWeight: 500, marginRight: 8,
-                        }}>
-                        {lienEnCours === user.id ? "…" : "Lien d'accès"}
-                      </button>
-                    )}
+                    {/* « Lien d'accès » retiré (15/09) : c'est un lien magique, coupé chez
+                        Duret — chaque profil entre par sa carte et son code. */}
                     {peutGerer(user.role) && (
                       <button onClick={() => { setProfilErreur(""); setEditProfil({ id: user.id, name: user.name || "", email: user.email }) }}
                         className="sym-tap" title="Modifier le nom et l'adresse"
@@ -1490,9 +1477,6 @@ export default function SettingsClient({ initialUsers, backendToken, currentRole
 
       {activeTab === "code" && (
         <div style={{ display: "flex", justifyContent: "flex-start" }}><MonCode jeton={backendToken} /></div>
-      )}
-      {activeTab === "google" && (
-        <GoogleTab apiUrl={apiUrl} backendToken={backendToken} currentRole={currentRole} />
       )}
       {activeTab === "utilisateurs" && (
         <UsersTab initialUsers={initialUsers} backendToken={backendToken} currentRole={currentRole} apiUrl={apiUrl} />

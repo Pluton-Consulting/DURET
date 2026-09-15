@@ -103,8 +103,11 @@ ecran = (FRONTEND / "app" / "(app)" / "parametres" / "SettingsClient.tsx").read_
 verifier("le bouton « Lien d'accès » est dans la liste des utilisateurs",
          "Lien d'accès" in ecran and "creerLienAcces" in ecran)
 verifier("il appelle la bonne route", "/lien-connexion" in ecran)
-verifier("il ne s'affiche pas pour un compte désactivé",
-         "user.actif && (currentRole ===" in ecran)
+# 15/09 (Duret) : le lien magique est coupé, le bouton quitte la liste des
+# utilisateurs et la route répond 410 (test_connexion_admin.py). Le mécanisme
+# reste, pour qui rallume `lien_magique_actif`.
+verifier("le bouton a quitté la liste des utilisateurs (lien magique coupé)",
+         "setLienPour({ id: user.id" not in ecran)
 verifier("l'écran dit que le lien ouvre la session À LA PLACE de la personne",
          "ouvre la session à sa place" in ecran)
 verifier("il dit qu'il ne sert QU'UNE FOIS et qu'il expire",
@@ -141,8 +144,7 @@ verifier("le lien du MAIL reste à usage unique (rien ne change pour lui)",
          "INSERT INTO verification_tokens (email, token, expires_at) VALUES ($1, $2, $3)" in auth_py)
 verifier("l'audit note le nombre d'utilisations accordé", '"utilisations": utilisations' in users_py)
 verifier("l'écran fait CHOISIR avant de créer : 1, 2, 3 ou 5 appareils",
-         "[1, 2, 3, 5].map((n) =>" in ecran and "Créer le lien" in ecran
-         and "setLienPour({ id: user.id" in ecran)
+         "[1, 2, 3, 5].map((n) =>" in ecran and "Créer le lien" in ecran)
 verifier("le bandeau dit combien de fois le lien vaut",
          "Il fonctionne <b>{lienAcces.utilisations} fois</b>" in ecran)
 verifier("le bandeau prévient si le serveur ne sait pas encore compter",

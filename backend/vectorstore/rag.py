@@ -89,6 +89,75 @@ def _filtrer_mails(chunks: list[dict], mailboxes: Optional[list[str]]) -> list[d
     return retenus
 
 
+async def _embedding_sans_panne(query: str, diagnostic: dict):
+    """Le vecteur de la requête, ou None — JAMAIS une exception (16/09, audit D-06).
+
+    Le calcul du vecteur vivait dans le même `try` que la recherche : un
+    fournisseur d'embeddings en panne (quota, clé refusée, réseau) faisait
+    rendre VIDE toute la recherche, alors que la voie plein texte n'en dépend
+    pas. Une panne ici n'est qu'une voie en moins, et c'est noté.
+    """
+    try:
+        vecteur = await embed_query(query)
+    except Exception as e:  # noqa: BLE001 — la voie lexicale doit survivre
+        logger.warning("Embedding de la requête indisponible (%s) : recherche en plein texte seule",
+                       type(e).__name__)
+        diagnostic["embedding"] = "indisponible"
+        diagnostic["erreur_embedding"] = type(e).__name__
+        return None
+    diagnostic["embedding"] = "ok" if vecteur else "absent"
+    return vecteur
+
+
+async def retrieve_detaille(
+    query: str,
+    user_role: str,
+    source_types: Optional[list[str]] = None,
+    top_k: int = 5,
+    mailboxes: Optional[list[str]] = None,
+) -> dict:
+    """Comme `retrieve`, avec le DIAGNOSTIC de couverture (audit D-06).
+
+    {"chunks": [...], "diagnostic": {"embedding": ok|absent|indisponible,
+    "voies": [...], "corpus_vide": bool, "erreur": ...}}. Une liste vide dit
+    ainsi POURQUOI : corpus vide, voie vectorielle en panne, ou vraiment rien.
+    """
+    diagnostic: dict = {"embedding": "non_tente", "voies": [], "corpus_vide": False}
+    query = (query or "").strip()
+    if not query:
+        return {"chunks": [], "diagnostic": diagnostic}
+    if not await _corpus_has_documents():
+        diagnostic["corpus_vide"] = True
+        return {"chunks": [], "diagnostic": diagnostic}
+    embedding = await _embedding_sans_panne(query, diagnostic)
+    # On sur-échantillonne pour le cloisonnement des boîtes (post-filtre) :
+    # sans marge on renverrait moins que `top_k` alors que des documents
+    # pertinents existent.
+    marge = 3 if mailboxes is not None else 1
+    types = list(source_types) if source_types else None
+    chunks: list = []
+    try:
+        chunks = await vectorstore.search_hybrid(
+            query, embedding, user_role, top_k=top_k * marge, source_types=types) or []
+        diagnostic["voies"] = ["vecteur", "texte"] if embedding else ["texte"]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Recherche hybride en échec (rôle=%s, %s) : voie plein texte seule",
+                       user_role, type(e).__name__)
+        diagnostic["erreur"] = type(e).__name__
+        try:
+            chunks = await vectorstore.search_lexical(query, user_role, types, top_k=top_k * marge) or []
+            diagnostic["voies"] = ["texte"]
+        except Exception as e2:  # noqa: BLE001 — ne lève jamais
+            logger.warning("Échec RAG retrieve (rôle=%s, %s) : %s", user_role, type(e2).__name__, e2)
+            diagnostic["erreur"] = type(e2).__name__
+            chunks = []
+    # Cloisonnement des boîtes mail (fail-closed).
+    chunks = _filtrer_mails(chunks, mailboxes)[:top_k]
+    logger.debug("RAG retrieve : rôle=%s, embedding=%s, résultats=%d",
+                 user_role, diagnostic["embedding"], len(chunks))
+    return {"chunks": chunks, "diagnostic": diagnostic}
+
+
 async def retrieve(
     query: str,
     user_role: str,
@@ -113,42 +182,10 @@ async def retrieve(
         `source_type`, `source_id`, `similarity`. Liste vide en cas d'échec
         ou d'absence de résultat. Ne lève jamais.
     """
-    query = (query or "").strip()
-    if not query:
-        return []
-
-    # Mémoire vide → inutile d'embedder (Gemini) puis de chercher : on gagne ~2 s/requête
-    # et on préserve le quota, sans changer le résultat (il n'y a rien à trouver).
-    if not await _corpus_has_documents():
-        return []
-
-    try:
-        # Embedding optionnel : None => la voie lexicale seule (search_hybrid).
-        embedding = await embed_query(query)
-
-        # On sur-échantillonne pour le cloisonnement des boîtes (post-filtre) :
-        # sans marge on renverrait moins que `top_k` alors que des documents
-        # pertinents existent.
-        marge = 3 if mailboxes is not None else 1
-        chunks = await vectorstore.search_hybrid(
-            query, embedding, user_role, top_k=top_k * marge,
-            source_types=list(source_types) if source_types else None) or []
-
-        # Cloisonnement des boîtes mail (fail-closed).
-        chunks = _filtrer_mails(chunks, mailboxes)[:top_k]
-
-        logger.debug(
-            "RAG retrieve : rôle=%s, embedding=%s, résultats=%d",
-            user_role, "oui" if embedding else "non (lexical seul)", len(chunks),
-        )
-        return chunks
-
-    except Exception as e:
-        logger.warning(
-            "Échec RAG retrieve (rôle=%s, %s) : %s",
-            user_role, type(e).__name__, e,
-        )
-        return []
+    # L'API liste est conservée pour tous les appelants ; le diagnostic vit dans
+    # `retrieve_detaille` (audit D-06).
+    return (await retrieve_detaille(query, user_role, source_types=source_types,
+                                    top_k=top_k, mailboxes=mailboxes))["chunks"]
 
 
 # Profondeur maximale d'une recherche : le nombre de morceaux qu'on remonte
@@ -210,8 +247,11 @@ async def rechercher(
             "embedding": False, "page": page, "limite": limite}
     if not query or not await _corpus_has_documents():
         return vide
+    diagnostic: dict = {"embedding": "non_tente", "voies": []}
+    # Le vecteur est calculé HORS du `try` de la recherche (audit D-06) : sa
+    # panne ne doit pas vider la voie plein texte.
+    embedding = await _embedding_sans_panne(query, diagnostic)
     try:
-        embedding = await embed_query(query)
         profondeur = min(PROFONDEUR_MAX, max(60, limite * page * 4))
         types = list(source_types) if source_types else None
         voies: dict = {}
@@ -245,11 +285,14 @@ async def rechercher(
                 try:
                     voies["vecteur"] = await vectorstore.search(
                         embedding, user_role, types, top_k=profondeur, fichier=fichier)
+                    diagnostic["voies"].append("vecteur")
                 except Exception as e:  # noqa: BLE001 — la voie lexicale doit survivre
                     logger.warning("Voie vectorielle écartée (%s) : la recherche "
                                    "continue en plein texte", type(e).__name__)
+                    diagnostic["erreur_vecteur"] = type(e).__name__
         voies["texte"] = await vectorstore.search_lexical(
             query, user_role, types, top_k=profondeur, fichier=fichier)
+        diagnostic["voies"].append("texte")
         total_morceaux, total_documents = await vectorstore.count_lexical(
             query, user_role, types, fichier=fichier)
         chunks = _filtrer_mails(fusionner(voies), mailboxes)
@@ -262,10 +305,13 @@ async def rechercher(
                 "total_documents": max(len(documents), total_documents),
                 "total_morceaux": max(len(chunks), total_morceaux),
                 "embedding": bool(embedding), "page": page, "limite": limite,
-                "profondeur_atteinte": len(chunks) >= profondeur}
+                "profondeur_atteinte": len(chunks) >= profondeur,
+                "diagnostic": diagnostic}
     except Exception as e:  # noqa: BLE001 — une recherche en échec n'est pas une panne
         logger.warning("Échec RAG rechercher (rôle=%s, %s) : %s", user_role, type(e).__name__, e)
-        return vide
+        # UNE PANNE SE DIT (audit D-06) : « rien trouvé » et « recherche en
+        # panne » ne sont pas la même réponse.
+        return {**vide, "diagnostic": {**diagnostic, "erreur": type(e).__name__}}
 
 
 async def retrieve_as_context(

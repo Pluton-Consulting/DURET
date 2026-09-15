@@ -89,6 +89,18 @@ async def rechercher_documents(data: dict, user) -> dict:
                 "message": "La recherche a échoué, la mémoire est momentanément indisponible."}
 
     documents = trouve.get("documents") or []
+    diagnostic = trouve.get("diagnostic") or {}
+    # UNE PANNE N'EST PAS UN « RIEN TROUVÉ » (16/09, audit D-06) : sans cette
+    # distinction, le modèle concluait à l'absence d'un document que la
+    # recherche n'avait simplement pas pu chercher.
+    if not documents and diagnostic.get("erreur"):
+        return {"ok": False, "requete": requete, "resultats": [], "nombre": 0,
+                "diagnostic": diagnostic,
+                "message": "La recherche dans la mémoire est momentanément indisponible : "
+                           "aucune conclusion ne peut être tirée sur la présence du document.",
+                "a_faire": ("Ne dis PAS que le document n'existe pas. Dis que la mémoire ne répond "
+                            "pas, et cherche directement dans la source (nas_chercher, lire_mails) "
+                            "si la demande le permet.")}
     total_documents = int(trouve.get("total_documents") or len(documents))
     pages = max(1, -(-len(documents) // limite))
     page_docs = documents[(page - 1) * limite: page * limite]
@@ -165,6 +177,10 @@ async def rechercher_documents(data: dict, user) -> dict:
         "total_morceaux": trouve.get("total_morceaux"),
         "page": page, "pages": pages, "limite": limite,
         "compte": compte,
+        # LA COUVERTURE (audit D-06) : quelles voies ont répondu. En plein texte
+        # seul, une notion formulée autrement peut manquer — c'est dit.
+        "couverture": {"voies": diagnostic.get("voies") or [],
+                       "recherche_par_le_sens": diagnostic.get("embedding") == "ok"},
         # La PAGE SUIVANTE, mécanique : le modèle n'a rien à calculer.
         "pour_continuer": (
             f"Pour les {limite} documents SUIVANTS, rappelle rechercher_documents avec les "
@@ -175,7 +191,10 @@ async def rechercher_documents(data: dict, user) -> dict:
             "une FENÊTRE sur le document, centrée sur les termes cherchés : cite la source "
             "(champ `source`) quand tu t'appuies dessus. "
             + ("Le détail ne couvre pas tout : dis-le, et propose la page suivante ou des "
-               "termes plus précis. " if suite else "")),
+               "termes plus précis. " if suite else "")
+            + ("La recherche par le sens est indisponible : seuls les mots exacts ont été "
+               "cherchés, un document formulé autrement peut manquer. " if diagnostic.get("embedding")
+               == "indisponible" else "")),
         "resultats": resultats,
     }
 

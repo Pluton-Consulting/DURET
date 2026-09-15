@@ -192,8 +192,16 @@ class VectorStoreClient:
         from vectorstore.fusion import fusionner
         voies: dict = {}
         if query_embedding:
-            voies["vecteur"] = await self.search(query_embedding, user_role, source_types,
-                                                 top_k=top_k, fichier=fichier)
+            # LA VOIE VECTORIELLE A SON FILET (16/09, audit D-06) : un vecteur de
+            # la mauvaise dimension ou un index en panne ne doit pas emporter la
+            # voie plein texte avec lui.
+            try:
+                voies["vecteur"] = await self.search(query_embedding, user_role, source_types,
+                                                     top_k=top_k, fichier=fichier)
+            except Exception as e:  # noqa: BLE001
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Voie vectorielle écartée (%s) : plein texte seul", type(e).__name__)
         voies["texte"] = await self.search_lexical(query_text, user_role, source_types,
                                                    top_k=top_k, fichier=fichier)
         return fusionner(voies)[:max(1, int(top_k))]

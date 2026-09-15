@@ -14,7 +14,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 |---|---|---|
 | D-02 | Styles Word conservés au remplacement, contrôle du fichier produit | fait (bancs réels) |
 | D-05 | Échecs métier jamais présentés comme réussis | étape 1 faite (normaliseur, exécuteur, boucle, reprise) ; reçus avant « créé/envoyé » et preuves par requête : lot suivant |
-| D-06 | Secours lexical quand les embeddings tombent | à faire |
+| D-06 | Secours lexical quand les embeddings tombent | étape 1 faite (embedding et voie vectorielle isolés, diagnostic, panne ≠ absence) ; orchestrateur de sources et comparables NAS : lot 2 |
 | D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | à faire |
 | D-27 | Doublons NAS : plus d'exclusion sur nom+taille | à faire |
 | D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | à faire |
@@ -34,3 +34,8 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   `tools_node` et la reprise après accord suivent `ok`. Banc `test_resultats_normalises`.
 - 16/09 — hors fiche (trouvé par la suite de bancs) : relances de facturation comptées au jour
   UTC — entre minuit et 2 h « relancée à l'instant » devenait « il y a 1 jour ». Jour à Paris.
+- 16/09 — D-06 (étape 1) : `vectorstore/rag.py` calcule le vecteur hors du `try` de la recherche
+  (`_embedding_sans_panne`), `retrieve_detaille` rend le diagnostic (API liste conservée),
+  `search_hybrid` isole la voie vectorielle, `rechercher_documents` distingue panne (ok False,
+  interdiction de conclure à l'absence) et « rien trouvé », et dit la couverture. Banc
+  `test_recherche_documents` +5.

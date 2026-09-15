@@ -117,7 +117,7 @@ verifier("filtres type/fichier en PARAMÈTRE, jamais dans le texte SQL",
 print("\n3. rechercher() : profondeur, compte, groupement (vectorstore/rag.py)")
 rag = lire("vectorstore/rag.py")
 verifier("retrieve() filtre les types DANS la requête (plus de post-filtre qui vide la page)",
-         "source_types=list(source_types) if source_types else None" in rag and "allowed = set(source_types)" not in rag)
+         "types = list(source_types) if source_types else None" in rag and "allowed = set(source_types)" not in rag)
 if fusion and "async def rechercher(" in rag:
     debut = rag.index("PROFONDEUR_MAX")
     fin = rag.index("async def retrieve_as_context(")
@@ -150,6 +150,7 @@ if fusion and "async def rechercher(" in rag:
               "logger": logging.getLogger("banc"), "__name__": "banc_rag"}
     sys.path.insert(0, str(BACKEND))
     try:
+        exec(rag[rag.index("async def _embedding_sans_panne("):rag.index("async def retrieve_detaille(")], espace)  # noqa: S102
         exec(rag[debut:fin], espace)  # noqa: S102 — code du dépôt
         rechercher = espace["rechercher"]
         r = asyncio.run(rechercher("drainage terrasse", "direction", limite=6, page=1))
@@ -168,6 +169,37 @@ if fusion and "async def rechercher(" in rag:
         verifier("sans embedding : la voie lexicale seule, et un résultat quand même", [a[0] for a in appels] == ["texte"] and r["documents"] and r["embedding"] is False)
         r = asyncio.run(rechercher("", "terrain"))
         verifier("requête vide : résultat vide, sans appel", r["documents"] == [] and r["total_documents"] == 0)
+        # 16/09 (audit D-06) : une PANNE du fournisseur d'embeddings ne vide plus la recherche.
+        async def _emb_en_panne(q):
+            raise RuntimeError("quota Gemini épuisé")
+        espace["embed_query"] = _emb_en_panne
+        appels.clear()
+        r = asyncio.run(rechercher("drainage", "terrain"))
+        verifier("embeddings EN PANNE : la voie plein texte répond quand même, et le diagnostic le dit",
+                 [a[0] for a in appels] == ["texte"] and r["documents"]
+                 and r["diagnostic"]["embedding"] == "indisponible", r.get("diagnostic"))
+        espace["embed_query"] = _emb
+
+        class _VSPanne(_VS):
+            async def search(self, *a, **k):
+                raise RuntimeError("different vector dimensions 768 and 1536")
+        espace["vectorstore"] = _VSPanne()
+        appels.clear()
+        r = asyncio.run(rechercher("drainage", "terrain"))
+        verifier("voie vectorielle EN PANNE : plein texte, diagnostic de l'erreur",
+                 r["documents"] and r["diagnostic"].get("erreur_vecteur") == "RuntimeError")
+        exec(rag[rag.index("async def retrieve_detaille("):rag.index("# Profondeur maximale d'une recherche")], espace)  # noqa: S102
+
+        class _VSHybride(_VS):
+            async def search_hybrid(self, *a, **k):
+                raise RuntimeError("index HNSW indisponible")
+        espace["vectorstore"] = _VSHybride()
+        espace["embed_query"] = _emb_en_panne
+        d = asyncio.run(espace["retrieve_detaille"]("drainage", "terrain", top_k=5))
+        verifier("retrieve : embeddings en panne ET hybride en panne → plein texte quand même, diagnostic complet",
+                 d["chunks"] and d["diagnostic"]["voies"] == ["texte"]
+                 and d["diagnostic"]["embedding"] == "indisponible" and d["diagnostic"]["erreur"] == "RuntimeError", d["diagnostic"])
+        verifier("retrieve garde son API liste", len(asyncio.run(espace["retrieve"]("drainage", "terrain", top_k=5))) == 5)
     except Exception as e:  # noqa: BLE001
         verifier("rechercher() s'exécute sur le doublé", False, repr(e))
 else:
@@ -238,6 +270,18 @@ if fusion and "MAX_LIMITE" in src_skill:
         etat["docs"] = 0
         r = asyncio.run(skill({"requete": "licorne"}, user))
         verifier("rien trouvé : l'inventaire côté humain, la consigne côté modèle", r["nombre"] == 0 and "1 398 devis" in r["message"] and "connaissances_acquises" in r["a_faire"])
+        # 16/09 (audit D-06) : une recherche EN PANNE n'est pas un « rien trouvé ».
+        async def _rechercher_en_panne(*a, **k):
+            return {"documents": [], "total_documents": 0, "diagnostic": {"embedding": "indisponible",
+                                                                          "erreur": "OperationalError"}}
+        faux_rag.rechercher = _rechercher_en_panne
+        exec(src_skill[src_skill.index("MAX_RESULTATS = 6"): src_skill.index("async def _inventaire(")], espace)  # noqa: S102
+        r = asyncio.run(espace["rechercher_documents"]({"requete": "licorne"}, user))
+        verifier("recherche en PANNE : un échec (ok False) qui interdit de conclure à l'absence",
+                 r.get("ok") is False and "indisponible" in r["message"] and "Ne dis PAS" in r["a_faire"], r)
+        faux_rag.rechercher = _rechercher
+        exec(src_skill[src_skill.index("MAX_RESULTATS = 6"): src_skill.index("async def _inventaire(")], espace)  # noqa: S102
+        skill = espace["rechercher_documents"]
         try:
             asyncio.run(skill({}, user))
             verifier("sans requête : refus", False)

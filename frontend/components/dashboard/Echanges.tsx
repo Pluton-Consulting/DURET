@@ -139,28 +139,30 @@ export default function Echanges({ apiUrl, token, C }: Props) {
   } as const
 
   /** TOUT L'HISTORIQUE, DEPUIS LE PREMIER ÉCHANGE (15/09). La période affichée
-   *  ne compte pas ; la personne et la recherche choisies, si. Le fichier est
-   *  produit par le serveur, page après page, puis téléchargé ici. */
+   *  ne compte pas ; la personne et la recherche choisies, si.
+   *
+   *  (16/09, audit D-22) Le fichier ne passe plus par la mémoire du navigateur :
+   *  un export de plusieurs centaines de milliers de lignes tenait dans un Blob
+   *  avant d'atteindre le disque. On demande un TICKET court (à usage unique,
+   *  lié à cette personne et à cet export), puis on suit l'adresse : le
+   *  navigateur écrit au fil de l'eau. Le jeton de session, lui, ne va jamais
+   *  dans une URL. */
   async function exporter(format: "csv" | "json") {
     setErr(""); setExporte(format)
     try {
-      const p = new URLSearchParams({ format })
-      if (personne) p.set("utilisateur", personne)
-      if (recherche) p.set("q", recherche)
-      const res = await fetch(`${apiUrl}/api/dashboard/echanges/export?${p}`,
-                              { headers: { Authorization: `Bearer ${token}` } })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        throw new Error(d.detail || `HTTP ${res.status}`)
-      }
-      const blob = await res.blob()
-      const nom = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1]
-                  || `echanges.${format}`
-      const url = URL.createObjectURL(blob)
+      const res = await fetch(`${apiUrl}/api/dashboard/echanges/export/ticket`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ format, utilisateur: personne || null, q: recherche || null }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok || !d?.ticket) throw new Error(d?.detail || `HTTP ${res.status}`)
       const a = document.createElement("a")
-      a.href = url; a.download = nom
+      a.href = `${apiUrl}/api/dashboard/echanges/export?ticket=${encodeURIComponent(d.ticket)}`
+      // `download` laisse le navigateur écrire le flux sur le disque ; le nom
+      // définitif vient de l'en-tête `Content-Disposition` du serveur.
+      a.download = ""
       document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 5000)
     } catch (e: any) {
       setErr(`Export impossible : ${e?.message || "erreur réseau"}`)
     } finally { setExporte("") }

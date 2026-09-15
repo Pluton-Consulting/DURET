@@ -39,13 +39,21 @@ def _is_placeholder(value: Optional[str]) -> bool:
 
 def _mask_pii(data: Any) -> Any:
     """
-    Masque Langfuse (défense en profondeur RGPD) : re-anonymise tout contenu
-    envoyé au cloud. Le pipeline agent1 anonymise déjà les prompts LLM ; ce masque
-    couvre en plus l'état brut du graphe (ex. la requête utilisateur non masquée)
-    capturé par le tracing niveau-graphe, afin qu'AUCUNE PII ne quitte le système.
+    Ce qui part vers Langfuse, masqué autant que le permet le réglage du jour.
+
+    ⚠️ DIT TEL QUEL (16/09, audit D-22). Ce masque promettait qu'« AUCUNE PII ne
+    quitte le système » : c'est FAUX depuis le 31/08, où l'anonymisation est
+    désactivée par défaut (décision de Noa, `anonymisation`). Quand elle est
+    coupée, l'anonymiseur rend le texte tel quel : noms, adresses et montants
+    partent donc vers l'observabilité, comme ils partent déjà vers le modèle.
+    C'est un choix d'usage, pas un accident — et il doit se lire ici.
+
+    Ce qui est masqué EN TOUTE CIRCONSTANCE, réglage ou pas : les CLÉS et jetons
+    (`security/secrets.py`), qui n'ont jamais rien à faire dans une trace.
     Ne lève jamais : en cas de doute, renvoie une valeur neutralisée.
     """
     from security.anonymizer import anonymizer
+    from security.secrets import masquer_arbre
 
     def walk(x: Any, depth: int = 0) -> Any:
         if depth > 6:
@@ -64,7 +72,7 @@ def _mask_pii(data: Any) -> Any:
         return x
 
     try:
-        return walk(data)
+        return masquer_arbre(walk(data))
     except Exception:
         return "[masqué]"
 
@@ -94,10 +102,16 @@ def _get_client() -> Optional[Any]:
             public_key=settings.langfuse_public_key,
             secret_key=settings.langfuse_secret_key,
             host=_host(),
-            mask=_mask_pii,          # défense en profondeur RGPD — aucune PII vers le cloud
+            # Masque : les clés TOUJOURS, les données personnelles selon le
+            # réglage `anonymisation` (coupé par défaut depuis le 31/08 — dit
+            # dans `_mask_pii`, audit D-22).
+            mask=_mask_pii,
             environment=settings.environment,
         )
-        logger.info("Observabilité Langfuse activée (host=%s, masque PII actif)", _host())
+        from security.anonymizer import anonymizer as _anon
+        logger.info("Observabilité Langfuse activée (host=%s, clés masquées, "
+                    "masquage des données personnelles : %s)", _host(),
+                    "coupé" if getattr(_anon, "desactivee", lambda: False)() else "actif")
     except Exception as e:
         logger.warning("Langfuse indisponible — observabilité désactivée : %s", e)
         _client = None

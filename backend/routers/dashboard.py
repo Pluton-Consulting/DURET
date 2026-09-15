@@ -3,7 +3,8 @@ import datetime
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from auth.dependencies import get_current_user
 from database.models import User
 from database.connection import get_rls_db, get_db
@@ -176,6 +177,13 @@ WHERE m.role = 'user'
   AND ($2::uuid IS NULL OR u.id = $2::uuid)
   AND ($3::text IS NULL OR m.content ILIKE '%' || $3::text || '%'
                         OR COALESCE(r.content, '') ILIKE '%' || $3::text || '%')
+  -- LA FIN EST FIXÉE AU LANCEMENT D'UN EXPORT (16/09, audit D-22) : sans elle,
+  -- les messages écrits PENDANT l'export décalent les pages, et une ligne peut
+  -- être livrée deux fois ou pas du tout.
+  AND ($6::timestamptz IS NULL OR m.created_at <= $6::timestamptz)
+  -- PAGINATION PAR CLÉ plutôt que par OFFSET : sur un historique long, OFFSET
+  -- relit et jette tout ce qui précède, à chaque page.
+  AND ($7::timestamptz IS NULL OR (m.created_at, m.id) > ($7::timestamptz, $8::uuid))
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT $4 OFFSET $5
 """
@@ -265,7 +273,8 @@ def _cible_et_recherche(utilisateur, q):
 
 
 async def _lire_echanges(jours: int, cible, recherche, limite: int, decalage: int,
-                         avec_gens: bool = False, croissant: bool = False) -> tuple[list, list]:
+                         avec_gens: bool = False, croissant: bool = False,
+                         fin=None, apres=None) -> tuple[list, list]:
     """Une page d'échanges, avec leur détail technique rapproché.
 
     Le technique n'est lu que sur la FENÊTRE DE TEMPS de la page (15/09) : lire
@@ -275,7 +284,8 @@ async def _lire_echanges(jours: int, cible, recherche, limite: int, decalage: in
     async with get_db() as conn:
         sql = (_SQL_ECHANGES.replace("ORDER BY m.created_at DESC, m.id DESC", "ORDER BY m.created_at ASC, m.id ASC")
                if croissant else _SQL_ECHANGES)
-        lignes = await conn.fetch(sql, jours, cible, recherche, limite, decalage)
+        lignes = await conn.fetch(sql, jours, cible, recherche, limite, decalage,
+                                  fin, (apres or (None, None))[0], (apres or (None, None))[1])
         techniques = []
         if lignes:
             bornes = [r["quand"] for r in lignes] + [r["quand_reponse"] for r in lignes if r["quand_reponse"]]
@@ -399,48 +409,158 @@ EXPORT_PAQUET = 500
 EXPORT_TOUT_JOURS = 36500
 
 
+# ── UNE CELLULE DE TABLEUR N'EST PAS UNE FORMULE (16/09, audit D-22) ───────
+# Une question qui commence par « =2+2 », « +33 6… », « -5 % » ou « @canal » est
+# du TEXTE écrit par quelqu'un. Excel et LibreOffice, eux, l'exécutent à
+# l'ouverture du CSV : c'est l'injection de formule (OWASP CSV Injection). Les
+# guillemets du CSV n'y changent rien — ils protègent le séparateur, pas le
+# tableur. On préfixe donc d'une apostrophe, marqueur « ceci est du texte »,
+# et l'on retire les caractères de contrôle (tabulation et retour chariot en
+# tête déclenchent le même effet), en gardant les retours à la ligne.
+# ⚠️ L'export JSON, lui, reste FIDÈLE : c'est le format de référence.
+_DEBUTS_DE_FORMULE = ("=", "+", "-", "@")
+
+
+def _cellule_inerte(valeur):
+    """Le texte d'une cellule, inoffensif à l'ouverture. Les nombres passent."""
+    if not isinstance(valeur, str) or not valeur:
+        return valeur
+    texte = valeur.replace("\r\n", "\n").replace("\r", "\n")
+    texte = "".join(c for c in texte if c == "\n" or ord(c) >= 32)
+    if texte[:1] in _DEBUTS_DE_FORMULE:
+        texte = "'" + texte
+    return texte
+
+
 def _ligne_csv(e: dict) -> list:
     gestes = " | ".join(f"{g.get('skill')}:{'ok' if g.get('ok') else 'échec'}"
                         for g in (e.get("gestes") or []) if isinstance(g, dict))
     u = e.get("utilisateur") or {}
     quand = e.get("quand")
-    return [quand.isoformat() if hasattr(quand, "isoformat") else str(quand or ""),
-            u.get("nom") or "", u.get("email") or "", u.get("role") or "",
-            e.get("fil") or "", e.get("expert") or "",
-            e.get("question") or "", e.get("reponse") or "", gestes,
-            e.get("modele") or "", round((e.get("duree_ms") or 0) / 1000, 1),
-            e.get("jetons") or 0, e.get("cout_eur") or 0,
-            "oui" if e.get("succes") else "non", e.get("erreur") or ""]
+    cellules = [quand.isoformat() if hasattr(quand, "isoformat") else str(quand or ""),
+                u.get("nom") or "", u.get("email") or "", u.get("role") or "",
+                e.get("fil") or "", e.get("expert") or "",
+                e.get("question") or "", e.get("reponse") or "", gestes,
+                e.get("modele") or "", round((e.get("duree_ms") or 0) / 1000, 1),
+                e.get("jetons") or 0, e.get("cout_eur") or 0,
+                "oui" if e.get("succes") else "non", e.get("erreur") or ""]
+    return [_cellule_inerte(c) for c in cellules]
+
+
+# ── LE TICKET DE TÉLÉCHARGEMENT (16/09, audit D-22) ───────────────────────
+# L'écran téléchargeait l'export par `fetch` + Blob : tout l'historique passait
+# par la mémoire du navigateur avant d'atteindre le disque. On échange donc le
+# jeton de session contre un TICKET court, à usage unique, lié à la personne et
+# à CE téléchargement ; le navigateur suit l'adresse et écrit au fil de l'eau.
+# Jamais le JWT dans une URL : une adresse se retrouve dans l'historique, les
+# journaux du serveur et le presse-papier.
+_TICKETS_EXPORT: dict[str, dict] = {}
+TICKET_EXPORT_TTL_S = 120
+
+
+def _emettre_ticket(user, format: str, utilisateur, q) -> str:
+    import secrets as _secrets
+    import time as _time
+    maintenant = _time.monotonic()
+    for cle in [c for c, t in _TICKETS_EXPORT.items() if t["expire"] < maintenant]:
+        _TICKETS_EXPORT.pop(cle, None)
+    jeton = _secrets.token_urlsafe(24)
+    _TICKETS_EXPORT[jeton] = {"user_id": str(user.id), "role": user.role,
+                              "format": format, "utilisateur": utilisateur, "q": q,
+                              "expire": maintenant + TICKET_EXPORT_TTL_S}
+    return jeton
+
+
+def _consommer_ticket(jeton: str) -> Optional[dict]:
+    import time as _time
+    entree = _TICKETS_EXPORT.pop(jeton or "", None)     # usage unique
+    if not entree or entree["expire"] < _time.monotonic():
+        return None
+    return entree
+
+
+class _TicketExport(BaseModel):
+    format: str = "csv"
+    utilisateur: Optional[str] = None
+    q: Optional[str] = None
+
+
+@router.post("/echanges/export/ticket")
+async def ticket_export(body: _TicketExport, current_user: User = Depends(get_current_user)):
+    """Un ticket de téléchargement (2 min, à usage unique) pour CET export."""
+    _exiger_super_admin(current_user)
+    fmt = "json" if (body.format or "").lower() == "json" else "csv"
+    return {"ticket": _emettre_ticket(current_user, fmt, body.utilisateur, body.q),
+            "expire_dans_s": TICKET_EXPORT_TTL_S}
 
 
 @router.get("/echanges/export")
 async def exporter_echanges(
-    current_user: User = Depends(get_current_user),
+    request: Request,
     format: str = "csv",
     utilisateur: Optional[str] = None,
     q: Optional[str] = None,
+    ticket: Optional[str] = None,
 ):
-    """Tous les échanges depuis le premier, du plus ancien au plus récent."""
+    """Tous les échanges depuis le premier, du plus ancien au plus récent.
+
+    Deux façons d'entrer : le jeton de session (en-tête `Authorization`, pour
+    un appel d'API) ou un TICKET court obtenu juste avant (pour que le
+    navigateur écrive le fichier directement sur le disque).
+    """
     import csv
     import io
     from fastapi.responses import StreamingResponse
 
+    if ticket:
+        entree = _consommer_ticket(ticket)
+        if entree is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="Ticket de téléchargement expiré : relancez l'export.")
+        async with get_db() as conn:
+            ligne = await conn.fetchrow("SELECT * FROM users WHERE id = $1::uuid AND actif = true",
+                                        entree["user_id"])
+        if ligne is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Compte introuvable.")
+        current_user = User(**dict(ligne))
+        format, utilisateur, q = entree["format"], entree["utilisateur"], entree["q"]
+    else:
+        from auth.dependencies import get_current_user as _lire_jeton
+        from fastapi.security import HTTPAuthorizationCredentials
+        entete = request.headers.get("authorization") or ""
+        if not entete.lower().startswith("bearer "):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session requise.")
+        current_user = await _lire_jeton(HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=entete.split(" ", 1)[1].strip()))
+
+    # LES DROITS SONT REVÉRIFIÉS ICI, ticket ou pas : un ticket dit QUI demande,
+    # jamais ce qu'il a le droit de lire (la permission a pu être retirée entre-temps).
     _exiger_super_admin(current_user)
     cible, recherche = _cible_et_recherche(utilisateur, q)
     fmt = "json" if (format or "").lower() == "json" else "csv"
     maintenant = datetime.datetime.now().strftime("%Y-%m-%d_%Hh%M")
+    fin = datetime.datetime.now(datetime.timezone.utc)
+    compte = {"lignes": 0}
+    manifeste = {"depuis": "le premier échange", "jusqu_a": fin.isoformat(),
+                 "personne": utilisateur or "toutes", "recherche": q or "",
+                 "format": fmt, "demande_par": str(current_user.id),
+                 "cellules_csv_neutralisees": fmt == "csv",
+                 "note": ("Le CSV neutralise les cellules qu'un tableur prendrait pour des "
+                          "formules (préfixe « ' ») ; le JSON est fidèle.")}
 
     async def _pages():
-        decalage = 0
+        apres = None
         while True:
             echanges, _ = await _lire_echanges(EXPORT_TOUT_JOURS, cible, recherche,
-                                               EXPORT_PAQUET, decalage, croissant=True)
+                                               EXPORT_PAQUET, 0, croissant=True,
+                                               fin=fin, apres=apres)
             if not echanges:
                 return
             yield echanges
             if len(echanges) < EXPORT_PAQUET:
                 return
-            decalage += EXPORT_PAQUET
+            dernier = echanges[-1]
+            apres = (dernier["quand"], dernier["id"])
 
     def _defaut(v):
         return v.isoformat() if hasattr(v, "isoformat") else str(v)
@@ -460,15 +580,22 @@ async def exporter_echanges(
                 w = csv.writer(tampon, delimiter=";")
                 for e in page:
                     w.writerow(_ligne_csv(e))
+                    compte["lignes"] += 1
                 yield tampon.getvalue()
+            tampon = io.StringIO()
+            csv.writer(tampon, delimiter=";").writerow(
+                ["#manifeste", json.dumps({**manifeste, "lignes": compte["lignes"]},
+                                          ensure_ascii=False)])
+            yield tampon.getvalue()
         else:
-            yield "["
+            yield '{"manifeste": ' + json.dumps(manifeste, ensure_ascii=False) + ', "echanges": ['
             premier = True
             async for page in _pages():
                 for e in page:
                     yield ("" if premier else ",\n") + json.dumps(e, ensure_ascii=False, default=_defaut)
                     premier = False
-            yield "]"
+                    compte["lignes"] += 1
+            yield '], "lignes": ' + str(compte["lignes"]) + "}"
 
     nom = f"echanges_depuis_le_debut_{maintenant}.{fmt}"
     return StreamingResponse(

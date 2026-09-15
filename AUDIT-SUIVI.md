@@ -18,7 +18,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | étape 1 faite (jeton par origine, propriétaire noté au dépôt, route et pièces jointes contrôlées, pièce de mail résolue dans sa boîte, script de rattachement des anciens) ; registre PostgreSQL des ressources, médias DOCX, résultat structuré d'image manquante : lot suivant |
 | D-27 | Doublons NAS : plus d'exclusion sur nom+taille | étape 1 faite (copies lues en dernier et reconnues à leur contenu, « toujours apprendre », fichiers écartés retentés et repris à la main, écritures atomiques) ; écran détaillé du tri, budgets et baux, niveaux réactualisés, références et couverture de `nas_chercher` : lots 2 et 4 |
 | D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | fait (verdict typé fail-closed, verrou de ligne, code de première entrée à usage unique + migration 044, clé de chiffrement séparée, borne par origine, script de secours) ; réauthentification ciblée pour l'administration : lot suivant |
-| D-22 | Export CSV neutralisé, export borné, secrets dans les traces | à faire |
+| D-22 | Export CSV neutralisé, export borné, secrets dans les traces | étape 1 faite (cellules inertes, fin bornée + pagination par clé + manifeste, ticket de téléchargement, filtre des secrets sur les handlers et les traces) ; carte des sorties, modes de confidentialité et rétention par type : lot 4 |
 | D-23 / D-26 / D-00 | Scripts de sauvegarde, de déploiement vérifié et procédure de recette | à faire |
 
 ## Journal
@@ -86,3 +86,16 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   ⚠️ Au déploiement : appliquer la 044 AVANT de redémarrer, sinon l'entrée par le code de
   première entrée est refusée (c'est voulu) ; poser `CODE_ADMIN_DEFAUT` et `CODE_CHIFFREMENT_CLE`
   dans le `.env` du VPS.
+- 16/09 — D-22 (étape 1) : `security/secrets.py` (nouveau) porte le masquage des clés — et le filtre
+  est posé sur les HANDLERS, pas sur le seul logger racine : un enregistrement d'un logger enfant ne
+  passe pas par les filtres du parent, donc presque rien n'était masqué. Il couvre désormais le
+  message, les arguments, le message RECOLLÉ (« key=%s » + la valeur : le secret n'existe qu'une fois
+  les deux réunis), la trace d'une exception, et il est reposé au démarrage (uvicorn installe ses
+  handlers après l'import). Les traces Langfuse passent par le même masquage, et leur docstring ne
+  promet plus « aucune PII » — l'anonymisation est coupée depuis le 31/08, c'est dit. Export de la
+  console : cellules CSV inertes (`=`, `+`, `-`, `@`, caractères de contrôle — le JSON reste fidèle),
+  fin bornée à l'instant du lancement, pagination par clé `(created_at, id)` au lieu d'OFFSET,
+  manifeste (période, filtres, nombre de lignes) en dernière ligne CSV et dans le JSON, et un ticket
+  court à usage unique pour que le navigateur écrive le fichier sans Blob géant — jamais le jeton
+  dans l'URL. Bancs `test_secrets_journaux` (+8, filtre exécuté sur un logger enfant et une
+  exception) et `test_echanges_admin` (+10, export exécuté par ticket et par jeton).

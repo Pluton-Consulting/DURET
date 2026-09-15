@@ -367,18 +367,27 @@ from contextlib import asynccontextmanager
 
 arbre = ast.parse(dash_src)
 noms = {"get_echanges", "_lire_echanges", "_detail_du_fil", "_ligne_csv", "exporter_echanges", "_cible_et_recherche",
-        "_exiger_super_admin", "EXPORT_PAQUET", "EXPORT_TOUT_JOURS", "_SQL_ECHANGES"}
-gardes = [n for n in arbre.body if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in noms)
-          or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in noms for t in n.targets))]
+        "_exiger_super_admin", "EXPORT_PAQUET", "EXPORT_TOUT_JOURS", "_SQL_ECHANGES",
+        # 16/09, audit D-22 : cellules inertes et ticket de téléchargement.
+        "_cellule_inerte", "_DEBUTS_DE_FORMULE", "_TICKETS_EXPORT", "TICKET_EXPORT_TTL_S",
+        "_emettre_ticket", "_consommer_ticket", "ticket_export", "_TicketExport"}
+gardes = [n for n in arbre.body
+          if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name in noms)
+          or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in noms for t in n.targets))
+          or (isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") in noms)]
 for n in gardes:
     n.decorator_list = []
     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
         for a in n.args.defaults + n.args.kw_defaults:
             pass
-QUESTIONS = [{"id": _uuid.uuid4(), "question": f"question {i}", "quand": datetime.datetime(2026, 8, 1) + datetime.timedelta(hours=i),
+# Des dates AVEC fuseau, comme les rend Postgres (`timestamptz`) : la borne de
+# fin de l'export en est une aussi (audit D-22).
+# … et toutes DANS LE PASSÉ : l'export borne sa fin à l'instant du lancement.
+_T0 = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1300)
+QUESTIONS = [{"id": _uuid.uuid4(), "question": f"question {i}", "quand": _T0 + datetime.timedelta(hours=i),
               "fil": "f1", "agent_type": "agent1", "utilisateur_id": "u1", "email": "a@exemple.fr", "name": "Anna",
               "utilisateur_role": "direction", "reponse": f"réponse {i}; « guillemets »\nligne 2",
-              "quand_reponse": datetime.datetime(2026, 8, 1) + datetime.timedelta(hours=i, seconds=5)} for i in range(1203)]
+              "quand_reponse": _T0 + datetime.timedelta(hours=i, seconds=5)} for i in range(1203)]
 REQUETES = []
 
 
@@ -387,6 +396,13 @@ class _Conn:
         if "FROM messages m" in sql:
             REQUETES.append((sql, args))
             ordre = sorted(QUESTIONS, key=lambda r: r["quand"], reverse="created_at DESC" in sql.split("ORDER BY")[-1])
+            # (16/09, audit D-22) La fin est bornée et la page reprend APRÈS la
+            # dernière ligne livrée (created_at, id) : la doublure applique les
+            # deux, sinon le banc ne prouverait pas la pagination par clé.
+            if len(args) > 5 and args[5] is not None:
+                ordre = [r for r in ordre if r["quand"] <= args[5]]
+            if len(args) > 6 and args[6] is not None:
+                ordre = [r for r in ordre if (r["quand"], str(r["id"])) > (args[6], str(args[7]))]
             return ordre[args[4]:args[4] + args[3]]
         if "FROM audit_log" in sql:
             return [{"id": 1, "user_id": "u1", "action": "chat_request", "agent_id": "agent1", "model_used": "m",
@@ -396,9 +412,17 @@ class _Conn:
         return []
 
 
+class _ConnAvecUsers(_Conn):
+    async def fetchrow(self, sql, *args):
+        # Le ticket de téléchargement relit le compte (audit D-22).
+        if "FROM users" in sql:
+            return {"id": "u-admin", "role": "super_admin"}
+        return None
+
+
 @asynccontextmanager
 async def _get_db():
-    yield _Conn()
+    yield _ConnAvecUsers()
 
 
 class _Http(Exception):
@@ -417,37 +441,116 @@ esp = {"get_db": _get_db, "json": _json, "datetime": datetime, "uuid": _uuid, "H
        "status": types.SimpleNamespace(HTTP_403_FORBIDDEN=403, HTTP_400_BAD_REQUEST=400),
        "_exiger": lambda role, f: None, "Optional": __import__("typing").Optional,
        "User": object, "Depends": lambda x=None: None, "get_current_user": None, "Query": lambda *a, **k: None}
+# (16/09, audit D-22) L'export entre par le jeton de session OU par un ticket
+# court : la doublure fournit les deux.
+class _Requete:
+    def __init__(self, entete=""):
+        self.headers = {"authorization": entete} if entete else {}
+
+
+async def _lire_jeton_double(credentials):
+    """Le jeton de session, doublé : l'un ouvre en super_admin, l'autre en direction."""
+    jeton = getattr(credentials, "credentials", "")
+    if jeton == "jeton-direction":
+        return types.SimpleNamespace(id="u-dir", role="direction")
+    return admin
+
+
+sys.modules["auth"] = types.ModuleType("auth")
+sys.modules["auth.dependencies"] = types.SimpleNamespace(get_current_user=_lire_jeton_double)
+sys.modules["fastapi.security"] = types.SimpleNamespace(
+    HTTPAuthorizationCredentials=lambda scheme=None, credentials=None: types.SimpleNamespace(
+        scheme=scheme, credentials=credentials))
+esp["Request"] = _Requete
+esp["User"] = lambda **kw: types.SimpleNamespace(**kw)
+esp["status"].HTTP_401_UNAUTHORIZED = 401
+esp["BaseModel"] = type("BaseModel", (), {})
+
 exec(compile(ast.Module(body=gardes, type_ignores=[]), "dashboard", "exec"), esp)
-admin = types.SimpleNamespace(role="super_admin")
+admin = types.SimpleNamespace(id="u-admin", role="super_admin")
 
 
 async def _lire(reponse):
     return "".join([bout async for bout in reponse.gen])
 
-rep_csv = asyncio.run(esp["exporter_echanges"](current_user=admin, format="csv", utilisateur=None, q=None))
+print("\n── 5. L'export : cellules inertes, borne de fin, ticket (audit D-22)")
+inerte = esp["_cellule_inerte"]
+verifier("une cellule qui commence par une formule devient du TEXTE (=, +, -, @)",
+         [inerte(v) for v in ("=2+2", "+33 6 12 34 56 78", "-5 %", "@canal")]
+         == ["'=2+2", "'+33 6 12 34 56 78", "'-5 %", "'@canal"])
+verifier("le texte ordinaire et les nombres ne bougent pas",
+         inerte("Bonjour, où en est le devis ?") == "Bonjour, où en est le devis ?"
+         and inerte(12.5) == 12.5 and inerte(0) == 0 and inerte("") == "")
+verifier("les caractères de contrôle sortent (une tabulation en tête suffisait), les retours à la ligne restent",
+         inerte("a\x07b\r\nc") == "ab\nc" and inerte("\t=2+2") == "'=2+2", (inerte("a\x07b\r\nc"), inerte("\t=2+2")))
+verifier("la ligne CSV entière passe par là",
+         esp["_ligne_csv"]({"question": "=cmd|' /C calc'!A0", "reponse": "ok", "gestes": []})[6]
+         == "'=cmd|' /C calc'!A0")
+
+REQUETES.clear()
+rep_csv = asyncio.run(esp["exporter_echanges"](_Requete("Bearer jeton-admin"), format="csv",
+                                               utilisateur=None, q=None))
 texte = asyncio.run(_lire(rep_csv))
 lignes = list(_csv.reader(_io.StringIO(texte.lstrip("\ufeff")), delimiter=";"))
 verifier("export CSV : TOUT l'historique (1 203 échanges, lus par pages de 500)",
-         len(lignes) == 1204 and [(a[3], a[4]) for s_, a in REQUETES] == [(500, 0), (500, 500), (500, 1000)],
-         (len(lignes), [(a[3], a[4]) for s_, a in REQUETES]))
+         len(lignes) == 1205 and len(REQUETES) == 3, (len(lignes), len(REQUETES)))
+verifier("… par pagination de CLÉ, jamais par OFFSET qui relit tout",
+         all(a[4] == 0 for _s, a in REQUETES) and REQUETES[0][1][6] is None
+         and REQUETES[1][1][6] == QUESTIONS[499]["quand"] and "(m.created_at, m.id) >" in REQUETES[0][0],
+         [(a[4], a[6]) for _s, a in REQUETES])
+verifier("… avec une FIN fixée au lancement (ce qui s'écrit pendant l'export ne décale rien)",
+         all(a[5] is not None and a[5] == REQUETES[0][1][5] for _s, a in REQUETES))
 verifier("… depuis le tout début, du plus ancien au plus récent",
-         lignes[1][6] == "question 0" and lignes[-1][6] == "question 1202"
-         and all("ASC" in s_.split("ORDER BY")[-1] and a[0] == esp["EXPORT_TOUT_JOURS"] for s_, a in REQUETES[-3:]))
+         lignes[1][6] == "question 0" and lignes[-2][6] == "question 1202"
+         and all("ASC" in _s.split("ORDER BY")[-1] and a[0] == esp["EXPORT_TOUT_JOURS"] for _s, a in REQUETES))
 verifier("… lisible par Excel (BOM, point-virgule), réponses multi-lignes et guillemets intacts",
          texte.startswith("\ufeff") and lignes[1][7] == "réponse 0; « guillemets »\nligne 2"
          and lignes[1][8] == "lire_mails:ok" and lignes[1][9] == "m")
+manifeste = _json.loads(lignes[-1][1])
+verifier("… et un MANIFESTE en dernière ligne : période, filtres, nombre de lignes",
+         lignes[-1][0] == "#manifeste" and manifeste["lignes"] == 1203 and manifeste["jusqu_a"]
+         and manifeste["cellules_csv_neutralisees"] is True, lignes[-1][:1])
 verifier("… en pièce à télécharger, datée", 'attachment; filename="echanges_depuis_le_debut_' in rep_csv.headers["Content-Disposition"])
 REQUETES.clear()
-rep_json = asyncio.run(esp["exporter_echanges"](current_user=admin, format="json", utilisateur=None, q=None))
-donnees = _json.loads(asyncio.run(_lire(rep_json)))
-verifier("export JSON : complet, détail technique compris", len(donnees) == 1203 and donnees[0]["detail"]
-         and donnees[0]["question"] == "question 0")
+rep_json = asyncio.run(esp["exporter_echanges"](_Requete("Bearer jeton-admin"), format="json",
+                                                utilisateur=None, q=None))
+brut = _json.loads(asyncio.run(_lire(rep_json)))
+verifier("export JSON : fidèle (aucune cellule neutralisée), complet, avec son manifeste",
+         len(brut["echanges"]) == 1203 and brut["lignes"] == 1203 and brut["manifeste"]["format"] == "json"
+         and brut["echanges"][0]["detail"] and brut["echanges"][0]["question"] == "question 0")
+
+ticket = asyncio.run(esp["ticket_export"](types.SimpleNamespace(format="csv", utilisateur=None, q=None),
+                                          current_user=admin))["ticket"]
+verifier("le ticket est court et à usage unique",
+         esp["_consommer_ticket"](ticket) is not None and esp["_consommer_ticket"](ticket) is None
+         and esp["TICKET_EXPORT_TTL_S"] <= 300)
+ticket = asyncio.run(esp["ticket_export"](types.SimpleNamespace(format="csv", utilisateur=None, q=None),
+                                          current_user=admin))["ticket"]
+REQUETES.clear()
+rep = asyncio.run(esp["exporter_echanges"](_Requete(), format="csv", utilisateur=None, q=None, ticket=ticket))
+verifier("un ticket ouvre le téléchargement sans jeton dans l'URL", asyncio.run(_lire(rep)).startswith("\ufeff"))
 try:
-    asyncio.run(esp["exporter_echanges"](current_user=types.SimpleNamespace(role="direction"), format="csv",
-                                         utilisateur=None, q=None))
-    verifier("l'export est réservé au super-administrateur", False)
+    asyncio.run(esp["exporter_echanges"](_Requete(), format="csv", utilisateur=None, q=None, ticket="inconnu"))
+    verifier("un ticket inconnu ou périmé est refusé", False)
 except _Http as e:
-    verifier("l'export est réservé au super-administrateur", e.status_code == 403)
+    verifier("un ticket inconnu ou périmé est refusé", e.status_code == 401)
+try:
+    asyncio.run(esp["exporter_echanges"](_Requete(), format="csv", utilisateur=None, q=None))
+    verifier("sans jeton ni ticket, rien ne sort", False)
+except _Http as e:
+    verifier("sans jeton ni ticket, rien ne sort", e.status_code == 401)
+try:
+    asyncio.run(esp["exporter_echanges"](_Requete("Bearer jeton-direction"), format="csv",
+                                         utilisateur=None, q=None))
+    verifier("l'export est réservé au super-administrateur (la direction est refusée)", False)
+except _Http as e:
+    verifier("l'export est réservé au super-administrateur (la direction est refusée)", e.status_code == 403)
+try:
+    asyncio.run(esp["ticket_export"](types.SimpleNamespace(format="csv", utilisateur=None, q=None),
+                                     current_user=types.SimpleNamespace(id="u-dir", role="direction")))
+    verifier("… et le ticket ne s'obtient pas non plus", False)
+except _Http as e:
+    verifier("… et le ticket ne s'obtient pas non plus", e.status_code == 403)
 REQUETES.clear()
 vue = asyncio.run(esp["get_echanges"](current_user=admin, jours=7, limite=40, page=2, utilisateur=None, q=None))
 verifier("la console elle-même : une page de 40, du plus récent au plus ancien, avec le détail rapproché",
@@ -456,6 +559,9 @@ verifier("la console elle-même : une page de 40, du plus récent au plus ancien
 tsx_src = (FRONTEND / "components" / "dashboard" / "Echanges.tsx").read_text(encoding="utf-8")
 verifier("la console porte les boutons d'export (CSV et JSON)",
          "/api/dashboard/echanges/export" in tsx_src and "Exporter" in tsx_src)
+verifier("l'écran demande un ticket et laisse le navigateur écrire le fichier (plus de Blob géant)",
+         "export/ticket" in tsx_src and "createObjectURL" not in tsx_src and "res.blob()" not in tsx_src
+         and "Bearer ${token}" in tsx_src and "?ticket=" in tsx_src)
 
 print()
 if echecs:

@@ -79,29 +79,101 @@ const ALL_SUB_TABS: { key: SubTab; label: string; roles?: string[]; permission?:
   { key: "cles", label: "Clés API", roles: ["super_admin"] },
 ]
 
-/** Les cases des dossiers de la boîte. La réception n'y est pas : toujours ouverte. */
+/** Les dossiers de la boîte rangés en ARBRE, d'après leur chemin (« Clients/Martin/Devis »). */
+interface NoeudDossier { cle: string; libelle: string; dossier: DossierBoite | null; enfants: NoeudDossier[] }
+
+export function arbreDossiers(dossiers: DossierBoite[]): NoeudDossier[] {
+  const racines: NoeudDossier[] = []
+  const parCle = new Map<string, NoeudDossier>()
+  // Le préfixe système de Gmail n'est pas un niveau que l'on choisit.
+  const chemin = (d: DossierBoite) => (d.nom.startsWith("[Gmail]/") ? d.nom.slice(8) : d.nom).split("/").filter(Boolean)
+  const tries = [...dossiers].sort((a, b) => chemin(a).length - chemin(b).length || a.libelle.localeCompare(b.libelle, "fr"))
+  for (const d of tries) {
+    const segments = chemin(d)
+    let niveau = racines
+    let cle = ""
+    segments.forEach((seg, i) => {
+      cle = cle ? `${cle}/${seg}` : seg
+      let noeud = parCle.get(cle)
+      if (!noeud) {
+        noeud = { cle, libelle: i === segments.length - 1 ? (segments.length > 1 ? seg : d.libelle) : seg, dossier: null, enfants: [] }
+        parCle.set(cle, noeud)
+        niveau.push(noeud)
+      }
+      if (i === segments.length - 1) noeud.dossier = d
+      niveau = noeud.enfants
+    })
+  }
+  const trier = (liste: NoeudDossier[]) => {
+    liste.sort((a, b) => a.libelle.localeCompare(b.libelle, "fr"))
+    liste.forEach((n) => trier(n.enfants))
+  }
+  trier(racines)
+  // Les envoyés restent en tête, comme le serveur les propose.
+  racines.sort((a, b) => Number(b.dossier?.nom === "envoyes") - Number(a.dossier?.nom === "envoyes"))
+  return racines
+}
+
+/** Tous les dossiers réels sous un nœud (lui compris). */
+function nomsSous(n: NoeudDossier): string[] {
+  return [...(n.dossier ? [n.dossier.nom] : []), ...n.enfants.flatMap(nomsSous)]
+}
+
+/** Les cases des dossiers de la boîte. La réception n'y est pas : toujours ouverte.
+ *
+ * EN CASCADE (15/09, Duret, demande de Noa : « quand il y en a beaucoup c'est
+ * horrible »). Seuls les dossiers de premier degré s'affichent ; cocher un
+ * dossier montre ses sous-dossiers, et ainsi de suite. Décocher un dossier
+ * décoche aussi ce qu'il contient : un choix qu'on ne voit plus ne doit pas
+ * rester actif en douce. Un niveau qui n'existe pas comme dossier dans la
+ * boîte (« Clients » quand seul « Clients/Martin » existe) s'affiche en simple
+ * titre, ouvert. Rien ne change côté serveur : un dossier coché ouvre CE
+ * dossier, pas ses sous-dossiers.
+ */
 function CasesDossiers({ dossiers, choix, onChange }: {
   dossiers: DossierBoite[]; choix: string[]; onChange: (choix: string[]) => void
 }) {
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-      {dossiers.map((d) => {
-        const coche = choix.includes(d.nom)
+  const arbre = arbreDossiers(dossiers)
+  const basculer = (n: NoeudDossier, coche: boolean) => {
+    if (!n.dossier) return
+    if (coche) onChange(choix.includes(n.dossier.nom) ? choix : [...choix, n.dossier.nom])
+    else { const retires = new Set(nomsSous(n)); onChange(choix.filter((x) => !retires.has(x))) }
+  }
+  const rendre = (liste: NoeudDossier[], degre: number): React.ReactNode => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginLeft: degre ? 22 : 0,
+                  paddingLeft: degre ? 10 : 0, borderLeft: degre ? "2px solid var(--marque-border)" : "none" }}>
+      {liste.map((n) => {
+        const coche = !!n.dossier && choix.includes(n.dossier.nom)
+        const ouvert = !n.dossier || coche
+        const cochesDessous = nomsSous(n).filter((x) => x !== n.dossier?.nom && choix.includes(x)).length
         return (
-          <label key={d.nom} className="sym-tap" style={{
-            display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer",
-            padding: "6px 12px", borderRadius: "var(--marque-radius-pill)",
-            border: coche ? "1px solid var(--marque-primary)" : "1px solid var(--marque-border)",
-            background: coche ? "var(--marque-surface)" : "transparent", color: "var(--marque-text-body)",
-          }}>
-            <input type="checkbox" checked={coche}
-                   onChange={(e) => onChange(e.target.checked ? [...choix, d.nom] : choix.filter((x) => x !== d.nom))} />
-            {d.libelle}
-          </label>
+          <div key={n.cle}>
+            {n.dossier ? (
+              <label className="sym-tap" style={{
+                display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer",
+                padding: "5px 12px", borderRadius: "var(--marque-radius-pill)",
+                border: coche ? "1px solid var(--marque-primary)" : "1px solid var(--marque-border)",
+                background: coche ? "var(--marque-surface)" : "transparent", color: "var(--marque-text-body)",
+              }}>
+                <input type="checkbox" checked={coche} onChange={(e) => basculer(n, e.target.checked)} />
+                {n.libelle}
+                {n.enfants.length > 0 && (
+                  <span style={{ fontSize: 11, color: "var(--marque-text-muted)" }}>
+                    {coche ? "▾" : "▸"} {n.enfants.length} sous-dossier{n.enfants.length > 1 ? "s" : ""}
+                    {cochesDessous ? ` · ${cochesDessous} coché${cochesDessous > 1 ? "s" : ""}` : ""}
+                  </span>
+                )}
+              </label>
+            ) : (
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--marque-text-muted)", padding: "4px 2px" }}>{n.libelle}</div>
+            )}
+            {ouvert && n.enfants.length > 0 && <div style={{ marginTop: 4 }}>{rendre(n.enfants, degre + 1)}</div>}
+          </div>
         )
       })}
     </div>
   )
+  return <div data-testid="cases-dossiers" style={{ maxHeight: 360, overflowY: "auto", paddingRight: 4 }}>{rendre(arbre, 0)}</div>
 }
 
 /* ---------- USERS TAB ---------- */

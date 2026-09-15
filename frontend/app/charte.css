@@ -113,4 +113,21 @@
   /* ── Typographie ──────────────────────────────────────────────────
      La police fait partie de l'identité au même titre que les couleurs. */
   --marque-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* ── Console développeur (Superviseur, Échanges) ─────────────────────
+     Un bandeau SOMBRE, lisible en monospace. Il empruntait la couleur
+     principale et les textes d'état de la charte : chez un client dont la
+     couleur principale est claire ou moyenne, le texte d'état se posait sur
+     sa propre teinte (relevé chez Duret le 15/09 : « bleu sur bleu, on voit
+     rien »). La console a donc ses tons à elle, réglés ici par client. */
+  --marque-console-fond:     #0B0E11;
+  --marque-console-panneau:  #151B22;
+  --marque-console-panneau2: #0B0E11;
+  --marque-console-bord:     #2A3440;
+  --marque-console-texte:    #F2F5F8;
+  --marque-console-attenue:  #9AA6B2;
+  --marque-console-vert:     #4ADE80;
+  --marque-console-ambre:    #FACC15;
+  --marque-console-rouge:    #F87171;
+  --marque-console-bleu:     #7CC4F4;
 }

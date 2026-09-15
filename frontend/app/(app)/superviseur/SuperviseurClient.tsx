@@ -6,12 +6,12 @@ interface Props { apiUrl: string; token: string }
 
 const POLL_MS = 3000
 
-// Palette console (bandeau sombre) — charte Duret & Sols (bleu), variables CSS uniquement.
+// Palette console (bandeau sombre) — ses tons propres, réglés par client dans charte.css (`--marque-console-*`).
 // Monospace conservé : fonction terminal (alignement des logs).
 const C = {
-  bg: "var(--marque-text-primary)", panel: "var(--marque-primary)", panel2: "var(--marque-text-primary)", border: "var(--marque-primary-hover)",
-  text: "var(--marque-text-on-dark)", dim: "var(--marque-text-muted)", green: "var(--marque-paid-text)", amber: "var(--marque-pending-text)",
-  red: "var(--marque-error-text)", blue: "var(--marque-progress-text)", mono: "ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace",
+  bg: "var(--marque-console-fond)", panel: "var(--marque-console-panneau)", panel2: "var(--marque-console-panneau2)", border: "var(--marque-console-bord)",
+  text: "var(--marque-console-texte)", dim: "var(--marque-console-attenue)", green: "var(--marque-console-vert)", amber: "var(--marque-console-ambre)",
+  red: "var(--marque-console-rouge)", blue: "var(--marque-console-bleu)", mono: "ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace",
 }
 
 async function getJSON(apiUrl: string, path: string, token: string) {
@@ -78,7 +78,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
     <div style={{ minHeight: "calc(100vh - 64px)", background: C.bg, color: C.text, fontFamily: C.mono, padding: "20px 24px" }}>
       <style>{`
         @keyframes symFadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes symLivePulse { 0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--marque-paid-text) 55%, transparent)} 50%{box-shadow:0 0 0 7px transparent} }
+        @keyframes symLivePulse { 0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--marque-console-vert) 55%, transparent)} 50%{box-shadow:0 0 0 7px transparent} }
         .sym-fade{animation:symFadeUp .45s ease both}
         .sym-live{animation:symLivePulse 1.7s ease-in-out infinite}
         .sym-logrow{transition:background-color .15s ease}
@@ -194,7 +194,7 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
             <div style={{ fontSize: 12, color: C.dim, marginBottom: 10 }}>fournisseurs LLM</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {system?.providers && Object.entries(system.providers).map(([p, up]: any) => (
-                <span key={p} style={{ fontSize: 11, padding: "3px 8px", borderRadius: "var(--marque-radius-pill)", background: up ? "var(--marque-paid-bg)" : C.panel2, color: up ? C.green : C.dim, border: `1px solid ${up ? "var(--marque-paid-text)" : C.border}` }}>
+                <span key={p} style={{ fontSize: 11, padding: "3px 8px", borderRadius: "var(--marque-radius-pill)", background: up ? "color-mix(in srgb, var(--marque-console-vert) 16%, transparent)" : C.panel2, color: up ? C.green : C.dim, border: `1px solid ${up ? "var(--marque-console-vert)" : C.border}` }}>
                   {up ? "●" : "○"} {p}
                 </span>
               ))}

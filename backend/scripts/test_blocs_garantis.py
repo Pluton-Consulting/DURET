@@ -117,7 +117,8 @@ verifier("octets_lisibles : 512 → « 512 o », 2048 → « 2,0 Ko »",
          aff.octets_lisibles(512) == "512 o" and aff.octets_lisibles(2048) == "2,0 Ko")
 
 # ── 2. agent1 : le garde-fou restitue et efface ─────────────────────────
-espace = {"_tracer_filet": lambda *a, **k: None, "AgentState": dict}
+espace = {"_tracer_filet": lambda *a, **k: None, "AgentState": dict,
+          "logger": __import__("logging").getLogger("banc")}
 extraire(BACKEND / "agents" / "agent1.py",
          {"_blocs_garantis", "_blocs_de", "_designe_le_meme", "_plat_nom",
           "_signature_bloc", "_re_livrables", "_BLOC_UI_RE"}, espace)

@@ -1116,12 +1116,23 @@ Voici les messages trouvés :
                 "repassera par sa validation.")
         # LE RELECTEUR A RELEVÉ DES AFFIRMATIONS NON PROUVÉES (15/09) : la
         # rédaction est reprise avec ce qu'il a vu, et la réponse relue.
+        #
+        # À LA FIN DU MESSAGE, PAS DANS LE SYSTÈME (15/09, Duret 16:07). Posé en
+        # queue d'un prompt système de 60 000 caractères, suivi de la réponse
+        # relue en entier, le relevé a obtenu la MÊME réponse, au caractère
+        # près — « analysés dans le dossier souche (CCTP des lots 11 et 12,
+        # règlement de consultation) » alors que seul le lot 12 avait été lu.
+        # La consigne vient donc en dernier, là où le modèle la lit, et la
+        # réponse relue n'est plus un modèle à recopier.
         from agents.verificateur import pour_la_redaction
         _releve = pour_la_redaction(state.get("verification"))
         if _releve:
             redaction_a_reprendre = True
-            system_prompt += (_releve + "\nTa réponse précédente était :\n"
-                              + str((state.get("verification") or {}).get("reponse_relue") or "")[:3000])
+            human_content += (
+                "\n\n" + _releve.strip()
+                + "\nVoici la réponse relue, À NE PAS RECOPIER — réécris-la en retirant "
+                  "chaque affirmation relevée :\n« "
+                + str((state.get("verification") or {}).get("reponse_relue") or "")[:3000] + " »")
         # La raison d'une sortie sans résultat est expliquée par le modèle, dans
         # ses mots : l'utilisateur mérite une phrase, pas un code d'erreur.
         note = state.get("note_sortie")
@@ -2459,9 +2470,12 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
         # dans le texte brut, et le même fichier s'affichait DEUX fois.
         if ref and (ref in affiches or ref in texte):
             continue
+        # PAS UN FILET (15/09) : le skill dit au modèle de NE PAS écrire la carte
+        # (« elle s'affiche automatiquement »). La poser ici est le chemin
+        # normal ; le tracer « success=False » faisait lire à la Console une
+        # erreur à chaque document produit. Les vrais échecs (invention,
+        # prétention sans geste) gardent leur trace.
         logger.info("Livrable restitué à l'écran : %s", ref)
-        _tracer_filet(state, "livrable_restitue", "absent_de_la_redaction",
-                      reference=ref)
         affiches.add(ref)
         texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()
     return texte
@@ -2649,8 +2663,8 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
         # La signature s'ajoute à la volée : deux résultats garantis IDENTIQUES
         # dans le même tour (le skill rappelé tel quel) n'affichent qu'un bloc.
         presentes.add(_signature_bloc(bloc))
-        _tracer_filet(state, "livrable_restitue", "bloc_garanti_absent",
-                      type=str(bloc.get("type") or ""))
+        # Chemin normal, pas un échec : voir `_livrables_a_l_ecran` (15/09).
+        logger.debug("Bloc garanti posé : %s", bloc.get("type"))
         texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()
     return texte
 
@@ -4066,6 +4080,21 @@ async def verifier_node(state: AgentState, config=None) -> dict:
             blocs.append(" · ".join(str(x) for x in (
                 b.get("type"), b.get("titre") or b.get("title") or b.get("nom") or b.get("name")
                 or b.get("subject"), b.get("url")) if x))
+    # Les cartes GARANTIES (fichier produit, fichier lu, tableau d'un listage)
+    # sont posées par le serveur APRÈS la relecture : sans elles, le relecteur
+    # lisait « composants : aucun » et contestait « la carte s'affiche sous
+    # cette réponse » — une affirmation vraie (15/09).
+    for r in resultats:
+        brut = str((r or {}).get("resultat_masque") or "") if isinstance(r, dict) and r.get("ok") else ""
+        i = brut.find("{")
+        try:
+            d = _json_v.loads(brut[i:]) if i >= 0 else None
+        except ValueError:
+            d = None
+        if isinstance(d, dict):
+            for b in _blocs_de(d.get("bloc_ui")):
+                blocs.append(" · ".join(str(x) for x in (
+                    b.get("type"), b.get("titre") or b.get("nom"), "(posé par le serveur)") if x))
     resume_resultats = "\n".join(
         f"- {r.get('skill') or '?'} ({'réussi' if r.get('ok') else 'ÉCHEC'}) : "
         f"{_essentiel(str(r.get('resultat_masque') or ''), 1500)}" for r in resultats[-12:])

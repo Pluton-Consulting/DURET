@@ -128,7 +128,7 @@ esp = {"logger": _Journal(), "get_llm": lambda tier: _LLM(), "LLMTier": types.Si
        "_tracer_filet": lambda *a, **k: None, "MAX_FORCAGES_PAR_TOUR": 2,
        "_re_livrables": re, "AgentState": dict}
 manque = extraire(racine / "agents" / "agent1.py",
-                  {"verifier_node", "route_apres_verifier", "_BLOC_UI_RE"}, esp)
+                  {"verifier_node", "route_apres_verifier", "_BLOC_UI_RE", "_blocs_de"}, esp)
 # Le texte visible et la compaction des résultats ont leurs propres bancs : ici,
 # on juge la relecture, pas eux.
 esp["_texte_visible"] = lambda t: t
@@ -177,6 +177,19 @@ if "verifier_node" in esp:
                                            "tool_results": [RESULTAT_SIGNATURE],
                                            "pending_action": {"skill": "envoyer_email"}}))
     verifier("une carte d'accord ne se relit pas", r5 == {} and not APPELS)
+
+    # 15/09, Duret 16:07 : la carte du Word produit est posée par le serveur
+    # APRÈS la relecture ; le relecteur lisait « composants : aucun » et
+    # contestait une affirmation vraie.
+    APPELS.clear()
+    _LLM.verdict = '{"verdict": "ok", "problemes": []}'
+    produit = {"skill": "produire_document", "ok": True, "args": {},
+               "resultat_masque": json.dumps({"message_final": "Word produit", "bloc_ui": {
+                   "type": "fichier", "url": "/api/documents/x", "nom": "MEMOIRE TECHNIQUE.docx"}})}
+    asyncio.run(esp["verifier_node"]({"query": "fais le mémoire en word", "tool_results": [produit],
+                                       "llm_response": "Le mémoire est prêt, sa carte s'affiche sous cette réponse."}))
+    verifier("le relecteur voit les cartes que le serveur posera",
+             APPELS and "MEMOIRE TECHNIQUE.docx" in APPELS[-1] and "posé par le serveur" in APPELS[-1])
     _LLM.panne = True
     r6 = asyncio.run(esp["verifier_node"](etat))
     _LLM.panne = False
@@ -189,6 +202,11 @@ verifier("le graphe envoie au vérificateur ce qui partait à l'écran (llm et t
          '"rehydrate": "verifier"}' in src and '{"llm": "llm", "rehydrate": "verifier"}' in src
          and 'graph.add_node("verifier", verifier_node)' in src)
 verifier("la rédaction reprise porte le relevé", "pour_la_redaction(state.get(\"verification\"))" in src)
+_i = src.index("pour_la_redaction(state.get(\"verification\"))")
+verifier("le relevé vient À LA FIN du message, pas en queue du système (16:07 : même texte réécrit)",
+         "human_content += (" in src[_i:_i + 600] and "NE PAS RECOPIER" in src[_i:_i + 900])
+verifier("une carte posée par construction n'est plus tracée comme un échec du modèle",
+         '"livrable_restitue", "absent_de_la_redaction"' not in src and '"bloc_garanti_absent"' not in src)
 verifier("le forceur reçoit le geste manquant", '_verif.get("action_manquante")' in src)
 etat_src = (racine / "agents" / "state.py").read_text(encoding="utf-8")
 verifier("`verification` est déclarée dans l'état", "verification: Optional[dict]" in etat_src)

@@ -1095,7 +1095,11 @@ async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: st
             raise LookupError(f"Le message « {message.get('objet')} » n'a pas de pièce jointe.")
         voulu = (nom or "").strip().lower()
         choisie = next((p for p in pieces if voulu and voulu in str(p.get("nom") or "").lower()), None)
-        if not choisie and (len(pieces) == 1 or not voulu):
+        # UN NOM DEMANDÉ QUI NE CORRESPOND PAS N'EST PAS « LA SEULE PIÈCE » (15/09,
+        # Duret 16:12) : « Cadre_de_reponse…xlsx » a rendu « Lot 11 Renonciation
+        # AF.docx » — l'unique pièce du dernier mail, lue et présentée comme le
+        # cadre demandé. Sans nom, la seule pièce reste la bonne réponse.
+        if not choisie and not voulu:
             choisie = pieces[0]
         if not choisie:
             raise LookupError("Aucune pièce jointe de ce nom dans ce message : "

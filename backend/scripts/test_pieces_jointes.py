@@ -237,6 +237,24 @@ try:
         verifier("un nom inconnu : refus qui liste les pièces", False)
     except LookupError as e:
         verifier("un nom inconnu : refus qui liste les pièces", "devis.pdf" in str(e))
+    # 15/09, Duret 16:12 : « Cadre_de_reponse…xlsx » demandé, « Lot 11
+    # Renonciation AF.docx » rendu — l'unique pièce du dernier mail.
+    async def _ouvrir_une(boite, identifiant):
+        return {"ref": "r", "objet": "Renonciation", "de": "x@ext.fr", "a": "", "date": "", "date_iso": "",
+                "lu": False, "apercu": "x", "corps": "", "pieces_jointes": [
+                    {"id": "ATT9", "nom": "Lot 11 Renonciation AF.docx", "taille": 100, "type": "application/msword"}]}
+    espace["_ouvrir_outlook"] = _ouvrir_une
+    telechargements.clear()
+    try:
+        asyncio.run(lire_piece("nath@x.fr", nom="Cadre_de_reponse_2026-TX-0003- LOT03.xlsx"))
+        verifier("un nom qui ne correspond pas à l'UNIQUE pièce : refus, pas cette pièce", False, telechargements)
+    except LookupError as e:
+        verifier("un nom qui ne correspond pas à l'UNIQUE pièce : refus, pas cette pièce",
+                 not telechargements and "Renonciation" in str(e))
+    telechargements.clear()
+    asyncio.run(lire_piece("nath@x.fr"))
+    verifier("sans nom, l'unique pièce reste la réponse", telechargements and telechargements[-1][2] == "ATT9")
+    espace["_ouvrir_outlook"] = _ouvrir
 except Exception as e:  # noqa: BLE001
     verifier("lire_message/lire_piece s'exécutent sur le doublé", False, repr(e))
 

@@ -243,6 +243,65 @@ except ImportError:
     pass
 
 
+# ── VIVANT N'EST PAS PRÊT (16/09, audit D-26) ──────────────────────────────
+# `/api/health` disait « ok » dès que le processus répondait : il disait donc
+# « ok » avec un schéma incomplet, une base injoignable ou la mémoire des
+# conversations en mode volatil. On sépare :
+#   · /api/health  — LIVENESS : le processus vit (c'est tout, et c'est voulu) ;
+#   · /api/ready   — READINESS : base joignable, migrations du disque toutes
+#                    suivies, checkpointer durable — et le COMMIT livré.
+# Une source facultative en panne (NAS, mail, modèle) ne rend pas le site
+# inutilisable : elle est DITE dégradée, elle n'empêche pas d'être prêt.
+def version_livree() -> dict:
+    """Le commit réellement en service, écrit par `deploy.sh` (backend/.version)."""
+    fiche = {}
+    try:
+        import pathlib as _pathlib
+        for ligne in (_pathlib.Path(__file__).with_name(".version")).read_text(encoding="utf-8").splitlines():
+            if "=" in ligne:
+                cle, valeur = ligne.split("=", 1)
+                fiche[cle.strip()] = valeur.strip()
+    except Exception:  # noqa: BLE001 — hors déploiement (poste de dev), on ne sait pas
+        pass
+    return fiche
+
+
+async def _etat_du_service() -> dict:
+    """Ce qui doit être vrai pour servir : base, schéma, mémoire durable."""
+    from pathlib import Path as _Path
+    etat = {"base": False, "schema": False, "checkpointer": False, "manquantes": [],
+            "version": version_livree()}
+    try:
+        from database.connection import get_db
+        async with get_db() as conn:
+            await conn.fetchval("SELECT 1")
+            etat["base"] = True
+            suivies = {r["filename"] for r in await conn.fetch("SELECT filename FROM schema_migrations")}
+        fichiers = {f.name for f in (_Path(__file__).parent / "database" / "migrations").glob("[0-9]*.sql")}
+        etat["manquantes"] = sorted(fichiers - suivies)
+        etat["schema"] = not etat["manquantes"]
+    except Exception as e:  # noqa: BLE001 — une base muette n'est pas « prête »
+        etat["erreur_base"] = str(e)[:200]
+    try:
+        from agents.checkpointer import get_checkpointer
+        saver = await get_checkpointer()
+        etat["checkpointer"] = type(saver).__name__ != "MemorySaver"
+        etat["checkpointer_type"] = type(saver).__name__
+    except Exception as e:  # noqa: BLE001
+        etat["erreur_checkpointer"] = str(e)[:200]
+    etat["pret"] = bool(etat["base"] and etat["schema"] and etat["checkpointer"])
+    return etat
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "duret-pluton"}
+    """LIVENESS : le processus répond. Ne dit RIEN de la base ni du schéma."""
+    return {"status": "ok", "service": "duret-pluton", **version_livree()}
+
+
+@app.get("/api/ready")
+async def ready():
+    """READINESS : ce qu'il faut pour servir vraiment. 503 tant que ça manque."""
+    from fastapi.responses import JSONResponse
+    etat = await _etat_du_service()
+    return JSONResponse(status_code=200 if etat["pret"] else 503, content=etat)

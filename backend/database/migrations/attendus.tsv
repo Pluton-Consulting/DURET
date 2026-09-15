@@ -1,0 +1,61 @@
+# LA LIGNE DE BASE VÉRIFIÉE (16/09, audit D-26).
+#
+# `deploy.sh` marquait TOUTES les migrations comme appliquées dès que la table
+# `users` existait : « la base tourne, donc tout est en place ». Une base qui
+# avait manqué une migration la gardait manquante pour toujours, et personne
+# ne le savait — c'est ainsi qu'un correctif livré ne s'applique jamais.
+#
+# Ici, chaque migration dit l'OBJET qu'elle laisse derrière elle. Au premier
+# déploiement sur une base existante, une migration n'est marquée « appliquée »
+# que si son objet est là ; sinon elle est JOUÉE. Les migrations idempotentes
+# (ADD COLUMN IF NOT EXISTS, INSERT … ON CONFLICT) se rejouent sans dégât.
+#
+# ⚠️ 011_global_config et les migrations de PERMISSIONS (005, 028, 039) sont
+# vérifiées sur une ligne existante, jamais rejouées à l'aveugle : leur rejeu
+# réécrirait des droits personnalisés à l'écran.
+#
+# Format : <fichier de migration>  <TAB>  <requête SQL qui rend t / f>
+001_initial_schema.sql	SELECT to_regclass('public.users') IS NOT NULL AND to_regclass('public.documents') IS NOT NULL
+002_magic_link_tokens.sql	SELECT to_regclass('public.verification_tokens') IS NOT NULL
+003_agent_permissions.sql	SELECT to_regclass('public.user_agent_permissions') IS NOT NULL
+004_user_schedules.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='schedule_start_hour')
+005_super_admin_role.sql	SELECT EXISTS(SELECT 1 FROM roles_permissions WHERE role='super_admin')
+006_direction_merge.sql	SELECT EXISTS(SELECT 1 FROM pg_policies WHERE tablename='messages' AND policyname='messages_user_isolation')
+007_quota_config.sql	SELECT to_regclass('public.role_quota_config') IS NOT NULL
+008_revoked_tokens.sql	SELECT to_regclass('public.revoked_tokens') IS NOT NULL
+009_validations.sql	SELECT to_regclass('public.validations') IS NOT NULL
+010_force_rls.sql	SELECT COALESCE((SELECT relforcerowsecurity FROM pg_class WHERE relname='messages'), false)
+011_global_config.sql	SELECT to_regclass('public.global_config') IS NOT NULL
+012_browser_tasks.sql	SELECT to_regclass('public.browser_tasks') IS NOT NULL
+013_mail.sql	SELECT to_regclass('public.user_mailboxes') IS NOT NULL AND to_regclass('public.mail_style_profiles') IS NOT NULL
+014_agent_tasks.sql	SELECT to_regclass('public.agent_tasks') IS NOT NULL AND to_regclass('public.agent_task_runs') IS NOT NULL
+015_effets_skills.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='validations' AND column_name='payload_hash')
+016_apprentissage.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='skills' AND column_name='enabled')
+017_skills_acces.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='skills' AND column_name='access_level')
+018_cles_api.sql	SELECT to_regclass('public.cles_api') IS NOT NULL
+019_donnees_structurees.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='document_metadata' AND column_name='access_level')
+020_champs_normalises.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='document_metadata' AND column_name='champs')
+021_consignes.sql	SELECT to_regclass('public.consignes') IS NOT NULL
+022_taches_differees.sql	SELECT to_regclass('public.taches_differees') IS NOT NULL
+023_synchronisations.sql	SELECT to_regclass('public.synchronisations') IS NOT NULL
+024_coquilles_catalogue.sql	SELECT NOT EXISTS(SELECT 1 FROM skills WHERE COALESCE(code,'') LIKE '%Squelette g_n_rique%' AND (COALESCE(enabled,true) OR status IN ('validated','stable')))
+025_conversation_memoire.sql	SELECT to_regclass('public.conversation_memoire') IS NOT NULL
+026_connexions_google.sql	SELECT to_regclass('public.connexions_google') IS NOT NULL
+026_reglages.sql	SELECT to_regclass('public.reglages') IS NOT NULL
+027_recherche_documents.sql	SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE indexname='idx_documents_fts_fr')
+028_permissions_manquantes.sql	SELECT EXISTS(SELECT 1 FROM roles_permissions WHERE feature='manage_mailboxes')
+029_concurrence_llm.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='llm_simultanes')
+030_signatures_mail.sql	SELECT to_regclass('public.mail_signatures') IS NOT NULL
+032_profil_utilisateur.sql	SELECT to_regclass('public.profils_utilisateur') IS NOT NULL
+033_trames.sql	SELECT to_regclass('public.trames') IS NOT NULL
+034_sessions_appareil.sql	SELECT to_regclass('public.sessions_appareil') IS NOT NULL
+035_lien_multi_usages.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='verification_tokens' AND column_name='utilisations_max')
+036_planification_mois_jours.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='agent_tasks' AND column_name='origin_thread_id')
+037_factures_suivies.sql	SELECT to_regclass('public.factures_suivies') IS NOT NULL
+038_courrier_suivi.sql	SELECT to_regclass('public.courrier_suivi') IS NOT NULL
+039_acces_mail.sql	SELECT EXISTS(SELECT 1 FROM roles_permissions WHERE feature='access_mail')
+040_profils_boite_partagee.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='dossiers_mail')
+041_code_profil.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='code_pin_hash')
+042_code_profil_lisible.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='code_pin_chiffre')
+043_lecons.sql	SELECT to_regclass('public.lecons') IS NOT NULL
+044_code_admin_premiere_entree.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='code_defaut_le')

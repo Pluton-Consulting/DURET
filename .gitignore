@@ -41,3 +41,8 @@ sessions/
 
 # Captures du banc d interface (regenerees a chaque run)
 frontend/e2e/captures/
+
+# La version livrée, écrite par deploy.sh sur le serveur (jamais versionnée).
+backend/.version
+# Environnement de restauration isolée, produit par restaurer.sh.
+.restauration/

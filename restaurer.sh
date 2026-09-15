@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# =====================================================================
+#  RESTAURER UN JEU DE SAUVEGARDE — dans une copie ISOLÉE (16/09, audit D-23).
+#
+#  Une sauvegarde qu'on n'a jamais restaurée n'est pas une sauvegarde : c'est
+#  une intention. Ce script reconstitue le projet À CÔTÉ de la production —
+#  autre nom de projet Compose, donc AUTRES VOLUMES, autres ports — puis coupe
+#  tout ce qui pourrait sortir : aucune clé d'API, aucune boîte mail reliée,
+#  ni tâches planifiées, ni lecture automatique du NAS. Sans cela, une copie
+#  restaurée enverrait de VRAIS mails aux clients avec de vieux brouillons.
+#
+#  Il ne touche JAMAIS la base ni les volumes de production : il refuse de
+#  tourner sous le nom de projet de production, et ne joue aucun DROP ailleurs
+#  que dans la base de la copie.
+#
+#  USAGE (sur le VPS, depuis le dossier du projet) :
+#      chmod +x restaurer.sh
+#      ./restaurer.sh ~/duret-backups/duret_2026-09-16_0300
+#      # puis, quand les contrôles sont faits :
+#      ./restaurer.sh --arreter
+#
+#  Réglages : PROJET_COPIE (défaut duret-restauration), PORT_FRONT (3100),
+#             PORT_API (8100), BACKUP_PASSPHRASE (si les secrets sont chiffrés).
+# =====================================================================
+set -euo pipefail
+umask 077
+cd "$(dirname "$0")"
+
+PROJET_COPIE="${PROJET_COPIE:-duret-restauration}"
+PORT_FRONT="${PORT_FRONT:-3100}"
+PORT_API="${PORT_API:-8100}"
+DOSSIER_COPIE=".restauration"
+SURCOUCHE="$DOSSIER_COPIE/docker-compose.restauration.yml"
+
+env_get() { awk -F= -v k="$1" '$1==k{sub(/^[^=]*=/,"");sub(/[[:space:]]+#.*$/,"");sub(/[[:space:]]*$/,"");print;exit}' .env; }
+PROJET_PROD="$(env_get COMPOSE_PROJECT_NAME)"
+PROJET_PROD="${PROJET_PROD:-duret-sols}"
+PG_USER="$(env_get POSTGRES_USER)"
+PG_DB="$(env_get POSTGRES_DB)"
+
+# GARDE-FOU N°1 : on ne restaure jamais SUR la production.
+if [ "$PROJET_COPIE" = "$PROJET_PROD" ]; then
+  echo "REFUS : PROJET_COPIE ($PROJET_COPIE) est le projet de PRODUCTION." >&2
+  echo "  Une restauration se fait à côté, jamais par-dessus." >&2
+  exit 1
+fi
+
+COPIE="docker compose -p $PROJET_COPIE --env-file $DOSSIER_COPIE/.env -f docker-compose.yml -f $SURCOUCHE"
+
+if [ "${1:-}" = "--arreter" ]; then
+  echo "==> Arrêt de la copie $PROJET_COPIE (ses volumes sont conservés)…"
+  $COPIE down
+  echo "Pour effacer aussi ses données :  docker volume rm ${PROJET_COPIE}_postgres_data ${PROJET_COPIE}_documents_produits"
+  exit 0
+fi
+
+JEU="${1:-}"
+if [ -z "$JEU" ] || [ ! -d "$JEU" ]; then
+  echo "USAGE : ./restaurer.sh <dossier du jeu de sauvegarde>   (ou --arreter)" >&2
+  exit 1
+fi
+
+echo "==> 1/6  Contrôle du jeu $JEU…"
+[ -f "$JEU/base.sql.gz" ] || { echo "ERREUR : base.sql.gz manquant." >&2; exit 1; }
+( cd "$JEU" && sha256sum -c --quiet EMPREINTES.sha256 ) \
+  || { echo "ERREUR : les empreintes ne correspondent pas — jeu abîmé." >&2; exit 1; }
+sed -n '1,20p' "$JEU/manifeste.txt"
+
+echo "==> 2/6  Configuration ISOLÉE (aucune sortie possible)…"
+mkdir -p "$DOSSIER_COPIE"
+# Le .env de la copie : celui de la production, PRIVÉ DE TOUT CE QUI SORT.
+# Les clés et identifiants deviennent vides ; le lien magique et les tâches
+# planifiées sont coupés. Ce qui n'a pas d'identifiant ne peut rien envoyer.
+awk -F= '
+  BEGIN { OFS="=" }
+  /^(RESEND_API_KEY|SMTP_|MAIL_IMAP_|GOOGLE_|MS_|GMAIL_|OPENAI_|ANTHROPIC_|GROQ_|DEEPSEEK_|OPENROUTER_|LONGCAT_|OLLAMA_|LANGFUSE_|SYNOLOGY_PASSWORD|BROWSER_)/ { print $1 "="; next }
+  /^COMPOSE_PROJECT_NAME=/ { next }
+  /^AGENT_TASKS_ENABLED=/ { next }
+  /^EMBEDDING_WORKER_ENABLED=/ { next }
+  { print }
+' .env > "$DOSSIER_COPIE/.env"
+{
+  echo "COMPOSE_PROJECT_NAME=$PROJET_COPIE"
+  echo "AGENT_TASKS_ENABLED=false"
+  echo "EMBEDDING_WORKER_ENABLED=false"
+  echo "ENVIRONMENT=restauration"
+} >> "$DOSSIER_COPIE/.env"
+
+cat > "$SURCOUCHE" <<YAML
+# Surcouche de RESTAURATION (produite par restaurer.sh) : d'autres ports, et
+# rien qui parle à l'extérieur. Les volumes portent le nom du projet
+# $PROJET_COPIE : ceux de la production ne sont jamais montés ici.
+services:
+  postgres:
+    ports: []
+  backend:
+    ports:
+      - "$PORT_API:8000"
+  frontend:
+    ports:
+      - "$PORT_FRONT:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:$PORT_API"
+  nginx:
+    profiles: ["jamais-en-restauration"]
+  browser-worker:
+    profiles: ["jamais-en-restauration"]
+YAML
+
+echo "==> 3/6  Démarrage de la base de la copie…"
+$COPIE up -d postgres
+cid="$($COPIE ps -q postgres)"
+until [ "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo starting)" = "healthy" ]; do
+  printf '.'; sleep 3
+done
+echo " ok"
+
+echo "==> 4/6  Restauration de la base…"
+gunzip -c "$JEU/base.sql.gz" | $COPIE exec -T postgres psql -q -U "$PG_USER" -d "$PG_DB" >/dev/null
+
+echo "==> 5/6  Restauration des documents, puis coupure des sorties…"
+if [ -f "$JEU/documents.tar.gz" ]; then
+  docker volume create "${PROJET_COPIE}_documents_produits" >/dev/null
+  docker run --rm -v "${PROJET_COPIE}_documents_produits":/cible \
+      -v "$(cd "$JEU" && pwd)":/jeu:ro alpine:3.20 \
+      sh -c 'rm -rf /cible/* && tar xzf /jeu/documents.tar.gz -C /cible'
+fi
+# GARDE-FOU N°2 : les clés vivent AUSSI en base (`cles_api` prime sur le .env).
+# On les retire de la copie, et l'on coupe la lecture automatique du NAS.
+$COPIE exec -T postgres psql -q -U "$PG_USER" -d "$PG_DB" -c "
+  DELETE FROM cles_api;
+  INSERT INTO reglages (nom, valeur) VALUES ('nas_integration_continue', 'desactivee')
+    ON CONFLICT (nom) DO UPDATE SET valeur = 'desactivee';
+" >/dev/null 2>&1 || echo "    (cles_api / reglages absents de ce jeu — rien à couper)"
+
+echo "==> 6/6  Démarrage de l'application restaurée…"
+$COPIE up -d backend frontend
+
+cat <<FIN
+
+Copie restaurée : $PROJET_COPIE
+  application  : http://localhost:$PORT_FRONT      (API : http://localhost:$PORT_API/api/ready)
+  base         : volume ${PROJET_COPIE}_postgres_data
+  documents    : volume ${PROJET_COPIE}_documents_produits
+  sorties      : AUCUNE (clés vidées, boîte mail non reliée, tâches coupées)
+
+LES QUATRE OBJETS À ROUVRIR (recette de l'audit D-23) :
+  1. une CONVERSATION passée : ses messages, ses pièces jointes s'affichent ;
+  2. une TRAME enregistrée : elle se rouvre et se remplit ;
+  3. un DOCUMENT avec image : l'image est là (elle vient du volume restauré) ;
+  4. un BROUILLON de mail lié à un document : le document est toujours joint.
+Notez le temps qu'a pris la reprise et l'heure du dernier point restaurable
+(manifeste du jeu) : c'est ce couple qui dit ce que la maison peut perdre.
+
+Quand c'est fini :  ./restaurer.sh --arreter
+FIN

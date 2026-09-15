@@ -19,7 +19,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-27 | Doublons NAS : plus d'exclusion sur nom+taille | étape 1 faite (copies lues en dernier et reconnues à leur contenu, « toujours apprendre », fichiers écartés retentés et repris à la main, écritures atomiques) ; écran détaillé du tri, budgets et baux, niveaux réactualisés, références et couverture de `nas_chercher` : lots 2 et 4 |
 | D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | fait (verdict typé fail-closed, verrou de ligne, code de première entrée à usage unique + migration 044, clé de chiffrement séparée, borne par origine, script de secours) ; réauthentification ciblée pour l'administration : lot suivant |
 | D-22 | Export CSV neutralisé, export borné, secrets dans les traces | étape 1 faite (cellules inertes, fin bornée + pagination par clé + manifeste, ticket de téléchargement, filtre des secrets sur les handlers et les traces) ; carte des sorties, modes de confidentialité et rétention par type : lot 4 |
-| D-23 / D-26 / D-00 | Scripts de sauvegarde, de déploiement vérifié et procédure de recette | à faire |
+| D-23 / D-26 / D-00 | Scripts de sauvegarde, de déploiement vérifié et procédure de recette | fait (backup.sh complet et vérifié, restaurer.sh isolé, deploy.sh réordonné avec ligne de base vérifiée, readiness séparée de la liveness, RECETTE-LOT1.md) ; exercice de restauration réel : à jouer par Noa |
 
 ## Journal
 
@@ -99,3 +99,17 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   court à usage unique pour que le navigateur écrive le fichier sans Blob géant — jamais le jeton
   dans l'URL. Bancs `test_secrets_journaux` (+8, filtre exécuté sur un logger enfant et une
   exception) et `test_echanges_admin` (+10, export exécuté par ticket et par jeton).
+- 16/09 — D-23 / D-26 / D-00 : `backup.sh` prend désormais la base ET le volume des documents
+  produits (Word, Excel, visuels et leurs propriétaires) ET les secrets (`.env`, `backend/secrets`,
+  chiffrables) ; il écrit dans un dossier provisoire, vérifie (gzip, tar, sha256) puis publie, avec
+  un manifeste (commit, migrations, comptes) — et ne purge qu'ensuite, en gardant toujours les
+  derniers jeux. `restaurer.sh` (nouveau) reconstitue une copie ISOLÉE (autre projet Compose, donc
+  autres volumes, autres ports) et coupe toute sortie : clés vidées dans le `.env` et dans `cles_api`,
+  tâches planifiées et lecture du NAS désactivées ; il refuse de tourner sous le projet de production.
+  `deploy.sh` réordonné : version → build → sauvegarde → base seule → migrations (un échec ARRÊTE la
+  livraison) → schéma vérifié complet → bascule → attente de `/api/ready`. La ligne de base ne dit
+  plus « la base existe donc tout est appliqué » : `migrations/attendus.tsv` donne l'objet attendu de
+  chaque migration, et celle dont l'objet manque est JOUÉE. `main.py` sépare `/api/health` (liveness)
+  de `/api/ready` (base, schéma complet, checkpointer durable, commit livré ; 503 sinon).
+  `RECETTE-LOT1.md` : la procédure de Noa, fiche par fiche, avec le retour arrière et ce que le lot
+  ne prouve pas. Banc `test_deploiement` (34, dont `backup.sh` EXÉCUTÉ contre un docker doublé).

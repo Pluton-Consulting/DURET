@@ -81,7 +81,7 @@ if callable(pv):
 
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("la garde refuse l'essai TEXTE quand le fil porte une image à garder",
-         re.search(r"action\[\"skill\"\] in \(\"tester_visuel\", \"generer_visuel\"\).*?"
+         re.search(r"action\[\"skill\"\] in \((?:\"preparer_visuel\", )?\"tester_visuel\", \"generer_visuel\"\).*?"
                    r"cles_images_du_fil\(state\).*?demande_de_garder_la_photo.*?"
                    r"modifier_visuel", agent1, re.S))
 verifier("le refus passe par SkillError : le modèle se corrige au tour suivant",

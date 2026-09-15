@@ -355,6 +355,33 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
 
 # ── Nœuds ────────────────────────────────────────────────────────────
 
+def _demande_de_retouche(state) -> str:
+    """Les mots de la personne pour une retouche d'image, tels qu'elle les a dits.
+
+    15/09 (fil d4864cdc) : la retouche ne recevait QUE `changements`, une
+    traduction anglaise écrite par un modèle de texte qui n'a jamais vu la
+    photo — « Replace the gravel on the left side of the garage with gravel
+    only » pour « laisse que du gravier sur le côté gauche du garage et le
+    goudron démarre que sur la face avant ». Le moteur d'images, lui, VOIT la
+    photo et lit le français : il reçoit la demande d'origine. Une suite courte
+    (« fais le rendu ») emporte les deux demandes précédentes du fil.
+    """
+    q = (state.get("query") or "").strip()
+    if len(q) >= 80:
+        return q[:1500]
+    avant = []
+    for m in reversed(state.get("messages") or []):
+        if getattr(m, "type", "") != "human" and m.__class__.__name__ != "HumanMessage":
+            continue
+        contenu = getattr(m, "content", "")
+        contenu = (contenu if isinstance(contenu, str) else str(contenu)).strip()
+        if contenu and contenu != q and not contenu.startswith("{"):
+            avant.append(contenu[:600])
+        if len(avant) >= 2:
+            break
+    return " / ".join(list(reversed(avant)) + ([q] if q else []))[:1500]
+
+
 def _derniere_reponse_assistant(state) -> str:
     """La dernière chose que l'assistant a dite dans ce fil, avant ce tour.
 
@@ -1482,6 +1509,12 @@ async def tools_node(state: AgentState, config=None) -> dict:
     # s'exécute, sinon la garantie « ce qui est validé est ce qui part » tombe.
     args = {k: ((state.get("query") or "") if _est_jeton_message(v) else v)
             for k, v in args.items()}
+    # LA DEMANDE EXACTE PART AVEC LA RETOUCHE (15/09) — posée par le serveur,
+    # avant l'empreinte : ce qui est validé est ce qui part au moteur d'images.
+    if action["skill"] == "modifier_visuel" and not str(args.get("demande") or "").strip():
+        demande_retouche = _demande_de_retouche(state)
+        if demande_retouche:
+            args = {**args, "demande": demande_retouche}
     # MÊME LOGIQUE POUR UN TABLEAU JOINT : les lignes du fichier (ou du dernier
     # fichier tabulaire de la conversation) remplacent le jeton. Sans tableau
     # connu, le jeton reste tel quel et le skill dira ce qui manque.
@@ -1639,7 +1672,10 @@ async def tools_node(state: AgentState, config=None) -> dict:
         # garder, l'essai et le tirage depuis un texte sont REFUSÉS : le refus
         # nomme la voie (modifier_visuel, avec la clé de l'image), et le
         # modèle se corrige au tour de boucle suivant.
-        if (action["skill"] in ("tester_visuel", "generer_visuel")
+        # 15/09 : `preparer_visuel` aussi — « fais le rendu » après une photo
+        # jointe est parti préparer un visuel NEUF (questions sur le style et
+        # l'ambiance) au lieu de retoucher la photo du fil.
+        if (action["skill"] in ("preparer_visuel", "tester_visuel", "generer_visuel")
                 and not (args.get("image") or args.get("cle_image"))):
             from agents.annonce import demande_de_garder_la_photo
             cles = cles_images_du_fil(state)

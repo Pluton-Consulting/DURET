@@ -699,7 +699,15 @@ _MODIFIE_SANS_DIRE_QUOI = re.compile(
     r"|\b(?:remplace|change|modifie|transforme|agrandis|reduis|rehausse|surelev"
     r"|abaisse|monte|descend|elargis|retrecis|deplace|decale|enleve|supprime"
     r"|retire|ajoute|rajoute|mets|met|pose|colore|repeins)\w*\b"
-    r"|\ben (?:blanc|noir|gris|beige|bois|pierre|travertin|couleur)\b",
+    r"|\ben (?:blanc|noir|gris|beige|bois|pierre|travertin|couleur)\b"
+    # 15/09 (fil d4864cdc) : « fais le rendu », « fais une allée en goudron en
+    # face du garage », « refais un rendu », « ça doit rester du gravier » —
+    # aucun verbe de la liste, et la photo était remontrée sans retouche.
+    r"|\b(?:refais|represente|redessine|dessine)\w*\b"
+    r"|\bfais(?:[- ]moi| nous)? (?:un |une |le |la |les |des |l['’])?(?:nouveau |nouvelle |autre )?"
+    r"(?:rendu|visuel|image|photo|photomontage|montage|allee|terrasse|massif|muret?|cloture"
+    r"|haie|parking|chemin|bordure|berlinoise|pergola|piscine)"
+    r"|\b(?:doit|doivent) (?:etre|rester|devenir)\b|\b(?:laisse|garde)s? (?:que |uniquement |seulement )?du\b",
     re.IGNORECASE)
 
 # Ce qui n'est PAS une retouche d'image, même si la phrase modifie quelque

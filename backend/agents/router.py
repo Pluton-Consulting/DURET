@@ -544,7 +544,19 @@ _SUITE_ATTENDUE = (
     # paysagiste qui POSE quelque chose dans un jardin :
     "intègr", "integr", "insèr", "inser", "incrust", "implant", "aménag",
     "amenag", "construi", "creus", "pose ", "place ",
+    # 15/09 (fil d4864cdc, 16:59) : « sur cette image, en face du garage ça doit
+    # rester une allée en goudron, le gravier vient jusqu'au bâtiment. Garde le
+    # reste identique » — une consigne, sans verbe de la liste : la vision a
+    # DÉCRIT le photomontage à faire, et aucune image n'a été produite.
+    "doit ", "doivent", "garde ", "garde-", "laisse ", "représent", "represent",
+    "refai", "fais ", "fais-", "photomontage", "montage", "identique",
 )
+
+# Ce que dit la VISION quand elle a compris qu'on attend une image : sa propre
+# réponse annonce le photomontage (« servira de base pour réaliser le
+# photomontage »). La demande ne porte alors pas forcément un mot de la liste.
+_VISION_ANNONCE_UNE_RETOUCHE = ("photomontage", "retouche", "rendu final", "visuel final",
+                               "image modifiée", "image retouchée")
 
 
 async def passer_la_main_node(state: AgentState) -> dict:
@@ -584,7 +596,12 @@ def route_apres_agent2(state: AgentState) -> str:
     if state.get("plan_valide"):
         return "human_gate"                 # on exécute déjà un plan : pas de rebond
     demande = (state.get("query") or "").lower()
-    return "agent1" if any(m in demande for m in _SUITE_ATTENDUE) else "human_gate"
+    if any(m in demande for m in _SUITE_ATTENDUE):
+        return "agent1"
+    reponse = str(state.get("vision_reponse") or "").lower()
+    if state.get("vision_mode") == "reponse" and any(m in reponse for m in _VISION_ANNONCE_UNE_RETOUCHE):
+        return "agent1"
+    return "human_gate"
 
 
 def route_to_agent(state: AgentState) -> str:

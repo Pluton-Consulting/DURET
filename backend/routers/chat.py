@@ -735,6 +735,10 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     # Les fichiers du tour avec leur clé de dépôt : portés par `final` ou par
     # `pending_validation`, selon la façon dont le tour se termine.
     pieces_tour: list = []
+    # Un tour qui s'arrête sur une CARTE D'ACCORD n'a pas de réponse finale, et
+    # ce n'est pas un échec : il attend la personne (15/09, Duret — l'envoi d'un
+    # mail approuvé huit secondes plus tard s'affichait en rouge).
+    attend_un_accord = False
     try:
         async for event in runtime.stream_turn(
             query=data.get("query", ""),
@@ -759,6 +763,8 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                 agent_used = cible
             if event.get("pieces"):
                 pieces_tour = event["pieces"]
+            if event.get("type") == "pending_validation":
+                attend_un_accord = True
             if event.get("type") == "final":
                 final_response = event.get("response") or ""
                 # CE QUE LE TOUR A COÛTÉ. Cette variable valait 0 depuis
@@ -858,8 +864,8 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     # construction.
     await log_action(
         action="chat_request", user_id=str(user.id), agent_id=agent_used,
-        model_used=modele, success=bool(final_response),
-        error_message=None if final_response else "aucune réponse finale",
+        model_used=modele, success=bool(final_response) or attend_un_accord,
+        error_message=(None if final_response or attend_un_accord else "aucune réponse finale"),
         duration_ms=duration_ms,
         tokens_in=int(mesure.get("tokens_in", 0) or 0),
         tokens_out=int(mesure.get("tokens_out", 0) or 0),

@@ -334,6 +334,12 @@ verifier("l'effet du geste et la boîte concernée se lisent, sans aucun contenu
          "effet ${m.effet}" in tsx and "m.mailbox" in tsx
          and "args" not in tsx.split("function detailsLigne")[1][:600])
 
+# 15/09, Duret : un tour qui s'arrête sur une carte d'accord (l'envoi d'un
+# mail, approuvé huit secondes plus tard) s'affichait « ✗ aucune réponse finale ».
+verifier("un tour en attente d'accord n'est pas journalisé comme un échec",
+         'if event.get("type") == "pending_validation":' in chat_src
+         and "success=bool(final_response) or attend_un_accord" in chat_src)
+
 print()
 if echecs:
     print(f"✗ {len(echecs)} échec(s) : " + ", ".join(echecs))

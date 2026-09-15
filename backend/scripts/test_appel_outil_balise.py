@@ -207,7 +207,7 @@ for nom in ("est_une_annonce", "promesse_sans_suite", "cloture_attendue",
             "pretend_avoir_livre", "demande_une_production", "propose_au_lieu_d_agir",
             "renvoie_au_deja_fait", "demande_sur_le_passe", "demande_un_visuel",
             "demande_de_montrer", "decrit_un_contenu_lu", "suite_qui_retouche",
-            "deuxieme_salve_de_questions"):
+            "deuxieme_salve_de_questions", "pretend_brouillon_depose"):
     espace[nom] = getattr(annonce, nom)
 extraire(racine / "agents" / "agent1.py",
          {"route_apres_llm", "route_apres_forcage", "_texte_visible"}, espace)

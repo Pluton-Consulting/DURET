@@ -343,6 +343,8 @@ espace2.update({
     # 02/09 : le filet « une seule salve de questions » traverse aussi
     # `route_apres_llm` — sans lui dans l'espace doublé, la fonction lève.
     "deuxieme_salve_de_questions": _annonce.deuxieme_salve_de_questions,
+    # 15/09 : le brouillon prétendu dans la boîte traverse aussi `route_apres_llm`.
+    "pretend_brouillon_depose": _annonce.pretend_brouillon_depose,
     "_derniere_reponse_assistant": lambda state: "",
     "MAX_FORCAGES_PAR_TOUR": 2,
 })

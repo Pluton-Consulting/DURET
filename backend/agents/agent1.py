@@ -46,7 +46,7 @@ Tu disposes d'une mémoire d'entreprise : fichiers importés (clients, devis, fa
 OÙ EST CHAQUE DONNÉE. Quatre sources, quatre gestes. Choisis le bon AVANT de répondre :
 1. CLIENTS, DEVIS, FACTURES, CHIFFRES (combien, liste, total, chiffre d'affaires, tout ce qu'on sait d'un client) : ce sont des FICHIERS IMPORTÉS, lus de façon EXACTE par `liste_clients`, `liste_fournisseurs`, `fiche_client` et `interroger_donnees`. Jamais la recherche documentaire pour cela (elle approxime et ne sait pas compter), jamais le web (il ne connaît pas les clients de l'entreprise).
 2. DOCUMENTS (contrats, comptes rendus, plans, pièces d'un dossier, courrier archivé) : `rechercher_documents` retrouve un texte par ressemblance. Pour parcourir ou ouvrir les fichiers eux-mêmes : les gestes du serveur de fichiers (`nas_arborescence`, `nas_lister`, `nas_ouvrir`, `nas_lire`, `nas_lire_lot`, `nas_chercher`, `nas_apercu`). `ou_chercher` dit D'ABORD dans quel dossier c'est rangé (carte du classement en mémoire, instantané) : appelle-le avant de parcourir l'arborescence.
-3. MAILS : `boites_mail` pour LISTER les boîtes et adresses mail accessibles ; `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord ; `pieces: true` récupère et LIT ses pièces jointes) ; `lire_piece_jointe` pour UNE pièce jointe (PDF, image, plan DWG/DXF : téléchargeable, aperçu, contenu lu) ; `redaction_email` pour écrire ; `preparer_envois` pour un MÊME mail à PLUSIEURS destinataires (10, 100, sans limite : une carte par destinataire, gabarit à variables {nom} {email} ou corps sur mesure par destinataire, pages de 40 à enchaîner — rien ne part sans validation). Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
+3. MAILS : `boites_mail` pour LISTER les boîtes et adresses mail accessibles ; `check_mails` pour faire le point (résumés, réponses à proposer, avec le COMPTE de la période) ; `lire_mails` pour consulter une boîte ou compter ; `lire_mail` pour OUVRIR un message en entier (une liste ne rend qu'un extrait de chaque message — pour répondre, résumer ou citer un mail, ouvre-le d'abord ; `pieces: true` récupère et LIT ses pièces jointes) ; `lire_piece_jointe` pour UNE pièce jointe (PDF, image, plan DWG/DXF : téléchargeable, aperçu, contenu lu) ; `redaction_email` pour écrire un brouillon (il reste DANS LA CONVERSATION ; pour une retouche, `retoucher: true` : on part de la version précédente) ; `deposer_brouillon` pour le POSER dans le dossier Brouillons de la boîte, sans l'envoyer — ne dis jamais qu'un brouillon est dans la boîte mail sans que ce geste ait réussi ; `preparer_envois` pour un MÊME mail à PLUSIEURS destinataires (10, 100, sans limite : une carte par destinataire, gabarit à variables {nom} {email} ou corps sur mesure par destinataire, pages de 40 à enchaîner — rien ne part sans validation). Ces gestes lisent les messages RÉELS, en direct : la recherche documentaire ne voit que ce qui a été ingéré. Le détail est borné à 25 messages, le total ne l'est pas : pour « combien », cite le total. Pour analyser tout le courrier de l'entreprise (process, activités), la seule voie est `lancer_enrichissement`.
 4. LE WEB (`chercher_web`, `ouvrir_page`, `naviguer`) : UNIQUEMENT pour une information PUBLIQUE qui n'existe pas dans l'entreprise (prix public, norme, réglementation, coordonnées d'un fournisseur, contenu d'un site), ou quand on te le demande. Ne réponds jamais que tu n'as pas accès à internet : c'est faux. Un OBJET qui appartient à l'entreprise n'est pas une DONNÉE de l'entreprise : la puissance du véhicule qu'on vient d'acheter, les dimensions d'une machine, la fiche technique d'un produit se cherchent ici, même quand la phrase dit « notre » ou « nous avons acheté ». Mais ne l'utilise JAMAIS pour les clients, devis, factures, chantiers ou mails : il ne peut rendre que du bruit. Ce qui en vient est EXTERNE : cite les adresses, ne le présente jamais comme une donnée interne.
 La mémoire n'est PAS consultée d'avance : rien ne se passe si tu n'émets pas l'action. Pour une salutation, un remerciement ou une conversation courante, réponds simplement, SANS action et SANS parler de la mémoire d'entreprise. Dès qu'on te demande de FABRIQUER un fichier ou de TOUCHER à un système (créer un document, lire ou déposer un fichier, lire des mails, analyser un DCE), il FAUT émettre les actions : aucune rédaction directe ne produit un document téléchargeable.
 
@@ -131,6 +131,9 @@ TOUR_DUREE_MAX_S = 8 * 60
 # rapport de douze sections, c'est douze `ajouter_document` légitimes.
 MAX_APPELS_MEME_SKILL = 10
 SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
+# Les gestes à qui le SERVEUR donne la conversation en cours (`_fil`).
+SKILLS_QUI_CONNAISSENT_LE_FIL = frozenset({"creer_tache_agent", "redaction_email",
+                                           "deposer_brouillon"})
 # LES GESTES QUI LISENT UN FICHIER. Quand la demande visait UN document et
 # que l'un d'eux a rendu un contenu, le but est atteint : le tour passe à la
 # rédaction au lieu de repartir lister (08/09, 11:09 : neuf listages et une
@@ -347,7 +350,7 @@ from agents.annonce import (est_une_annonce, cloture_attendue, promesse_sans_sui
                             demande_sur_le_passe, demande_un_visuel,
                             suite_qui_retouche, demande_de_montrer,
                             decrit_un_contenu_lu, demande_d_ouvrir_un_seul,
-                            deuxieme_salve_de_questions)
+                            deuxieme_salve_de_questions, pretend_brouillon_depose)
 
 
 # ── Nœuds ────────────────────────────────────────────────────────────
@@ -1584,10 +1587,11 @@ async def tools_node(state: AgentState, config=None) -> dict:
                     "avant/après) : un essai depuis un brief texte réinventerait "
                     "une AUTRE maison. Appelle `modifier_visuel` avec "
                     f'image="{cles[-1]}" et la liste des changements demandés.')
-        if action["skill"] == "creer_tache_agent":
+        if action["skill"] in SKILLS_QUI_CONNAISSENT_LE_FIL:
             # LA TÂCHE SE SOUVIENT DE SA CONVERSATION (08/09) : le fil est posé
             # ici, par le serveur — le modèle ne le connaît pas, et ne doit pas
-            # pouvoir en désigner un autre.
+            # pouvoir en désigner un autre. Le brouillon aussi (15/09) : la
+            # retouche et le dépôt reprennent le dernier de CETTE conversation.
             args = {**args, "_fil": state.get("thread_id")}
         brut = await execute_skill(
             action["skill"], args, user=utilisateur,
@@ -2535,6 +2539,16 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
             return m.group(0)
         if not isinstance(bloc, dict):
             return m.group(0)
+        # LE BROUILLON RECOPIÉ EN CARTE `email` (15/09). Le 11/09, chaque
+        # version d'un brouillon s'affichait deux fois : une carte `email` dont
+        # l'aperçu recopiait le texte (avec un nom de signataire), puis le texte
+        # en prose. La carte du skill fait foi ; une carte `email` dont l'aperçu
+        # EST ce brouillon s'efface. Une carte d'un mail REÇU reste : son aperçu
+        # n'est pas dans notre texte.
+        if bloc.get("type") == "email" and brouillons_garantis and _apercu_du_brouillon(
+                bloc, brouillons_garantis, boites_des_brouillons):
+            _tracer_filet(state, "invention_effacee", "brouillon_recopie_en_carte")
+            return ""
         # Un bloc UNIQUE (les cartes de mail) écrit par le modèle cède la
         # place au bloc mécanique de sa dernière version : il n'en existe
         # qu'un par message, et c'est le skill qui le tient.
@@ -2559,7 +2573,14 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
             return ""
         return m.group(0)
 
+    boites_des_brouillons = [g.get("boite") for g in garantis
+                             if g.get("type") == "reponses_mail" and g.get("boite")]
+    brouillons_garantis = [str(rep.get("reponse") or "") for g in garantis
+                           if g.get("type") == "reponses_mail"
+                           for rep in (g.get("reponses") or []) if isinstance(rep, dict)]
     texte = _BLOC_UI_RE.sub(_retirer, texte).strip()
+    if brouillons_garantis:
+        texte = _sans_recopie_du_brouillon(texte, brouillons_garantis)
     presentes: set[str] = set()
     for brut in _BLOC_UI_RE.findall(texte):
         try:
@@ -2578,6 +2599,77 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
                       type=str(bloc.get("type") or ""))
         texte = (texte + "\n\n```ui\n" + _j.dumps(bloc, ensure_ascii=False) + "\n```").strip()
     return texte
+
+
+def _aplati_texte(t: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(t or "")).encode("ascii", "ignore").decode().lower()
+    return " ".join("".join(c if c.isalnum() else " " for c in t).split())
+
+
+def _apercu_du_brouillon(bloc: dict, brouillons: list, boites=()) -> bool:
+    """Cette carte `email` est-elle une copie du brouillon garanti ?
+
+    Oui si son aperçu est le début du brouillon, ou si elle se donne pour
+    expéditeur la boîte même qui rédige : un mail REÇU vient d'ailleurs.
+    """
+    expediteur = str(bloc.get("from") or "").strip().lower()
+    if expediteur and any(expediteur == str(b or "").strip().lower() for b in boites):
+        return True
+    apercu = _aplati_texte(str(bloc.get("preview") or ""))[:80]
+    if len(apercu) < 25:
+        return False
+    return any(apercu[:60] in _aplati_texte(b) for b in brouillons)
+
+
+def _sans_recopie_du_brouillon(texte: str, brouillons: list) -> str:
+    """Retire du texte le brouillon RECOPIÉ en prose sous sa carte (15/09).
+
+    On ne retire que des suites de paragraphes qui SONT le brouillon (chaque
+    paragraphe se retrouve dans son texte, 60 caractères au moins en tout),
+    et le nom seul qui les suit — le modèle y ajoutait le signataire que la
+    consigne interdit. La phrase qui présente le brouillon, avant ou après,
+    reste. Pur : le banc l'exécute.
+    """
+    corps = [_aplati_texte(b) for b in brouillons if b]
+    if not corps or not texte:
+        return texte
+    paragraphes = [p for p in __import__("re").split(r"\n\s*\n", texte)]
+
+    def _nom_seul(ligne: str) -> bool:
+        ligne = ligne.strip()
+        return (0 < len(ligne) <= 40 and len(ligne.split()) <= 4
+                and not any(c in ligne for c in ".?!:`"))
+
+    def _dans_le_brouillon(p: str) -> bool:
+        if p.lstrip().startswith("```"):
+            return False
+        lignes = [l for l in p.splitlines() if _aplati_texte(l)]
+        # « Bien cordialement,\nBenjamin Durou » : la dernière ligne peut être
+        # le signataire ajouté par le modèle.
+        if len(lignes) > 1 and _nom_seul(lignes[-1]) and not any(
+                _aplati_texte(lignes[-1]) in c for c in corps):
+            lignes = lignes[:-1]
+        return bool(lignes) and all(
+            len(_aplati_texte(l)) >= 3 and any(_aplati_texte(l) in c for c in corps) for l in lignes)
+
+    garder = [True] * len(paragraphes)
+    i = 0
+    while i < len(paragraphes):
+        if not _dans_le_brouillon(paragraphes[i]):
+            i += 1
+            continue
+        j = i
+        while j < len(paragraphes) and _dans_le_brouillon(paragraphes[j]):
+            j += 1
+        if sum(len(_aplati_texte(p)) for p in paragraphes[i:j]) >= 60:
+            for k in range(i, j):
+                garder[k] = False
+            # Le signataire ajouté sous le brouillon : quelques mots, sans phrase.
+            if j < len(paragraphes) and _nom_seul(paragraphes[j]):
+                garder[j] = False
+        i = j
+    return "\n\n".join(p for p, g in zip(paragraphes, garder) if g).strip()
 
 
 def _image_connue(cle: str, state) -> bool:
@@ -3759,6 +3851,12 @@ def route_apres_llm(state: AgentState) -> str:
                  # envoyé au forceur, qui a relancé la recherche déjà faite :
                  # cinquante secondes pour une réponse qui était juste.
                  and not any(r.get("ok") and r.get("skill") in SKILLS_LECTURE_FICHIER
+                             for r in (state.get("tool_results") or [])))
+             # 15/09 : « le brouillon a bien été créé dans votre boîte mail »
+             # (11/09) sans aucun dépôt : le forceur pose le brouillon, qui
+             # est exactement ce que la personne attendait.
+             or (pretend_brouillon_depose(visible)
+                 and not any(r.get("ok") and r.get("skill") == "deposer_brouillon"
                              for r in (state.get("tool_results") or [])))
              # 08/09 : « a été ouvert, voici son contenu » sans qu'un seul
              # geste ait réussi = un contenu inventé → forceur (contexte neuf).

@@ -92,6 +92,7 @@ ACTES = {
     "rediger_email": "je rédige le message",
     "redaction_email": "je rédige le message",
     "envoyer_email": "j'envoie le message",
+    "deposer_brouillon": "je pose le brouillon dans votre boîte",
     "resume_fil_email": "je résume le fil de discussion",
     "apprendre_style_email": "j'apprends le style d'écriture",
     "apprendre_signature": "j'apprends la signature",

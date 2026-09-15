@@ -111,8 +111,12 @@ verifier("le skill lit tous_les_jours / jour_du_mois et les écrit avec le fil d
 verifier("« tous les 3 jours » écrit en interval avec des jours est compris comme every_days",
          'planification["schedule_kind"] = "every_days"' in sk)
 ag1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
-verifier("la boucle d'actions pose le fil (`_fil`) pour creer_tache_agent SEULEMENT, depuis l'état, pas depuis le modèle",
-         'if action["skill"] == "creer_tache_agent":' in ag1 and 'args = {**args, "_fil": state.get("thread_id")}' in ag1)
+# 15/09 : la même porte sert aussi aux gestes du brouillon (retouche, dépôt) —
+# toujours une liste FERMÉE, toujours depuis l'état.
+verifier("la boucle d'actions pose le fil (`_fil`) pour une liste FERMÉE de gestes dont creer_tache_agent, depuis l'état, pas depuis le modèle",
+         'if action["skill"] in SKILLS_QUI_CONNAISSENT_LE_FIL:' in ag1
+         and '"creer_tache_agent"' in ag1.split("SKILLS_QUI_CONNAISSENT_LE_FIL = frozenset(")[1][:120]
+         and 'args = {**args, "_fil": state.get("thread_id")}' in ag1)
 pr = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
 verifier("le catalogue dit les deux rythmes et que le compte rendu revient dans la conversation",
          "tous_les_jours=3" in pr and "jour_du_mois=5" in pr and "compte rendu DANS cette conversation" in pr)

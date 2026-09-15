@@ -233,37 +233,7 @@ async def _envoyer_par_brouillon(jeton: str, boite: str, charge: dict,
             raise RuntimeError("Le serveur de courrier n'a pas rendu "
                                "d'identifiant de brouillon.")
 
-        for p in pieces or []:
-            octets = p.get("octets") or b""
-            nom = p.get("nom") or "piece-jointe"
-            rs = await client.post(
-                f"{base}/{identifiant}/attachments/createUploadSession",
-                json={"AttachmentItem": {
-                    "attachmentType": "file", "name": nom,
-                    "size": len(octets),
-                    "contentType": p.get("mime") or "application/octet-stream"}},
-                headers=entetes)
-            if rs.status_code >= 300:
-                raise RuntimeError(
-                    f"Le téléversement de « {nom} » a été refusé "
-                    f"(HTTP {rs.status_code}) : {rs.text[:200]}")
-            url = (rs.json() or {}).get("uploadUrl")
-            if not url:
-                raise RuntimeError(f"Aucune adresse de téléversement pour « {nom} ».")
-            total = len(octets)
-            for debut in range(0, total, TRONCON):
-                bout = octets[debut:debut + TRONCON]
-                fin = debut + len(bout) - 1
-                # La session de téléversement s'authentifie par son URL : y
-                # rajouter le jeton est une erreur documentée (Graph refuse).
-                rp = await client.put(
-                    url, content=bout,
-                    headers={"Content-Length": str(len(bout)),
-                             "Content-Range": f"bytes {debut}-{fin}/{total}"})
-                if rp.status_code >= 300:
-                    raise RuntimeError(
-                        f"Le téléversement de « {nom} » s'est interrompu "
-                        f"(HTTP {rp.status_code}).")
+        await _televerser_pieces(client, base, identifiant, pieces, entetes)
 
         re_ = await client.post(f"{base}/{identifiant}/send", headers=entetes)
         if re_.status_code >= 300:
@@ -273,6 +243,191 @@ async def _envoyer_par_brouillon(jeton: str, boite: str, charge: dict,
 
     return {"envoye": True, "boite": boite, "destinataire": destinataire,
             "objet": objet, "chemin": "brouillon"}
+
+
+async def _televerser_pieces(client, base: str, identifiant: str, pieces: list,
+                             entetes: dict) -> None:
+    """Pose les pièces sur un brouillon Graph, par sessions de téléversement.
+
+    Extrait du chemin des pièces lourdes (15/09) pour servir aussi au dépôt
+    d'un brouillon dans la boîte : les deux attachent de la même façon.
+    """
+    for p in pieces or []:
+        octets = p.get("octets") or b""
+        nom = p.get("nom") or "piece-jointe"
+        rs = await client.post(
+            f"{base}/{identifiant}/attachments/createUploadSession",
+            json={"AttachmentItem": {
+                "attachmentType": "file", "name": nom,
+                "size": len(octets),
+                "contentType": p.get("mime") or "application/octet-stream"}},
+            headers=entetes)
+        if rs.status_code >= 300:
+            raise RuntimeError(
+                f"Le téléversement de « {nom} » a été refusé "
+                f"(HTTP {rs.status_code}) : {rs.text[:200]}")
+        url = (rs.json() or {}).get("uploadUrl")
+        if not url:
+            raise RuntimeError(f"Aucune adresse de téléversement pour « {nom} ».")
+        total = len(octets)
+        for debut in range(0, total, TRONCON):
+            bout = octets[debut:debut + TRONCON]
+            fin = debut + len(bout) - 1
+            # La session de téléversement s'authentifie par son URL : y
+            # rajouter le jeton est une erreur documentée (Graph refuse).
+            rp = await client.put(
+                url, content=bout,
+                headers={"Content-Length": str(len(bout)),
+                         "Content-Range": f"bytes {debut}-{fin}/{total}"})
+            if rp.status_code >= 300:
+                raise RuntimeError(
+                    f"Le téléversement de « {nom} » s'est interrompu "
+                    f"(HTTP {rp.status_code}).")
+
+
+# ── Le brouillon DANS la boîte ─────────────────────────────────────────────
+#
+# 11/09 (Symbiose) : « je ne le trouve pas dans les brouillons de ma boîte
+# mail ». `redaction_email` écrit un texte dans la conversation et rien
+# d'autre ; aucun geste ne savait le poser dans le dossier Brouillons. Pire,
+# un tour plus loin, l'assistant a affirmé « le brouillon a bien été créé dans
+# votre boîte mail, enregistré comme brouillon », puis s'est contredit au tour
+# suivant. Ce geste existe désormais : le message est posé dans les
+# Brouillons de la boîte, NON envoyé, signature de la boîte comprise — la
+# personne le retrouve dans Outlook, le relit, l'envoie elle-même.
+
+def _message_graph_brouillon(destinataire: str, objet: str, corps: str, cc=None,
+                             html: str = "") -> dict:
+    """Le corps du POST Graph qui crée un brouillon (pur, vérifiable au banc)."""
+    message = dict(_message_graph(destinataire, objet, corps, cc, None, html)["message"])
+    if not destinataire:
+        # Un brouillon peut n'avoir encore aucun destinataire : la personne le
+        # complétera dans sa messagerie.
+        message.pop("toRecipients", None)
+    return message
+
+
+def _dossier_brouillons_imap(listes: list) -> str:
+    """Le dossier des brouillons d'un serveur IMAP, d'après sa liste (LIST).
+
+    L'attribut `\\Drafts` (RFC 6154) fait foi — Gmail en français nomme le
+    dossier « [Gmail]/Brouillons » ; à défaut, les noms courants.
+    """
+    noms = []
+    for ligne in listes or []:
+        texte = ligne.decode("utf-8", "replace") if isinstance(ligne, bytes) else str(ligne)
+        nom = texte.rsplit(' "/" ', 1)[-1].strip().strip('"')
+        if "\\Drafts" in texte:
+            return nom
+        noms.append(nom)
+    for candidat in ("[Gmail]/Brouillons", "[Gmail]/Drafts", "Drafts", "Brouillons", "INBOX.Drafts"):
+        if candidat in noms:
+            return candidat
+    return "Drafts"
+
+
+async def deposer_brouillon(boite: str, destinataire: str, objet: str, corps: str,
+                            cc=None, pieces=None, html: str = "",
+                            en_reponse_a: str | None = None) -> dict:
+    """Pose le message dans le dossier Brouillons de la boîte. N'ENVOIE RIEN.
+
+    `en_reponse_a` : l'identifiant (fournisseur) du message auquel on répond —
+    chez Outlook, le brouillon est alors une vraie réponse (fil, citation du
+    message d'origine), comme le bouton « Répondre ».
+    Lève avec un message en français quand le dépôt est impossible.
+    """
+    from mail.collecte import fournisseur
+    nom = fournisseur()
+    logger.info("Brouillon déposé dans %s via %s (%d pièce(s))", boite, nom, len(pieces or []))
+
+    if nom == "outlook":
+        import httpx
+        from ingestion.connectors.outlook import _jeton
+
+        jeton = await _jeton()
+        entetes = {"Authorization": f"Bearer {jeton}", "Content-Type": "application/json"}
+        base = f"https://graph.microsoft.com/v1.0/users/{boite}/messages"
+        async with httpx.AsyncClient(timeout=180) as client:
+            if en_reponse_a:
+                # createReply garde le fil et cite le message d'origine ; le
+                # texte proposé passe en `comment`, au-dessus de la citation.
+                r = await client.post(f"{base}/{en_reponse_a}/createReply",
+                                      json={"comment": html or corps}, headers=entetes)
+                if r.status_code < 300 and objet:
+                    identifiant = (r.json() or {}).get("id")
+                    maj = {"subject": objet}
+                    if destinataire:
+                        maj["toRecipients"] = [{"emailAddress": {"address": destinataire}}]
+                    await client.patch(f"{base}/{identifiant}", json=maj, headers=entetes)
+            else:
+                r = await client.post(base, json=_message_graph_brouillon(
+                    destinataire, objet, corps, cc, html), headers=entetes)
+            if r.status_code == 403:
+                raise RuntimeError(
+                    "Le serveur de courrier refuse d'écrire dans la boîte : il faut "
+                    "accorder l'autorisation « Mail.ReadWrite » (application) dans le "
+                    "portail Azure, avec le consentement d'un administrateur.")
+            if r.status_code >= 300:
+                raise RuntimeError(
+                    f"Le brouillon n'a pas pu être créé (HTTP {r.status_code}) : {r.text[:300]}")
+            donnees = r.json() or {}
+            identifiant = donnees.get("id")
+            if not identifiant:
+                raise RuntimeError("Le serveur de courrier n'a pas rendu d'identifiant de brouillon.")
+            await _televerser_pieces(client, base, identifiant, pieces, entetes)
+        return {"depose": True, "envoye": False, "boite": boite, "dossier": "Brouillons",
+                "objet": objet, "destinataire": destinataire or None,
+                "lien": donnees.get("webLink")}
+
+    import base64 as _b64
+    brut_b64 = _mime_gmail(boite, destinataire or "", objet, corps, cc, pieces, html)
+
+    if nom == "imap":
+        import asyncio as _asyncio
+        from mail import imap
+        try:
+            dossier = await _asyncio.to_thread(imap.deposer, _b64.urlsafe_b64decode(brut_b64))
+        except Exception as e:  # noqa: BLE001 — imaplib lève ses propres types
+            raise RuntimeError(f"Le brouillon n'a pas pu être déposé dans la boîte : {str(e)[:300]}") from e
+        return {"depose": True, "envoye": False, "boite": boite, "dossier": dossier,
+                "objet": objet, "destinataire": destinataire or None}
+
+    import asyncio
+
+    def _travail() -> None:
+        try:
+            from ingestion.connectors.gmail import _service_envoi
+        except ImportError as e:
+            raise RuntimeError(
+                "Ce projet n'a pas de connecteur Gmail : le dépôt de brouillon n'est "
+                "pas configuré pour ce fournisseur de courrier.") from e
+        service = _service_envoi(boite)
+        corps_api = {"message": {"raw": brut_b64}}
+        if en_reponse_a:
+            # Gmail range un brouillon dans un fil par son `threadId`, pas par
+            # l'identifiant du message : on le lui demande.
+            try:
+                fil = service.users().messages().get(
+                    userId="me", id=en_reponse_a, format="minimal").execute().get("threadId")
+                if fil:
+                    corps_api["message"]["threadId"] = fil
+            except Exception:  # noqa: BLE001 — sans fil, le brouillon reste valable
+                pass
+        service.users().drafts().create(userId="me", body=corps_api).execute()
+
+    try:
+        await asyncio.to_thread(_travail)
+    except RuntimeError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        texte = str(e)
+        if "insufficient" in texte.lower() or "403" in texte:
+            raise RuntimeError(
+                "Le serveur de courrier refuse d'écrire un brouillon : le consentement "
+                "ne porte pas la composition (gmail.compose). Reliez à nouveau la boîte.") from e
+        raise RuntimeError(f"Le dépôt du brouillon a échoué : {texte[:300]}") from e
+    return {"depose": True, "envoye": False, "boite": boite, "dossier": "Brouillons",
+            "objet": objet, "destinataire": destinataire or None}
 
 
 async def envoyer_message(boite: str, destinataire: str, objet: str,

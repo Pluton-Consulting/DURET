@@ -526,6 +526,30 @@ def piece(uid: str, rang: str, dossier: str = "INBOX") -> bytes:
     raise LookupError(f"pièce {rang} absente du message {uid}")
 
 
+def deposer(brut: bytes) -> str:
+    """Pose un message MIME dans le dossier Brouillons (APPEND, drapeau \\Draft).
+
+    Rend le nom du dossier. Le dossier se reconnaît à son attribut `\\Drafts`
+    (Gmail en français : « [Gmail]/Brouillons »), pas à un nom supposé.
+    """
+    import imaplib as _imaplib
+    from mail.expedition import _dossier_brouillons_imap
+    client = _connexion()
+    try:
+        _type, listes = client.list()
+        dossier = _dossier_brouillons_imap(listes or [])
+        statut, reponse = client.append(f'"{dossier}"', "(\\Draft)",
+                                        _imaplib.Time2Internaldate(datetime.now(timezone.utc)), brut)
+        if statut != "OK":
+            raise RuntimeError(f"le serveur a refusé le dépôt dans « {dossier} » : {reponse}")
+        return dossier
+    finally:
+        try:
+            client.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def envoyer(brut: bytes, expediteur: str, destinataires: list[str]) -> None:
     """Envoie un message MIME déjà construit, par SMTP + STARTTLS."""
     hote = (getattr(settings, "mail_smtp_host", None) or HOTE_SMTP_DEFAUT).strip()

@@ -605,8 +605,16 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "Rédige un BROUILLON de message (11 types : reponse, relance_devis, "
         "relance_impaye, envoi_devis, reclamation, information_chantier, "
         "confirmation_rdv, demande_information, remerciement, refus, interne). "
-        "N'envoie jamais. Meme regle qu'au triage : ne reclame aucune adresse, "
-        "`mailbox` est facultatif (defaut : la boite de la personne connectee).",
+        "N'envoie jamais, et ne le met PAS dans la boite mail : le brouillon reste "
+        "dans la conversation (sa carte modifiable s'affiche seule) — pour le poser "
+        "dans les Brouillons de la boite, c'est `deposer_brouillon`. `contexte` porte "
+        "TOUT ce que la conversation a etabli (faits, precisions donnees plus tot, ce "
+        "qu'il faut garder ou retirer). RETOUCHER le brouillon precedent (« plus "
+        "court », « moins brut », « enleve… », « rajoute… », « le precedent etait "
+        "mieux ») : `retoucher: true` et la demande dans `contexte` — le serveur "
+        "reprend la derniere version et n'y change que ce qui est demande. `ref` : "
+        "la ref du mail auquel on repond. Meme regle qu'au triage : ne reclame "
+        "aucune adresse, `mailbox` est facultatif (defaut : la boite de la personne connectee).",
         # `mailbox` ETAIT REQUIS ICI, et c'etait le dernier verrou du meme piege.
         # Le skill `rediger_email` a bien son repli sur la boite de la personne
         # -- son commentaire le dit -- mais le CATALOGUE exigeait l'adresse, donc
@@ -616,7 +624,20 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         # tombaient juste, puis la redaction s'arretait sur cette question.
         # Le controle de droits reste entier : nommer la boite d'un collegue est
         # refuse comme avant, et l'envoi exige toujours l'ecriture sur la boite.
-        ["type_mail"], ["mailbox", "contexte", "message_recu", "destinataire"]),
+        ["type_mail"], ["mailbox", "contexte", "message_recu", "destinataire",
+                        "retoucher", "version_precedente", "ref"]),
+    "deposer_brouillon": (
+        # 15/09 : « je ne le trouve pas dans les brouillons de ma boite mail »
+        # (11/09) — aucun geste ne savait l'y mettre, et l'assistant l'a
+        # pretendu. Rien ne part : effet interne.
+        "POSE un brouillon dans le dossier Brouillons de la boite mail, "
+        "SANS l'envoyer : la personne le relit et l'envoie elle-meme. Sans `corps`, "
+        "c'est le DERNIER brouillon redige dans cette conversation qui est depose, "
+        "tel quel. `ref` : la ref du mail auquel on repond (le brouillon devient "
+        "une vraie reponse, dans le fil). `destinataire`, `objet`, `cc`, `pieces` "
+        "facultatifs. La signature de la boite est apposee. Ne dis JAMAIS qu'un "
+        "brouillon est dans la boite mail sans que ce geste ait reussi",
+        [], ["corps", "objet", "destinataire", "ref", "cc", "pieces", "mailbox", "signature"]),
     "envoyer_email": (
         # Le pendant de `redaction_email`, qui s'arrete au brouillon. Sans ce
         # geste, l'assistant promettait parfois d'envoyer (defaut n.4 du 27/08)

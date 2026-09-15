@@ -66,7 +66,8 @@ export function ReponsesMail({ titre, reponses, onAction }: Props) {
   const valides = useMemo(() => (reponses || []).filter((r) => r && (r.reponse || "").trim()), [reponses])
   const [choisies, setChoisies] = useState<boolean[]>(() => valides.map(() => true))
   const [textes, setTextes] = useState<string[]>(() => valides.map((r) => (r.reponse || "").trim()))
-  const [transmis, setTransmis] = useState(false)
+  // Ce qui a été demandé : l'envoi, ou le dépôt dans les brouillons de la boîte.
+  const [transmis, setTransmis] = useState<false | "envoi" | "brouillons">(false)
   const n = choisies.filter(Boolean).length
   const toutes = n === valides.length
 
@@ -101,18 +102,33 @@ export function ReponsesMail({ titre, reponses, onAction }: Props) {
   const corriger = (i: number, v: string) =>
     setTextes((t) => t.map((x, j) => (j === i ? v : x)))
 
+  const lignesCochees = () => valides
+    .map((r, i) => ({ r, i }))
+    .filter(({ i }) => choisies[i] && textes[i].trim())
+    .map(({ r, i }) =>
+      `- à ${r.de || "(expéditeur du message)"} — « ${r.objet || "sans objet"} »` +
+      (r.ref ? ` (ref ${r.ref})` : "") + ` :\n${textes[i].trim()}`)
+
   const envoyer = () => {
     if (!onAction || !n || transmis) return
-    const lignes = valides
-      .map((r, i) => ({ r, i }))
-      .filter(({ i }) => choisies[i] && textes[i].trim())
-      .map(({ r, i }) =>
-        `- à ${r.de || "(expéditeur du message)"} — « ${r.objet || "sans objet"} »` +
-        (r.ref ? ` (ref ${r.ref})` : "") + ` :\n${textes[i].trim()}`)
+    const lignes = lignesCochees()
     if (!lignes.length) return
     onAction(
       `Envoie ces ${lignes.length} réponse(s) aux mails correspondants, telles quelles :\n${lignes.join("\n\n")}`)
-    setTransmis(true)
+    setTransmis("envoi")
+  }
+
+  /** LES BROUILLONS DE LA BOÎTE (15/09). « Je ne le trouve pas dans les
+   * brouillons de ma boîte mail » (11/09) : le texte vivait dans le chat
+   * seulement. Ce bouton demande le dépôt RÉEL (`deposer_brouillon`) : rien
+   * ne part, la personne relit et envoie depuis sa messagerie. */
+  const versBrouillons = () => {
+    if (!onAction || !n || transmis) return
+    const lignes = lignesCochees()
+    if (!lignes.length) return
+    onAction(
+      `Dépose ${lignes.length > 1 ? `ces ${lignes.length} messages` : "ce message"} dans les brouillons de ma boîte mail, tel${lignes.length > 1 ? "s" : ""} quel${lignes.length > 1 ? "s" : ""}, sans rien envoyer :\n${lignes.join("\n\n")}`)
+    setTransmis("brouillons")
   }
 
   const Pages = pages > 1 ? (
@@ -210,9 +226,9 @@ export function ReponsesMail({ titre, reponses, onAction }: Props) {
           const qui = [r.prenom, r.nom].filter(Boolean).join(" ")
           return (
             <div key={r.ref || i} className="sym-rm-carte"
-                 data-choisie={String(!!choisies[i])} data-eteinte={String(transmis && !choisies[i])}>
+                 data-choisie={String(!!choisies[i])} data-eteinte={String(!!transmis && !choisies[i])}>
               <label className="sym-rm-tete">
-                <input type="checkbox" checked={!!choisies[i]} disabled={transmis}
+                <input type="checkbox" checked={!!choisies[i]} disabled={!!transmis}
                        onChange={() => basculer(i)}
                        aria-label={`Retenir la réponse à ${qui || r.de || "ce message"}`} />
                 <span className="sym-rm-avatar" aria-hidden="true">{initiale(r.de, qui)}</span>
@@ -240,7 +256,7 @@ export function ReponsesMail({ titre, reponses, onAction }: Props) {
                 <textarea
                   className="sym-rm-texte"
                   value={textes[i]}
-                  disabled={transmis}
+                  disabled={!!transmis}
                   onChange={(e) => corriger(i, e.target.value)}
                   aria-label={`Réponse proposée à ${qui || r.de || "ce message"} — modifiable`}
                 />
@@ -259,12 +275,20 @@ export function ReponsesMail({ titre, reponses, onAction }: Props) {
       {Pages}
 
       <div className="sym-rm-actions">
-        <button type="button" className="sym-rm-envoyer" data-transmis={String(transmis)}
-                onClick={envoyer} disabled={!onAction || !n || transmis}>
-          {transmis
+        <button type="button" className="sym-rm-envoyer" data-transmis={String(!!transmis)}
+                onClick={envoyer} disabled={!onAction || !n || !!transmis}>
+          {transmis === "envoi"
             ? "Demande transmise — chaque envoi vous sera soumis"
-            : `Envoyer ${n ? `les ${n} réponse(s) cochée(s)` : "(aucune réponse cochée)"}`}
+            : transmis === "brouillons"
+              ? "Demande transmise — dépôt dans vos brouillons"
+              : `Envoyer ${n ? `les ${n} réponse(s) cochée(s)` : "(aucune réponse cochée)"}`}
         </button>
+        {!transmis && (
+          <button type="button" className="sym-rm-tout" data-testid="vers-brouillons"
+                  onClick={versBrouillons} disabled={!onAction || !n}>
+            Mettre dans mes brouillons
+          </button>
+        )}
         {!transmis && valides.length > 1 && (
           <button type="button" className="sym-rm-tout"
                   onClick={() => setChoisies(valides.map(() => !toutes))}>

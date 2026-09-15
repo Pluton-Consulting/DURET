@@ -86,7 +86,7 @@ verifier("aucun antécédent (premier tour du fil) : PERMIS",
 
 # ── 4. LE BRANCHEMENT, LU SUR LE SOURCE ──────────────────────────────────
 agent = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
-verifier("le prédicat est importé", "deuxieme_salve_de_questions)" in agent)
+verifier("le prédicat est importé", "deuxieme_salve_de_questions" in agent.split("from agents.annonce import")[1][:900])
 verifier("la dernière réponse de l'assistant est relue dans le fil",
          "def _derniere_reponse_assistant" in agent)
 verifier("le filet ne mord QUE si aucun geste n'a tourné",

@@ -363,6 +363,38 @@ def demande_un_visuel(texte: str) -> bool:
     return bool(_DEMANDE_VISUEL.search(_sans_accent(texte)))
 
 
+# LE BROUILLON PRÉTENDU DANS LA BOÎTE (15/09). Le 11/09, après un simple
+# `redaction_email` : « Oui, le brouillon a bien été créé dans votre boîte mail
+# […] Il est enregistré comme brouillon dans la boîte contact@…, non envoyé.
+# Vous pouvez le retrouver dans vos brouillons » — faux, et la personne l'a
+# cherché. Une phrase AFFIRMATIVE qui met un brouillon dans la boîte ; les
+# négations, questions et propositions (« je peux le mettre dans vos
+# brouillons », « souhaitez-vous… ? ») ne comptent pas. L'appelant vérifie
+# qu'aucun `deposer_brouillon` n'a réussi.
+_LIEU_BOITE = re.compile(r"\b(?:brouillons|boite (?:mail|de reception)|messagerie|outlook)\b", re.I)
+_AFFIRME_DEPOT = re.compile(
+    r"\b(?:a|ai|est|sont|ont) (?:bien |ete |bien ete )*(?:cree|creee|enregistre|enregistree|depose|deposee"
+    r"|place|placee|mis|mise|ajoute|ajoutee|range|rangee|sauvegarde|sauvegardee)\b"
+    r"|\b(?:retrouver|trouverez|figure|se trouve|l'y trouverez)\b", re.I)
+_NIE_OU_PROPOSE = re.compile(
+    r"\b(?:n'|ne |pas\b|jamais|aucun|peux|pourrai|pourrais|pourriez|souhaitez|voulez|voudriez"
+    r"|dois-je|faut-il|pour l'y|pour le mettre|des que|si vous|une fois que)", re.I)
+
+
+def pretend_brouillon_depose(texte: str) -> bool:
+    """Le texte affirme-t-il qu'un brouillon est DANS la boîte mail ?"""
+    if not isinstance(texte, str) or not texte:
+        return False
+    for phrase in re.split(r"(?<=[.!?\n])\s+", _sans_accent(texte)):
+        if "brouillon" not in phrase.lower() and "brouillons" not in phrase.lower():
+            continue
+        if "?" in phrase or _NIE_OU_PROPOSE.search(phrase):
+            continue
+        if _LIEU_BOITE.search(phrase) and _AFFIRME_DEPOT.search(phrase):
+            return True
+    return False
+
+
 # LE CONTENU DÉCRIT SANS AVOIR ÉTÉ LU (08/09, Duret). « ouvre le » → « Le
 # dossier X a été ouvert. Voici son contenu : Fichiers (4) : … » — quatre
 # fichiers INVENTÉS, aucun geste dans le tour (le forceur avait rendu de la

@@ -205,7 +205,29 @@ async def rediger_email(data: dict, user) -> dict:
     contexte = (data.get("contexte") or "").strip()
     message_recu = (data.get("message_recu") or "").strip()
     destinataire = (data.get("destinataire") or "").strip()
-    if not contexte and not message_recu:
+    ref_recu = str(data.get("ref") or "").strip()
+
+    # LA RETOUCHE PART DE LA VERSION PRÉCÉDENTE (15/09). Le 11/09, « une
+    # version un peu moins brute » puis « tu as enlevé trop de choses, le mail
+    # d'avant était mieux construit » : chaque retouche était une réécriture
+    # depuis le seul `contexte`. La version précédente vient du modèle
+    # (`version_precedente`) ou, à défaut, du dernier brouillon retenu pour
+    # cette conversation (`mail/brouillons.py`).
+    from mail import brouillons
+    fil = data.get("_fil")
+    precedent = (data.get("version_precedente") or "").strip()
+    retouche = bool(precedent) or str(data.get("retoucher") or "").lower() in ("true", "1", "oui", "yes")
+    if retouche and not precedent:
+        garde = brouillons.dernier(getattr(user, "id", ""), fil) or {}
+        precedent = garde.get("corps") or ""
+        destinataire = destinataire or garde.get("destinataire") or ""
+        ref_recu = ref_recu or garde.get("ref") or ""
+    if retouche and not precedent:
+        raise MailSkillError(
+            "Aucune version précédente de ce message n'est connue dans cette "
+            "conversation : passe son texte dans `version_precedente`, ou rédige-le "
+            "à nouveau avec `contexte`.")
+    if not contexte and not message_recu and not precedent:
         raise MailSkillError(
             "Fournissez au moins `contexte` (ce que vous voulez dire) ou "
             "`message_recu` (le message auquel répondre).")
@@ -214,7 +236,10 @@ async def rediger_email(data: dict, user) -> dict:
     brut = "\n\n".join(p for p in [
         f"Destinataire : {destinataire}" if destinataire else "",
         f"Message reçu :\n{message_recu}" if message_recu else "",
-        f"Éléments à intégrer :\n{contexte}" if contexte else "",
+        (f"VERSION PRÉCÉDENTE DU BROUILLON (validée jusqu'ici par la personne) :\n{precedent}"
+         if precedent else ""),
+        (f"MODIFICATIONS DEMANDÉES :\n{contexte}" if precedent and contexte
+         else f"Éléments à intégrer :\n{contexte}" if contexte else ""),
     ] if p)
     masque, carte = await _protege(brut)
 
@@ -223,6 +248,10 @@ async def rediger_email(data: dict, user) -> dict:
         _CONSIGNE_COMMUNE,
         f"TYPE DE MESSAGE : {libelle}.\n{consigne}",
         style,
+        ("C'EST UNE RETOUCHE, PAS UNE RÉÉCRITURE : pars de la version précédente et "
+         "n'y change QUE ce que les modifications demandent. Garde sa structure, ses "
+         "informations et ses formulations partout ailleurs ; n'enlève rien qu'on "
+         "n'ait pas demandé d'enlever." if precedent else ""),
         f"ÉLÉMENTS FOURNIS :\n{masque}",
         'Réponds UNIQUEMENT par un objet JSON :\n'
         '{"objet":"<objet du mail>","corps":"<corps complet, sauts de ligne compris>",'
@@ -242,11 +271,99 @@ async def rediger_email(data: dict, user) -> dict:
         "type_mail": type_mail,
         "statut": "brouillon",
         "envoye": False,
+        "retouche": retouche or None,
+        # OÙ EST LE BROUILLON (15/09). Le 11/09 : « le brouillon a bien été créé
+        # dans votre boîte mail, enregistré comme brouillon » — faux, et démenti
+        # au tour suivant. Le résultat le dit en toutes lettres.
+        "ou_est_il": ("dans cette conversation SEULEMENT — il n'est PAS dans la boîte "
+                      "mail. Pour l'y poser : `deposer_brouillon`."),
         "avertissement": "Brouillon à relire. Aucun message n'a été envoyé.",
     })
     if "[À COMPLÉTER]" in resultat.get("corps", ""):
         resultat.setdefault("elements_a_verifier", []).append(
             "Le brouillon contient des mentions [À COMPLÉTER] à renseigner.")
+    brouillons.retenir(getattr(user, "id", ""), fil, {
+        "objet": resultat.get("objet"), "corps": resultat.get("corps"),
+        "destinataire": destinataire, "ref": ref_recu, "boite": boite})
+    # LA CARTE EST MÉCANIQUE (15/09). Le 11/09, chaque version s'affichait DEUX
+    # fois : une carte `email` recopiée par le modèle (avec un nom de signataire
+    # que la consigne interdit), puis le même texte en prose. La carte vient du
+    # skill : modifiable, et ses boutons demandent l'envoi (avec accord) ou le
+    # dépôt dans les brouillons de la boîte.
+    resultat["bloc_garanti"] = True
+    resultat["bloc_ui"] = {"type": "reponses_mail", "titre": "Brouillon — modifiable", "boite": boite,
+                           "reponses": [{"ref": ref_recu or None, "de": destinataire or None,
+                                         "objet": resultat.get("objet") or "",
+                                         "reponse": resultat.get("corps") or ""}]}
+    resultat["a_faire"] = (
+        "La carte du brouillon s'affiche AUTOMATIQUEMENT (modifiable, avec « Envoyer » et "
+        "« Mettre dans mes brouillons ») : n'écris NI bloc email NI le texte du message, "
+        "et n'ajoute aucun nom de signataire. Dis en une ou deux phrases ce que ce "
+        "brouillon dit" + (" et ce qui a changé par rapport à la version précédente"
+                           if retouche else "") + ". Il est dans la CONVERSATION seulement : "
+        "ne dis jamais qu'il est dans la boîte mail. Pour l'y mettre, `deposer_brouillon`.")
+    return resultat
+
+
+async def deposer_brouillon(data: dict, user) -> dict:
+    """POSE un brouillon dans le dossier Brouillons de la boîte. N'envoie rien.
+
+    Relevé du 11/09 : « je ne le trouve pas dans les brouillons de ma boîte
+    mail » — aucun geste ne savait l'y mettre, et l'assistant a prétendu
+    l'avoir fait. Ici le message est réellement créé dans la messagerie, avec la
+    signature de la boîte, en réponse au message d'origine quand on le connaît.
+    Rien ne sort de l'entreprise : effet `ecriture_interne`.
+    """
+    from mail import brouillons
+    from mail.expedition import deposer_brouillon as _deposer, porte_un_jeton
+
+    garde = brouillons.dernier(getattr(user, "id", ""), data.get("_fil")) or {}
+    corps = (data.get("corps") or data.get("message") or "").strip() or garde.get("corps") or ""
+    objet = (data.get("objet") or "").strip() or garde.get("objet") or ""
+    destinataire = (data.get("destinataire") or "").strip() or garde.get("destinataire") or ""
+    ref_recu = str(data.get("ref") or "").strip() or garde.get("ref") or ""
+    if not corps:
+        raise MailSkillError(
+            "Aucun brouillon à déposer : rédige-le d'abord (`redaction_email`) ou donne "
+            "son `corps` complet.")
+    cible = data.get("mailbox") or garde.get("boite")
+    boite = await verifier_acces(user, await _boite_a_lire({**data, "mailbox": cible} if cible else data, user),
+                                 envoi=True)
+    for champ, valeur in (("destinataire", destinataire), ("objet", objet), ("corps", corps)):
+        if porte_un_jeton(valeur):
+            raise MailSkillError(
+                f"Le champ `{champ}` contient une balise de masquage jamais résolue : "
+                "réécris-le avec les vraies valeurs.")
+
+    brut_pieces = (data.get("pieces") or data.get("pieces_jointes") or data.get("fichiers"))
+    pieces = []
+    if brut_pieces:
+        from mail.attaches import resoudre
+        pieces, refusees = await resoudre(brut_pieces, user, boite)
+        if refusees:
+            raise MailSkillError(
+                "Ces pièces n'ont pas pu être jointes, aucun brouillon n'a été déposé : "
+                + " ; ".join(f"« {r['nom']} » ({r['raison']})" for r in refusees) + ".")
+
+    from mail.signature import apposer
+    corps_signe, html, pieces = await apposer(boite, corps, pieces, demandee=data.get("signature"))
+    en_reponse_a = None
+    if ref_recu:
+        from mail.lecture import _resoudre
+        en_reponse_a = _resoudre(ref_recu, boite)
+    try:
+        resultat = await _deposer(boite, destinataire, objet, corps_signe, cc=data.get("cc"),
+                                  pieces=pieces, html=html, en_reponse_a=en_reponse_a)
+    except RuntimeError as e:
+        raise MailSkillError(str(e))
+    resultat["en_reponse"] = bool(en_reponse_a) or None
+    resultat["message_final"] = (
+        f"Le brouillon « {objet or 'sans objet'} » est dans le dossier Brouillons de {boite}"
+        + (f", adressé à {destinataire}" if destinataire else "")
+        + (", en réponse au message d'origine" if en_reponse_a else "")
+        + ". Rien n'a été envoyé.")
+    resultat["a_faire"] = ("Dis en une phrase que le brouillon est dans les Brouillons de la "
+                           "boîte, non envoyé. N'affirme rien d'autre.")
     return resultat
 
 
@@ -496,6 +613,7 @@ SKILLS_NATIFS = {
     "triage_email_entrant": triage_email_entrant,
     "redaction_email": rediger_email,
     "envoyer_email": envoyer_email,
+    "deposer_brouillon": deposer_brouillon,
     "resume_fil_email": resumer_fil,
     "profil_style_email": profil_style,
     "apprendre_style_email": apprendre_style,
@@ -1476,6 +1594,9 @@ EFFETS_NATIFS = {
     # ENVOYER sort de l'entreprise : validation humaine obligatoire, l'accord
     # porte sur le destinataire, l'objet et le corps exacts (payload_hash).
     "envoyer_email": "externe",
+    # DÉPOSER UN BROUILLON écrit dans la messagerie de l'entreprise, rien n'en
+    # sort : la personne relit et envoie elle-même depuis Outlook (15/09).
+    "deposer_brouillon": "ecriture_interne",
     "profil_style_email": "ecriture_interne",
     "apprendre_style_email": "ecriture_interne",
     # Apprendre une signature ÉCRIT dans l'application (une table), rien n'en

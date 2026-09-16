@@ -1,5 +1,5 @@
 """
-Banc « LES DROITS AVANT LES RÉSULTATS, ET RIEN NE SE PERD » — audit D-09, D-08, D-10.
+Banc « LES DROITS AVANT LES RÉSULTATS, ET RIEN NE SE PERD » — audit D-09/S-09, D-08/S-08, D-10/S-10.
 
 CE QUI ÉTAIT FAUX :
   · le cloisonnement des boîtes mail se faisait APRÈS la recherche : on
@@ -115,7 +115,7 @@ poser("security.acces", ROLE_ACCESS_LEVELS={"direction": ["all", "direction_only
 client_mod = charger("vectorstore.client", "vectorstore/client.py")
 vs = client_mod.vectorstore
 
-print("1. Les boîtes autorisées entrent dans la requête (D-09)")
+print("1. Les boîtes autorisées entrent dans la requête (D-09/S-09)")
 REQUETES.clear()
 asyncio.run(vs.search_lexical("devis", "terrain", None, top_k=5, boites=["a@exemple-sols.fr"]))
 sql, args = REQUETES[-1]
@@ -152,7 +152,7 @@ verifier("le post-filtre reste, en défense", "_filtrer_mails(chunks, mailboxes)
 verifier("le compte exact est demandé avec les boîtes",
          "count_lexical(\n            query, user_role, types, fichier=fichier, boites=mailboxes)" in rag_src)
 
-print("3. Une réindexation ne perd rien (D-08)")
+print("3. Une réindexation ne perd rien (D-08/S-08)")
 REQUETES.clear()
 ecrits = asyncio.run(vs.remplacer_source(["morceau 1", "morceau 2"], source_type="nas",
                                          source_id="synology:/a/b.pdf", source_filename="b.pdf",
@@ -171,7 +171,7 @@ verifier("le pipeline passe par la bascule en une fois, et ne supprime plus à p
 verifier("un document vide laisse l'ancienne version en place, et le dit",
          "l'ancienne version reste" in pipeline_src)
 
-print("4. La lecture des mails suit ses pages (D-10)")
+print("4. La lecture des mails suit ses pages (D-10/S-10)")
 outlook_src = (BACKEND / "ingestion" / "connectors" / "outlook.py").read_text(encoding="utf-8")
 verifier("la synchronisation suit `@odata.nextLink` au lieu de lire une page",
          '@odata.nextLink' in outlook_src and "while url and len(messages) < maximum" in outlook_src)
@@ -179,7 +179,7 @@ verifier("elle DIT quand elle s'arrête sur le plafond au lieu de laisser croire
          "plafond de %d messages atteint" in outlook_src)
 verifier("elle borne quand même son parcours (pas de boucle sans fin)", "pages < 50" in outlook_src)
 
-print("5. Un effet externe ne se fait qu'une fois (D-11)")
+print("5. Un effet externe ne se fait qu'une fois (D-11/S-11)")
 ETAT_OPS = {"op-1": {"execution": "en_attente"}}
 
 
@@ -243,7 +243,7 @@ verifier("la migration 045 sépare la décision humaine de l'état d'exécution"
          and "effet_inconnu" in migration.read_text(encoding="utf-8")
          and "idx_operations_validation" in migration.read_text(encoding="utf-8"))
 
-print("6. Une demande, un seul tour (D-13) et le cloisonnement mesurable (D-20)")
+print("6. Une demande, un seul tour (D-13/S-13) et le cloisonnement mesurable (D-20/S-20)")
 ETAT_REQ = {}
 
 

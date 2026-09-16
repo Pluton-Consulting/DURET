@@ -1,5 +1,5 @@
 """
-RETROUVER LA MÊME SOURCE APRÈS UN REDÉMARRAGE (16/09, audit D-07).
+RETROUVER LA MÊME SOURCE APRÈS UN REDÉMARRAGE (16/09, audit D-07/S-07).
 
 CE QUI ÉTAIT FAUX. Un message de la messagerie et une pièce jointe ne sont
 désignés au modèle que par une `ref` courte (16 hexadécimaux) — l'identifiant

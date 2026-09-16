@@ -368,7 +368,7 @@ from contextlib import asynccontextmanager
 arbre = ast.parse(dash_src)
 noms = {"get_echanges", "_lire_echanges", "_detail_du_fil", "_ligne_csv", "exporter_echanges", "_cible_et_recherche",
         "_exiger_super_admin", "EXPORT_PAQUET", "EXPORT_TOUT_JOURS", "_SQL_ECHANGES",
-        # 16/09, audit D-22 : cellules inertes et ticket de téléchargement.
+        # 16/09, audit D-22/S-22 : cellules inertes et ticket de téléchargement.
         "_cellule_inerte", "_DEBUTS_DE_FORMULE", "_TICKETS_EXPORT", "TICKET_EXPORT_TTL_S",
         "_emettre_ticket", "_consommer_ticket", "ticket_export", "_TicketExport"}
 gardes = [n for n in arbre.body
@@ -381,7 +381,7 @@ for n in gardes:
         for a in n.args.defaults + n.args.kw_defaults:
             pass
 # Des dates AVEC fuseau, comme les rend Postgres (`timestamptz`) : la borne de
-# fin de l'export en est une aussi (audit D-22).
+# fin de l'export en est une aussi (audit D-22/S-22).
 # … et toutes DANS LE PASSÉ : l'export borne sa fin à l'instant du lancement.
 _T0 = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1300)
 QUESTIONS = [{"id": _uuid.uuid4(), "question": f"question {i}", "quand": _T0 + datetime.timedelta(hours=i),
@@ -396,7 +396,7 @@ class _Conn:
         if "FROM messages m" in sql:
             REQUETES.append((sql, args))
             ordre = sorted(QUESTIONS, key=lambda r: r["quand"], reverse="created_at DESC" in sql.split("ORDER BY")[-1])
-            # (16/09, audit D-22) La fin est bornée et la page reprend APRÈS la
+            # (16/09, audit D-22/S-22) La fin est bornée et la page reprend APRÈS la
             # dernière ligne livrée (created_at, id) : la doublure applique les
             # deux, sinon le banc ne prouverait pas la pagination par clé.
             if len(args) > 5 and args[5] is not None:
@@ -414,7 +414,7 @@ class _Conn:
 
 class _ConnAvecUsers(_Conn):
     async def fetchrow(self, sql, *args):
-        # Le ticket de téléchargement relit le compte (audit D-22).
+        # Le ticket de téléchargement relit le compte (audit D-22/S-22).
         if "FROM users" in sql:
             return {"id": "u-admin", "role": "super_admin"}
         return None
@@ -441,7 +441,7 @@ esp = {"get_db": _get_db, "json": _json, "datetime": datetime, "uuid": _uuid, "H
        "status": types.SimpleNamespace(HTTP_403_FORBIDDEN=403, HTTP_400_BAD_REQUEST=400),
        "_exiger": lambda role, f: None, "Optional": __import__("typing").Optional,
        "User": object, "Depends": lambda x=None: None, "get_current_user": None, "Query": lambda *a, **k: None}
-# (16/09, audit D-22) L'export entre par le jeton de session OU par un ticket
+# (16/09, audit D-22/S-22) L'export entre par le jeton de session OU par un ticket
 # court : la doublure fournit les deux.
 class _Requete:
     def __init__(self, entete=""):
@@ -473,7 +473,7 @@ admin = types.SimpleNamespace(id="u-admin", role="super_admin")
 async def _lire(reponse):
     return "".join([bout async for bout in reponse.gen])
 
-print("\n── 5. L'export : cellules inertes, borne de fin, ticket (audit D-22)")
+print("\n── 5. L'export : cellules inertes, borne de fin, ticket (audit D-22/S-22)")
 inerte = esp["_cellule_inerte"]
 verifier("une cellule qui commence par une formule devient du TEXTE (=, +, -, @)",
          [inerte(v) for v in ("=2+2", "+33 6 12 34 56 78", "-5 %", "@canal")]

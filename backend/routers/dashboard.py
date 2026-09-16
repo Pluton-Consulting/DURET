@@ -177,7 +177,7 @@ WHERE m.role = 'user'
   AND ($2::uuid IS NULL OR u.id = $2::uuid)
   AND ($3::text IS NULL OR m.content ILIKE '%' || $3::text || '%'
                         OR COALESCE(r.content, '') ILIKE '%' || $3::text || '%')
-  -- LA FIN EST FIXÉE AU LANCEMENT D'UN EXPORT (16/09, audit D-22) : sans elle,
+  -- LA FIN EST FIXÉE AU LANCEMENT D'UN EXPORT (16/09, audit D-22/S-22) : sans elle,
   -- les messages écrits PENDANT l'export décalent les pages, et une ligne peut
   -- être livrée deux fois ou pas du tout.
   AND ($6::timestamptz IS NULL OR m.created_at <= $6::timestamptz)
@@ -409,7 +409,7 @@ EXPORT_PAQUET = 500
 EXPORT_TOUT_JOURS = 36500
 
 
-# ── UNE CELLULE DE TABLEUR N'EST PAS UNE FORMULE (16/09, audit D-22) ───────
+# ── UNE CELLULE DE TABLEUR N'EST PAS UNE FORMULE (16/09, audit D-22/S-22) ───────
 # Une question qui commence par « =2+2 », « +33 6… », « -5 % » ou « @canal » est
 # du TEXTE écrit par quelqu'un. Excel et LibreOffice, eux, l'exécutent à
 # l'ouverture du CSV : c'est l'injection de formule (OWASP CSV Injection). Les
@@ -447,7 +447,7 @@ def _ligne_csv(e: dict) -> list:
     return [_cellule_inerte(c) for c in cellules]
 
 
-# ── LE TICKET DE TÉLÉCHARGEMENT (16/09, audit D-22) ───────────────────────
+# ── LE TICKET DE TÉLÉCHARGEMENT (16/09, audit D-22/S-22) ───────────────────────
 # L'écran téléchargeait l'export par `fetch` + Blob : tout l'historique passait
 # par la mémoire du navigateur avant d'atteindre le disque. On échange donc le
 # jeton de session contre un TICKET court, à usage unique, lié à la personne et

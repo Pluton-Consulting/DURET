@@ -22,7 +22,7 @@ router = APIRouter()
 @router.get("/{cle}")
 async def visuel(cle: str, current_user: User = Depends(get_current_user)):
     from visuels.depot import lire, peut_lire
-    # LE PROPRIÉTAIRE, PAS SEULEMENT LA CONNEXION (16/09, audit D-03). Un refus
+    # LE PROPRIÉTAIRE, PAS SEULEMENT LA CONNEXION (16/09, audit D-03/S-03). Un refus
     # répond comme un visuel absent : une clé devinée ne dit pas qu'elle existe.
     resultat = lire(cle) if peut_lire(cle, current_user) else None
     if not resultat:

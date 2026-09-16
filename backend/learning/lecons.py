@@ -167,7 +167,7 @@ async def enregistrer(user_id: str, lecon: dict, fil: str = "") -> str:
                     "UPDATE lecons SET occurrences = occurrences + 1, derniere_maj = NOW() WHERE id = $1",
                     e["id"])
                 return "renforcee"
-        # CE QU'ELLE EST, ET CE QU'ELLE VAUT (16/09, audit D-14) : une tournure
+        # CE QU'ELLE EST, ET CE QU'ELLE VAUT (16/09, audit D-14/S-14) : une tournure
         # de politesse et une règle de facturation ne s'injectent pas pareil, et
         # une leçon tirée d'une correction EXPLICITE vaut mieux qu'une déduction.
         type_lecon = str(lecon.get("type") or "procedure").strip().lower()
@@ -195,7 +195,7 @@ async def enregistrer(user_id: str, lecon: dict, fil: str = "") -> str:
     return "creee"
 
 
-# UNE PANNE PASSAGÈRE N'EST PAS UNE RÈGLE MÉTIER (16/09, audit D-14). Quand le
+# UNE PANNE PASSAGÈRE N'EST PAS UNE RÈGLE MÉTIER (16/09, audit D-14/S-14). Quand le
 # tour a échoué parce qu'un fournisseur n'a pas répondu, la « correction » de la
 # personne (« recommence ») ne dit rien de la conduite à tenir : en tirer une
 # leçon, c'est graver dans la mémoire une panne d'un jour.
@@ -256,7 +256,7 @@ def requete_plein_texte(question: str) -> str:
 async def pertinentes(user_id: str, question: str, limite: int = MAX_LECONS_RAPPELEES) -> list[dict]:
     """Les leçons dont la situation ressemble à la demande (les siennes et celles de l'entreprise).
 
-    LES PLUS SÛRES D'ABORD (16/09, audit D-14) : quand deux leçons se
+    LES PLUS SÛRES D'ABORD (16/09, audit D-14/S-14) : quand deux leçons se
     contredisent, celle qui vient d'une correction explicite l'emporte sur une
     déduction. Sans la migration 048, la requête d'avant sert : les leçons
     continuent d'être rappelées, dans leur ordre d'alors.

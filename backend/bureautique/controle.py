@@ -1,5 +1,5 @@
 """
-LE CONTRÔLE D'UN LIVRABLE AVANT QU'IL SORTE (16/09, audit D-02).
+LE CONTRÔLE D'UN LIVRABLE AVANT QU'IL SORTE (16/09, audit D-02/S-02).
 
 Un document repris d'un original ne doit rien perdre de ce qu'on n'a pas
 demandé de changer. « Le logo est toujours là » ne se déduit pas du code qui a

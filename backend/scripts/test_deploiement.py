@@ -1,5 +1,5 @@
 """
-Banc « SAUVEGARDER, LIVRER, RESTAURER » — audit du 15/09, fiches D-23, D-26, D-00.
+Banc « SAUVEGARDER, LIVRER, RESTAURER » — audit du 15/09, fiches D-23/S-23, D-26/S-26, D-00/S-00.
 
 CE QUI ÉTAIT FAUX :
   · `backup.sh` ne sauvait que la base et le `.env`. Les Word et Excel rendus,

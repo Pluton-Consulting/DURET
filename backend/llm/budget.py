@@ -1,5 +1,5 @@
 """
-LE TEMPS D'UNE DEMANDE SE COMPTE UNE FOIS (16/09, audit D-16).
+LE TEMPS D'UNE DEMANDE SE COMPTE UNE FOIS (16/09, audit D-16/S-16).
 
 CE QUI ÉTAIT FAUX. Chaque étage avait son délai : le routeur, chaque candidat de
 la cascade, les tentatives, les outils, le relecteur. Personne ne regardait
@@ -54,7 +54,7 @@ class Budget:
         return f"<Budget {self.restant():.0f}s restantes sur {self.total:.0f}>"
 
 
-# ── CLASSER LES PANNES (audit D-16, point 2) ───────────────────────────────
+# ── CLASSER LES PANNES (audit D-16/S-16, point 2) ───────────────────────────────
 # Toutes les erreurs d'un fournisseur ne se valent pas, et les traiter pareil
 # fait perdre du temps à chaque tour : une clé invalide ne deviendra pas valide
 # en trois secondes, alors qu'un 429 passe. Trois familles, trois conduites.

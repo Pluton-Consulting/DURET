@@ -114,7 +114,7 @@ OUVERTS_FIL = []
 
 
 def _atelier_ouvrir(entete, proprio, fil=None, **reste):
-    # (16/09, audit D-04) Le document sait de quelle conversation il vient.
+    # (16/09, audit D-04/S-04) Le document sait de quelle conversation il vient.
     OUVERTS_FIL.append(fil)
     ATELIER["ouvert"] += 1
     ATELIER["entete"] = entete

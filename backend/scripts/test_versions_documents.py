@@ -1,5 +1,5 @@
 """
-Banc « UN LIVRABLE DURABLE, UNE SOURCE RETROUVABLE » — audit du 15/09, D-04 et D-07.
+Banc « UN LIVRABLE DURABLE, UNE SOURCE RETROUVABLE » — audit du 15/09, D-04/S-04 et D-07/S-07.
 
 CE QUI ÉTAIT FAUX :
   · l'atelier écrivait la fiche JSON et le contenu JSONL séparément, sans
@@ -201,7 +201,7 @@ verifier("la messagerie écrit ses références dans le registre, et les y relit
 verifier("le cache mémoire reste devant (il accélère, il ne décide plus seul)",
          "_REFS[ref] = (str(fiche[\"boite\"])" in lecture_src and "_PIECES[ref] = info" in lecture_src)
 
-print("6. Le document de référence du travail (D-01)")
+print("6. Le document de référence du travail (D-01/S-01)")
 trames_src = (BACKEND / "skills" / "trames.py").read_text(encoding="utf-8")
 # Les fonctions pures de mémoire du travail, exécutées contre le vrai registre.
 import ast as _ast

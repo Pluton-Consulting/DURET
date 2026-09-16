@@ -1,5 +1,5 @@
 """
-Banc « LE TEMPS SE COMPTE, LES JOBS SE RÉCLAMENT » — audit D-16 et D-17.
+Banc « LE TEMPS SE COMPTE, LES JOBS SE RÉCLAMENT » — audit D-16/S-16 et D-17/S-17.
 
 CE QUI ÉTAIT FAUX :
   · chaque étage avait son délai (routeur, candidats, tentatives, outils,
@@ -95,14 +95,14 @@ verifier("une clé refusée ne se retente pas tout de suite, un quota et un rés
          not budget.a_retenter(budget.CONFIGURATION)
          and budget.a_retenter(budget.QUOTA) and budget.a_retenter(budget.RESEAU))
 
-print("3. Demi-ouverture de la cascade (D-16)")
+print("3. Demi-ouverture de la cascade (D-16/S-16)")
 routeur_src = (BACKEND / "llm" / "router.py").read_text(encoding="utf-8")
 verifier("quand tout est écarté, un SEUL candidat est rouvert",
          "demi-ouverture sur" in routeur_src and "return [prochain]" in routeur_src
          and "return vivants or chain" not in routeur_src)
 verifier("c'est celui dont la quarantaine finit le plus tôt", "min(chain, key=lambda c: _QUARANTAINE" in routeur_src)
 
-print("4. Les jobs de vectorisation se réclament (D-17)")
+print("4. Les jobs de vectorisation se réclament (D-17/S-17)")
 REQUETES = []
 ETAT = {"bail": None}
 

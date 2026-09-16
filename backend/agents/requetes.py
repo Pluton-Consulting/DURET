@@ -1,5 +1,5 @@
 """
-UNE DEMANDE, UN SEUL TOUR (16/09, audit D-13).
+UNE DEMANDE, UN SEUL TOUR (16/09, audit D-13/S-13).
 
 CE QUI ÉTAIT FAUX. L'écran envoie sa demande par WebSocket ; si la socket se
 ferme (réseau, veille, changement de page), il la REJOUE en HTTP. Le tour

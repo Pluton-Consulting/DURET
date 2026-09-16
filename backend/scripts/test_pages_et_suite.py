@@ -1,6 +1,6 @@
 """
 Banc « LES PAGES QU'IL FAUT LIRE, ET CE QUI VIENT APRÈS » — audit du 15/09,
-fiche D-24 (S-24 chez le jumeau : même fichier des deux côtés).
+fiche D-24/S-24 — le même fichier des deux côtés.
 
 CE QUI ÉTAIT FAUX :
   · on rendait les CINQ PREMIÈRES pages d'un PDF, toujours. Sur un dossier de

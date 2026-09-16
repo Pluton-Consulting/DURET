@@ -1,5 +1,5 @@
 """
-Banc « UN ÉCHEC MÉTIER N'EST PAS UNE RÉUSSITE » — audit détaillé du 15/09, fiche D-05.
+Banc « UN ÉCHEC MÉTIER N'EST PAS UNE RÉUSSITE » — audit détaillé du 15/09, fiche D-05/S-05.
 
 L'enveloppe d'exécution d'un skill natif rendait `ok=True` dès que la fonction
 Python se terminait, même quand sa sortie annonçait l'échec (`{"ok": False}`,

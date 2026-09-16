@@ -1,5 +1,5 @@
 """
-CE QU'UN GESTE A VRAIMENT DONNÉ — le résultat normalisé d'un skill (16/09, audit D-05).
+CE QU'UN GESTE A VRAIMENT DONNÉ — le résultat normalisé d'un skill (16/09, audit D-05/S-05).
 
 L'enveloppe d'exécution rendait `ok=True` dès que la fonction Python se
 terminait, même quand sa sortie disait elle-même l'échec : `{"ok": False,

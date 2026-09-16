@@ -97,7 +97,7 @@ verifier("la raison est lisible", router._ecarte(*premier) == "clé refusée",
          router._ecarte(*premier))
 
 # ── 3. Une cascade entièrement morte : UN SEUL candidat rouvert ───────────
-# (16/09, audit D-16) Avant, on retentait TOUT LE MONDE dans la même demande :
+# (16/09, audit D-16/S-16) Avant, on retentait TOUT LE MONDE dans la même demande :
 # cinq fournisseurs morts × leurs délais, payés avant de conclure. On ne rouvre
 # plus qu'un candidat — celui qui sort le premier de quarantaine.
 print("\n3. Garde-fou : une cascade entièrement morte garde UN chemin")

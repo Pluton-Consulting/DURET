@@ -80,7 +80,7 @@ def lire(cle: str) -> tuple[bytes, str] | None:
     return p.read_bytes(), _MIMES.get(p.suffix, "image/jpeg")
 
 
-# ── À QUI APPARTIENT UN VISUEL (16/09, audit D-03) ──────────────────────────
+# ── À QUI APPARTIENT UN VISUEL (16/09, audit D-03/S-03) ──────────────────────────
 # La route vérifiait la connexion, pas le propriétaire : toute clé connue d'un
 # compte ouvrait l'image d'un autre (une photo de chantier, une pièce d'un
 # mail). Chaque dépôt fait pendant un geste note désormais son propriétaire

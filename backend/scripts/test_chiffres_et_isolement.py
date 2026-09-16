@@ -1,6 +1,6 @@
 """
 Banc « DES CHIFFRES JUSTES, DU CODE ISOLÉ, DES BOUCLES QUI NE DOUBLENT PAS »
-— audit du 15/09, fiches D-12, D-15, D-18 et D-21.
+— audit du 15/09, fiches D-12/S-12, D-15/S-15, D-18/S-18 et D-21/S-21.
 
 CE QUI ÉTAIT FAUX :
   · les totaux s'additionnaient en flottant : sur trois cents lignes de devis,
@@ -42,7 +42,7 @@ def verifier(nom, cond, detail=""):
 
 print(f"\n═══ CHIFFRES, ISOLEMENT, BOUCLES, NAVIGATEUR — {BACKEND.parent}\n")
 
-print("1. Les montants s'additionnent au centime (D-12)")
+print("1. Les montants s'additionnent au centime (D-12/S-12)")
 donnees_src = (BACKEND / "skills" / "donnees.py").read_text(encoding="utf-8")
 arbre = ast.parse(donnees_src)
 
@@ -84,7 +84,7 @@ if fonction is not None:
     verifier("un groupe sans valeur lisible rend « rien », pas zéro",
              _resultat({"valeurs": [], "enregistrements": 4}) is None)
 
-print("2. Le code généré : même verrou, et pas dans le backend (D-15)")
+print("2. Le code généré : même verrou, et pas dans le backend (D-15/S-15)")
 executor_src = (BACKEND / "skills" / "executor.py").read_text(encoding="utf-8")
 verifier("le verrou des effets externes s'applique AUSSI à la branche générée",
          executor_src.count("_verifier_effet(name, data") >= 2)
@@ -100,7 +100,7 @@ sandbox_src = (BACKEND / "sandbox" / "daytona_client.py").read_text(encoding="ut
 verifier("le bac à sable dit s'il isole vraiment", "def isolement(" in sandbox_src
          and "subprocess_fallback" in sandbox_src)
 
-print("3. Les boucles de fond suivent le rôle du processus (D-18)")
+print("3. Les boucles de fond suivent le rôle du processus (D-18/S-18)")
 main_src = (BACKEND / "main.py").read_text(encoding="utf-8")
 verifier("le rôle est lu au démarrage et journalisé",
          "role_processus" in main_src and "Rôle du processus" in main_src)
@@ -113,7 +113,7 @@ worker_src = (BACKEND / "tasks" / "worker.py").read_text(encoding="utf-8")
 verifier("au démarrage, on ne requalifie que ce qui ne donne plus signe de vie",
          "updated_at < NOW() - INTERVAL '15 minutes'" in worker_src)
 
-print("4. La garde du navigateur résout, elle ne devine pas (D-21)")
+print("4. La garde du navigateur résout, elle ne devine pas (D-21/S-21)")
 from browser.sandbox_filter import SandboxFilter, _adresse_interne  # noqa: E402
 import ipaddress  # noqa: E402
 

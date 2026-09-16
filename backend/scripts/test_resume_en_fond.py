@@ -67,7 +67,7 @@ if callable(getattr(mod, "fondre_en_fond", None)):
         mod.fondre_en_fond("fil-2", {"resume_couvre": 2}, ["a"] * 6, 6)
         await asyncio.sleep(0.12)
         verifier("un autre fil a sa propre fonte", mod.resume_pret("fil-2").get("resume_couvre") == 6)
-        # (16/09, audit D-13) UN RÉSUMÉ EN RETARD N'ÉCRASE PAS UNE CORRECTION.
+        # (16/09, audit D-13/S-13) UN RÉSUMÉ EN RETARD N'ÉCRASE PAS UNE CORRECTION.
         mod._RESUMES_EN_FOND["fil-4"] = {"resume_conversation": "état d'avant",
                                          "_messages_couverts": 4}
         verifier("un résumé calculé sur une conversation plus COURTE est écarté",

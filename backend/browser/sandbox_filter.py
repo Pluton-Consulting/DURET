@@ -47,7 +47,7 @@ def _adresse_interne(ip: "ipaddress._BaseAddress") -> bool:
 class SandboxFilter:
 
     def is_blocked(self, url: str) -> tuple[bool, str]:
-        """(bloqué, raison). Le nom est RÉSOLU (16/09, audit D-21) : comparer
+        """(bloqué, raison). Le nom est RÉSOLU (16/09, audit D-21/S-21) : comparer
         des chaînes laissait passer `localtest.me`, `0x7f.0.0.1`, une IPv6 et
         tout nom public qui pointe vers 10.x — c'est le b.a.-ba du SSRF."""
         try:

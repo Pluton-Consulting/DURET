@@ -133,7 +133,7 @@ _poser("database.connection", get_db=None, get_rls_db=None)
 _poser("security")
 _poser("security.rbac", has_permission=lambda *a: True, SCHEDULE_EXEMPT_ROLES=())
 _poser("security.audit", log_action=None)
-# Le VRAI contexte du lecteur (audit D-03) : les photos déposées pendant le
+# Le VRAI contexte du lecteur (audit D-03/S-03) : les photos déposées pendant le
 # prétraitement appartiennent à la personne du tour.
 sys.modules["security.lecteur"] = _exec_module(BACKEND / "security" / "lecteur.py", "security.lecteur")
 _poser("agents")

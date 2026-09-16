@@ -17,7 +17,7 @@ Il vérifie aussi que le filtre n'abîme PAS les journaux ordinaires : un filtre
 trop gourmand qui masquerait des mots courants rendrait les traces illisibles,
 et on le désactiverait au premier incident.
 
-(16/09, audit D-22) Il vérifie EN PLUS ce que l'audit a trouvé : le filtre était
+(16/09, audit D-22/S-22) Il vérifie EN PLUS ce que l'audit a trouvé : le filtre était
 posé sur le seul logger RACINE, par lequel les enregistrements des autres
 loggers ne passent pas — ils remontent vers ses HANDLERS. Et une exception
 (`exc_info`) sort par le formateur, jamais par `msg`.
@@ -95,7 +95,7 @@ for ordinaire in (
 controle("un mot court après « key= » n'est pas masqué (pas un secret)",
          masquer("key=abc") == "key=abc", masquer("key=abc"))
 
-# ── LE FILTRE EST-IL POSÉ LÀ OÙ LES ENREGISTREMENTS PASSENT ? (audit D-22) ──
+# ── LE FILTRE EST-IL POSÉ LÀ OÙ LES ENREGISTREMENTS PASSENT ? (audit D-22/S-22) ──
 print("\n\x1b[1mLE FILTRE COUVRE TOUT CE QUI S'ÉCRIT\x1b[0m\n")
 tampon = io.StringIO()
 handler = logging.StreamHandler(tampon)

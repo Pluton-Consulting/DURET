@@ -96,7 +96,7 @@ sys.modules["database.connection"] = dbc
 for paquet in ("llm", "mail", "security"):
     sys.modules[paquet] = types.ModuleType(paquet)
     sys.modules[paquet].__path__ = [str(BACKEND / paquet)]
-# LE COFFRE, LE VRAI (16/09, audit D-19) : depuis que les jetons de
+# LE COFFRE, LE VRAI (16/09, audit D-19/S-19) : depuis que les jetons de
 # rafraîchissement sont chiffrés au repos, `google_perso` le traverse à chaque
 # lecture. Le doubler cacherait justement ce qu'on veut éprouver ici — qu'un
 # compte relié se relit après le chiffrement.

@@ -1,5 +1,5 @@
 """
-UN EFFET EXTERNE NE SE FAIT QU'UNE FOIS (16/09, audit D-11).
+UN EFFET EXTERNE NE SE FAIT QU'UNE FOIS (16/09, audit D-11/S-11).
 
 CE QUI MANQUAIT. L'accord humain est réclamé atomiquement depuis longtemps :
 deux personnes ne peuvent pas approuver deux fois la même carte. Mais entre

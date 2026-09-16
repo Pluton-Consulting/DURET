@@ -1,5 +1,5 @@
 """
-Banc « UN VISUEL A UN PROPRIÉTAIRE, ET LE JETON NE SORT PAS » — audit du 15/09, fiche D-03.
+Banc « UN VISUEL A UN PROPRIÉTAIRE, ET LE JETON NE SORT PAS » — audit du 15/09, fiche D-03/S-03.
 
 Deux défauts relevés par l'audit :
   · la route `/api/visuels/{clé}` vérifiait la CONNEXION, pas le propriétaire :

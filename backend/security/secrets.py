@@ -1,5 +1,5 @@
 """
-AUCUNE CLÉ NE SORT — journaux, traces, exports (27/08, élargi le 16/09, audit D-22).
+AUCUNE CLÉ NE SORT — journaux, traces, exports (27/08, élargi le 16/09, audit D-22/S-22).
 
 Relevé le 27/08 en lisant `docker compose logs backend` : httpx journalise en
 INFO chaque requête avec son URL COMPLÈTE, et les API Google portent la clé dans
@@ -7,7 +7,7 @@ la query string. La clé s'affichait donc en clair, lisible par quiconque ouvre
 les journaux ou en poste une capture. Aucune ligne du projet ne l'écrivait :
 c'est la bibliothèque HTTP qui la recopiait.
 
-CE QUE L'AUDIT A TROUVÉ (D-22). Le filtre était posé sur le LOGGER RACINE. Or,
+CE QUE L'AUDIT A TROUVÉ (D-22/S-22). Le filtre était posé sur le LOGGER RACINE. Or,
 en Python, un enregistrement émis par `logging.getLogger("duret.mail")` ne passe
 PAS par les filtres de la racine : il remonte vers ses HANDLERS. Tout ce que
 journalisait le reste de l'application échappait donc au masquage. Et une

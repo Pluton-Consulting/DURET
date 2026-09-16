@@ -1,5 +1,5 @@
 """
-LA RECETTE, EN UNE COMMANDE ET UN RAPPORT (16/09, audit D-25).
+LA RECETTE, EN UNE COMMANDE ET UN RAPPORT (16/09, audit D-25/S-25).
 
 « Aucune régression » ne se décrète pas : ça se MESURE. Les bancs existent
 (plus de cent quarante fichiers `test_*.py`), mais chacun se lançait à la main,

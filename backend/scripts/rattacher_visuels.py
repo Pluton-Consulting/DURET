@@ -1,5 +1,5 @@
 """
-RATTACHER LES VISUELS ANCIENS À LEUR PROPRIÉTAIRE (16/09, audit D-03).
+RATTACHER LES VISUELS ANCIENS À LEUR PROPRIÉTAIRE (16/09, audit D-03/S-03).
 
 Depuis le 16/09, chaque visuel déposé pendant un geste note son propriétaire
 (`visuels/depot.py`, fichier voisin `<clé>.acces`) et la route ne le sert qu'à

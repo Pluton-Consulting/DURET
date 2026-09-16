@@ -35,7 +35,7 @@ class VectorStoreClient:
         """`source_type`, `source_filename` et les BOÎTES autorisées : les
         valeurs voyagent en PARAMÈTRE, jamais dans le texte SQL.
 
-        LES DROITS AVANT LE TOP_K (16/09, audit D-09). Le cloisonnement des
+        LES DROITS AVANT LE TOP_K (16/09, audit D-09/S-09). Le cloisonnement des
         boîtes mail se faisait APRÈS la recherche : on demandait trois fois
         plus de morceaux « pour avoir de la marge », puis on jetait ceux des
         boîtes fermées. Deux conséquences : de bons documents restaient dehors
@@ -235,7 +235,7 @@ class VectorStoreClient:
         from vectorstore.fusion import fusionner
         voies: dict = {}
         if query_embedding:
-            # LA VOIE VECTORIELLE A SON FILET (16/09, audit D-06) : un vecteur de
+            # LA VOIE VECTORIELLE A SON FILET (16/09, audit D-06/S-06) : un vecteur de
             # la mauvaise dimension ou un index en panne ne doit pas emporter la
             # voie plein texte avec lui.
             try:
@@ -298,7 +298,7 @@ class VectorStoreClient:
                                contains_pii: bool = True, is_anonymized: bool = True,
                                embeddings: Optional[List[Optional[List[float]]]] = None) -> int:
         """Remplace TOUS les morceaux d'une source par les nouveaux, en UNE
-        transaction (16/09, audit D-08).
+        transaction (16/09, audit D-08/S-08).
 
         Avant : `delete_by_source` puis N insertions séparées. Une coupure au
         milieu — redémarrage, base qui ferme, plafond atteint — laissait le
@@ -342,7 +342,7 @@ class VectorStoreClient:
     async def copier_source(self, source_id_origine: str, source_type: str, source_id: str,
                             source_filename: Optional[str] = None, access_level: str = "all") -> int:
         """Reprend les morceaux d'une source au contenu IDENTIQUE sous une autre
-        source (16/09, audit D-27) : même texte et mêmes vecteurs, mais le nom
+        source (16/09, audit D-27/S-27) : même texte et mêmes vecteurs, mais le nom
         de fichier et le NIVEAU D'ACCÈS de la copie — un même CCTP dans deux
         affaires ne fusionne pas leurs droits. Un morceau pas encore vectorisé
         reçoit son job. Rend le nombre de morceaux repris ; 0 si l'original n'en
@@ -388,7 +388,7 @@ class VectorStoreClient:
 
     async def get_pending_embedding_jobs(self, limit: int = 50, preneur: Optional[str] = None,
                                          bail_s: int = 300) -> List[dict]:
-        """Réclame un lot de jobs de vectorisation, AVEC UN BAIL (16/09, audit D-17).
+        """Réclame un lot de jobs de vectorisation, AVEC UN BAIL (16/09, audit D-17/S-17).
 
         Avant : un simple SELECT des jobs « en attente ». Deux workers — ou un
         redémarrage en plein lot — pouvaient travailler le MÊME job : le
@@ -469,7 +469,7 @@ class VectorStoreClient:
             return
         async with get_db() as conn:
             async with conn.transaction():
-                # LE BAIL EST VÉRIFIÉ AVANT D'ÉCRIRE (audit D-17) : un worker
+                # LE BAIL EST VÉRIFIÉ AVANT D'ÉCRIRE (audit D-17/S-17) : un worker
                 # dont le bail a expiré — parce qu'il a été long — ne doit pas
                 # écraser le travail de celui qui a repris le job entre-temps.
                 try:

@@ -1,5 +1,5 @@
 """
-LE CLOISONNEMENT TIENT-IL VRAIMENT ? (16/09, audit D-20 et D-00.)
+LE CLOISONNEMENT TIENT-IL VRAIMENT ? (16/09, audit D-20/S-20 et D-00/S-00.)
 
 `FORCE ROW LEVEL SECURITY` (migration 010) applique les politiques même au
 propriétaire des tables. Mais un rôle SUPERUSER ou BYPASSRLS les ignore TOUTES :
@@ -92,7 +92,7 @@ async def main() -> int:
             print(f"  · {a}")
         print("\nProcédure : créer un rôle applicatif NOSUPERUSER NOBYPASSRLS avec les seuls")
         print("droits nécessaires, un rôle de migration séparé, puis basculer DATABASE_URL")
-        print("après avoir vérifié lectures et écritures de chaque composant (audit D-20).")
+        print("après avoir vérifié lectures et écritures de chaque composant (audit D-20/S-20).")
         return 1
     print("Cloisonnement : rien à signaler.")
     return 0

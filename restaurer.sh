@@ -125,13 +125,19 @@ if [ -f "$JEU/documents.tar.gz" ]; then
       -v "$(cd "$JEU" && pwd)":/jeu:ro alpine:3.20 \
       sh -c 'rm -rf /cible/* && tar xzf /jeu/documents.tar.gz -C /cible'
 fi
-# GARDE-FOU N°2 : les clés vivent AUSSI en base (`cles_api` prime sur le .env).
-# On les retire de la copie, et l'on coupe la lecture automatique du NAS.
-$COPIE exec -T postgres psql -q -U "$PG_USER" -d "$PG_DB" -c "
-  DELETE FROM cles_api;
-  INSERT INTO reglages (nom, valeur) VALUES ('nas_integration_continue', 'desactivee')
-    ON CONFLICT (nom) DO UPDATE SET valeur = 'desactivee';
-" >/dev/null 2>&1 || echo "    (cles_api / reglages absents de ce jeu — rien à couper)"
+# GARDE-FOU N°2 : LE .env NE SUFFIT PAS. Les clés vivent AUSSI en base
+# (`cles_api` prime sur le .env), et les comptes Google reliés portent des
+# REFRESH TOKENS toujours valables. On coupe chaque source SÉPARÉMENT : une
+# table absente d'un vieux jeu ne doit pas annuler les autres coupures (un seul
+# `psql -c` est une seule transaction — tout serait défait).
+couper() {   # $1 = phrase SQL, $2 = ce qu'elle coupe (pour le message)
+  $COPIE exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" -c "$1" >/dev/null 2>&1 \
+    && echo "    coupé : $2" || echo "    (rien à couper : $2)"
+}
+couper "DELETE FROM cles_api;"                   "clés d'API enregistrées à l'écran"
+couper "DELETE FROM connexions_google;"          "comptes Google reliés (refresh tokens)"
+couper "UPDATE agent_tasks SET enabled = false;" "tâches planifiées"
+couper "INSERT INTO reglages (cle, valeur) VALUES ('nas_integration_continue', 'desactivee') ON CONFLICT (cle) DO UPDATE SET valeur = 'desactivee';" "lecture automatique du NAS"
 
 echo "==> 6/6  Démarrage de l'application restaurée…"
 $COPIE up -d backend frontend

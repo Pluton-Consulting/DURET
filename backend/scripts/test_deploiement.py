@@ -135,8 +135,17 @@ verifier("le schéma est vérifié complet avant la bascule",
          "migrations non appliquées" in deploy and "schéma complet" in deploy)
 verifier("la readiness est attendue, et un échec dit le RETOUR ARRIÈRE",
          "/api/ready" in deploy and "RETOUR ARRIÈRE" in deploy)
-verifier("le commit livré est écrit pour l'application", "backend/.version" in deploy
-         and "backend/.version" in (RACINE / ".gitignore").read_text(encoding="utf-8"))
+# Le `.gitignore` peut vivre à la racine du PROJET (Duret) ou un cran au-dessus,
+# à la racine du DÉPÔT (Symbiose, dont le projet est un sous-dossier).
+def _ignore() -> str:
+    for candidat in (RACINE / ".gitignore", RACINE.parent / ".gitignore"):
+        if candidat.exists():
+            return candidat.read_text(encoding="utf-8")
+    return ""
+
+
+verifier("le commit livré est écrit pour l'application, et jamais versionné",
+         "backend/.version" in deploy and "backend/.version" in _ignore())
 
 print("3. La ligne de base : vérifiée, jamais devinée")
 attendus = {}
@@ -207,7 +216,7 @@ if [ "${1:-}" = "compose" ]; then
   for a in "$@"; do
     case "$a" in
       pg_dump) echo "-- dump de la base"; echo "CREATE TABLE users();"; exit 0;;
-      psql) echo "001_initial_schema.sql 044_code_admin_premiere_entree.sql"; exit 0;;
+      psql) echo "001_initial_schema.sql 043_lecons.sql"; exit 0;;
     esac
   done
 fi
@@ -227,7 +236,11 @@ milieu = {**os.environ, "PATH": f"{faux_bin}:{os.environ['PATH']}", "BACKUP_DIR"
           "GARDER_AU_MOINS": "1", "RETENTION_DAYS": "0"}
 lance = subprocess.run(["bash", "backup.sh"], cwd=projet, env=milieu, capture_output=True, text=True)
 verifier("backup.sh va au bout et publie un jeu", lance.returncode == 0, lance.stderr[-300:])
-jeux = sorted(depot.glob("duret_*"))
+import re as _re
+_m = _re.search(r'CIBLE="\$BACKUP_DIR/([A-Za-z0-9_-]+)_\$STAMP"', backup)
+PREFIXE = _m.group(1) if _m else "jeu"
+verifier("les jeux portent un préfixe lisible dans backup.sh", bool(_m), backup[:200])
+jeux = sorted(depot.glob(f"{PREFIXE}_*"))
 verifier("le jeu porte la base, les documents, les secrets, le manifeste et les empreintes",
          len(jeux) == 1 and {f.name for f in jeux[0].iterdir()} >=
          {"base.sql.gz", "documents.tar.gz", "secrets.tar.gz", "manifeste.txt", "EMPREINTES.sha256"},
@@ -238,13 +251,13 @@ if jeux:
     verifier("les empreintes du jeu se vérifient", controle.returncode == 0, controle.stdout[-200:])
     manifeste = (jeux[0] / "manifeste.txt").read_text(encoding="utf-8")
     verifier("le manifeste dit le commit et les migrations du jeu",
-             "commit du code" in manifeste and "044_code_admin" in manifeste, manifeste[:200])
+             "commit du code" in manifeste and "001_initial_schema" in manifeste, manifeste[:200])
     verifier("aucun dossier provisoire ne traîne", not list(depot.glob(".en-cours_*")))
     verifier("le raccourci DERNIER pointe le jeu publié",
              (depot / "DERNIER").resolve() == jeux[0].resolve())
     # Un second passage : la rétention ne doit pas emporter le jeu qu'on vient d'écrire.
     subprocess.run(["bash", "backup.sh"], cwd=projet, env=milieu, capture_output=True, text=True)
-    restants = sorted(depot.glob("duret_*"))
+    restants = sorted(depot.glob(f"{PREFIXE}_*"))
     verifier("la rétention garde au moins le dernier jeu, même avec RETENTION_DAYS=0",
              len(restants) >= 1, [f.name for f in restants])
 # Sans le volume des documents, la sauvegarde REFUSE au lieu de mentir.
@@ -263,8 +276,13 @@ verifier("elle vérifie les empreintes du jeu avant d'y toucher",
          "sha256sum -c" in restaurer and "jeu abîmé" in restaurer)
 verifier("elle vide les clés du .env ET de la base : une copie ne peut rien envoyer",
          "DELETE FROM cles_api" in restaurer and "MAIL_IMAP_" in restaurer and "RESEND_API_KEY" in restaurer)
-verifier("elle coupe les tâches planifiées et la lecture automatique du NAS",
-         "AGENT_TASKS_ENABLED=false" in restaurer and "nas_integration_continue" in restaurer)
+verifier("elle coupe les tâches planifiées, dans le .env ET en base",
+         "AGENT_TASKS_ENABLED=false" in restaurer
+         and "agent_tasks SET enabled = false" in restaurer)
+verifier("elle coupe la lecture automatique du socle documentaire",
+         "connexions_google" in restaurer or "nas_integration_continue" in restaurer)
+verifier("chaque coupure part SÉPARÉMENT (une table absente n'annule pas les autres)",
+         restaurer.count("couper \"") >= 3)
 verifier("elle monte d'autres ports et d'autres volumes (projet distinct)",
          "PORT_FRONT" in restaurer and "$PROJET_COPIE" in restaurer
          and "${PROJET_COPIE}_documents_produits" in restaurer)

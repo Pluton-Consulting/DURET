@@ -288,7 +288,62 @@ def _nettoyer_image(donnees: bytes) -> bytes:
     return out.getvalue()
 
 
-def _preparer_piece(piece: dict) -> dict:
+# ── CHOISIR LES PAGES QU'IL FAUT LIRE (16/09, audit D-24) ─────────────────
+# On rendait les CINQ PREMIÈRES pages, toujours. Sur un DCE de quarante pages,
+# la cote demandée est page 8, le tableau des quantités page 23 : l'assistant
+# répondait « non visible » avec assurance après avoir lu la page de garde et
+# trois pages de clauses. Pire, il ne DISAIT pas qu'il n'avait lu que cinq
+# pages sur quarante.
+#
+# La couche texte d'un PDF se lit en quelques millisecondes (sans la rendre en
+# image) : on s'en sert pour CLASSER les pages par rapport à la question, et
+# l'on rend en image les meilleures. La page 1 est toujours retenue — c'est le
+# cartouche, l'échelle, le nom de l'affaire.
+_MOTS_VIDES = {"le", "la", "les", "un", "une", "des", "du", "de", "et", "ou", "a", "à",
+               "au", "aux", "en", "dans", "sur", "pour", "par", "avec", "ce", "cette",
+               "ces", "que", "qui", "quoi", "est", "sont", "quel", "quelle", "quelles",
+               "quels", "combien", "moi", "me", "je", "tu", "il", "elle", "nous", "vous",
+               "dis", "dit", "fais", "fait", "donne", "montre", "page", "pages",
+               "document", "fichier", "pdf", "plan"}
+
+
+def _mots_utiles(question: str) -> list:
+    """Les mots de la question qui peuvent désigner quelque chose dans un plan."""
+    import re as _re
+    mots = _re.findall(r"[a-zà-ÿ0-9]{3,}", (question or "").lower())
+    return [m for m in mots if m not in _MOTS_VIDES]
+
+
+def _pages_a_lire(doc, question: str, maximum: int) -> list:
+    """Les numéros (0-based) des pages à rendre en image, la 1re toujours.
+
+    Sans question utile ou sans couche texte (plan scanné), on garde l'ordre
+    d'origine : c'est le comportement d'avant, et il reste le bon par défaut.
+    """
+    total = doc.page_count
+    if total <= maximum:
+        return list(range(total))
+    mots = _mots_utiles(question)
+    if not mots:
+        return list(range(maximum))
+    notes = []
+    for numero in range(total):
+        try:
+            texte = (doc.load_page(numero).get_text() or "").lower()
+        except Exception:  # noqa: BLE001 — page illisible : note nulle, pas d'arrêt
+            texte = ""
+        note = sum(texte.count(m) for m in mots)
+        notes.append((note, numero))
+    if not any(note for note, _ in notes):
+        return list(range(maximum))       # aucune couche texte : l'ordre d'origine
+    # La page 1 d'abord, puis les mieux notées, puis l'ordre du document pour
+    # que le modèle lise les pages dans le sens de lecture.
+    meilleures = [n for note, n in sorted(notes, key=lambda x: (-x[0], x[1]))
+                  if note][: maximum - 1]
+    return sorted({0, *meilleures})
+
+
+def _preparer_piece(piece: dict, question: str = "") -> dict:
     """Un fichier joint -> ses pages nettoyées et sa référence de dépôt.
 
     Fonction PURE au sens qui compte ici : elle ne touche ni à l'état ni au
@@ -307,13 +362,14 @@ def _preparer_piece(piece: dict) -> dict:
         return {"nom": nom, "erreur": "fichier vide"}
 
     # PDF -> rendre ses pages en images (PyMuPDF, import optionnel).
-    pages_brutes, pages_totales = [], 0
+    pages_brutes, pages_totales, numeros = [], 0, []
     if "pdf" in mime or nom.lower().endswith(".pdf"):
         try:
             import fitz  # PyMuPDF
             doc = fitz.open(stream=raw, filetype="pdf")
             pages_totales = doc.page_count
-            for numero in range(min(pages_totales, MAX_PAGES_PDF)):
+            numeros = _pages_a_lire(doc, question, MAX_PAGES_PDF)
+            for numero in numeros:
                 pix = doc.load_page(numero).get_pixmap(dpi=150)
                 pages_brutes.append(pix.tobytes("png"))
             if not pages_brutes:
@@ -361,6 +417,9 @@ def _preparer_piece(piece: dict) -> dict:
         "cle": cle_visuel,
         "pages_totales": pages_totales or None,
         "pages_ignorees": (max(0, pages_totales - len(pages)) if pages_totales else 0) or None,
+        # LES NUMÉROS, pas seulement le compte : « lues 1, 8 et 23 sur 40 » se
+        # vérifie, « 3 pages sur 40 » ne se vérifie pas.
+        "pages_lues": [n + 1 for n in (numeros or [])][:len(pages)] or None,
     }
 
 
@@ -394,7 +453,7 @@ async def preprocess_attachment_node(state: AgentState) -> dict:
     from types import SimpleNamespace
     from security.lecteur import au_nom_de
     with au_nom_de(SimpleNamespace(id=state.get("user_id"), role=state.get("user_role"))):
-        preparees = await asyncio.gather(*[asyncio.to_thread(_preparer_piece, p) for p in pieces])
+        preparees = await asyncio.gather(*[asyncio.to_thread(_preparer_piece, p, state.get("query") or "") for p in pieces])
     retenues = [p for p in preparees if p.get("pages")]
     ecartees = [p for p in preparees if not p.get("pages")]
 
@@ -523,6 +582,8 @@ async def vision_node(state: AgentState, config=None) -> dict:
     return {
         "vision_analysis": analyse,
         "vision_mode": "releve",
+        "vision_suite": suite_du_tour(
+            state.get("query") or "", _retouche_disponible()),
         "vision_reponse": None,
         "vision_releve": None,
         "llm_response": analyse,
@@ -537,18 +598,64 @@ def _entete_pages(piece: dict) -> str:
     pages = piece.get("pages") or []
     total = piece.get("pages_totales") or 0
     ignorees = piece.get("pages_ignorees") or 0
+    lues = piece.get("pages_lues") or []
     entete = ""
     if len(pages) > 1:
+        # LES NUMÉROS DES PAGES MONTRÉES (16/09, audit D-24). On disait « les N
+        # premières » — c'était faux dès qu'on choisissait les pages utiles à la
+        # question, et cela empêchait de relier un relevé à SA page.
+        lesquelles = (", ".join(str(n) for n in lues) if lues
+                      else f"les {len(pages)} premières")
         entete += (f"\n\nCe document comporte {total or len(pages)} page(s) ; "
-                   f"les {len(pages)} premières te sont montrées, dans l'ordre. "
+                   f"celles qui te sont montrées, dans l'ordre, sont : {lesquelles}. "
                    "Analyse-les ENSEMBLE : un plan de masse, ses coupes et ses "
                    "façades décrivent le même projet. Dis à quelle page se "
                    "trouve chaque élément que tu relèves.")
     if ignorees:
         entete += (f"\n\nATTENTION : {ignorees} page(s) n'ont PAS été analysées. "
-                   "Signale-le dans ta réponse, et ne conclus rien sur ce que tu "
-                   "n'as pas vu.")
+                   "Signale-le dans ta réponse en disant lesquelles ont été lues, "
+                   "et ne conclus rien sur ce que tu n'as pas vu. Si la réponse "
+                   "dépend d'une page non lue, DEMANDE-LA plutôt que de l'estimer.")
     return entete
+
+
+# ── LA SUITE D'UN TOUR DE VISION, DÉCIDÉE ET NOMMÉE (16/09, audit D-24) ─────
+# Le routage cherchait des MOTS dans la demande, puis d'autres mots dans la
+# réponse libre du modèle. Deux listes à tenir, et surtout : une demande de
+# RETOUCHE partait vers l'assistant même là où aucun moteur de retouche n'est
+# installé — l'assistant n'avait alors aucun geste à appeler, et improvisait.
+# Le tour rend maintenant une intention NOMMÉE, confrontée au registre réel.
+SUITE_DOCUMENT = "document"          # un devis, un mail, un compte rendu à produire
+SUITE_RETOUCHE = "retouche"          # une image à modifier, et le geste existe
+SUITE_SANS_MOTEUR = "retouche_indisponible"   # demandée, mais non installée ici
+SUITE_AUCUNE = "aucune"              # la réponse de la vision suffit
+
+_RETOUCHE = ("retouch", "photomontage", "montage", "modifi", "ajout", "remplac",
+             "enlève", "enleve", "supprime", "intègr", "integr", "insèr", "inser",
+             "incrust", "implant", "simul", "variante", "rendu", "visuel",
+             "illustr", "dessine", "à la place", "a la place")
+
+
+def suite_du_tour(demande: str, retouche_possible: bool) -> str:
+    """Ce que ce tour de vision appelle APRÈS lui. Fonction pure : elle se
+    vérifie au banc, et elle ne dépend pas de ce que le modèle a répondu."""
+    try:
+        from agents.router import _SUITE_ATTENDUE
+    except Exception:  # noqa: BLE001 — le routeur importe agent2 : pas de boucle ici
+        _SUITE_ATTENDUE = ("devis", "chiffr", "mail", "document", "rapport",
+                           "compte rendu", "prépare", "prepare", "rédige", "redige")
+    texte = (demande or "").lower()
+    veut_retouche = any(m in texte for m in _RETOUCHE)
+    if veut_retouche and not retouche_possible:
+        # Ne pas passer la main : l'assistant n'a rien à appeler, et lui passer
+        # la main produit une promesse. La vision explique ce qu'elle peut faire
+        # (montrer l'image, la décrire, l'insérer telle quelle dans un document).
+        return SUITE_SANS_MOTEUR
+    if veut_retouche:
+        return SUITE_RETOUCHE
+    if any(m in texte for m in _SUITE_ATTENDUE):
+        return SUITE_DOCUMENT
+    return SUITE_AUCUNE
 
 
 def _retouche_disponible() -> bool:
@@ -658,6 +765,7 @@ async def _repondre(pieces: list, illisibles: list, demande: str, candidats, con
     return {
         "vision_analysis": complet,
         "vision_mode": "reponse",
+        "vision_suite": suite_du_tour(demande, _retouche_disponible()),
         "vision_reponse": reponse,
         "vision_releve": releve or None,
         "llm_response": reponse,

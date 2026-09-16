@@ -235,6 +235,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "vision_mode": None,
         "vision_reponse": None,
         "vision_releve": None,
+        "vision_suite": None,
         # LA QUESTION MASQUÉE DU TOUR D'AVANT NE DOIT PAS FILER (07/09). Le
         # graphe de la vision n'a pas de nœud d'anonymisation : il relit
         # `anonymized_query` tel quel pour archiver le tour, et l'export du

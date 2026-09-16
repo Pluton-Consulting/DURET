@@ -41,7 +41,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-15 | Skills générés testés et isolés | fait (même verrou d'effet, refus du code non isolé, retour arrière explicite) ; exécuteur isolé à fournir par l'exploitant |
 | D-18 | Travaux lourds séparés | étape 1 faite (rôle de processus, requalification seulement sans signe de vie) ; baux durables par job long : lot suivant |
 | D-21 | Secrets et navigateur | étape 1 faite (SSRF : résolution DNS, IPv6, adresses internes) ; secrets du worker et route interne : à faire avec le serveur |
-| D-24 | Vision cohérente avec Duret | à faire |
+| D-24 | Vision cohérente avec la demande | étape 1 faite (pages choisies d'après la question, pages lues dites, suite du tour nommée et confrontée au registre) ; recadrage des cotes et mesures reliées à leur zone : lot suivant |
 | D-25 | Mesurer les usages et prouver l'absence de régression | fait (`scripts/recette_usages.py` : PASS/FAIL/SKIP, rapport daté par commit) |
 
 ## Journal
@@ -176,3 +176,16 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   d'heure. La garde du navigateur RÉSOUT le nom (IPv6, IPv4 déguisée, 169.254.169.254, nom public qui
   mène à 10.x) au lieu de comparer des chaînes. `scripts/recette_usages.py` joue tous les bancs et rend
   un rapport daté PASS/FAIL/SKIP par commit. Banc `test_chiffres_et_isolement` (22).
+- 16/09 — D-24 (étape 1, socle des deux côtés) : on rendait les CINQ PREMIÈRES pages d'un
+  PDF, toujours. Sur un DCE de quarante pages, la cote demandée est page 8 et le
+  quantitatif page 23 : l'assistant répondait « non visible » après avoir lu la page de
+  garde et trois pages de clauses — sans dire qu'il n'en avait lu que cinq. La couche
+  texte se lit en quelques millisecondes : elle sert à CLASSER les pages par rapport à la
+  question, la page 1 restant toujours lue (cartouche, échelle, affaire). Sans question
+  utile, sans couche texte ou sur un document court, rien ne change. L'en-tête dit
+  désormais les NUMÉROS des pages montrées et demande d'en réclamer une plutôt que de
+  l'estimer. Enfin la suite du tour est NOMMÉE (`vision_suite` : document, retouche,
+  retouche_indisponible, aucune) et confrontée au registre réel : ici, sans moteur de
+  retouche, une demande de photomontage ne passe plus la main à l'assistant — qui n'avait
+  aucun geste à appeler et improvisait. Banc `test_pages_et_suite` (25, le même fichier
+  des deux côtés).

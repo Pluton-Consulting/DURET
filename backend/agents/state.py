@@ -52,6 +52,9 @@ class AgentState(TypedDict):
     vision_mode: Optional[str]
     vision_reponse: Optional[str]
     vision_releve: Optional[str]
+    # Ce que ce tour de vision appelle après lui — nommé, pas deviné
+    # (16/09, audit D-24) : document, retouche, retouche_indisponible, aucune.
+    vision_suite: Optional[str]
     extracted_data: Optional[dict]  # extraction structurée (postes, surfaces, contraintes)
 
     # Routage

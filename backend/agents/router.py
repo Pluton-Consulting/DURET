@@ -628,6 +628,17 @@ def route_apres_agent2(state: AgentState) -> str:
         return "human_gate"                 # l'analyse a échoué : rien à enchaîner
     if state.get("plan_valide"):
         return "human_gate"                 # on exécute déjà un plan : pas de rebond
+    # LE CONTRAT D'ABORD (16/09, audit D-24) : la vision a nommé ce qu'elle
+    # appelle après elle. Les mots-clés restent en second, pour les tours
+    # d'avant ce correctif et pour les chemins qui ne passent pas par le
+    # pré-chiffrage.
+    # (Les valeurs sont celles de `agents.agent2` — écrites ici en clair : un
+    # import croisé ferait dépendre le routeur du module qu'il route.)
+    suite = state.get("vision_suite")
+    if suite:
+        # « retouche_indisponible » : demandée, mais aucun moteur installé —
+        # passer la main ferait promettre à l'assistant un geste qu'il n'a pas.
+        return "agent1" if suite in ("document", "retouche") else "human_gate"
     demande = (state.get("query") or "").lower()
     if any(m in demande for m in _SUITE_ATTENDUE):
         return "agent1"

@@ -93,9 +93,15 @@ dbc = types.ModuleType("database.connection")
 dbc.get_db = lambda: _Ctx()
 sys.modules["database"] = types.ModuleType("database")
 sys.modules["database.connection"] = dbc
-for paquet in ("llm", "mail"):
+for paquet in ("llm", "mail", "security"):
     sys.modules[paquet] = types.ModuleType(paquet)
     sys.modules[paquet].__path__ = [str(BACKEND / paquet)]
+# LE COFFRE, LE VRAI (16/09, audit D-19) : depuis que les jetons de
+# rafraîchissement sont chiffrés au repos, `google_perso` le traverse à chaque
+# lecture. Le doubler cacherait justement ce qu'on veut éprouver ici — qu'un
+# compte relié se relit après le chiffrement.
+sys.modules["security.coffre"] = charger(BACKEND / "security" / "coffre.py", "security.coffre")
+sys.modules["security"].coffre = sys.modules["security.coffre"]
 cles = charger(BACKEND / "llm" / "cles.py", "llm.cles")
 cles._EXPIRE = 10 ** 12   # cache piloté à la main
 

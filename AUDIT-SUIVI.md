@@ -17,7 +17,7 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
 | D-06 | Secours lexical quand les embeddings tombent | étape 1 faite (embedding et voie vectorielle isolés, diagnostic, panne ≠ absence) ; orchestrateur de sources et comparables NAS : lot 2 |
 | D-03 | Bearer jamais envoyé à une origine externe ; propriété des visuels | étape 1 faite (jeton par origine, propriétaire noté au dépôt, route et pièces jointes contrôlées, pièce de mail résolue dans sa boîte, script de rattachement des anciens) ; registre PostgreSQL des ressources, médias DOCX, résultat structuré d'image manquante : lot suivant |
 | D-27 | Doublons NAS : plus d'exclusion sur nom+taille | étape 1 faite (copies lues en dernier et reconnues à leur contenu, « toujours apprendre », fichiers écartés retentés et repris à la main, écritures atomiques) ; écran détaillé du tri, budgets et baux, niveaux réactualisés, références et couverture de `nas_chercher` : lots 2 et 4 |
-| D-19 | Code admin : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique | fait (verdict typé fail-closed, verrou de ligne, code de première entrée à usage unique + migration 044, clé de chiffrement séparée, borne par origine, script de secours) ; réauthentification ciblée pour l'administration : lot suivant |
+| D-19 | Code admin ET connexions : refus sur schéma incomplet, tentatives atomiques, « 0000 » à usage unique, jetons Google au coffre | fait (verdict typé fail-closed, verrou de ligne, code de première entrée à usage unique + migration 044, clé de chiffrement séparée, borne par origine sur le code ET le lien de connexion, jetons Google chiffrés au repos, état OAuth à usage unique, capacités par scope, lien jamais imprimé sur un serveur, script de secours) ; réauthentification ciblée pour l'administration : lot suivant |
 | D-22 | Export CSV neutralisé, export borné, secrets dans les traces | étape 1 faite (cellules inertes, fin bornée + pagination par clé + manifeste, ticket de téléchargement, filtre des secrets sur les handlers et les traces) ; carte des sorties, modes de confidentialité et rétention par type : lot 4 |
 | D-23 / D-26 / D-00 | Scripts de sauvegarde, de déploiement vérifié et procédure de recette | fait (backup.sh complet et vérifié, restaurer.sh isolé, deploy.sh réordonné avec ligne de base vérifiée, readiness séparée de la liveness, RECETTE-LOT1.md) ; exercice de restauration réel : à jouer par Noa |
 
@@ -189,3 +189,14 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   retouche, une demande de photomontage ne passe plus la main à l'assistant — qui n'avait
   aucun geste à appeler et improvisait. Banc `test_pages_et_suite` (25, le même fichier
   des deux côtés).
+- 16/09 — D-19 (suite, parité avec le jumeau) : le jeton de rafraîchissement d'un compte
+  Google était écrit EN CLAIR dans `connexions_google` — une clé permanente vers la boîte
+  de la personne, qu'une sauvegarde égarée emporte. `security/coffre.py` le chiffre au
+  repos avec une clé séparée du secret des sessions (`JETONS_CHIFFREMENT_CLE`) ; les
+  lignes d'avant restent lisibles et passent au coffre à l'usage. L'état OAuth, signé et
+  daté, était REJOUABLE dix minutes : il porte une marque consommée à la vérification.
+  Les demandes de lien de connexion et les essais de vérification sont bornés par ORIGINE,
+  comme l'était déjà le code admin — et la réponse ne change pas quand la borne mord. Les
+  CAPACITÉS suivent les droits rendus par Google. Enfin le lien de connexion ne s'imprime
+  plus dès que `DEBUG` est vrai : l'environnement fait foi. Banc `test_connexions_google`
+  (36, le même fichier des deux côtés).

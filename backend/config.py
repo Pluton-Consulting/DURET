@@ -346,6 +346,12 @@ class Settings(BaseSettings):
     # même vie. Vide = ancienne dérivation depuis JWT_SECRET_KEY ; dès qu'elle
     # est posée, tout code relu est réécrit avec elle (rotation sans perte).
     code_chiffrement_cle: str = ""
+    # LA CLÉ DES SECRETS AU REPOS (16/09, audit D-19). Séparée du secret des
+    # sessions comme l'est déjà celle des codes : changer JWT_SECRET_KEY ne doit
+    # pas couper les comptes Google reliés, et une fuite de l'un ne doit pas
+    # donner l'autre. Vide = dérivation depuis JWT_SECRET_KEY (rien n'est
+    # perdu) ; dès qu'elle est posée, tout jeton relu est réécrit avec elle.
+    jetons_chiffrement_cle: str = ""
     # LE CODE GÉNÉRÉ NE TOURNE PAS DANS LE BACKEND (16/09, audit D-15). Sans
     # exécuteur isolé configuré, un skill généré est REFUSÉ : le sous-processus
     # partagerait les fichiers, les clés et le réseau du serveur. Ce drapeau

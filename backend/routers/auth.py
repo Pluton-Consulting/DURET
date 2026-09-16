@@ -103,7 +103,13 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
     plus ni HTML ni Resend — c'est ce qui garantit qu'une correction de mise en
     page se pose des deux côtés d'un seul geste.
     """
-    if settings.debug:
+    # LE LIEN NE S'IMPRIME QU'EN DÉVELOPPEMENT (16/09, audit D-19). Un lien de
+    # connexion EST une identité : imprimé dans les journaux, il se lit dans
+    # `docker compose logs`, dans une capture d'écran de diagnostic, dans une
+    # sauvegarde de journaux. `DEBUG=true` laissé par mégarde sur le serveur
+    # suffisait — l'environnement fait donc foi, pas le drapeau de confort.
+    environnement = str(getattr(settings, "environment", "") or "").strip().lower()
+    if settings.debug and environnement in ("development", "dev", "local", "test"):
         print(f"\nMAGIC LINK (dev) → {magic_link}\n")
         # Pas de return : l'email part quand même en mode debug.
 
@@ -117,11 +123,20 @@ async def _send_magic_link_email(to_email: str, magic_link: str) -> None:
 
 
 @router.post("/magic-link/request")
-async def request_magic_link(body: MagicLinkRequest):
+async def request_magic_link(body: MagicLinkRequest, request: Request):
     """
     Génère un token et envoie un lien de connexion par email.
     Retourne toujours le même message pour ne pas révéler si l'email existe.
+
+    BORNÉE PAR ORIGINE (16/09, audit D-19) : mille demandes font mille mails
+    partis de notre domaine, et notre réputation d'expéditeur avec. Quand la
+    borne mord, la réponse NE CHANGE PAS — sinon elle dirait, à qui insiste,
+    quelles adresses existent : on cesse simplement d'envoyer.
     """
+    origine = _origine(request)
+    if tentatives.saturee(origine):
+        logger.warning("Demandes de lien de connexion trop nombreuses depuis une origine")
+        return {"ok": True}
     if not getattr(settings, "lien_magique_actif", True):
         raise HTTPException(status_code=status.HTTP_410_GONE,
                             detail="La connexion par lien magique est désactivée : entrez par votre "
@@ -140,6 +155,7 @@ async def request_magic_link(body: MagicLinkRequest):
             success=False,
             error_message="Email non enregistré",
         )
+        tentatives.noter_echec(origine)
         # Réponse UNIFORME (anti-énumération de comptes) — voir aussi le chemin "connu".
         return {"ok": True}
 
@@ -172,7 +188,13 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
             body.token, body.email,
         )
 
+    origine = _origine(request)
+    if tentatives.saturee(origine):
+        # Même message que pour un lien faux : la borne ne se laisse pas
+        # mesurer depuis l'extérieur.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien invalide")
     if not row:
+        tentatives.noter_echec(origine)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien invalide")
     # UN LIEN PEUT SERVIR PLUSIEURS FOIS (03/09, migration 035) : PC puis
     # téléphone, chacun ouvrant sa propre session d'appareil. Le compteur fait
@@ -182,8 +204,10 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
     maxi = int(d.get("utilisations_max") or 1)
     faites = int(d.get("utilisations") or 0)
     if row["used"] or faites >= maxi:
+        tentatives.noter_echec(origine)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien déjà utilisé")
     if row["expires_at"] < datetime.now(timezone.utc):
+        tentatives.noter_echec(origine)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lien expiré")
 
     # QUI ENTRE (11/09). L'adresse peut porter plusieurs profils — la boîte
@@ -195,7 +219,10 @@ async def verify_magic_link(body: VerifyTokenRequest, request: Request):
     if retenu == "choix":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="choix_profil")
     if retenu is None:
+        tentatives.noter_echec(origine)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accès non autorisé")
+    # Entrée réussie : cette origine n'a plus rien à traîner.
+    tentatives.oublier(origine)
     # Un profil à CODE d'une adresse partagée ne s'ouvre pas par le lien : le
     # lien prouve la boîte, que tout le monde partage ; le code prouve la
     # personne. Il se choisit sur la page de connexion (13/09).

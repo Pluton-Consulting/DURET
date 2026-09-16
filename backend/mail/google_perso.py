@@ -30,6 +30,7 @@ survivre au redéploiement ET être visible d'un contexte synchrone).
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 import urllib.parse
 from datetime import timedelta
@@ -143,6 +144,71 @@ def accorde(boite: str, scope: str) -> Optional[bool]:
     return scope in connus
 
 
+# CE QU'UN COMPTE RELIÉ PERMET RÉELLEMENT (16/09, audit D-19). Un compte
+# autorisé à LIRE le Drive n'a pas pour autant le droit d'écrire un brouillon
+# Gmail : les droits se lisent dans les scopes que Google a RENDUS au
+# consentement, pas dans ceux qu'on avait demandés. Sans cette table, un geste
+# partait, échouait chez Google, et rendait une erreur d'API à la personne.
+CAPACITES = {
+    "drive_lecture": ("https://www.googleapis.com/auth/drive",
+                      "https://www.googleapis.com/auth/drive.readonly"),
+    "drive_ecriture": ("https://www.googleapis.com/auth/drive",
+                       "https://www.googleapis.com/auth/drive.file"),
+    "gmail_lecture": ("https://www.googleapis.com/auth/gmail.readonly",
+                      "https://mail.google.com/"),
+    "gmail_envoi": ("https://www.googleapis.com/auth/gmail.send",
+                    "https://mail.google.com/"),
+    "gmail_brouillon": ("https://www.googleapis.com/auth/gmail.compose",
+                        "https://mail.google.com/"),
+    "agenda": ("https://www.googleapis.com/auth/calendar.events",
+               "https://www.googleapis.com/auth/calendar"),
+}
+
+# Ce qu'il faut demander pour obtenir une capacité qui manque — ce n'est pas
+# forcément le premier scope de la liste : on redemande le plus étroit qui
+# suffit, jamais « tout Gmail » pour poser un brouillon.
+DEMANDE_POUR = {
+    "drive_lecture": "https://www.googleapis.com/auth/drive",
+    "drive_ecriture": "https://www.googleapis.com/auth/drive",
+    "gmail_lecture": "https://www.googleapis.com/auth/gmail.readonly",
+    "gmail_envoi": "https://www.googleapis.com/auth/gmail.send",
+    "gmail_brouillon": "https://www.googleapis.com/auth/gmail.compose",
+    "agenda": "https://www.googleapis.com/auth/calendar.events",
+}
+
+
+def capacites(boite: str) -> Optional[set]:
+    """Ce que ce compte relié permet, d'après les droits RENDUS par Google.
+
+    None : le compte n'est pas relié du tout — ce n'est pas la même chose
+    qu'un compte relié sans le droit demandé, et l'écran ne dit pas la même
+    phrase dans les deux cas.
+    """
+    email = _normaliser(boite)
+    if email not in _CACHE:
+        return None
+    accordes = set(_SCOPES_PAR_EMAIL.get(email) or SCOPES_HISTORIQUES)
+    return {nom for nom, exigés in CAPACITES.items() if accordes & set(exigés)}
+
+
+def peut(boite: str, capacite: str) -> bool:
+    """Ce compte peut-il faire CE geste-là ? (fail-closed : non relié = non)"""
+    acquises = capacites(boite)
+    return bool(acquises and capacite in acquises)
+
+
+def refus_de_capacite(boite: str, capacite: str) -> str:
+    """Le message à rendre quand le droit manque — il dit quoi faire, pas
+    seulement que c'est refusé."""
+    acquises = capacites(boite)
+    if acquises is None:
+        return ("Ce compte Google n'est pas relié à l'assistant : Paramètres → "
+                "Mon compte Google, puis « Relier mon compte ».")
+    return (f"Le compte {boite} est relié, mais il n'a pas accordé le droit nécessaire "
+            f"à ce geste ({capacite.replace('_', ' ')}). Reliez-le à nouveau depuis "
+            "Paramètres → Mon compte Google : Google redemandera ce droit-là.")
+
+
 def _scopes_pour(email: str) -> list[str]:
     """Les droits à demander au rafraîchissement : ceux accordés, sinon ceux
     d'avant l'agenda (un compte relié sans trace de ses droits les avait)."""
@@ -174,7 +240,13 @@ def lien_autorisation(user_id: str, compte: Optional[str] = None,
                            "(Paramètres → Clés API, ou GOOGLE_OAUTH_CLIENT_ID / "
                            "GOOGLE_OAUTH_CLIENT_SECRET).")
     from auth.jwt_handler import create_access_token
-    state = create_access_token({"sub": str(user_id), "usage": USAGE_STATE},
+    # UN ÉTAT NE SERT QU'UNE FOIS (16/09, audit D-19). Signé et daté, il l'était
+    # déjà ; rejouable pendant dix minutes, il l'était aussi — un retour Google
+    # capturé (historique du navigateur, journal d'un proxy) pouvait être
+    # renvoyé. Le `nonce` est retenu à l'émission et CONSOMMÉ à la vérification.
+    nonce = secrets.token_urlsafe(12)
+    _nonce_emis(nonce)
+    state = create_access_token({"sub": str(user_id), "usage": USAGE_STATE, "nonce": nonce},
                                 expires_delta=timedelta(minutes=10))
     params = {
         "client_id": _client()[0],
@@ -195,12 +267,48 @@ def lien_autorisation(user_id: str, compte: Optional[str] = None,
     return URL_AUTORISATION + "?" + urllib.parse.urlencode(params)
 
 
+# Les états émis et pas encore consommés. Bornés en nombre et en temps : cette
+# mémoire vit dans le processus, comme le flux OAuth qu'elle protège (dix
+# minutes). Un redémarrage entre l'aller et le retour fait échouer le retour —
+# c'est le bon sens du rejeu : on refuse ce qu'on ne peut pas prouver.
+_NONCES: dict[str, float] = {}
+_NONCE_TTL_S = 900
+_MAX_NONCES = 2000
+
+
+def _nonce_emis(nonce: str) -> None:
+    maintenant = time.monotonic()
+    for ancien, quand in list(_NONCES.items()):
+        if maintenant - quand > _NONCE_TTL_S:
+            _NONCES.pop(ancien, None)
+    if len(_NONCES) >= _MAX_NONCES:
+        _NONCES.clear()
+    _NONCES[nonce] = maintenant
+
+
+def _nonce_consomme(nonce: str) -> bool:
+    """Vrai si ce nonce était bien en attente — et il ne l'est plus."""
+    return _NONCES.pop(nonce, None) is not None
+
+
 def verifier_state(state: str) -> str:
-    """L'identifiant d'utilisateur porté par un state valide — lève sinon."""
+    """L'identifiant d'utilisateur porté par un state valide — lève sinon.
+
+    Trois contrôles, dans cet ordre : la SIGNATURE et la date (le JWT),
+    l'USAGE (un jeton de session ne vaut pas un état OAuth), et le REJEU (un
+    état ne sert qu'une fois).
+    """
     from auth.jwt_handler import decode_access_token
     donnees = decode_access_token(state)
     if not isinstance(donnees, dict) or donnees.get("usage") != USAGE_STATE:
         raise ValueError("state OAuth invalide")
+    nonce = str(donnees.get("nonce") or "")
+    if nonce and not _nonce_consomme(nonce):
+        raise ValueError("state OAuth déjà utilisé")
+    if not nonce:
+        # État émis par une version d'avant ce correctif : signé, daté, lié à
+        # une personne. On l'accepte le temps que les liens en vol s'éteignent.
+        logger.info("État OAuth sans marque d'unicité (lien ouvert avant la mise à jour)")
     user_id = str(donnees.get("sub") or "")
     if not user_id:
         raise ValueError("state OAuth sans identité")
@@ -244,16 +352,29 @@ async def echanger_code(code: str) -> dict:
             "scope": jetons.get("scope", "")}
 
 
+# L'usage du coffre pour ces jetons : il entre dans la dérivation de la clé.
+USAGE_COFFRE = "google-refresh"
+
+
 async def enregistrer(user_id: str, email: str, refresh_token: str, scopes: str) -> None:
-    """Retient (ou remplace) la connexion de cet utilisateur, cache compris."""
+    """Retient (ou remplace) la connexion de cet utilisateur, cache compris.
+
+    LE JETON EST CHIFFRÉ AVANT D'ÊTRE ÉCRIT (16/09, audit D-19) : ce n'est pas
+    un mot de passe qu'on change en cinq minutes, c'est une clé permanente vers
+    la boîte de la personne. Une sauvegarde égarée ou un accès en lecture à la
+    base ne doit pas la livrer.
+    """
     from database.connection import get_db
+    from security import coffre
     async with get_db() as conn:
         await conn.execute(
             """INSERT INTO connexions_google (user_id, email, refresh_token, scopes)
                VALUES ($1::uuid, $2, $3, $4)
                ON CONFLICT (user_id) DO UPDATE
                    SET email = $2, refresh_token = $3, scopes = $4, maj_le = NOW()""",
-            user_id, _normaliser(email), refresh_token, scopes or "")
+            user_id, _normaliser(email),
+            coffre.chiffrer(refresh_token, USAGE_COFFRE),
+            scopes or "")
     await rafraichir(force=True)
 
 
@@ -282,8 +403,13 @@ async def deconnecter(user_id: str) -> bool:
     if jeton:
         try:
             import httpx
+
+            from security import coffre
+            # Le jeton sort du coffre pour être révoqué CHEZ GOOGLE : oublier la
+            # ligne chez nous ne suffit pas, la clé resterait valable là-bas.
+            en_clair = coffre.dechiffrer(jeton, USAGE_COFFRE)
             async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(URL_REVOCATION, params={"token": jeton})
+                await client.post(URL_REVOCATION, params={"token": en_clair or jeton})
         except Exception as e:  # noqa: BLE001
             logger.info("Révocation Google non aboutie (connexion oubliée localement) : %s", e)
     await rafraichir(force=True)
@@ -303,13 +429,38 @@ async def rafraichir(force: bool = False) -> None:
     except Exception as e:  # noqa: BLE001 - table absente (migration pas passée) : cache vide
         logger.info("Connexions Google non chargées : %s", e)
         return
-    _CACHE = {_normaliser(l["email"]): l["refresh_token"] for l in lignes}
-    _SCOPES_PAR_EMAIL = {_normaliser(l["email"]): _scopes_accordes(l["scopes"]) for l in lignes}
-    _PAR_USER = {str(l["user_id"]): {"email": _normaliser(l["email"]),
-                                     "refresh_token": l["refresh_token"]}
-                 for l in lignes}
+    # LE COFFRE SE LIT ICI, ET NULLE PART AILLEURS : c'est le seul endroit qui
+    # lit la table. Une ligne écrite AVANT le coffre est en clair — on la lit
+    # telle quelle (les couper le jour du déploiement fermerait tous les comptes
+    # reliés) et on la réécrit chiffrée : la rotation se fait à l'usage.
+    from security import coffre
+    clairs, a_reecrire = {}, []
+    for l in lignes:
+        jeton = coffre.dechiffrer(l["refresh_token"], USAGE_COFFRE)
+        if jeton is None:
+            logger.warning("Connexion Google illisible pour %s : clé de chiffrement changée",
+                           _normaliser(l["email"]))
+            continue
+        clairs[str(l["user_id"])] = (_normaliser(l["email"]), jeton,
+                                     _scopes_accordes(l["scopes"]))
+        if coffre.a_rechiffrer(l["refresh_token"]):
+            a_reecrire.append((str(l["user_id"]), jeton))
+    _CACHE = {email: jeton for email, jeton, _ in clairs.values()}
+    _SCOPES_PAR_EMAIL = {email: scopes for email, _, scopes in clairs.values()}
+    _PAR_USER = {uid: {"email": email, "refresh_token": jeton}
+                 for uid, (email, jeton, _) in clairs.items()}
     _CACHE_QUAND = time.monotonic()
     logger.info("Connexions Google : %d boîte(s) reliée(s)", len(_CACHE))
+    for uid, jeton in a_reecrire:
+        try:
+            async with get_db() as conn:
+                await conn.execute(
+                    "UPDATE connexions_google SET refresh_token = $2 WHERE user_id = $1::uuid",
+                    uid, coffre.chiffrer(jeton, USAGE_COFFRE))
+        except Exception as e:  # noqa: BLE001 — la lecture a réussi : ce n'est pas bloquant
+            logger.info("Jeton Google non rechiffré (%s) : %s", uid, e)
+    if a_reecrire:
+        logger.info("Jetons Google mis au coffre : %d", len(a_reecrire))
 
 
 def emails_connectes() -> list[str]:

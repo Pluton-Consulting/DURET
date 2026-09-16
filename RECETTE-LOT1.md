@@ -1,15 +1,26 @@
-# Lot 1 de l'audit — ce qu'il faut faire, dans l'ordre, et ce qu'on doit voir
+# L'audit sur Duret — ce qu'il faut faire, dans l'ordre, et ce qu'on doit voir
 
 Branche `audit/duret`. Ce document est la **procédure** : les commandes se lancent
 sur le serveur (Noa), les contrôles se font à l'écran. Rien ici n'a tourné contre
 le vrai Postgres, le vrai NAS ni un navigateur — c'est précisément ce que cette
 recette va dire.
 
-Fiches livrées dans ce lot : **D-02** (styles Word), **D-05** (un échec n'est plus
-une réussite), **D-06** (recherche quand les embeddings tombent), **D-03** (propriété
-des visuels, jeton), **D-27** (doublons du NAS), **D-19** (code administrateur),
-**D-22** (journaux et export), **D-23 / D-26 / D-00** (sauvegarde, déploiement,
-restauration).
+Fiches livrées sur cette branche, dans l'ordre des commits :
+
+**Lot 1** — **D-02** (styles Word), **D-05** (un échec n'est plus une réussite),
+**D-06** (recherche quand les embeddings tombent), **D-03** (propriété des visuels,
+jeton), **D-27** (doublons du NAS), **D-19** (code administrateur, puis connexions
+Google), **D-22** (journaux et export), **D-23 / D-26 / D-00** (sauvegarde,
+déploiement, restauration).
+
+**Lot 2** — **D-04** (versions et atelier durables), **D-07** (références stables),
+**D-01** (bon document de référence), **D-09** (droits dans la requête), **D-08**
+(réindexation), **D-10** (pagination des mails), **D-11** (un envoi ne part qu'une
+fois), **D-13** (une demande ne lance qu'un tour), **D-16** (budget de temps),
+**D-17** (baux de vectorisation), **D-20** (cloisonnement PostgreSQL), **D-12**
+(montants au centime), **D-14** (leçons qualifiées), **D-15** (code généré isolé),
+**D-18** (rôle du processus), **D-21** (SSRF du navigateur), **D-25** (la recette qui
+se mesure), **D-24** (pages d'un PDF, suite du tour).
 
 ---
 
@@ -27,10 +38,18 @@ restauration).
    · `CODE_CHIFFREMENT_CLE` sépare le chiffrement des codes du secret des
    sessions. Vide, tout continue de fonctionner (ancienne dérivation) ; posée,
    les codes se réécrivent avec elle au fil des lectures.
-3. **Optionnel mais recommandé** : `BACKUP_PASSPHRASE=<phrase>` (chiffre les
+3. **Une clé de plus** (audit D-19, connexions Google) :
+   ```
+   JETONS_CHIFFREMENT_CLE=<openssl rand -hex 32>
+   ```
+   Elle chiffre au repos les jetons des comptes Google reliés, séparément du
+   secret des sessions. Vide, tout continue (dérivation depuis `JWT_SECRET_KEY`).
+4. **Optionnel mais recommandé** : `BACKUP_PASSPHRASE=<phrase>` (chiffre les
    secrets dans les sauvegardes) et `BACKUP_DISTANT=user@hote:/chemin` (copie
    hors de la machine). La phrase de passe se garde **ailleurs** que les
    sauvegardes.
+5. **Facultatif, pour plus tard** : `ROLE_PROCESSUS` (audit D-18) reste à
+   `complet` — ne le changer que le jour où l'on ajoute un second processus.
 
 ## 2. Déployer (D-26 — la livraison vérifiée)
 
@@ -41,9 +60,10 @@ git fetch origin && git checkout audit/duret && git pull
 ```
 
 `deploy.sh` fait, **dans cet ordre** : version livrée → construction des images →
-**sauvegarde** → démarrage de la base seule → **migrations** (la **044** est la
-nouvelle ; un échec ARRÊTE la livraison) → vérification que le schéma est complet
-→ bascule → attente de `/api/ready`.
+**sauvegarde** → démarrage de la base seule → **migrations** (**044**, **045**,
+**046**, **047**, **048** sont nouvelles, toutes additives et idempotentes ; un
+échec ARRÊTE la livraison) → vérification que le schéma est complet → bascule →
+attente de `/api/ready`.
 
 **À VÉRIFIER** : la dernière ligne affiche l'état prêt, avec le commit. Sinon, le
 script dit ce qui manque et rappelle le retour arrière — l'ancienne version est
@@ -111,6 +131,43 @@ curl -s https://duret.pluton-consulting.fr/api/ready | head -c 400
 2. `docker compose logs backend | grep -i "key="` → aucune clé lisible, seulement
    `***` suivi de six caractères.
 
+### D-19 (suite) — les connexions Google
+1. Relier un compte Google, puis sur le serveur :
+   `SELECT left(refresh_token, 8) FROM connexions_google;`
+   **À VÉRIFIER** : la valeur commence par `coffre1:`, jamais par `1//`.
+2. Les comptes reliés AVANT ce déploiement continuent de marcher et passent au
+   coffre au premier rafraîchissement (journal : « Jetons Google mis au coffre »).
+3. `docker compose logs backend | grep "MAGIC LINK"` → **rien** en production.
+
+### D-24 — la page qu'il faut lire
+Joindre un DCE long dont la cote utile est en page 8, et demander cette cote.
+**À VÉRIFIER** : la réponse donne la cote OU dit explicitement quelles pages ont
+été lues et que celle-là ne l'a pas été — jamais un « non visible » sans précision.
+Une demande de photomontage reçoit une explication fidèle : aucun moteur de
+retouche n'est installé ici, et l'assistant ne le promet pas.
+
+### Le reste du lot 2, en une passe
+* **D-01 / D-04** — « reprends ce devis pour Madame Martin », puis « change le
+  prix », puis « joins-le à un mail ». **À VÉRIFIER** : c'est la DERNIÈRE version
+  qui part ; on ne redemande pas ce qui a déjà été dit.
+* **D-09** — un compte sans accès à une boîte demande un compte de messages.
+  **À VÉRIFIER** : le compte annoncé est celui qu'on a le droit de lire.
+* **D-11 / D-13** — approuver un envoi, puis recharger la page pendant le
+  traitement. **À VÉRIFIER** : le mail ne part pas deux fois.
+* **D-12** — « le total des devis de l'année » : juste au centime.
+* **D-14** — corriger l'assistant, puis Connaissances → Leçons : la leçon porte un
+  type et une confiance ; une correction qui suit une panne n'en crée aucune.
+* **D-08** — relancer « Enrichir les documents » : aucun document ne perd ses
+  morceaux en route (une réindexation est une seule transaction).
+* **D-15** — un skill GÉNÉRÉ (Savoir-faire → un brouillon de skill) : sans
+  exécuteur isolé configuré, il est REFUSÉ en le disant. Les gestes natifs
+  continuent normalement.
+* **D-16** — un tour qui enchaîne plusieurs gestes se termine, et une cascade
+  entièrement en panne ne fait plus payer tous ses fournisseurs avant de conclure.
+* **D-21** — « ouvre http://169.254.169.254/ » → refusé, en le disant.
+* **D-25** — `docker compose exec backend python scripts/recette_usages.py` → un
+  rapport daté, 0 FAIL.
+
 ### D-05 / D-06 — les gestes disent la vérité
 1. Poser une question qui déclenche un geste voué à l'échec (par exemple retenir
    une consigne vide). **À VÉRIFIER** : l'assistant dit l'échec ; la console le
@@ -161,5 +218,9 @@ tâches planifiées et lecture du NAS coupées.
 * Le NAS, le Drive et les fournisseurs de modèles n'ont pas été appelés.
 * Rien n'a été rendu dans un navigateur : l'écran du tri, le panneau du code
   administrateur et l'export se jugent à la première utilisation.
-* Les fiches restantes (D-01, D-04, D-07 à D-18, D-20, D-21, D-24, D-25, et la
-  suite de D-05, D-06, D-22, D-27) ne sont pas dans ce lot.
+* Les **étapes 2** annoncées fiche par fiche dans `AUDIT-SUIVI.md` ne sont pas
+  faites : registre des ressources en base (D-03/D-07), générations de vecteurs
+  (D-17), delta Graph des mails (D-10), recadrage des cotes (D-24), rétention et
+  modes de confidentialité (D-22), écran détaillé du tri NAS (D-27).
+* La bascule du rôle applicatif PostgreSQL (D-20) est une opération de serveur :
+  `scripts/controle_droits_base.py` dit seulement où l'on en est.

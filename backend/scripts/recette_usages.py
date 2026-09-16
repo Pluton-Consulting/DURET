@@ -38,7 +38,12 @@ BACKEND = RACINE / "backend"
 # pire des deux mondes.
 MOTS_DE_SAUT = ("exige le conteneur", "non joué", "non jouée", "absent :", "(Node absent",
                 "sans objet ici", "SAUTÉ", "python-docx", "cryptography absent",
-                "n'est pas installé", "ModuleNotFoundError")
+                "n'est pas installé", "ModuleNotFoundError",
+                # Un banc qui ATTEND UNE SAISIE (identifiants d'un tenant, mot de
+                # passe) ne peut pas tourner sans personne devant : c'est un
+                # contrôle non joué, pas un échec. On lui ferme l'entrée standard
+                # pour qu'il le dise tout de suite au lieu d'attendre.
+                "EOFError")
 
 
 def _sortie_par_defaut() -> pathlib.Path:
@@ -99,14 +104,16 @@ def main() -> int:
         t0 = time.monotonic()
         try:
             lance = subprocess.run([args.python, str(banc), str(BACKEND)],
-                                   capture_output=True, text=True, timeout=args.delai)
+                                   capture_output=True, text=True, timeout=args.delai,
+                                   stdin=subprocess.DEVNULL)
             texte, code = (lance.stdout or "") + (lance.stderr or ""), lance.returncode
             # La plupart des bancs prennent le chemin du backend en argument ;
             # quelques-uns ont leurs propres options et le refusent. On les
             # relance tels quels plutôt que de les compter en échec.
             if code != 0 and "unrecognized arguments" in texte:
                 lance = subprocess.run([args.python, str(banc)], cwd=str(RACINE),
-                                       capture_output=True, text=True, timeout=args.delai)
+                                       capture_output=True, text=True, timeout=args.delai,
+                                       stdin=subprocess.DEVNULL)
                 texte, code = (lance.stdout or "") + (lance.stderr or ""), lance.returncode
         except subprocess.TimeoutExpired:
             texte, code = f"délai de {args.delai}s dépassé", 1

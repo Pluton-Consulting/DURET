@@ -296,10 +296,31 @@ recette = (RACINE / "RECETTE-LOT1.md")
 verifier("la procédure de recette du lot existe", recette.exists())
 if recette.exists():
     texte = recette.read_text(encoding="utf-8")
-    verifier("elle donne les commandes du serveur (sauvegarde, migration, déploiement, restauration)",
-             all(c in texte for c in ("./backup.sh", "./deploy.sh", "./restaurer.sh", "044")))
-    verifier("elle couvre les fiches du lot (D-02, D-03, D-05, D-06, D-19, D-22, D-27)",
-             all(f in texte for f in ("D-02", "D-03", "D-05", "D-06", "D-19", "D-22", "D-27")))
+    verifier("elle donne les commandes du serveur (sauvegarde, déploiement, restauration)",
+             all(c in texte for c in ("./backup.sh", "./deploy.sh", "./restaurer.sh")))
+    # LES FICHES DU LOT NE SONT PAS LES MÊMES DES DEUX CÔTÉS (le code
+    # administrateur est propre à l'un, le connecteur du stockage à l'autre) :
+    # on ne fige pas une liste ici, on vérifie que CHAQUE fiche annoncée en tête
+    # du document a bien sa place plus bas. Une fiche citée et jamais reprise
+    # est exactement ce qu'on veut interdire.
+    import re as _re
+    entete = texte.split("---", 1)[0]
+    annoncees = sorted(set(_re.findall(r"\b[DS]-\d{2}\b", entete)))
+    corps = texte.split("---", 1)[1] if "---" in texte else ""
+    orphelines = [f for f in annoncees if f not in corps]
+    verifier("elle annonce les fiches du lot", len(annoncees) >= 4, annoncees)
+    verifier("chaque fiche annoncée est reprise plus bas (rien n'est cité pour mémoire)",
+             not orphelines, orphelines)
+    # LE SCHÉMA SE DIT. Soit le lot apporte une migration et la NOMME, soit il
+    # n'en apporte pas et le dit — c'est ce qu'on regarde en premier quand une
+    # livraison se passe mal. Une migration citée doit exister sur le disque.
+    import re as _re2
+    numeros = {p.name[:3] for p in (RACINE / "backend/database/migrations").glob("[0-9]*.sql")}
+    citees = set(_re2.findall(r"\*\*(\d{3})\*\*|migration (\d{3})|la \*\*(\d{3})\*\*", texte))
+    citees = {n for triplet in citees for n in triplet if n}
+    verifier("elle dit ce que le schéma fait dans ce lot",
+             bool(citees) or "aucune migration" in texte.lower(), "aucune migration nommée")
+    verifier("les migrations qu'elle nomme existent", citees <= numeros, sorted(citees - numeros))
     verifier("elle dit ce qu'on regarde à l'écran, pas seulement ce qu'on tape",
              "À VÉRIFIER" in texte.upper() and "retour arrière" in texte.lower())
 

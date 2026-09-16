@@ -13,7 +13,7 @@ restauration).
 
 ---
 
-## 1. Avant de déployer
+## 1. Avant de déployer (D-00 — la préparation)
 
 1. **Pousser la branche** (Claude ne pousse pas) :
    `git push origin audit/duret` depuis le worktree `DURET-audit`.
@@ -32,7 +32,7 @@ restauration).
    hors de la machine). La phrase de passe se garde **ailleurs** que les
    sauvegardes.
 
-## 2. Déployer
+## 2. Déployer (D-26 — la livraison vérifiée)
 
 ```bash
 cd ~/DURET/duret-sols        # le dossier du projet sur le VPS

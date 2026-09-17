@@ -203,6 +203,7 @@ verifier("sans clause de localisation : aucune ligne, et c'est dit", not l1 and 
 # ─── 6. Le chargement du dossier et la file ─────────────────────────────────
 print("6. Le dossier se charge une fois, se suit à l'écran, et la file ne le perd pas")
 import importlib
+import json as json_mod
 import types
 
 importlib.reload(dossiers)                      # la vraie base SQLite, dans le dossier temporaire
@@ -270,6 +271,17 @@ with dossiers.base() as c:
 dossiers.etape(uid, fil2, "dossier", "chargement", {"dossier": "construction 29 lgts", "vus": 305, "a_charger": 24, "charges": 9, "en_cours": True})
 phase = next(x["phase"] for x in df.progression(uid, fil2) if x["id"] == j1["tache_documentaire"])
 verifier("pendant l'ouverture, l'écran dit « n/N pièces utiles chargées »", "9/24" in phase and "305 fichiers vus" in phase, phase)
+with dossiers.base() as c:
+    donnees_j = json_mod.loads(c.execute("SELECT donnees FROM file_documentaire WHERE id=?", (j1["tache_documentaire"],)).fetchone()[0]); donnees_j["tache"] = "tache-ecran"
+    c.execute("UPDATE file_documentaire SET donnees=? WHERE id=?", (json_mod.dumps(donnees_j), j1["tache_documentaire"]))
+dossiers.etape(uid, fil2, "dossier", "chargement", {"dossier": "x", "vus": 1, "a_charger": 1, "charges": 1, "en_cours": False})
+asyncio.run(dd.dire(uid, fil2, "tache-ecran", "lecture visuelle du plan « 06 COUPES.pdf », page 1"))
+phase = next(x["phase"] for x in df.progression(uid, fil2) if x["id"] == j1["tache_documentaire"])
+verifier("l'écran dit CE QUI SE FAIT : la pièce et la page en cours", "en ce moment : lecture visuelle du plan « 06 COUPES.pdf », page 1" in phase, phase)
+dossiers.etape(uid, fil2, "tache-ecran", "suivi_lecture", {"pieces": 23, "parties": 41}); dossiers.etape(uid, fil2, "tache-ecran", "analyse:s1:1", {"faits": []})
+asyncio.run(dd.dire(uid, fil2, "tache-ecran", "analyse de « CCAP.pdf » — partie 3 sur 8"))
+phase = next(x["phase"] for x in df.progression(uid, fil2) if x["id"] == j1["tache_documentaire"])
+verifier("…et l'avancement : « 1 sur 41 parties (23 pièces) », la partie en cours nommée", "1 sur 41 parties analysées (23 pièces)" in phase and "partie 3 sur 8" in phase, phase)
 source_q = (BACKEND / "skills" / "quantitatifs.py").read_text()
 verifier("un nouvel essai du quantitatif reprend le CONTRAT du premier (pièces et demande)", "contrat['sources']" in source_q and "if not contrat:await" in source_q)
 

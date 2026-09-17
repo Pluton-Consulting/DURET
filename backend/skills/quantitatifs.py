@@ -168,6 +168,8 @@ async def _affecter_surfaces(uid,fil,tache,demande,surfaces,plans,a_metrer,ligne
     if not retenus:
         return [],reserves+['Aucune clause du CCTP ne dit quel revêtement va dans quelle pièce : les surfaces sont livrées sans affectation à un poste. Ajoute le CCTP du lot ou le tableau de localisation.'],set(),[]
     cle='affectation_surfaces:v2'
+    from skills.documents_dossier import dire
+    await dire(uid,fil,tache,'rapprochement de '+str(len(postes))+' poste(s) du DPGF avec les pièces des logements, d’après '+str(len(retenus))+' clause(s) « Localisation » du CCTP')
     avis=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle)
     if not avis:
         def verifier(r):
@@ -332,6 +334,8 @@ async def _produire(data,user):
         ancienne=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle)
         if ancienne:return ancienne
         async with semaphore:
+            from skills.documents_dossier import dire
+            await dire(uid,fil,tache,'relevé des quantités dans « '+s['nom'][:70]+' » (passage '+cle.rsplit(':q',1)[-1]+')')
             passes=[0]
             def verifier(r):
                 if not isinstance(r.get('lignes'),list) or not isinstance(r.get('reserves'),list):raise ValueError('lignes[] et reserves[] obligatoires.')

@@ -299,7 +299,7 @@ def choisir_fichiers(fichiers,lots,deja,usage='document',tout=False):
         retenus.append(f);poids+=f.get('octets',0)
     return retenus,ecartes
 
-async def charger_dossier(uid,fil,dossier,user,lots=(),usage='document',tout=False):
+async def charger_dossier(uid,fil,dossier,user,lots=(),usage='document',tout=False,nommes=True):
     """LE DOSSIER DU SERVEUR ENTRE DANS LE TRAVAIL (17/09). Relevé de Noa : « fais
     les métrés à partir du dossier souche … » — le quantitatif n'a lu que les
     pièces jointes au chat ; aucun geste n'a ouvert le dossier nommé. Les fichiers
@@ -311,7 +311,8 @@ async def charger_dossier(uid,fil,dossier,user,lots=(),usage='document',tout=Fal
         chemin,fichiers,coupe=await arbre_du_dossier(dossier,user)
     deja={_cle_nom(s['nom']) for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)}
     lots=set(lots or ());deduits=False
-    if not lots and not tout:lots=lots_du_metier(fichiers);deduits=bool(lots)
+    if not nommes and not tout:
+        metier=lots_du_metier(fichiers);deduits=bool(metier-lots);lots|=metier
     choisis,ecartes=choisir_fichiers(fichiers,lots,deja,usage,tout)
     ajoutes=[];ignores=[]
     semaphore=asyncio.Semaphore(3)
@@ -342,21 +343,25 @@ async def dossier_du_travail(uid,fil,data,user,demande,usage='document'):
     nom=str(data.get('dossier') or '').strip() or dossier_cite(demande)
     if not nom or data.get('tache'):return None
     pieces=await asyncio.to_thread(dossiers.manifeste,uid,fil)
-    lots=lots_vises(demande,*[p['nom'] for p in pieces])
+    # Les lots NOMMÉS par la demande font foi. À défaut, ceux des pièces jointes
+    # ET ceux du métier de la maison : joindre le seul CCTP du lot 11 n'écarte
+    # pas le lot 12 d'un mémoire qui répond aux deux (test réel du 17/09).
+    lots=lots_vises(demande)
+    lots_des_pieces=set() if lots else lots_vises(*[p['nom'] for p in pieces])
     # UN NOUVEL ESSAI NE RECHARGE RIEN, ET NE PERD PAS LE COMPTE RENDU : au 2ᵉ essai
     # tout est « déjà dans le travail » — sans mémoire, la réserve du classeur
     # aurait dit « 0 pièce chargée » d'un dossier qui en a donné trente.
     cle='rapport:'+hashlib.sha256((_cle_nom(nom)+'|'+usage).encode()).hexdigest()[:16]
     try:
         ancien=await asyncio.to_thread(dossiers.etape,uid,fil,'dossier',cle)
-        r=await _charger_et_retenir(uid,fil,nom,user,lots,usage,demande,ancien,cle)
+        r=await _charger_et_retenir(uid,fil,nom,user,lots or lots_des_pieces,usage,demande,ancien,cle,bool(lots))
         return r
     except Exception as e:
         logger.warning('Dossier « %s » non chargé (%s) : %s',nom[:60],type(e).__name__,str(e)[:160])
         return {'dossier':nom,'ajoutes':[],'ignores':[],'introuvable':str(e)[:200]}
 
-async def _charger_et_retenir(uid,fil,nom,user,lots,usage,demande,ancien,cle):
-    try:r=await charger_dossier(uid,fil,nom,user,lots,usage,bool(_TOUT_LE_DOSSIER.search(str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0])))
+async def _charger_et_retenir(uid,fil,nom,user,lots,usage,demande,ancien,cle,nommes=True):
+    try:r=await charger_dossier(uid,fil,nom,user,lots,usage,bool(_TOUT_LE_DOSSIER.search(str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0])),nommes)
     except Exception:
         if ancien:return ancien
         raise
@@ -430,14 +435,26 @@ async def _reparer_citations(r,texte):
     _analyse_valide(r,texte)
     return r
 
+async def dire(uid,fil,tache,texte):
+    """CE QUI SE FAIT EN CE MOMENT, POUR L'ÉCRAN (17/09). Relevé de Noa : « Lecture et
+    préparation des pièces » restait affiché de longues minutes sans rien dire —
+    on ne voyait pas que le travail avançait. Chaque geste long dit ce qu'il
+    fait (quelle pièce, quelle page, quelle partie) ; la file l'affiche tel quel.
+    Un échec d'écriture n'arrête jamais le travail."""
+    try:await asyncio.to_thread(dossiers.etape,uid,fil,tache,'activite',{'texte':str(texte)[:220],'a':time.time()})
+    except Exception:pass
+
 async def _analyses(uid,fil,tache,demande,sources):
     semaphore=asyncio.Semaphore(CONCURRENCE)
+    parties={s['id']:len(dossiers.fragments(s['contenu'])) for s in sources}
+    await asyncio.to_thread(dossiers.etape,uid,fil,tache,'suivi_lecture',{'pieces':len(sources),'parties':sum(parties.values())})
     async def une(source,f):
         cle='analyse:'+source['id']+':'+str(f['numero'])
         connu=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle)
         if connu:return connu
         async with semaphore:
             debut=time.monotonic()
+            await dire(uid,fil,tache,'analyse de « '+source['nom'][:70]+' » — partie '+str(f['numero'])+' sur '+str(parties.get(source['id'],'?')))
             partielle='analyse_partielle:'+source['id']+':'+str(f['numero'])
             r=await asyncio.to_thread(dossiers.etape,uid,fil,tache,partielle)
             if not r:
@@ -624,6 +641,7 @@ async def composer_immediat(data,user):
                 utiles=[a for a in analyses if a['source'] in section['sources']]
                 refs={a['preuve'] for a in utiles}
                 async with semaphore:
+                    await dire(uid,fil,tache,'rédaction de la rubrique « '+str(section.get('titre') or i)[:80]+' » à partir de '+str(len(utiles))+' extrait(s) analysé(s)')
                     revision=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'revision:'+str(i))
                     r=revision['redaction'] if revision else await _json('Rédige intégralement cette section du document demandé, en français, avec un contenu concret et adapté. '
                         'Les faits et chiffres doivent venir des preuves. Les démarches proposées doivent être présentées comme proposées si elles ne sont pas établies. '
@@ -1159,8 +1177,9 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
 
 async def completer_visuels(uid,fil,tache,sources,user,demande):
     derives=[];parents={}
-    for source in sources:
+    for rang,source in enumerate(sources,1):
         contenu=source['contenu']
+        await dire(uid,fil,tache,'examen de la pièce '+str(rang)+' sur '+str(len(sources))+' : « '+source['nom'][:70]+' » (texte, tableaux, plan à lire ?)')
         # Les sources historiques courtes ont été extraites avant la détection des
         # plannings vectoriels. Relire l’original sans changer leur identité ni leurs
         # preuves textuelles permet la même reprise après une mise à jour.
@@ -1204,6 +1223,7 @@ async def _visuel_d_une_source(uid,fil,tache,source,user,demande,derives,parents
             if str(page) in acquis:
                 r=acquis[str(page)]
             else:
+                await dire(uid,fil,tache,'lecture visuelle du plan « '+source['nom'][:70]+' », page '+str(page)+' (dessin, cotes, tableau graphique)')
                 r=await analyser({'_fil':fil,'reference':source['reference'],'demande':demande,'page':page,'nombre_pages':1},user)
                 if not r.get('ok') or r.get('erreurs'):raise ValueError('Page graphique non lue : '+source['nom']+' page '+str(page))
                 acquis[str(page)]=r

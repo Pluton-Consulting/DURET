@@ -92,7 +92,7 @@ def progression(uid,fil):
         chargement=json.loads(x[0]) if x else None
         for r in c.execute("SELECT rowid,id,genre,statut,donnees,annonce,essais,prochain FROM file_documentaire WHERE utilisateur=? AND fil=? AND statut!='retire' ORDER BY rowid DESC LIMIT 30",(uid,fil)).fetchall():
             data=json.loads(r['donnees']);tache=data.get('tache')
-            etapes={x[0]:json.loads(x[1]) if x[0] in ('plan','suivi_controle','suivi_quantitatif') else True for x in c.execute("SELECT cle,CASE WHEN cle IN ('plan','suivi_controle','suivi_quantitatif') THEN valeur ELSE 'null' END FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache=?",(uid,fil,tache or ''))}
+            etapes={x[0]:json.loads(x[1]) if x[0] in ('plan','suivi_controle','suivi_quantitatif','suivi_lecture','activite') else True for x in c.execute("SELECT cle,CASE WHEN cle IN ('plan','suivi_controle','suivi_quantitatif','suivi_lecture','activite') THEN valeur ELSE 'null' END FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache=?",(uid,fil,tache or ''))}
             total=len(etapes.get('plan',{}).get('sections',[]))
             sections=sum(k.startswith('section:') for k in etapes)
             lectures=sum(k.startswith('analyse:') for k in etapes)
@@ -113,10 +113,14 @@ def progression(uid,fil):
             elif controles and controles_faits<len(controles):phase=f'Vérification des informations : {controles_faits}/{len(controles)} étapes'
             elif total and sections>=total:phase='Vérification finale et mise en page'
             elif total:phase=f'Rédaction et contrôle : {sections}/{total} rubriques'
-            elif lectures:phase=f'Lecture des pièces : {lectures} parties analysées'
+            elif lectures:
+                suivi=etapes.get('suivi_lecture') if isinstance(etapes.get('suivi_lecture'),dict) else {}
+                phase=(f"Lecture des pièces : {lectures} sur {suivi['parties']} parties analysées ({suivi.get('pieces','?')} pièces)" if suivi.get('parties') else f'Lecture des pièces : {lectures} parties analysées')
             elif statut=='en_cours' and (chargement or {}).get('en_cours'):
                 phase=f"Ouverture du dossier « {chargement.get('dossier','')} » : {chargement.get('charges',0)}/{chargement.get('a_charger',0)} pièces utiles chargées ({chargement.get('vus',0)} fichiers vus)"
-            elif statut=='en_cours':phase='Lecture et préparation des pièces'
+            elif statut=='en_cours':
+                plans=sum(k.startswith('pages_visuelles') for k in etapes)
+                phase='Préparation des pièces'+(f' : {plans} plan(s) ou tableau(x) graphique(s) déjà lu(s) visuellement' if plans else '')
             else:
                 # « Démarrage en attente » ne disait ni combien de temps ni derrière quoi.
                 avant=[a for a in actifs if a['rowid']<r['rowid']]
@@ -125,6 +129,10 @@ def progression(uid,fil):
                 if r['essais'] and r['prochain']>time.time():phase=f"Nouvel essai dans {max(1,int((r['prochain']-time.time())//60)+1)} min — étapes conservées (essai {r['essais']+1})"
                 elif avant:phase=f"En file : {len(avant)} travail(aux) avant celui-ci"+(f" ({noms.get(tourne['genre'],'un travail')} est en cours de rédaction)" if tourne else '')+' — un seul se rédige à la fois'
                 else:phase='Démarrage dans quelques secondes'
+            # CE QUI SE FAIT EN CE MOMENT (17/09) : la pièce, la page ou la partie en cours.
+            activite=etapes.get('activite')
+            if statut=='en_cours' and isinstance(activite,dict) and time.time()-float(activite.get('a') or 0)<900:
+                phase+=' — en ce moment : '+str(activite.get('texte') or '')
             sortie.append({'id':r['id'],'genre':r['genre'],'statut':statut,'phase':phase,'titre':str(data.get('titre') or '')[:120],
                            'sections':sections,'sections_total':total,'lectures':lectures,
                            'annonce':bool(r['annonce'])})

@@ -18,6 +18,8 @@ def fonctions(path,noms,env=None):
     tree=ast.parse(path.read_text());nodes=[n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name in noms]
     ns={'AgentState':dict,**(env or {})};exec(compile(ast.Module(body=nodes,type_ignores=[]),str(path),'exec'),ns);return ns
 
+async def _activite_muette(detail):return None
+
 class Recette(unittest.TestCase):
  def test_couverture_ne_reprend_pas_un_remplacement_de_pied(self):
     contrat={'titre':'Mémoire technique — Chantier actuel'}
@@ -540,7 +542,7 @@ class Recette(unittest.TestCase):
           '_build_model':lambda p,m,*a: lent if m=='lent' else secours,
           '_is_hard_fail':lambda e:False,'_contenu_vide':lambda r:not r.content,
           'tier_timeout':lambda _:10,'tier_max_tokens':lambda _:100,
-          'reflexion_mesuree':lambda *a,**k:None,'_BUDGET_REFLEXION_BASSE':12000}
+          'reflexion_mesuree':lambda *a,**k:None,'_BUDGET_REFLEXION_BASSE':12000,'_preciser_activite':_activite_muette}
       tree=ast.parse((BACKEND/'llm/router.py').read_text())
       classe=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='ResilientLLM')
       exec(compile(ast.Module(body=[classe],type_ignores=[]),'routeur_test','exec'),ns)

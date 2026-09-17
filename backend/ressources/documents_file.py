@@ -130,9 +130,9 @@ def progression(uid,fil):
                 elif avant:phase=f"En file : {len(avant)} travail(aux) avant celui-ci"+(f" ({noms.get(tourne['genre'],'un travail')} est en cours de rédaction)" if tourne else '')+' — un seul se rédige à la fois'
                 else:phase='Démarrage dans quelques secondes'
             # CE QUI SE FAIT EN CE MOMENT (17/09) : la pièce, la page ou la partie en cours.
-            activite=etapes.get('activite')
-            if statut=='en_cours' and isinstance(activite,dict) and time.time()-float(activite.get('a') or 0)<900:
-                phase+=' — en ce moment : '+str(activite.get('texte') or '')
+            from ressources.activite import phrase
+            en_ce_moment=phrase(etapes.get('activite')) if statut=='en_cours' else ''
+            if en_ce_moment:phase+=' — en ce moment : '+en_ce_moment
             sortie.append({'id':r['id'],'genre':r['genre'],'statut':statut,'phase':phase,'titre':str(data.get('titre') or '')[:120],
                            'sections':sections,'sections_total':total,'lectures':lectures,
                            'annonce':bool(r['annonce'])})

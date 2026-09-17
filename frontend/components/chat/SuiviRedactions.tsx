@@ -22,7 +22,7 @@ export default function SuiviRedactions({ threadId, token, enCours, actualiser }
     let actif = true
     let minuterie: ReturnType<typeof setTimeout> | undefined
     const lire = async () => {
-      let delai = 5000
+      let delai = 3000  // le détail « en ce moment » bouge en continu : on le relit souvent
       try {
         const rows = await apiRequest<Redaction[]>(`/api/chat/threads/${encodeURIComponent(threadId)}/redactions`, { token })
         if (!actif) return

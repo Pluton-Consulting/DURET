@@ -693,6 +693,17 @@ def texte_seul(model: Optional[str]) -> bool:
     return any(m in n for m in _TEXTE_SEUL)
 
 
+async def _preciser_activite(detail: str) -> None:
+    """Dit à l'écran ce qui arrive PENDANT un appel long d'un travail de fond
+    (17/09). Sans effet hors d'un tel travail ; ne lève jamais ; ne nomme aucun
+    modèle (règle d'écran : aucun nom de modèle)."""
+    try:
+        from ressources.activite import preciser
+        await preciser(detail)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class ResilientLLM:
     """LLM résilient : parcourt la cascade du palier, retry+backoff par candidat, fallback au suivant."""
 
@@ -790,6 +801,7 @@ class ResilientLLM:
                             budget_double = True
                             tentatives += 1
                             plafond = min(tier_max_tokens(self.tier.value) * 2, 16384)
+                            await _preciser_activite("le modèle a rendu une réponse vide : relance avec un budget de sortie doublé")
                             logger.warning("LLM %s : réponse VIDE (plafond de sortie atteint ?) — "
                                            "relance avec %d jetons", label, plafond)
                             llm = _build_model(provider, model, plafond,
@@ -810,14 +822,17 @@ class ResilientLLM:
                         # secours disponible avant de refaire la même attente.
                         # Sans secours, les tentatives ordinaires sont gardées.
                         logger.warning("LLM %s : délai documentaire dépassé — candidat suivant", label)
+                        await _preciser_activite("le modèle principal n’a pas répondu dans son délai : le modèle de secours prend le relais")
                         break
                     if _is_hard_fail(e):
                         logger.warning("LLM %s indispo (quota/auth) : %s — candidat suivant", label, e)
+                        await _preciser_activite("le fournisseur du modèle a refusé la demande : passage au modèle suivant")
                         # Et on le RETIENT : sans cela, l'appel suivant referait
                         # exactement le même échec, quinze fois par tour.
                         _ecarter(provider, model, e)
                         break  # inutile de retenter ce modèle, passer au suivant
                     delay = settings.llm_retry_base_delay * (2 ** attempt)
+                    await _preciser_activite("erreur passagère chez le fournisseur du modèle : nouvel essai (%d sur %d)" % (attempt + 2, tentatives))
                     logger.warning(
                         "LLM %s tentative %d/%d échouée : %s — retry dans %.1fs",
                         label, attempt + 1, tentatives, e, delay,

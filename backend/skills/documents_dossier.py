@@ -112,6 +112,7 @@ async def _json(consigne,donnees,verifier=None,*,extraction=False):
     brut=json.dumps(donnees,ensure_ascii=False)
     debut_etape=time.monotonic();etiquette=consigne[:65]
     logger.info('Étape documentaire %s : %d caractères à contrôler',etiquette,len(brut))
+    pages=max(1,len(brut)//3000)
     masques,carte=await asyncio.to_thread(anonymizer.anonymize_chunks,[brut],{})
     correction='';precedent=None
     for tentative in range(2):
@@ -122,6 +123,7 @@ async def _json(consigne,donnees,verifier=None,*,extraction=False):
         if precedent is not None:
             messages.extend([AIMessage(content=precedent),HumanMessage(content=correction)])
         palier=LLMTier.STANDARD if extraction else LLMTier.COMPLEX
+        await preciser(('demande envoyée au modèle' if not tentative else 'demande renvoyée au modèle avec les points à corriger')+' — environ '+str(pages)+' page(s) de pièces à lire, réponse attendue en 20 s à 3 min')
         message=await get_llm(palier).ainvoke(messages,_secours_timeout_documentaire=True,**({'_extraction_documentaire':True} if extraction else {}))
         texte=_texte(message).strip()
         # Rétablir avant de vérifier les citations contre la source originale.
@@ -135,6 +137,7 @@ async def _json(consigne,donnees,verifier=None,*,extraction=False):
                 return v
             r=retablir(r)
             if not isinstance(r,dict):raise ValueError('Objet JSON attendu.')
+            await preciser('réponse reçue en '+str(int(time.monotonic()-debut_etape))+' s : vérification des citations et des chiffres contre les pièces')
             if verifier:verifier(r)
             logger.info('Étape documentaire %s validée en %.1f s',etiquette,time.monotonic()-debut_etape)
             return r
@@ -144,6 +147,7 @@ async def _json(consigne,donnees,verifier=None,*,extraction=False):
             raisons,_=await asyncio.to_thread(anonymizer.anonymize_chunks,[str(e)[:6000]],carte)
             correction='Le résultat précédent était invalide : '+raisons[0]+'. Corrige les points signalés, conserve les faits valides et copie les citations exactement.'
             precedent=texte
+            await preciser('réponse refusée par le contrôle ('+str(e)[:90]+') : le modèle doit la corriger')
     from security.secrets import masquer
     raise ValueError('Réponse documentaire non vérifiable après deux essais ; étapes précédentes conservées. '+masquer(correction.removeprefix('\n'))[:300])
 
@@ -435,14 +439,7 @@ async def _reparer_citations(r,texte):
     _analyse_valide(r,texte)
     return r
 
-async def dire(uid,fil,tache,texte):
-    """CE QUI SE FAIT EN CE MOMENT, POUR L'ÉCRAN (17/09). Relevé de Noa : « Lecture et
-    préparation des pièces » restait affiché de longues minutes sans rien dire —
-    on ne voyait pas que le travail avançait. Chaque geste long dit ce qu'il
-    fait (quelle pièce, quelle page, quelle partie) ; la file l'affiche tel quel.
-    Un échec d'écriture n'arrête jamais le travail."""
-    try:await asyncio.to_thread(dossiers.etape,uid,fil,tache,'activite',{'texte':str(texte)[:220],'a':time.time()})
-    except Exception:pass
+from ressources.activite import dire,preciser  # ce qui se fait en ce moment, dit à l'écran
 
 async def _analyses(uid,fil,tache,demande,sources):
     semaphore=asyncio.Semaphore(CONCURRENCE)
@@ -563,6 +560,7 @@ async def composer_immediat(data,user):
             return fini
         try:
             sources=await asyncio.to_thread(dossiers.sources,uid,fil,ids)
+            await dire(uid,fil,tache,'vérification que les '+str(len(sources))+' pièces sont toujours accessibles et inchangées sur le serveur')
             await verifier_acces(sources,user)
             sources=await completer_visuels(uid,fil,tache,sources,user,demande)
             ids=[s["id"] for s in sources]
@@ -701,6 +699,7 @@ async def composer_immediat(data,user):
                         if not isinstance(indices,list) or any(type(i) is not int or not 0<=i<len(sections) for i in indices):raise ValueError('Indices de sections à corriger invalides.')
                         if r.get('titre') is not None and (not isinstance(r['titre'],str) or not r['titre'].strip()):raise ValueError('Titre corrigé invalide.')
                         if correction.get('facteur_longueur'):r['sections']=list(range(len(sections)))
+                    await dire(uid,fil,tache,'repérage des rubriques concernées par les '+str(len(correction.get('problemes') or []))+' remarque(s) du contrôle final')
                     cibles=await _json('Localise les corrections demandées dans ce document. JSON {"titre":null ou "titre corrigé", "sections":[indices de sections base zéro]}. '
                         'Un défaut limité au titre doit corriger le titre, sans réécrire tout le corps. Conserve les rubriques obligatoires. '
                         'titre désigne exclusivement le titre principal de couverture, jamais un en-tête ou pied de page. Les remplacements du modèle sont traités séparément ; ne les copie pas dans titre. '
@@ -718,6 +717,7 @@ async def composer_immediat(data,user):
                     if await asyncio.to_thread(dossiers.etape,uid,fil,tache,marque):return
                     section=plan['sections'][i];r=sections[i]
                     cible=correction.get('par_section',{}).get(str(i)) or correction
+                    await dire(uid,fil,tache,'correction de la rubrique « '+str(section.get('titre'))[:70]+' » : '+str((cible.get('problemes') or ['point relevé par le contrôle'])[0])[:110])
                     complement=set(cible.get('preuves_complementaires') or [])
                     utiles=[a for a in analyses if a['source'] in section['sources'] or a['source'] in complement or a['preuve'] in complement]
                     refs={a['preuve'] for a in utiles}
@@ -1100,6 +1100,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     from docx.oxml.ns import qn
     texte_final=' '.join(n.text or '' for n in document.element.body.iter(qn('w:t')))
     entetes=' '.join(n.text or '' for section in document.sections for partie in (section.header,section.footer,section.first_page_header,section.first_page_footer) for n in partie._element.iter(qn('w:t')))
+    await dire(uid,fil,tache,'contrôle final : relecture du document entier ('+str(len(texte_final)//3000+1)+' pages de texte) contre la demande, le plan et les pièces')
     avis=await _controle_interne(uid,fil,tache,'Contrôle final du document : respecte-t-il la demande, le plan et les réserves ? '
         'Vérifie les références contradictoires de projet, les noms et adresses réellement périmés, les rubriques manquantes et les incohérences internes substantielles. '
         'Une rubrique marquée « reprise telle quelle du modèle de l’entreprise » est CONFORME : son contenu est celui du modèle, il n’est ni à rédiger ni à contrôler ici. '
@@ -1141,6 +1142,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             plan['remplacements_modele']={**(plan.get('remplacements_modele') or {}),**remplacements}
             await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan',plan)
         if await corriger_ou_livrer({'problemes':avis.get('problemes')}):raise ValueError('Contrôle final à reprendre : '+str(avis.get('problemes'))[:500])
+    await dire(uid,fil,tache,'vérification des engagements : ce que le document présente comme acquis l’est-il vraiment dans les pièces ?')
     acquis=await _controler_acquis(uid,fil,tache,plan,sections,analyses,contrat['demande'])
     if acquis:
         if await corriger_ou_livrer({
@@ -1152,16 +1154,19 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     cle_controle='controle_reserves:v5:'+empreinte_reserves
     controle=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_controle)
     if controle is None:
+        await dire(uid,fil,tache,'vérification des « points à confirmer » : une information dite manquante l’est-elle vraiment dans tout le dossier ?')
         controle=await _controler_reserves(plan,sources,sections,analyses or [],(uid,fil,tache))
         await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_controle,controle)
     if controle['problemes']:
         cibles=sorted({p['section'] for p in controle['problemes']})
         correction=_correction_factuelle([{**p,'raison':p['raison']+' — réserve : '+p['reserve']} for p in controle['problemes']])
         if await corriger_ou_livrer(correction):raise ValueError('Réserves contredites par le dossier ; correction ciblée nécessaire dans les rubriques '+', '.join(str(i+1) for i in cibles))
+    await dire(uid,fil,tache,'vérification des chiffres, dates et noms du document contre les '+str(sum(len(a.get('faits',[])) for a in analyses or []))+' faits relevés dans les pièces')
     contradictions=await _controler_faits(uid,fil,tache,plan,sections,analyses or [])
     if contradictions:
         correction=_correction_factuelle(contradictions)
         if await corriger_ou_livrer(correction):raise ValueError('Contradictions factuelles détectées ; correction ciblée conservée.')
+    await dire(uid,fil,tache,'conversion du Word pour compter ses pages')
     controle_pages=await asyncio.to_thread(verifier_pages,provisoire,plan.get('pages_max'))
     if plan.get('pages_max') and not controle_pages.get('conforme'):
         if controle_pages.get('pages'):
@@ -1169,6 +1174,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
         raise ValueError('Limite de pages non vérifiée ou dépassée : '+controle_pages['note'])
     from ressources.documents_file import verifier_poursuite
     await asyncio.to_thread(verifier_poursuite)
+    await dire(uid,fil,tache,'mise en page finale dans le modèle de l’entreprise (garde, rubriques reprises, rubriques rédigées, images)')
     r=await terminer_document({'document_id':jeton,'_fil':fil},user)
     # Vérification du fichier rendu, pas seulement du titre de sa carte.
     from docx import Document

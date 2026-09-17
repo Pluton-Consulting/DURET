@@ -94,9 +94,13 @@ def _chemin(jeton: str, suffixe: str) -> str:
 def _lire_fiche(jeton: str) -> dict | None:
     try:
         with open(_chemin(jeton, "json"), encoding="utf-8") as f:
-            return json.load(f)
+            fiche = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
+    # UN JSON ÉTRANGER N'EST PAS UNE FICHE (17/09) : un fichier de sauvegarde posé
+    # dans ce dossier (une LISTE) faisait lever `.get` à chaque ouverture de
+    # document — un mémoire entièrement rédigé ne pouvait plus être rendu.
+    return fiche if isinstance(fiche, dict) else None
 
 
 def _ecrire_fiche(jeton: str, fiche: dict) -> None:

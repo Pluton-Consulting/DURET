@@ -231,7 +231,7 @@ class Settings(BaseSettings):
     # CHEZ NOUS, où l'attente est bornée et mesurable.
     llm_simultanes: int = 8              # plafond global, tous appels confondus
     llm_simultanes_personne: int = 3     # défaut par personne
-    llm_simultanes_fond: int = 2         # budget des tâches de fond et campagnes
+    llm_simultanes_fond: int = 4         # budget des tâches de fond et campagnes (17/09 : 2 → 4, mesuré sans refus)
     llm_attente_max_s: int = 90          # au-delà, on renonce : jamais d'attente sans fin
 
     ollama_base_url: str = "http://localhost:11434"

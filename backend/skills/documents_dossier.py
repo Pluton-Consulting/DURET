@@ -11,7 +11,7 @@ from skills.registre import Declaration
 
 logger=logging.getLogger('infra.documents')
 
-CONCURRENCE = 2  # Les rédactions de fond disposent de deux créneaux LLM.
+CONCURRENCE = 4  # 17/09 : deux créneaux faisaient 20 min de lecture pour 67 parties ; six appels de front passent sans refus.
 
 
 def _identite(data,user):return dossiers.identite(getattr(user,'id',None),data.get('_fil'))
@@ -464,6 +464,15 @@ from ressources.activite import dire,preciser  # ce qui se fait en ce moment, di
 
 async def _analyses(uid,fil,tache,demande,sources):
     semaphore=asyncio.Semaphore(CONCURRENCE)
+    # LE MÊME TEXTE SOUS DEUX NOMS NE SE LIT QU'UNE FOIS (17/09) : « Règlement de consultation.pdf » et
+    # « 2-2026-71RCv2.pdf » sont le même document — six analyses payées deux fois.
+    vus_contenu=set();uniques=[]
+    for s_ in sources:
+        empreinte_texte=hashlib.sha256(' '.join(s_['contenu'].split()).encode()).hexdigest()
+        if empreinte_texte in vus_contenu and len(s_['contenu'])>2000:
+            logger.info('Pièce « %s » : même texte qu’une pièce déjà lue, non réanalysée',s_['nom'][:60]);continue
+        vus_contenu.add(empreinte_texte);uniques.append(s_)
+    sources=uniques
     parties={s['id']:len(dossiers.fragments(s['contenu'])) for s in sources}
     await asyncio.to_thread(dossiers.etape,uid,fil,tache,'suivi_lecture',{'pieces':len(sources),'parties':sum(parties.values())})
     async def une(source,f):
@@ -581,9 +590,13 @@ async def composer_immediat(data,user):
             return fini
         try:
             sources=await asyncio.to_thread(dossiers.sources,uid,fil,ids)
-            await dire(uid,fil,tache,'vérification que les '+str(len(sources))+' pièces sont toujours accessibles et inchangées sur le serveur')
-            await verifier_acces(sources,user)
-            sources=await completer_visuels(uid,fil,tache,sources,user,demande)
+            # Une fois par heure et par tâche : chaque essai retéléchargeait les 29 pièces (1 min 30).
+            verifie=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'acces_verifie') or {}
+            if time.time()-float(verifie.get('a') or 0)>3600 or verifie.get('n')!=len(sources):
+                await dire(uid,fil,tache,'vérification que les '+str(len(sources))+' pièces sont toujours accessibles et inchangées sur le serveur')
+                await verifier_acces(sources,user)
+                await asyncio.to_thread(dossiers.etape,uid,fil,tache,'acces_verifie',{'a':time.time(),'n':len(sources)})
+            sources=await completer_visuels(uid,fil,tache,sources,user,demande,plans=False)
             ids=[s["id"] for s in sources]
             analyses=await _analyses(uid,fil,tache,demande,sources)
             from bureautique.illustrations import analyser as analyser_illustrations
@@ -1301,10 +1314,17 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             'controles_automatiques':'faits' if controles_bloquants else 'non faits : document livré dès sa mise en page, à relire',
             'a_faire':('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
 
-async def completer_visuels(uid,fil,tache,sources,user,demande):
+_PLAN_D_ARCHITECTE=re.compile(r'(\brdc\b|r\s?\+\s?\d|coupes?|fa[cç]ades?|nature des|surfaces?|toiture|typologie|d[ée]tails?|volumes?|situation|masse|plan\b)',re.I)
+
+async def completer_visuels(uid,fil,tache,sources,user,demande,plans=True):
+    """`plans=False` (rédaction d'un mémoire, d'un rapport) : les plans d'architecte ne passent PAS en
+    lecture visuelle — mesuré le 17/09 : 8 plans = 13 minutes (dont 5 dépassements de délai du modèle de
+    vision), pour un document qui n'en tire rien. Un planning ou un tableau graphique reste lu ; un métré
+    garde tout (plans=True)."""
     derives=[];parents={}
     for rang,source in enumerate(sources,1):
         contenu=source['contenu']
+        if not plans and _PLAN_D_ARCHITECTE.search(source['nom']) and not re.search(r'planning',source['nom'],re.I):continue
         await dire(uid,fil,tache,'examen de la pièce '+str(rang)+' sur '+str(len(sources))+' : « '+source['nom'][:70]+' » (texte, tableaux, plan à lire ?)')
         # Les sources historiques courtes ont été extraites avant la détection des
         # plannings vectoriels. Relire l’original sans changer leur identité ni leurs

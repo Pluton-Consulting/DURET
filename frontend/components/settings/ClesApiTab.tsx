@@ -428,7 +428,7 @@ function ReglageModeles({ apiUrl, backendToken, signal = 0 }:
         onRetirer={() => ecrire("modele_vision", "", "Modèle de vision retiré : la cascade reprend.")} />
       <LigneModele titre="Embeddings" usage="embedding" aide="la recherche documentaire et la mémoire de conversation"
         actuel={embedding} fiches={fiches} busy={busy}
-        avertissement={`Changer de modèle impose de re-vectoriser tout le corpus : les vecteurs existants (${dimensions} dimensions) ne se comparent pas à ceux d'un autre modèle. Un modèle qui rend une autre dimension est refusé à l'écriture, sans rien casser.`}
+        avertissement={`Après avoir choisi un modèle, lancez la préparation du nouvel index. L’ancien modèle reste actif jusqu’à la bascule complète ; les lots déjà préparés sont conservés en cas d’interruption.`}
         onChoisir={(v) => ecrire("modele_embedding", v, `${v} vectorise désormais. Re-vectorisation nécessaire.`)}
         onRetirer={() => ecrire("modele_embedding", "", "Modèle d'embedding retiré.")} />
 

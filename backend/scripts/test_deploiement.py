@@ -35,6 +35,7 @@ import types
 
 BACKEND = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend").resolve()
 RACINE = BACKEND.parent
+sys.path.insert(0,str(BACKEND))
 echecs = []
 
 
@@ -91,6 +92,8 @@ sys.modules["database"] = types.ModuleType("database")
 sys.modules["database.connection"] = types.SimpleNamespace(get_db=lambda: _Db())
 sys.modules["agents"] = types.ModuleType("agents")
 sys.modules["agents.checkpointer"] = types.SimpleNamespace(get_checkpointer=_checkpointer)
+async def _graphe(): return object()
+sys.modules["agents.runtime"] = types.SimpleNamespace(get_graph=_graphe)
 exec(compile(ast.Module(body=morceaux, type_ignores=[]), "main", "exec"), espace)
 etat = asyncio.run(espace["_etat_du_service"]())
 verifier("tout est en place → PRÊT", etat["pret"] and etat["schema"] and etat["base"] and etat["checkpointer"], etat)
@@ -195,6 +198,13 @@ faux_bin.mkdir()
 (faux_bin / "docker").write_text("""#!/usr/bin/env bash
 # `docker` doublé : la base rend un dump, le volume rend une archive.
 set -euo pipefail
+if [ -n "${BANC_OPERATIONS:-}" ]; then
+  echo "$*" >> "$BANC_OPERATIONS"
+  case "${1:-}" in
+    ps) case "$*" in *service=backend*) echo "backend-fictif";; esac; exit 0;;
+    stop|start) exit 0;;
+  esac
+fi
 if [ "${1:-}" = "volume" ] && [ "${2:-}" = "inspect" ]; then
   case "$3" in *_documents_produits) exit 0;; *) exit 1;; esac
 fi
@@ -215,13 +225,16 @@ fi
 if [ "${1:-}" = "compose" ]; then
   for a in "$@"; do
     case "$a" in
-      pg_dump) echo "-- dump de la base"; echo "CREATE TABLE users();"; exit 0;;
+      config) echo '{"name":"duret-sols","services":{"postgres":{"environment":{"POSTGRES_USER":"duret_user","POSTGRES_DB":"duret_sols"}}}}'; exit 0;;
+      pg_dump) [ "${BANC_DUMP_ECHOUE:-0}" = "0" ] || exit 9; echo "-- dump de la base"; echo "CREATE TABLE users();"; exit 0;;
       psql) echo "001_initial_schema.sql 043_lecons.sql"; exit 0;;
     esac
   done
 fi
 exit 0
 """, encoding="utf-8")
+# Un projet fictif distinct par banc évite la collision de deux recettes parallèles.
+(faux_bin / "docker").write_text((faux_bin / "docker").read_text().replace("duret-sols", atelier.name))
 (faux_bin / "docker").chmod(0o755)
 
 projet = atelier / "projet"
@@ -260,6 +273,22 @@ if jeux:
     restants = sorted(depot.glob(f"{PREFIXE}_*"))
     verifier("la rétention garde au moins le dernier jeu, même avec RETENTION_DAYS=0",
              len(restants) >= 1, [f.name for f in restants])
+# Les producteurs sont repris, y compris si pg_dump échoue au milieu.
+operations = atelier / "operations.log"
+for echoue in (False, True):
+    operations.write_text("")
+    r = subprocess.run(["bash", "backup.sh"], cwd=projet,
+        env={**milieu, "BANC_OPERATIONS": str(operations), "BANC_DUMP_ECHOUE": "1" if echoue else "0"},
+        capture_output=True, text=True)
+    lignes = operations.read_text().splitlines()
+    stops = [i for i,l in enumerate(lignes) if l.startswith("stop ")]
+    dumps = [i for i,l in enumerate(lignes) if " pg_dump " in l]
+    starts = [i for i,l in enumerate(lignes) if l.startswith("start ")]
+    verifier(f"sauvegarde {'échouée' if echoue else 'réussie'} : arrêt avant dump et reprise ensuite",
+             bool(stops and dumps and starts) and stops[0] < dumps[0] < starts[-1]
+             and ((r.returncode != 0) == echoue), r.stderr[-300:])
+    verifier("un service déjà arrêté ne démarre pas par la sauvegarde",
+             not any(l.startswith("start ") and "backend-fictif" not in l for l in lignes))
 # Sans le volume des documents, la sauvegarde REFUSE au lieu de mentir.
 (faux_bin / "docker").write_text((faux_bin / "docker").read_text(encoding="utf-8").replace(
     "case \"$3\" in *_documents_produits) exit 0;; *) exit 1;; esac", "exit 1"), encoding="utf-8")

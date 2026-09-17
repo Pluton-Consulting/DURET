@@ -27,8 +27,10 @@ import logging
 import re
 
 MOTIF = re.compile(
-    r"(?i)\b(key|api[_-]?key|access[_-]?token|token|apikey|password|secret)"
-    r"(=|%3D|\"?\s*:\s*\"?)([A-Za-z0-9._\-]{12,})")
+    r"(?i)\b(key|api[_-]?key|(?:access|refresh|id)[_-]?token|token|ticket|apikey|password|(?:client[_-]?)?secret)"
+    r"(=|%3D|[\"']?\s*:\s*[\"']?)([^\s\"'&,;<>]{12,})")
+_CLE_SECRETE = re.compile(r"(?i)^(?:api[_-]?key|apikey|key|(?:access|refresh|id)[_-]?token|token|ticket|password|(?:client[_-]?)?secret|authorization|cookie|set-cookie)$")
+_BEARER = re.compile(r"(?i)\b(Bearer\s+)([A-Za-z0-9._~+/=-]+)")
 
 
 def masquer(texte: str) -> str:
@@ -36,17 +38,18 @@ def masquer(texte: str) -> str:
     def _remplacer(m):
         valeur = m.group(3)
         return f"{m.group(1)}{m.group(2)}***{valeur[-6:]}"
-    return MOTIF.sub(_remplacer, texte)
+    return _BEARER.sub(lambda m: m.group(1) + "***", MOTIF.sub(_remplacer, texte))
 
 
 def masquer_arbre(valeur, profondeur: int = 0):
     """Le même masquage, sur une structure (ce qui part vers les traces)."""
     if profondeur > 8:
-        return valeur
+        return "[structure trop profonde masquée]"
     if isinstance(valeur, str):
         return masquer(valeur)
     if isinstance(valeur, dict):
-        return {k: masquer_arbre(v, profondeur + 1) for k, v in valeur.items()}
+        return {k: ("***" if _CLE_SECRETE.fullmatch(str(k)) else masquer_arbre(v, profondeur + 1))
+                for k, v in valeur.items()}
     if isinstance(valeur, (list, tuple)):
         rendu = [masquer_arbre(v, profondeur + 1) for v in valeur]
         return type(valeur)(rendu) if isinstance(valeur, tuple) else rendu

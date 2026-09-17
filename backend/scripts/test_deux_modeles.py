@@ -126,7 +126,7 @@ verifier("vision et embeddings sont bien deux d'entre elles",
 verifier("la génération d'images se MONTRE sans se choisir",
          "Génération d&apos;images" in ecran and 'ecrire("modele_image"' not in ecran)
 verifier("et le coût d'un changement d'embedding est dit AVANT le clic",
-         "re-vectoriser tout le corpus" in ecran)
+         "préparation du nouvel index" in ecran and "L’ancien modèle reste actif" in ecran)
 verifier("elle écrit modele_rapide et modele_puissant",
          'ecrire("modele_rapide", v' in ecran and 'ecrire("modele_puissant", v' in ecran)
 verifier("elle dit que la cascade n'est plus utilisée", "deux modèles seulement" in ecran)

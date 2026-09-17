@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/api"
 interface Lecon {
   id: string; situation: string; erreur: string; conduite: string
   portee: "personne" | "entreprise"; occurrences: number; rappels: number
+  type_lecon?: string; confiance?: number; preuve?: string | null; statut?: string
   auteur?: string | null; derniere_maj?: string | null
 }
 
@@ -37,6 +38,14 @@ export default function LeconsApprises({ token }: { token: string }) {
   }, [token])
 
   useEffect(() => { charger() }, [charger])
+
+  const valider = async (id: string) => {
+    setOccupe(id)
+    try {
+      await apiRequest(`/api/learning/lecons/${id}/valider`, { method: "POST", token })
+      await charger()
+    } catch (e: any) { setErreur(e?.message ?? "Validation impossible.") } finally { setOccupe(null) }
+  }
 
   const retirer = async (id: string) => {
     setOccupe(id)
@@ -81,11 +90,19 @@ export default function LeconsApprises({ token }: { token: string }) {
           <div style={{ fontSize: 13, color: "var(--marque-text-body)", marginTop: 6 }}>
             <strong>À faire :</strong> {l.conduite}
           </div>
+          <p style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 8 }}>
+            {l.type_lecon === "fait" ? "Fait" : l.type_lecon === "preference" ? "Préférence" : "Procédure"}
+            {typeof l.confiance === "number" ? ` · confiance estimée ${Math.round(l.confiance * 100)} %` : ""}
+            {l.statut && l.statut !== "active" ? ` · ${l.statut}` : ""}
+          </p>
+          {l.statut === "brouillon" && <p style={{ fontSize: 12 }}>Une leçon existante traite une situation très proche avec une autre conduite. Comparez-les avant activation et retirez celle qui ne convient plus. Cette nouvelle leçon reste exclue des rappels.</p>}
+          {l.preuve && <p style={{ fontSize: 12 }}>Origine de la leçon : {l.preuve}</p>}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 10,
                         fontSize: 12, color: "var(--marque-text-muted)" }}>
             <span>{l.portee === "entreprise" ? "Pour toute l'entreprise" : `Pour ${l.auteur || "la personne"}`}</span>
             <span>· relevée {l.occurrences} fois · rappelée {l.rappels} fois</span>
             <span style={{ flex: 1 }} />
+            {l.statut === "brouillon" && <button type="button" disabled={occupe === l.id} onClick={() => valider(l.id)}>Activer après vérification</button>}
             {administre && (
               <button type="button" className="sym-tap" disabled={occupe === l.id}
                       onClick={() => portee(l.id, l.portee !== "entreprise")}

@@ -84,7 +84,7 @@ export interface AttachmentPayload {
   attachments?: { nom: string; mime: string; b64: string }[]
   attachment_name: string
   attachment_mime: string
-  attachment_b64: string
+  attachment_b64?: string
 }
 
 export function sendQuery(

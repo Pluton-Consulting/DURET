@@ -111,7 +111,7 @@ for nom, attrs in {
     "skills": {"resultats": r},
     "database": {}, "database.connection": {"get_db": lambda: _Db()},
     "sandbox": {}, "sandbox.daytona_client": {"sandbox_client": object()},
-    "security": {}, "security.audit": {"log_action": _log_action},
+    "security": {"__path__": [str(BACKEND / "security")]}, "security.audit": {"log_action": _log_action},
     "security.lecteur": {"au_nom_de": lambda u: __import__("contextlib").nullcontext()},
     "mail": {}, "mail.skills": {"SKILLS_NATIFS": {"retenir": _retenir_echoue, "lister": _lister_ok},
                                 "EFFETS_NATIFS": {"retenir": "ecriture_interne", "lister": "lecture"}},
@@ -120,7 +120,7 @@ for nom, attrs in {
 }.items():
     m = sys.modules.get(nom) if nom == "skills.resultats" else types.ModuleType(nom)
     m.__dict__.update(attrs)
-    m.__path__ = []
+    m.__path__ = attrs.get("__path__", [])
     sys.modules[nom] = m
 sys.modules["skills.resultats"] = r
 if sys.version_info >= (3, 10):

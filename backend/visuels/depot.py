@@ -20,12 +20,13 @@ import logging
 import os
 import pathlib
 import threading
+from stockage.verrous import verrou_fichier
 
 import httpx
 
 logger = logging.getLogger("symbiose.visuels.depot")
 
-DOSSIER = pathlib.Path(os.environ.get("DOCUMENTS_DIR", "/tmp/symbiose-documents")) / "visuels"
+DOSSIER = pathlib.Path(os.environ.get("DOCUMENTS_DIR", "/tmp/duret-documents")) / "visuels"
 
 _MIMES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 _EXT_PAR_MIME = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
@@ -111,13 +112,13 @@ def proprietaires(cle: str) -> list[str] | None:
     try:
         import json
         valeur = json.loads(chemin.read_text(encoding="utf-8") or "[]")
-        return [str(v) for v in valeur if v] if isinstance(valeur, list) else None
+        return [str(v) for v in valeur if v] if isinstance(valeur, list) else []
     except Exception:  # noqa: BLE001 — un fichier abîmé ne vaut pas autorisation
         return []
 
 
 def noter_proprietaire(cle: str, proprietaire: str | None = None) -> None:
-    """Ajoute le propriétaire (ou la personne du geste en cours). Best-effort."""
+    """Ajoute le propriétaire ; une erreur de stockage interrompt le dépôt."""
     if proprietaire is None:
         try:
             from security.lecteur import id_lecteur
@@ -128,7 +129,7 @@ def noter_proprietaire(cle: str, proprietaire: str | None = None) -> None:
     if not proprietaire or chemin is None:
         return
     import json
-    with _VERROU_ACCES:
+    with _VERROU_ACCES, verrou_fichier(DOSSIER, "visuel:" + cle):
         actuels = proprietaires(cle) or []
         if str(proprietaire) in actuels:
             return
@@ -139,6 +140,7 @@ def noter_proprietaire(cle: str, proprietaire: str | None = None) -> None:
             temporaire.replace(chemin)
         except Exception as e:  # noqa: BLE001 — un dépôt ne casse jamais pour ça
             logger.warning("Propriétaire du visuel non noté (%s)", type(e).__name__)
+            raise
 
 
 def reserver_a_l_administration(cle: str) -> None:
@@ -149,7 +151,7 @@ def reserver_a_l_administration(cle: str) -> None:
     chemin = _chemin_acces(cle)
     if chemin is None or not _chemin(cle):
         return
-    with _VERROU_ACCES:
+    with _VERROU_ACCES, verrou_fichier(DOSSIER, "visuel:" + cle):
         if chemin.exists():
             return
         try:

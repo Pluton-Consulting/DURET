@@ -26,7 +26,8 @@ import sys
 import time
 import uuid
 
-sys.path.insert(0, ".")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 VERT, ROUGE, JAUNE, GRIS, RAZ = "\033[92m", "\033[91m", "\033[93m", "\033[90m", "\033[0m"
 
@@ -405,9 +406,10 @@ async def taches_autonomes(args, utilisateur):
             "SELECT COUNT(*) FROM agent_tasks WHERE enabled AND next_run_at IS NOT NULL")
         runs = await conn.fetchval("SELECT COUNT(*) FROM agent_task_runs")
     print(f"       {GRIS}{actives} tâche(s) planifiée(s), {runs} exécution(s) enregistrée(s){RAZ}")
-    verdict("le worker de tâches tourne",
-            __import__("tasks.worker", fromlist=["_task"])._task is not None,
-            "worker non démarré (agent_tasks_enabled=false ?)")
+    # Ce script est un processus distinct : la variable Python de l'API
+    # ne permet pas d'observer son worker, même depuis « docker exec ».
+    saute("activité du worker de tâches",
+          "à contrôler dans les journaux du processus de fond ; non observable depuis ce banc")
 
 
 async def nettoyer(args):

@@ -34,6 +34,13 @@ import sys
 import types
 
 BACKEND = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend").resolve()
+# Les tickets OAuth utilisent le vrai SQLite, isolé pour ce banc.
+import os, tempfile, atexit
+sys.path.insert(0, str(BACKEND.resolve()))
+_repertoire_tickets = tempfile.TemporaryDirectory(prefix="banc-oauth-")
+atexit.register(_repertoire_tickets.cleanup)
+os.environ["DOCUMENTS_DIR"] = _repertoire_tickets.name
+
 echecs = []
 
 
@@ -76,6 +83,7 @@ REGLAGES = types.SimpleNamespace(jetons_chiffrement_cle="", jwt_secret_key="secr
                                  environment="production")
 poser("config", settings=REGLAGES)
 coffre = charger("security.coffre", "security/coffre.py")
+sys.modules["security"].__path__ = [str(BACKEND / "security")]
 
 print("1. Le coffre : chiffrer ce qui ouvre une porte ailleurs")
 if not coffre.disponible():

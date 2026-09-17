@@ -227,8 +227,11 @@ verifier("un délai dépassé devient « effet inconnu », jamais « échec »",
 verifier("on sait dire ce qui est ambigu et ce qui ne l'est pas",
          operations.ambigu(TimeoutError()) and operations.ambigu(ConnectionResetError())
          and not operations.ambigu(ValueError("adresse invalide")))
-verifier("sans registre (migration absente), l'exécution garde le comportement d'avant",
-         asyncio.run(operations.reclamer(None)) is True)
+try:
+    asyncio.run(operations.reclamer(None))
+    verifier("sans registre, aucun effet externe ne démarre", False)
+except operations.RegistreIndisponible:
+    verifier("sans registre, aucun effet externe ne démarre", True)
 routeur_src = (BACKEND / "agents" / "router.py").read_text(encoding="utf-8")
 verifier("l'action approuvée RÉCLAME son opération avant d'appeler le fournisseur",
          "await operations.reclamer(operation)" in routeur_src
@@ -285,7 +288,8 @@ chat_src = (BACKEND / "routers" / "chat.py").read_text(encoding="utf-8")
 verifier("les DEUX transports (WS et secours HTTP) réclament la demande",
          chat_src.count("_requetes.reclamer(") == 2 and "request_id: Optional[str] = None" in chat_src)
 verifier("la demande est close à la fin du tour, des deux côtés",
-         chat_src.count("_requetes.terminer(") == 2)
+         all("_requetes.terminer(" in chat_src.split(section, 1)[1].split("\n@router.", 1)[0]
+             for section in ("async def chat(", "async def _derouler_tour(")))
 ws_src = (BACKEND.parent / "frontend" / "lib" / "ws.ts").read_text(encoding="utf-8")
 chatwindow = (BACKEND.parent / "frontend" / "components" / "chat" / "ChatWindow.tsx").read_text(encoding="utf-8")
 verifier("l'écran fabrique l'identifiant AVANT d'envoyer et le garde pour la reprise",

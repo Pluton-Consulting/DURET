@@ -522,6 +522,12 @@ async def vision_node(state: AgentState, config=None) -> dict:
         }
 
     demande = state.get("query") or "Décris ce document pour préparer un chiffrage de travaux de sols."
+    if state.get("travail"):
+        from ressources.travail import bloc as bloc_travail
+        from security.anonymizer import anonymizer
+        contexte, _ = await asyncio.to_thread(anonymizer.anonymize_chunks,
+                                               [bloc_travail(state["travail"])], state.get("entity_map") or {})
+        demande += "\n\n" + contexte[0]
     nombre = len(pieces)
 
     # Les fichiers que le prétraitement n'a pas su ouvrir : ils ne sont pas
@@ -644,7 +650,17 @@ def suite_du_tour(demande: str, retouche_possible: bool) -> str:
     except Exception:  # noqa: BLE001 — le routeur importe agent2 : pas de boucle ici
         _SUITE_ATTENDUE = ("devis", "chiffr", "mail", "document", "rapport",
                            "compte rendu", "prépare", "prepare", "rédige", "redige")
+    import re
     texte = (demande or "").lower()
+    # Une interdiction n'est pas une commande de retouche. En recette, « ne
+    # consulte ni ne modifie le NAS » bloquait même la création d'un Word.
+    texte = re.sub(r"\b(?:ne|n’|n')\s*[^.!?;\n]*(?:[.!?;\n]|$)", " ", texte)
+    # L'objet demandé prime sur les verbes génériques : modifier un cadre ou
+    # ajouter un logo dans un rapport ne réclame pas un moteur de photomontage.
+    livrable = re.search(r"\b(?:word|docx|excel|xlsx|classeur|mémoire|memoire|rapport|document|compte rendu|quantitatif)\b", texte)
+    visuel = re.search(r"\b(?:photomontage|retouche|image|photo|visuel|dessin)\b", texte)
+    if livrable and not visuel:
+        return SUITE_DOCUMENT
     veut_retouche = any(m in texte for m in _RETOUCHE)
     if veut_retouche and not retouche_possible:
         # Ne pas passer la main : l'assistant n'a rien à appeler, et lui passer
@@ -669,7 +685,7 @@ def _retouche_disponible() -> bool:
         return False
 
 
-async def _appel_vision(candidats, entete: str, images: list, nom: str, config=None) -> dict:
+async def _appel_vision(candidats, entete: str, images: list, nom: str, config=None, *, consigne_systeme=None, verifier=None) -> dict:
     """UN appel de vision, sa cascade de candidats — le texte, ou la raison d'échec.
 
     `images` : des couples (mime, base64), dans l'ordre où le modèle doit les voir.
@@ -689,10 +705,18 @@ async def _appel_vision(candidats, entete: str, images: list, nom: str, config=N
             # Hors cascade : la porte se pose ici aussi, sinon la vision
             # échapperait au plafond du fournisseur.
             from llm.concurrence import porte_llm
-            async with porte_llm():
-                response = await llm.ainvoke([message], config=config)
+            messages=([SystemMessage(content=consigne_systeme)] if consigne_systeme else [])+[message]
+            for tentative in range(2):
+                async with porte_llm():
+                    options=({'max_tokens':16384 if tentative else 8192} if consigne_systeme else {'max_tokens':8192} if tentative else {})
+                    response = await llm.ainvoke(messages, config=config, **options)
+                meta=getattr(response,'response_metadata',None) or {}
+                fin=str(meta.get('finish_reason') or meta.get('stop_reason') or '').lower()
+                if fin not in ('length','max_tokens','max_output_tokens'):break
+                if tentative:raise ValueError('Lecture visuelle tronquée par le modèle après reprise.')
+                logger.warning('Vision : sortie tronquée de %s — une reprise avec budget augmenté',label)
             contenu = response.content
-            texte = contenu if isinstance(contenu, str) else str(contenu or "")
+            texte = contenu if isinstance(contenu, str) else '\n'.join(x.get('text','') for x in contenu if isinstance(x,dict)) if isinstance(contenu,list) else str(contenu or "")
             # UNE RÉPONSE VIDE EST UN ÉCHEC, PAS UNE ANALYSE.
             #
             # Relevé en production le 07/09 : après 2 min 23 s d'attente,
@@ -707,6 +731,7 @@ async def _appel_vision(candidats, entete: str, images: list, nom: str, config=N
                 logger.warning("Vision : réponse VIDE de %s sur %s — candidat suivant",
                                label, nom)
                 continue
+            if verifier:verifier(texte)
             usage = getattr(response, "usage_metadata", None) or {}
             return {"nom": nom, "analyse": texte, "model_used": label,
                     "tokens_in": usage.get("input_tokens", 0),
@@ -784,7 +809,7 @@ async def extraction_node(state: AgentState) -> dict:
     llm = get_llm(LLMTier.STANDARD)
     schema = ('{"locaux_zones": [], "revetements_sol": [], "surfaces_m2": {}, '
               '"lineaires_plinthes_ml": {}, "contraintes": [], '
-              '"quantites_a_verifier": [], "incertitudes": []}')
+              '"quantites_a_verifier": [], "incertitudes": [], "preuves_mesures": [{"poste":"", "valeur":null, "unite":"", "nature":"lue|estimee|non_mesurable", "citation":"extrait exact de l’analyse", "fichier":"", "page":null, "cadre_normalise":null, "hypothese":""}]}')
     messages = [
         SystemMessage(content=(
             "Tu extrais des données structurées d'une analyse de plan technique BTP "
@@ -798,7 +823,8 @@ async def extraction_node(state: AgentState) -> dict:
         text = response.content or ""
         match = re.search(r"\{.*\}", text, re.DOTALL)
         data = json.loads(match.group(0)) if match else None
-        return {"extracted_data": data}
+        from agents.preuves_visuelles import controler
+        return {"extracted_data": controler(data,analysis,state)}
     except Exception as e:
         logger.warning("Extraction structurée échouée : %s", e)
         return {"extracted_data": None}

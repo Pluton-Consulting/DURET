@@ -201,7 +201,7 @@ verifier("la porte entoure l'appel de la cascade, PAS la cascade elle-même",
          re.search(r"async with porte_llm\(\):\s*\n\s*result = await llm\.ainvoke\(messages",
                    routeur))
 verifier("le backoff reste HORS de la porte",
-         routeur.index("await asyncio.sleep(delay)") > routeur.index("async with porte_llm()"))
+         routeur.index("await asyncio.sleep(delai_disponible(delay))") > routeur.index("async with porte_llm()"))
 a2 = (BACKEND / "agents" / "agent2.py").read_text(encoding="utf-8")
 pieces = (BACKEND / "mail" / "pieces.py").read_text(encoding="utf-8")
 verifier("les deux appels de vision hors cascade sont gardés aussi",

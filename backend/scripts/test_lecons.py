@@ -76,6 +76,8 @@ if L:
     verifier("une leçon qui porte une balise de masquage raconte un cas : écartée",
              L.lire_lecon(json.dumps(avec_balise, ensure_ascii=False)) is None)
 
+    inverse={**l,"conduite":"Ne pas "+l["conduite"]}
+    verifier("une conduite inversée ne renforce pas l'ancienne leçon", not L.est_un_doublon(inverse,l) and L.conflit_possible(inverse,l))
     print("2. L'échange retrouvé dans l'historique du 15/09")
     e = L._echange_du_tour(HISTORIQUE)
     verifier("la réponse corrigée, la correction, la nouvelle réponse",
@@ -151,8 +153,8 @@ if L:
     variante = json.loads(json.dumps(LECON))
     variante["lecon"]["conduite"] = "Ne l'apprendre que depuis un message ENVOYÉ par la boîte, en vérifiant l'expéditeur."
     _LLM.reponse = json.dumps(variante, ensure_ascii=False)
-    verifier("la même leçon, reformulée : renforcée, pas dupliquée",
-             asyncio.run(L.apprendre_du_tour(etat)) == "renforcee" and len(BASE) == 1 and BASE[0]["occurrences"] == 2)
+    verifier("une autre conduite pour la même situation exige vérification, sans renforcer l'ancienne",
+             asyncio.run(L.apprendre_du_tour(etat)) == "a_verifier" and len(BASE) == 2 and BASE[0]["occurrences"] == 1)
     _LLM.panne = True
     verifier("une panne du modèle ne lève jamais", asyncio.run(L.apprendre_du_tour(etat)) is None)
     _LLM.panne = False

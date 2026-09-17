@@ -46,3 +46,13 @@ frontend/e2e/captures/
 backend/.version
 # Environnement de restauration isolée, produit par restaurer.sh.
 .restauration/
+
+# Journaux privés de livraison (sauvegardes .env et empreintes).
+.livraisons/
+
+**/.configuration-retour.json
+**/RETOUR-ARRIERE.txt
+
+# Versions de livraison privées et anciens scripts opérationnels
+**/.livraisons-code-*/
+**/.operations-avant-livraison/

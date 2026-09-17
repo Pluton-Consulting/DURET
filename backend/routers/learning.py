@@ -438,14 +438,14 @@ async def lister_lecons(current_user: User = Depends(get_current_user)):
     async with get_db() as conn:
         lignes = await conn.fetch(
             """SELECT l.id, l.situation, l.erreur, l.conduite, l.portee, l.occurrences,
-                      l.rappels, l.cree_le, l.derniere_maj, COALESCE(u.name, u.email) AS auteur
+                      l.rappels, l.cree_le, l.derniere_maj, l.type_lecon, l.confiance, l.preuve, l.statut, COALESCE(u.name, u.email) AS auteur
                FROM lecons l LEFT JOIN users u ON u.id = l.user_id
                WHERE l.actif AND ($2::boolean OR l.user_id = $1 OR l.portee = 'entreprise')
                ORDER BY l.derniere_maj DESC LIMIT 300""",
             current_user.id, tous)
     return {"administre": tous, "lecons": [
         {**{k: l[k] for k in ("situation", "erreur", "conduite", "portee", "occurrences",
-                              "rappels", "auteur")},
+                              "rappels", "auteur", "type_lecon", "confiance", "preuve", "statut")},
          "id": str(l["id"]), "cree_le": l["cree_le"].isoformat() if l["cree_le"] else None,
          "derniere_maj": l["derniere_maj"].isoformat() if l["derniere_maj"] else None}
         for l in lignes]}
@@ -483,3 +483,12 @@ async def changer_portee(lecon_id: str, body: PorteeBody,
     if not n:
         raise HTTPException(status_code=http.HTTP_404_NOT_FOUND, detail="Leçon introuvable")
     return {"portee": "entreprise" if body.entreprise else "personne"}
+
+
+@router.post("/lecons/{lecon_id}/valider")
+async def valider_lecon(lecon_id: str, current_user: User = Depends(get_current_user)):
+    async with get_db() as conn:
+        n=await conn.fetchval("UPDATE lecons SET statut='active', derniere_maj=now() WHERE id=$1::uuid AND actif AND statut='brouillon' AND ($3::boolean OR (user_id=$2 AND portee='personne')) RETURNING id",lecon_id,current_user.id,_administre(current_user))
+    if not n:raise HTTPException(status_code=404,detail="Leçon à vérifier introuvable ou non autorisée")
+    await log_action(action="lecon_validee",user_id=str(current_user.id),metadata={"lecon":lecon_id})
+    return {"validee":True}

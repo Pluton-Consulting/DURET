@@ -37,6 +37,13 @@ Usage : python backend/scripts/test_appel_outil_balise.py [backend]
 import sys, ast, pathlib, types, importlib.util
 
 BACKEND = sys.argv[1] if len(sys.argv) > 1 else "backend"
+
+# Contrat réel des résultats, avec les fournisseurs toujours doublés.
+import importlib.util
+_spec_resultats = importlib.util.spec_from_file_location("skills.resultats", pathlib.Path(BACKEND) / "skills/resultats.py")
+_resultats = importlib.util.module_from_spec(_spec_resultats)
+sys.modules["skills.resultats"] = _resultats
+_spec_resultats.loader.exec_module(_resultats)
 racine = pathlib.Path(BACKEND)
 sys.path.insert(0, BACKEND)
 
@@ -197,6 +204,7 @@ espace = {
     "logger": _Journal(),
     "_tracer_filet": lambda *a, **k: None,
     "_blocs_livrables": lambda resultats: [],
+    "_productions_du_tour": lambda resultats: [],
     "_montre_un_fichier_du_fil": lambda visible, state: False,
     "_reponses_mail_manquantes": lambda state, texte: False,
     "_derniere_reponse_assistant": lambda state: "",

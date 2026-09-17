@@ -121,6 +121,10 @@ class VectorStoreClient:
         async with get_db() as conn:
             try:
                 async with conn.transaction():
+                    if getattr(query_embedding, 'modele', None):
+                        from vectorstore.generation import verifier_vecteur
+                        await conn.execute('LOCK TABLE documents IN ACCESS SHARE MODE')
+                        if not await verifier_vecteur(conn, query_embedding): return []
                     await conn.execute(f"SET LOCAL hnsw.ef_search = {min(1000, max(40, top_k))}")
                     rows = await conn.fetch(requete, *params)
             except Exception:  # noqa: BLE001 — pgvector sans HNSW : la requête vaut sans le réglage
@@ -223,6 +227,7 @@ class VectorStoreClient:
         source_types: Optional[List[str]] = None,
         fichier: Optional[str] = None,
         boites: Optional[List[str]] = None,
+        diagnostic: Optional[dict] = None,
     ) -> List[dict]:
         """
         Recherche HYBRIDE : la voie vectorielle ET la voie lexicale, TOUJOURS
@@ -242,11 +247,15 @@ class VectorStoreClient:
                 voies["vecteur"] = await self.search(query_embedding, user_role, source_types,
                                                      top_k=top_k, fichier=fichier, boites=boites)
             except Exception as e:  # noqa: BLE001
+                if diagnostic is not None:
+                    diagnostic["erreur_vecteur"] = type(e).__name__
                 import logging
                 logging.getLogger(__name__).warning(
                     "Voie vectorielle écartée (%s) : plein texte seul", type(e).__name__)
         voies["texte"] = await self.search_lexical(query_text, user_role, source_types,
                                                    top_k=top_k, fichier=fichier, boites=boites)
+        if diagnostic is not None:
+            diagnostic["voies"] = list(voies)
         return fusionner(voies)[:max(1, int(top_k))]
 
     async def insert_document_chunk(
@@ -378,6 +387,20 @@ class VectorStoreClient:
                         "SELECT unnest($1::uuid[]), 'pending'", a_vectoriser)
                 return len(lignes)
 
+    async def requalifier_drive(self, source_id: str, niveau: str) -> None:
+        """Un changement de dossier/droits ne dépend pas d'une nouvelle extraction."""
+        async with get_db() as conn:
+            await conn.execute("UPDATE documents SET access_level = $2 WHERE source_type = 'drive' AND source_id = $1",
+                               source_id, niveau)
+
+    async def reconcilier_drive(self, presents) -> int:
+        """À appeler UNIQUEMENT après un inventaire global complet et autorisé."""
+        async with get_db() as conn:
+            resultat = await conn.execute(
+                "DELETE FROM documents WHERE source_type = 'drive' AND NOT (source_id = ANY($1::text[]))",
+                list(presents))
+        return int(resultat.split()[-1])
+
     async def delete_by_source(self, source_id: str, source_type: str) -> int:
         """Supprime tous les chunks d'une source (pour ré-ingestion après modification)."""
         async with get_db() as conn:
@@ -465,21 +488,28 @@ class VectorStoreClient:
                 job_id,
                 f"dimension {len(embedding)} au lieu de {attendue} : le modèle "
                 "d'embedding ne correspond pas au schéma de la base. Changer de "
-                "modèle exige de re-vectoriser tout le corpus.")
+                "modèle exige de re-vectoriser tout le corpus.", preneur=preneur)
             return
         async with get_db() as conn:
             async with conn.transaction():
+                if modele:
+                    await conn.execute('LOCK TABLE documents IN ROW EXCLUSIVE MODE')
+                    actif = await conn.fetchval('SELECT modele FROM embedding_actif WHERE id=1')
+                    if actif and actif != modele: return
                 # LE BAIL EST VÉRIFIÉ AVANT D'ÉCRIRE (audit D-17/S-17) : un worker
                 # dont le bail a expiré — parce qu'il a été long — ne doit pas
                 # écraser le travail de celui qui a repris le job entre-temps.
                 try:
-                    pris = await conn.fetchval("""
-                        UPDATE embedding_jobs
-                           SET status = 'completed', processed_at = NOW(), lease_until = NULL
-                         WHERE id = $1
-                           AND ($2::text IS NULL OR claimed_by IS NULL OR claimed_by = $2)
-                     RETURNING document_id
-                    """, job_id, preneur)
+                    async with conn.transaction():
+                        pris = await conn.fetchval("""
+                            UPDATE embedding_jobs
+                               SET status = 'completed', processed_at = NOW(), lease_until = NULL
+                             WHERE id = $1
+                               AND status = 'pending'
+                               AND (($2::text IS NULL AND claimed_by IS NULL)
+                                    OR (claimed_by = $2 AND lease_until > NOW()))
+                         RETURNING document_id
+                        """, job_id, preneur)
                 except Exception as e:  # noqa: BLE001
                     from database.connection import schema_incomplet
                     if not schema_incomplet(e):
@@ -493,12 +523,13 @@ class VectorStoreClient:
                     logger.info("Job %s : bail perdu, résultat ignoré (un autre l'a repris)", str(job_id)[:8])
                     return
                 try:
-                    await conn.execute("""
-                        UPDATE documents
-                        SET embedding = $1::vector, embedding_modele = COALESCE($3, embedding_modele),
-                            updated_at = NOW()
-                        WHERE id = $2
-                    """, _vec_literal(embedding), pris, modele)
+                    async with conn.transaction():
+                        await conn.execute("""
+                            UPDATE documents
+                            SET embedding = $1::vector, embedding_modele = COALESCE($3, embedding_modele),
+                                updated_at = NOW()
+                            WHERE id = $2
+                        """, _vec_literal(embedding), pris, modele)
                 except Exception as e:  # noqa: BLE001
                     from database.connection import schema_incomplet
                     if not schema_incomplet(e):
@@ -507,7 +538,7 @@ class VectorStoreClient:
                         UPDATE documents SET embedding = $1::vector, updated_at = NOW() WHERE id = $2
                     """, _vec_literal(embedding), pris)
 
-    async def mark_job_failed(self, job_id: UUID, error: str) -> None:
+    async def mark_job_failed(self, job_id: UUID, error: str, preneur: Optional[str] = None) -> None:
         async with get_db() as conn:
             await conn.execute("""
                 UPDATE embedding_jobs
@@ -516,9 +547,14 @@ class VectorStoreClient:
                         ELSE 'pending'
                     END,
                     attempts = attempts + 1,
-                    error_message = $2
+                    error_message = $2,
+                    lease_until = NULL,
+                    claimed_by = NULL
                 WHERE id = $1
-            """, job_id, error)
+                  AND status = 'pending'
+                  AND (($3::text IS NULL AND claimed_by IS NULL)
+                       OR (claimed_by = $3 AND lease_until > NOW()))
+            """, job_id, error, preneur)
 
 
 # Singleton — importé par les agents

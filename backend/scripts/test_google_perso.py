@@ -18,6 +18,13 @@ import types
 import urllib.parse
 
 BACKEND = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend")
+# Les tickets OAuth utilisent le vrai SQLite, isolé pour ce banc.
+import os, tempfile, atexit
+sys.path.insert(0, str(BACKEND.resolve()))
+_repertoire_tickets = tempfile.TemporaryDirectory(prefix="banc-oauth-")
+atexit.register(_repertoire_tickets.cleanup)
+os.environ["DOCUMENTS_DIR"] = _repertoire_tickets.name
+
 FRONTEND = BACKEND.parent / "frontend"
 
 echecs = []

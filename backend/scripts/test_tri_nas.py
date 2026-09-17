@@ -279,7 +279,7 @@ class _Pdf:
 PAGES = {b"scan": ["", ""], b"texte": ["CAHIER DES CLAUSES TECHNIQUES " * 5, "Lot 12 sols souples " * 5]}
 # « texte|<ce qui distingue le fichier> » : un contenu PAR fichier (audit D-27,
 # une copie se reconnaît désormais à son empreinte).
-poser("pdfplumber", open=lambda f: _Pdf(PAGES[f.getvalue().split(b"|")[0]]))
+parsers._extraire_texte_pdf = lambda brut: {"texte": "\n\n".join(PAGES[brut.split(b"|")[0]]), "pages_lues": len(PAGES[brut.split(b"|")[0]]), "pages_total": len(PAGES[brut.split(b"|")[0]])}
 parsers.ocr_disponible = lambda: True
 parsers.ocr_pdf = lambda brut: OCR.append(brut) or "texte reconnu par OCR " * 10
 

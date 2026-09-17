@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel
@@ -63,7 +63,7 @@ def _verifier(secret: Optional[str]) -> None:
 
 class Statut(BaseModel):
     job_id: str
-    status: str
+    status: Literal["pending", "running", "awaiting_approval", "completed", "failed", "cancelled"]
 
 
 class Etapes(BaseModel):
@@ -73,7 +73,7 @@ class Etapes(BaseModel):
 
 class Resultat(BaseModel):
     job_id: str
-    status: str
+    status: Literal["pending", "running", "awaiting_approval", "completed", "failed", "cancelled"]
     result: Optional[dict] = None
     structured: Optional[dict] = None
     steps: Optional[int] = None
@@ -177,6 +177,9 @@ async def tache(job_id: str, x_navigateur_secret: str = Header(default="")):
 async def validation(c: Validation, x_navigateur_secret: str = Header(default="")):
     _verifier(x_navigateur_secret)
     async with get_db() as conn:
+        job = await conn.fetchrow("SELECT user_id,status FROM browser_tasks WHERE id=$1::uuid", c.thread_id)
+        if not job or str(job['user_id']) != c.user_id or job['status'] not in ('running','awaiting_approval') or str(c.payload.get('job_id')) != c.thread_id:
+            raise HTTPException(status_code=403,detail="Validation étrangère à la tâche navigateur.")
         vid = await conn.fetchval(
             "INSERT INTO validations (thread_id, user_id, agent, reason, payload, "
             "draft, status) VALUES ($1, $2::uuid, 'browser', $3, $4::jsonb, $5, "
@@ -191,7 +194,7 @@ async def validation_statut(validation_id: str,
     _verifier(x_navigateur_secret)
     async with get_db() as conn:
         statut = await conn.fetchval(
-            "SELECT status FROM validations WHERE id=$1::uuid", validation_id)
+            "SELECT status FROM validations WHERE id=$1::uuid AND agent='browser'", validation_id)
     return {"status": statut}
 
 
@@ -206,7 +209,7 @@ async def purger_capture(validation_id: str,
     _verifier(x_navigateur_secret)
     async with get_db() as conn:
         await conn.execute(
-            "UPDATE validations SET payload = payload - 'screenshot' WHERE id=$1::uuid",
+            "UPDATE validations SET payload = payload - 'screenshot' WHERE id=$1::uuid AND agent='browser'",
             validation_id)
     return {"ok": True}
 
@@ -226,3 +229,37 @@ def _serialisable(d: dict) -> dict[str, Any]:
         else:
             sortie[k] = str(v) if k == "id" else v
     return sortie
+
+
+@router.post("/tache/{job_id}/indexer")
+async def indexer_resultat(job_id: str, x_navigateur_secret: str = Header(default="")):
+    _verifier(x_navigateur_secret)
+    async with get_db() as conn:
+        job = await conn.fetchrow("SELECT user_id,status,result FROM browser_tasks WHERE id=$1::uuid",job_id)
+    if not job or job['status'] != 'completed':
+        raise HTTPException(status_code=409,detail="Résultat de navigation non terminé")
+    from tasks.identity import charger_executant
+    from security.rbac import has_permission
+    utilisateur = await charger_executant(job['user_id'])
+    if not utilisateur or not has_permission(utilisateur.role,'manage_system'):
+        raise HTTPException(status_code=403,detail="Indexation d’une extraction réservée à l’administration")
+    resultat=job['result'];resultat=json.loads(resultat) if isinstance(resultat,str) else resultat
+    texte=str((resultat or {}).get('summary') or '')
+    if not texte.strip() or len(texte)>200000:
+        raise HTTPException(status_code=422,detail="Résultat vide ou trop volumineux")
+    from ingestion.pipeline import ingest_document
+    nombre=await ingest_document(text=texte,source_type='web_extraction',source_id=job_id,
+                                 source_filename='browser-'+job_id,access_level='admin_only',anonymize=True)
+    return {'ok':True,'chunks':nombre,'access_level':'admin_only'}
+
+
+class Reclamation(BaseModel):
+    job_id: str
+    user_id: str
+
+@router.post("/reclamer")
+async def reclamer(c: Reclamation,x_navigateur_secret: str = Header(default="")):
+    _verifier(x_navigateur_secret)
+    async with get_db() as conn:
+        job=await conn.fetchval("UPDATE browser_tasks SET status='running',updated_at=NOW() WHERE id=$1::uuid AND user_id=$2::uuid AND status='pending' RETURNING id",c.job_id,c.user_id)
+    return {'reclame':bool(job)}

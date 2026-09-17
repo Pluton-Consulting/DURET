@@ -18,7 +18,15 @@ entier à l'import : on ne prend que ce qu'on teste). Ni base, ni réseau.
 import sys, ast, pathlib, json
 
 BACKEND = sys.argv[1] if len(sys.argv) > 1 else "backend"
+
+# Contrat réel des résultats, avec les fournisseurs toujours doublés.
+import importlib.util
+_spec_resultats = importlib.util.spec_from_file_location("skills.resultats", pathlib.Path(BACKEND) / "skills/resultats.py")
+_resultats = importlib.util.module_from_spec(_spec_resultats)
+sys.modules["skills.resultats"] = _resultats
+_spec_resultats.loader.exec_module(_resultats)
 racine = pathlib.Path(BACKEND)
+sys.path.insert(0,str(racine.resolve()))
 
 echecs = []
 
@@ -91,7 +99,7 @@ espace = {"logger": _Journal(), "AgentState": dict,
           "suite_qui_retouche": _annonce.suite_qui_retouche}
 extraire(racine / "agents" / "agent1.py",
          {"_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",
-          "_blocs_livrables", "_blocs_de", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
+          "_productions_du_tour", "_blocs_livrables", "_blocs_de", "fichiers_du_fil", "_plat_nom", "_designe_le_meme",
           "_meme_livrable", "_livrables_a_l_ecran", "_cartes_de_l_atelier",
           "_redaction_dement_le_livrable",
           # 07/09 soir : la branche « suite qui retouche » du routage lit les

@@ -28,6 +28,17 @@ logger = logging.getLogger("browser-worker")
 
 app = FastAPI(title="Symbiose Browser Worker")
 
+@app.middleware("http")
+async def authentifier_backend(request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+    import os, hmac
+    from fastapi.responses import JSONResponse
+    attendu = os.environ.get("BROWSER_WORKER_SECRET", "")
+    if not attendu or not hmac.compare_digest(request.headers.get("X-Navigateur-Secret", ""), attendu):
+        return JSONResponse(status_code=403, content={"detail":"Accès interne refusé"})
+    return await call_next(request)
+
 _running: dict[str, asyncio.Task] = {}
 
 
@@ -127,6 +138,10 @@ def _readonly_effectif(demande: bool) -> bool:
 # les routes ne sont pas vérifiées, elles sont supposées.
 @app.post("/run")
 async def run(req: RunRequest):
+    recu = await db._dire("POST", "/reclamer", {"job_id":req.job_id,"user_id":req.user_id})
+    if not recu or not recu.get("reclame"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409,detail="Tâche déjà prise, terminée ou non vérifiable ; aucune seconde exécution")
     async def _job():
         try:
             await run_task(

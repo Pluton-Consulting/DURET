@@ -8,7 +8,8 @@ Exécuteur de skills — LE chaînon entre la table `skills` et les agents.
 
 Garde-fou : seules les skills 'validated' / 'stable' sont exécutables par défaut. Les
 'draft' ne tournent qu'en mode test explicite (`allow_draft=True`), réservé aux admins.
-Aucune donnée client ne sort de l'infra : le code s'exécute en local, isolé.
+Le code généré et ses arguments s’exécutent dans le sandbox Daytona configuré.
+Les secrets et les montages du backend ne lui sont pas transmis.
 """
 import hashlib
 import hmac
@@ -192,8 +193,13 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
         # QUI LIT (13/09) : les droits de la personne suivent le geste jusqu'aux
         # lectures du stockage, quel que soit le chemin (security/lecteur.py).
         from security.lecteur import au_nom_de
-        with au_nom_de(user):
-            sortie = await executable(data or {}, user)
+        from security.conversation import fil_courant
+        contexte_fil = fil_courant.set((data or {}).get("_fil") or fil_courant.get())
+        try:
+            with au_nom_de(user):
+                sortie = await executable(data or {}, user)
+        finally:
+            fil_courant.reset(contexte_fil)
         duree = int((time.monotonic() - start) * 1000)
         from skills.resultats import message_d_echec, normaliser_resultat
         normalise = normaliser_resultat(sortie, effet_du_skill(name, ref))
@@ -237,7 +243,7 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
                 "retryable": normalise["retryable"]}
 
     async with get_db() as conn:
-        row = await conn.fetchrow("SELECT code, status, enabled FROM skills WHERE name = $1", name)
+        row = await conn.fetchrow("SELECT code, status, enabled, effect FROM skills WHERE name = $1", name)
     if not row:
         raise SkillError(f"skill introuvable : {name}")
 
@@ -280,6 +286,12 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
             "natifs, ou fais activer l'exécuteur isolé (réglage d'administration).")
 
     result = await sandbox_client.execute_skill(row["code"], name, data or {})
+    try:
+        from learning.qualification import constater_execution
+        await constater_execution(name,row["code"],result)
+    except Exception as e:
+        logger.warning("Résultat du skill conservé, suivi de qualification indisponible : %s",type(e).__name__)
+
 
     # Compteur d'usage + audit (best-effort : ne bloque jamais l'exécution).
     try:

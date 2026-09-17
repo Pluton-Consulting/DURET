@@ -407,16 +407,19 @@ def _docx(entete: dict, elements, sortie: str) -> str:
     if charte in ("000000",):
         charte = "1F3864"
     style = entete.get("style") or "classique"
-    doc = Document()
-    _styles_maison(doc, charte, charte_fond, style)
+    modele = entete.get("_modele_docx")
+    doc = Document(modele) if modele else Document()
+    if not modele:
+        _styles_maison(doc, charte, charte_fond, style)
     section = doc.sections[0]
     if entete.get("paysage"):
         section.orientation = WD_ORIENT.LANDSCAPE
         section.page_width, section.page_height = section.page_height, section.page_width
-    for marge in ("top_margin", "bottom_margin"):
-        setattr(section, marge, Cm(2.2))
-    for marge in ("left_margin", "right_margin"):
-        setattr(section, marge, Cm(2.3))
+    if not modele:
+        for marge in ("top_margin", "bottom_margin"):
+            setattr(section, marge, Cm(2.2))
+        for marge in ("left_margin", "right_margin"):
+            setattr(section, marge, Cm(2.3))
 
     titres = sum(1 for e in elements if e.get("bloc") == "titre" and int(e.get("niveau") or 1) <= 2)
     garde = entete.get("page_de_garde")
@@ -425,7 +428,8 @@ def _docx(entete: dict, elements, sortie: str) -> str:
             style, len(elements) >= SEUIL_PAGE_DE_GARDE)
     garde = bool(garde)
     # La page de garde n'a ni en-tête ni pied : ils commencent à la page 2.
-    section.different_first_page_header_footer = garde
+    if not modele:
+        section.different_first_page_header_footer = garde
 
     gris = RGBColor.from_string("7F7F7F")
     logo_haut, logo_bas = _image(entete.get("entete_image_fichier")), _image(entete.get("pied_image_fichier"))
@@ -440,7 +444,7 @@ def _docx(entete: dict, elements, sortie: str) -> str:
         if style == "moderne":
             _filet_paragraphe(p, "bottom", charte, 8)
 
-    if entete.get("pied") or entete.get("numeroter") or logo_bas:
+    if not modele and (entete.get("pied") or entete.get("numeroter") or logo_bas):
         p = section.footer.paragraphs[0]
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         if logo_bas:

@@ -212,6 +212,8 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
         if f.strip().lower() not in admis or not m.strip():
             raise ValueError("Forme attendue : « fournisseur:modele », fournisseur parmi "
                              + ", ".join(admis) + ".")
+    if nom == "modele_vision" and any(x in (brut or "").lower() for x in ("deepseek-v4", "deepseek-chat", "deepseek-reasoner")):
+        raise ValueError("Ce modèle ne lit pas les images ; choisissez un modèle multimodal pour la vision.")
     from database.connection import get_db
 
     v = (brut or "").strip()

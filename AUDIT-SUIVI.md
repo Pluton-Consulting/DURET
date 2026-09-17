@@ -200,3 +200,13 @@ branches poussées sur benit seulement ; code admin « 0000 » à usage unique.
   CAPACITÉS suivent les droits rendus par Google. Enfin le lien de connexion ne s'imprime
   plus dès que `DEBUG` est vrai : l'environnement fait foi. Banc `test_connexions_google`
   (36, le même fichier des deux côtés).
+
+
+## Contre-vérification complémentaire — 16/09
+
+Voir `REVUE-COMPLEMENTAIRE-20260916.md`. Plusieurs défauts supplémentaires ont été corrigés et testés localement. Les mentions « fait » ci-dessus ne valent pas validation en production ; les éléments annoncés « étape 1 » et « lot suivant » restent partiels. Aucun déploiement effectué dans cette revue.
+
+
+## Continuation de fiabilisation — 16/09
+
+Voir `FIABILISATION-20260916.md` : dépendances corrigées/verrouillées, migration 049, reprise du chat, sources directes, copies des pièces avant accord, documents et références entre processus, apprentissage filtré et démarrage renforcé. Modifications locales non déployées. Les mentions « fait » précédentes ne remplacent pas la recette réelle ; les points partiels sont explicitement recensés dans cette mise à jour.

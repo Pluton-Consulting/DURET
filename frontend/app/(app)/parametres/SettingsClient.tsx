@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect, Fragment } from "react"
+import { useSession } from "next-auth/react"
 import { ROLE_LABELS, ROLE_COLORS, nomExpert } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
@@ -1487,7 +1488,9 @@ function ServicesTab({ apiUrl, backendToken }: { apiUrl: string; backendToken: s
 }
 
 /* ---------- MAIN COMPONENT ---------- */
-export default function SettingsClient({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
+export default function SettingsClient({ initialUsers, backendToken: tokenInitial, currentRole, apiUrl }: Props) {
+  const { data: session } = useSession()
+  const backendToken = (session as any)?.backendToken || tokenInitial
   // CE QUE MON RÔLE A LE DROIT DE FAIRE (14/09) : une permission cochée dans
   // la matrice ouvre son onglet, sans quoi la case ne servait à rien.
   const [mesPermissions, setMesPermissions] = useState<string[]>([])

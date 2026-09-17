@@ -70,6 +70,9 @@ DROITS_AGENDA = ("https://www.googleapis.com/auth/calendar.events", "openid", "e
 SCOPES_HISTORIQUES = tuple(x for x in SCOPES
                            if x.startswith("https://") and "/auth/calendar" not in x)
 
+# Nouveaux consentements uniquement ; les anciens jetons gardent leurs scopes.
+SCOPES += ["https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/gmail.modify"]
+
 URL_AUTORISATION = "https://accounts.google.com/o/oauth2/v2/auth"
 URL_JETON = "https://oauth2.googleapis.com/token"
 URL_USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
@@ -150,16 +153,20 @@ def accorde(boite: str, scope: str) -> Optional[bool]:
 # consentement, pas dans ceux qu'on avait demandés. Sans cette table, un geste
 # partait, échouait chez Google, et rendait une erreur d'API à la personne.
 CAPACITES = {
+    "gmail_modification": ("https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"),
     "drive_lecture": ("https://www.googleapis.com/auth/drive",
                       "https://www.googleapis.com/auth/drive.readonly"),
     "drive_ecriture": ("https://www.googleapis.com/auth/drive",
                        "https://www.googleapis.com/auth/drive.file"),
     "gmail_lecture": ("https://www.googleapis.com/auth/gmail.readonly",
-                      "https://mail.google.com/"),
+                      "https://mail.google.com/",
+                    "https://www.googleapis.com/auth/gmail.modify"),
     "gmail_envoi": ("https://www.googleapis.com/auth/gmail.send",
-                    "https://mail.google.com/"),
+                    "https://mail.google.com/",
+                    "https://www.googleapis.com/auth/gmail.modify"),
     "gmail_brouillon": ("https://www.googleapis.com/auth/gmail.compose",
-                        "https://mail.google.com/"),
+                        "https://mail.google.com/",
+                    "https://www.googleapis.com/auth/gmail.modify"),
     "agenda": ("https://www.googleapis.com/auth/calendar.events",
                "https://www.googleapis.com/auth/calendar"),
 }
@@ -168,6 +175,7 @@ CAPACITES = {
 # forcément le premier scope de la liste : on redemande le plus étroit qui
 # suffit, jamais « tout Gmail » pour poser un brouillon.
 DEMANDE_POUR = {
+    "gmail_modification": "https://www.googleapis.com/auth/gmail.modify",
     "drive_lecture": "https://www.googleapis.com/auth/drive",
     "drive_ecriture": "https://www.googleapis.com/auth/drive",
     "gmail_lecture": "https://www.googleapis.com/auth/gmail.readonly",
@@ -267,28 +275,16 @@ def lien_autorisation(user_id: str, compte: Optional[str] = None,
     return URL_AUTORISATION + "?" + urllib.parse.urlencode(params)
 
 
-# Les états émis et pas encore consommés. Bornés en nombre et en temps : cette
-# mémoire vit dans le processus, comme le flux OAuth qu'elle protège (dix
-# minutes). Un redémarrage entre l'aller et le retour fait échouer le retour —
-# c'est le bon sens du rejeu : on refuse ce qu'on ne peut pas prouver.
-_NONCES: dict[str, float] = {}
+# Les états signés restent utilisables après changement de processus API.
 _NONCE_TTL_S = 900
-_MAX_NONCES = 2000
-
 
 def _nonce_emis(nonce: str) -> None:
-    maintenant = time.monotonic()
-    for ancien, quand in list(_NONCES.items()):
-        if maintenant - quand > _NONCE_TTL_S:
-            _NONCES.pop(ancien, None)
-    if len(_NONCES) >= _MAX_NONCES:
-        _NONCES.clear()
-    _NONCES[nonce] = maintenant
-
+    from security.jetons_ephemeres import emettre
+    emettre("google_oauth", nonce, "emis", _NONCE_TTL_S)
 
 def _nonce_consomme(nonce: str) -> bool:
-    """Vrai si ce nonce était bien en attente — et il ne l'est plus."""
-    return _NONCES.pop(nonce, None) is not None
+    from security.jetons_ephemeres import consommer
+    return consommer("google_oauth", nonce) == "emis"
 
 
 def verifier_state(state: str) -> str:
@@ -443,7 +439,7 @@ async def rafraichir(force: bool = False) -> None:
             continue
         clairs[str(l["user_id"])] = (_normaliser(l["email"]), jeton,
                                      _scopes_accordes(l["scopes"]))
-        if coffre.a_rechiffrer(l["refresh_token"]):
+        if coffre.a_rechiffrer(l["refresh_token"], USAGE_COFFRE):
             a_reecrire.append((str(l["user_id"]), jeton))
     _CACHE = {email: jeton for email, jeton, _ in clairs.values()}
     _SCOPES_PAR_EMAIL = {email: scopes for email, _, scopes in clairs.values()}

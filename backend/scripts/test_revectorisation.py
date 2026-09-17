@@ -178,8 +178,8 @@ rv.oublier_dimension()
 verifier("EXÉCUTÉ — la dimension attendue est LUE dans la base",
          asyncio.run(rv.dimension_attendue()) == 1536)
 COLONNE["valeur"] = "vector(768)"
-verifier("elle est mise en cache (une lecture par écriture serait payée 9 400 fois)",
-         asyncio.run(rv.dimension_attendue()) == 1536)
+verifier("une bascule effectuée par un autre processus est immédiatement visible",
+         asyncio.run(rv.dimension_attendue()) == 768)
 rv.oublier_dimension()
 verifier("et le cache s'oublie, sinon une re-vectorisation ne prendrait effet "
          "qu'au redémarrage",
@@ -406,6 +406,11 @@ verifier("un verrou refusé se dit (quelle tâche, et que rien n'est effacé)",
          "Rien n'a été effacé" in msg and "synchronisation" in msg, msg)
 
 
+# Ce banc vérifie le suivi de tâche avec une préparation doublée.
+# La préparation réelle et la conservation de l'ancien index sont testées sur PostgreSQL.
+async def _preparer(dimension,modele,progression):
+    return await rv.revectoriser(dimension,modele)
+sys.modules['vectorstore.generation']=types.SimpleNamespace(preparer=_preparer)
 async def _en_fond(echec=""):
     ECHEC["sqlstate"] = echec
     rv._OPERATION.clear()
@@ -442,7 +447,7 @@ verifier("hors opération, l'état porte `operation` (vide)", asyncio.run(rv.eta
 
 reglages = (BACKEND / "routers" / "settings.py").read_text(encoding="utf-8")
 verifier("la route LANCE en fond et répond tout de suite",
-         "rv.lancer_en_fond(mesuree)" in reglages and "await rv.revectoriser(" not in reglages)
+         "rv.lancer_en_fond(mesuree, choisi)" in reglages and "await rv.revectoriser(" not in reglages)
 emb = (BACKEND / "vectorstore" / "embeddings.py").read_text(encoding="utf-8")
 verifier("une mesure muette dit sa cause quand on la sait (pause de quota Gemini)",
          "def raison_du_silence" in emb and "pause de quota" in emb

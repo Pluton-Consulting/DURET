@@ -90,6 +90,8 @@ import importlib.util  # noqa: E402
 spec = importlib.util.spec_from_file_location("vectorstore.embeddings", BACKEND / "vectorstore" / "embeddings.py")
 emb = importlib.util.module_from_spec(spec)
 sys.modules["vectorstore.embeddings"] = emb
+async def _actif(): return emb.modele_courant()
+sys.modules["vectorstore.generation"] = types.SimpleNamespace(actif=_actif)
 spec.loader.exec_module(emb)
 
 

@@ -498,6 +498,10 @@ def modele_courant(modele_force: str = "") -> str:
     même espace : sans cette étiquette, on compare des vecteurs incomparables
     sans qu'aucun message ne le dise."""
     fournisseur, modele = fournisseur_choisi(modele_force)
+    fournisseur = "gemini" if fournisseur == "google" else fournisseur
+    if not modele:
+        champ = {"gemini":"gemini_embedding_model","openai":"embedding_model","ollama":"ollama_embedding_model","ollama_cloud":"ollama_cloud_embedding_model"}.get(fournisseur, "embedding_model")
+        modele = getattr(settings, champ, "")
     return f"{fournisseur}:{modele}" if fournisseur and modele else (modele or "")
 
 
@@ -570,6 +574,9 @@ async def embed_texts(texts: list[str],
     # la seule façon de connaître la dimension d'un modèle était de le POSER en
     # réglage — c'est-à-dire de basculer tout le système dessus pour savoir
     # s'il convenait. On veut l'inverse : mesurer, montrer, puis choisir.
+    if not modele_force:
+        from vectorstore.generation import actif
+        modele_force = await actif()
     nom_fournisseur, modele_choisi = fournisseur_choisi(modele_force)
     provider = _PROVIDERS.get(nom_fournisseur)
     if provider is None:
@@ -604,4 +611,10 @@ async def embed_query(text: str) -> Optional[list[float]]:
     text = (text or "").strip()
     if not text:
         return None
-    return (await embed_texts([text]))[0]
+    from vectorstore.generation import actif
+    modele = await actif()
+    brut = (await embed_texts([text],modele_force=modele))[0]
+    if brut is None: return None
+    class Vecteur(list): pass
+    resultat = Vecteur(brut); resultat.modele = modele
+    return resultat

@@ -255,6 +255,13 @@ async def _televerser_pieces(client, base: str, identifiant: str, pieces: list,
     for p in pieces or []:
         octets = p.get("octets") or b""
         nom = p.get("nom") or "piece-jointe"
+        if len(octets) < SEUIL_TELEVERSEMENT:
+            rs = await client.post(f"{base}/{identifiant}/attachments",
+                                   json=_piece_graph(p), headers=entetes)
+            rs.raise_for_status()
+            continue
+        if p.get("inline"):
+            raise ValueError("Une image de signature dépasse 3 Mo : réduis-la avant de déposer le brouillon.")
         rs = await client.post(
             f"{base}/{identifiant}/attachments/createUploadSession",
             json={"AttachmentItem": {
@@ -358,7 +365,8 @@ async def deposer_brouillon(boite: str, destinataire: str, objet: str, corps: st
                     maj = {"subject": objet}
                     if destinataire:
                         maj["toRecipients"] = [{"emailAddress": {"address": destinataire}}]
-                    await client.patch(f"{base}/{identifiant}", json=maj, headers=entetes)
+                    patch = await client.patch(f"{base}/{identifiant}", json=maj, headers=entetes)
+                    patch.raise_for_status()
             else:
                 r = await client.post(base, json=_message_graph_brouillon(
                     destinataire, objet, corps, cc, html), headers=entetes)
@@ -377,7 +385,8 @@ async def deposer_brouillon(boite: str, destinataire: str, objet: str, corps: st
             await _televerser_pieces(client, base, identifiant, pieces, entetes)
         return {"depose": True, "envoye": False, "boite": boite, "dossier": "Brouillons",
                 "objet": objet, "destinataire": destinataire or None,
-                "lien": donnees.get("webLink")}
+                "lien": donnees.get("webLink"), "id_brouillon": identifiant,
+                "effect_status": "accepted", "evidence_refs": [{"fournisseur": nom, "id": identifiant}]}
 
     import base64 as _b64
     brut_b64 = _mime_gmail(boite, destinataire or "", objet, corps, cc, pieces, html)
@@ -386,22 +395,18 @@ async def deposer_brouillon(boite: str, destinataire: str, objet: str, corps: st
         import asyncio as _asyncio
         from mail import imap
         try:
-            dossier = await _asyncio.to_thread(imap.deposer, _b64.urlsafe_b64decode(brut_b64))
+            recu = await _asyncio.to_thread(imap.deposer, _b64.urlsafe_b64decode(brut_b64), avec_recu=True)
+            dossier = recu["dossier"]
         except Exception as e:  # noqa: BLE001 — imaplib lève ses propres types
             raise RuntimeError(f"Le brouillon n'a pas pu être déposé dans la boîte : {str(e)[:300]}") from e
         return {"depose": True, "envoye": False, "boite": boite, "dossier": dossier,
-                "objet": objet, "destinataire": destinataire or None}
+                "objet": objet, "destinataire": destinataire or None, **recu, "effect_status": "accepted"}
 
     import asyncio
 
-    def _travail() -> None:
-        try:
-            from ingestion.connectors.gmail import _service_envoi
-        except ImportError as e:
-            raise RuntimeError(
-                "Ce projet n'a pas de connecteur Gmail : le dépôt de brouillon n'est "
-                "pas configuré pour ce fournisseur de courrier.") from e
-        service = _service_envoi(boite)
+    def _travail() -> dict:
+        from skills.gestion_mail import _service_gmail
+        service = _service_gmail(boite, "gmail_brouillon")
         corps_api = {"message": {"raw": brut_b64}}
         if en_reponse_a:
             # Gmail range un brouillon dans un fil par son `threadId`, pas par
@@ -413,10 +418,13 @@ async def deposer_brouillon(boite: str, destinataire: str, objet: str, corps: st
                     corps_api["message"]["threadId"] = fil
             except Exception:  # noqa: BLE001 — sans fil, le brouillon reste valable
                 pass
-        service.users().drafts().create(userId="me", body=corps_api).execute()
+        recu = service.users().drafts().create(userId="me", body=corps_api).execute()
+        if not recu.get("id"):
+            raise RuntimeError("Brouillon sans identifiant de confirmation ; vérifier la boîte avant de reprendre.")
+        return recu
 
     try:
-        await asyncio.to_thread(_travail)
+        recu = await asyncio.to_thread(_travail)
     except RuntimeError:
         raise
     except Exception as e:  # noqa: BLE001
@@ -427,7 +435,8 @@ async def deposer_brouillon(boite: str, destinataire: str, objet: str, corps: st
                 "ne porte pas la composition (gmail.compose). Reliez à nouveau la boîte.") from e
         raise RuntimeError(f"Le dépôt du brouillon a échoué : {texte[:300]}") from e
     return {"depose": True, "envoye": False, "boite": boite, "dossier": "Brouillons",
-            "objet": objet, "destinataire": destinataire or None}
+            "objet": objet, "destinataire": destinataire or None, "id_brouillon": recu["id"],
+            "effect_status": "accepted", "evidence_refs": [{"fournisseur": nom, "id": recu["id"]}]}
 
 
 async def envoyer_message(boite: str, destinataire: str, objet: str,

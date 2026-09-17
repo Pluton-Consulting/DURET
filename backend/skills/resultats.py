@@ -113,7 +113,7 @@ def normaliser_resultat(sortie, effet: str = "lecture") -> dict:
         effect_status = "pending"
     else:
         # Un effet dont la sortie ne dit rien de précis : on ne l'affirme pas.
-        effect_status = "unknown" if effet == "externe" else "done"
+        effect_status = "unknown"
     return {
         "outcome": outcome,
         "ok": outcome not in ("failed", "denied"),
@@ -133,3 +133,25 @@ def message_d_echec(sortie) -> str:
             if isinstance(v, str) and v.strip():
                 return v.strip()
     return "l'action n'a pas abouti"
+
+
+def metadonnees(resultat) -> dict:
+    """Même contrat dans la boucle directe et après approbation."""
+    return {k: resultat[k] for k in ("outcome", "effect_status", "evidence_refs", "warnings")
+            if isinstance(resultat, dict) and k in resultat}
+
+
+def resultat_probant(resultat: dict) -> bool:
+    """Un résultat exploitable ; les anciens gestes gardent leur contrat.
+
+    Une recherche vide ou un geste en attente n'établit jamais une lecture ou
+    une écriture accomplie. Une sortie libre exige une référence exploitable.
+    """
+    if not resultat.get("ok"):
+        return False
+    outcome = resultat.get("outcome")
+    if outcome in ("failed", "denied", "pending", "not_found"):
+        return False
+    if outcome == "unverified":
+        return bool(resultat.get("evidence_refs"))
+    return True

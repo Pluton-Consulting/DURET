@@ -404,25 +404,61 @@ def _charger(client, uid: bytes) -> tuple[object, str]:
     return email.message_from_bytes(brut, policy=policy.default), flags
 
 
+def _charger_apercus(client, uids):
+    """Un aller-retour pour le lot, sans télécharger ses grosses pièces jointes.
+
+    Le préfixe MIME suffit à un aperçu, jamais à certifier une lecture intégrale.
+    Ouvrir un message conserve le chemin complet `_charger` et BODY.PEEK.
+    """
+    if not uids:return {}
+    statut, donnees = client.uid('fetch', b','.join(uids), '(UID FLAGS RFC822.SIZE BODY.PEEK[]<0.65536>)')
+    if statut != 'OK':raise RuntimeError('Lecture des aperçus IMAP impossible.')
+    resultats={}
+    for entree in donnees or []:
+        if not isinstance(entree,tuple) or len(entree)!=2:continue
+        entete,brut=entree
+        if not isinstance(brut,bytes):continue
+        entete=entete.decode(errors='replace') if isinstance(entete,bytes) else str(entete)
+        uid=re.search(r'\bUID\s+(\d+)\b',entete,re.I)
+        taille=re.search(r'\bRFC822.SIZE\s+(\d+)\b',entete,re.I)
+        if uid:
+            resultats[uid[1].encode()] = (email.message_from_bytes(brut,policy=policy.default),entete,
+                int(taille[1])>len(brut) if taille else len(brut)>=65536)
+    return resultats
+
+
 def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = None,
            recherche: Optional[str] = None, avant: Optional[datetime] = None,
-           longueur_apercu: int = 160) -> tuple[list[dict], Optional[int]]:
+           longueur_apercu: int = 160, curseur: Optional[str] = None) -> tuple[list[dict], Optional[int]]:
     """(fiches des `limite` plus récents, nombre total de correspondances)."""
     client = _connexion()
     try:
         _selectionner(client, dossier)
         uids = _uids(client, _criteres(depuis, recherche, avant))
+        _, validite_brute=client.response('UIDVALIDITY')
+        validite=(validite_brute[0] or b'').decode() if validite_brute else ''
+        if curseur:
+            match=re.fullmatch(r'imap:(\d+):(\d+)',str(curseur))
+            if not match or match[1]!=validite:
+                raise ValueError('La pagination de cette boîte a expiré ; reprends la première page.')
+            uids=[u for u in uids if int(u)<int(match[2])]
         total = len(uids)
         fiches = []
-        for uid in reversed(uids[-max(1, min(int(limite), MAX_FETCH)):]):
+        selection=list(reversed(uids[-max(1, min(int(limite), MAX_FETCH)):]))
+        apercus=_charger_apercus(client,selection)
+        for uid in selection:
             try:
-                m, flags = _charger(client, uid)
+                m, flags, coupe = apercus[uid]
             except Exception as e:  # noqa: BLE001 — un message illisible ne cache pas les autres
                 logger.info("IMAP : message %s non lu (%s)", uid, str(e)[:80])
                 continue
             # L'identifiant mémorisé porte le DOSSIER : c'est lui que l'ouverture
             # et les pièces jointes relisent (« INBOX|123 »).
-            fiches.append(_fiche(m, f"{dossier}|{uid.decode()}", boite, longueur_apercu, flags))
+            fiche=_fiche(m, f"{dossier}|{uid.decode()}", boite, longueur_apercu, flags)
+            fiche['lecture_integrale']=not coupe
+            if coupe and not fiche['pieces_jointes']:fiche['pieces_jointes']=None
+            if validite.isdigit():fiche['curseur_suivant']=f'imap:{validite}:{uid.decode()}'
+            fiches.append(fiche)
         return fiches, total
     finally:
         try:
@@ -526,7 +562,7 @@ def piece(uid: str, rang: str, dossier: str = "INBOX") -> bytes:
     raise LookupError(f"pièce {rang} absente du message {uid}")
 
 
-def deposer(brut: bytes) -> str:
+def deposer(brut: bytes, avec_recu: bool = False):
     """Pose un message MIME dans le dossier Brouillons (APPEND, drapeau \\Draft).
 
     Rend le nom du dossier. Le dossier se reconnaît à son attribut `\\Drafts`
@@ -542,6 +578,11 @@ def deposer(brut: bytes) -> str:
                                         _imaplib.Time2Internaldate(datetime.now(timezone.utc)), brut)
         if statut != "OK":
             raise RuntimeError(f"le serveur a refusé le dépôt dans « {dossier} » : {reponse}")
+        if avec_recu:
+            preuve = b" ".join(v for v in reponse or [] if isinstance(v, bytes))
+            match = re.search(rb"APPENDUID\s+(\d+)\s+(\d+)", preuve, re.I)
+            return {"dossier": dossier, "id_brouillon": dossier + "|" + match.group(2).decode() if match else None,
+                    "uidvalidity": match.group(1).decode() if match else None}
         return dossier
     finally:
         try:

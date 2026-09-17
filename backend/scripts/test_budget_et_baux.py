@@ -77,8 +77,8 @@ verifier("une étape ne peut pas durer plus que ce qui reste", b.delai(30) <= b.
 verifier("elle garde ce qu'elle demande quand il y a la place", abs(b.delai(2) - 2) < 0.01)
 epuise = budget.Budget(5, debut=time.monotonic() - 9)
 verifier("un budget épuisé le dit", epuise.expire() and epuise.restant() == 0)
-verifier("… mais ne rend jamais un délai NUL (un appel à zéro échouerait avant de partir)",
-         epuise.delai(10) >= 1.0)
+verifier("un budget épuisé interdit un délai supplémentaire",
+         epuise.delai(10) == 0.0)
 verifier("on sait dire si une étape a encore la place", b.assez_pour(3) and not b.assez_pour(60))
 
 print("2. Les pannes classées")
@@ -130,6 +130,7 @@ class _Conn:
         if "SET status = 'completed'" in sql and "claimed_by = $2" in sql:
             # Le bail : seul son porteur écrit.
             return "d1" if args[1] in (None, ETAT["bail"]) else None
+        if "SELECT modele FROM embedding_actif" in sql: return None
         return "d1"
 
     async def execute(self, sql, *args):

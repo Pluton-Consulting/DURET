@@ -85,40 +85,53 @@ async def rechercher_documents(data: dict, user) -> dict:
         )
     except Exception as e:  # noqa: BLE001 - une recherche en échec n'est pas une panne
         logger.warning("Recherche « %s » échouée : %s", requete[:60], e)
-        return {"requete": requete, "resultats": [], "nombre": 0,
+        base = {"ok": False, "requete": requete, "resultats": [], "nombre": 0,
+                "diagnostic": {"erreur": type(e).__name__},
                 "message": "La recherche a échoué, la mémoire est momentanément indisponible."}
+        from skills.recherche_sources import completer
+        return await completer(base, data, user, "nas")
 
     documents = trouve.get("documents") or []
     diagnostic = trouve.get("diagnostic") or {}
+    voies = diagnostic.get("voies") or []
+    couverture = {"voies": voies, "recherche_par_le_sens": "vecteur" in voies}
+    degradee = bool(diagnostic) and "vecteur" not in voies and diagnostic.get("embedding") != "non_tente"
+    avertissement = ("La recherche par le sens n'a pas abouti : seules les voies disponibles "
+                    "ont été utilisées ; un document formulé autrement peut manquer. " if degradee else "")
     # UNE PANNE N'EST PAS UN « RIEN TROUVÉ » (16/09, audit D-06) : sans cette
     # distinction, le modèle concluait à l'absence d'un document que la
     # recherche n'avait simplement pas pu chercher.
     if not documents and diagnostic.get("erreur"):
-        return {"ok": False, "requete": requete, "resultats": [], "nombre": 0,
+        base = {"ok": False, "requete": requete, "resultats": [], "nombre": 0,
                 "diagnostic": diagnostic,
                 "message": "La recherche dans la mémoire est momentanément indisponible : "
                            "aucune conclusion ne peut être tirée sur la présence du document.",
                 "a_faire": ("Ne dis PAS que le document n'existe pas. Dis que la mémoire ne répond "
                             "pas, et cherche directement dans la source (nas_chercher, lire_mails) "
                             "si la demande le permet.")}
+        from skills.recherche_sources import completer
+        return await completer(base, data, user, "nas")
     total_documents = int(trouve.get("total_documents") or len(documents))
     pages = max(1, -(-len(documents) // limite))
     page_docs = documents[(page - 1) * limite: page * limite]
 
     if not page_docs:
         if page > 1 and documents:
-            return {"requete": requete, "resultats": [], "nombre": 0, "page": page, "pages": pages,
+            base = {"requete": requete, "resultats": [], "nombre": 0, "page": page, "pages": pages,
                     "total_documents": total_documents,
                     "message": f"Il n'y a que {pages} page(s) de résultats pour cette recherche.",
                     "a_faire": f"La page {page} n'existe pas : la dernière est la page {pages}."}
+            from skills.recherche_sources import completer
+            return await completer(base, data, user, "nas")
         # Une recherche vide ne dit RIEN sur le contenu global de la mémoire.
         # Sans cette distinction, le modèle conclut « la mémoire ne contient
         # aucun mail » alors qu'elle en contient des dizaines qui n'ont
         # simplement pas atteint le seuil de similarité — une affirmation fausse
         # sur l'état du système, bien plus grave qu'un « je ne trouve pas ».
         inventaire, appris = await _inventaire(getattr(user, "role", ""))
-        return {
+        base = {
             "requete": requete, "resultats": [], "nombre": 0,
+            "diagnostic": diagnostic, "couverture": couverture,
             "inventaire_memoire": inventaire,
             # DEUX PUBLICS, DEUX CHAMPS. `message` est ce que la personne LIT
             # quand le modèle ne rédige pas ; `a_faire` est la consigne au
@@ -130,13 +143,14 @@ async def rechercher_documents(data: dict, user) -> dict:
             # 1 398 devis alors que la recherche ne rend rien, c'est une
             # information, pas de la tuyauterie.
             "message": (
-                "Aucun document ne correspond à cette recherche."
+                ("Aucun résultat avec les voies de recherche disponibles. " + avertissement
+                 if degradee else "Aucun document ne correspond à cette recherche.")
                 + ("" if not inventaire else
                    f" La mémoire contient pourtant : {inventaire}.")),
             "a_faire": (
-                "La mémoire est effectivement vide pour les types consultés : "
+                avertissement + "La mémoire est effectivement vide pour les types consultés : "
                 "tu peux le dire." if not inventaire else
-                "Ne dis PAS que la mémoire est vide : dis que tu n'as rien trouvé "
+                avertissement + "Ne dis PAS que la mémoire est vide : dis que tu n'as rien trouvé "
                 "sur ce point précis. "
                 + ("Des connaissances DÉJÀ APPRISES existent : appelle "
                    "`connaissances_acquises` pour les lire. NE PROPOSE PAS de lancer "
@@ -148,6 +162,8 @@ async def rechercher_documents(data: dict, user) -> dict:
                    "norme, tarif public), dis que la maison ne l'a pas et enchaîne "
                    "`chercher_web` dans le même tour.")),
         }
+        from skills.recherche_sources import completer
+        return await completer(base, data, user, "nas")
 
     # Les extraits d'une page se partagent un budget : longs quand ils sont
     # peu, courts quand ils sont vingt — et CENTRÉS sur les termes cherchés.
@@ -179,8 +195,7 @@ async def rechercher_documents(data: dict, user) -> dict:
         "compte": compte,
         # LA COUVERTURE (audit D-06) : quelles voies ont répondu. En plein texte
         # seul, une notion formulée autrement peut manquer — c'est dit.
-        "couverture": {"voies": diagnostic.get("voies") or [],
-                       "recherche_par_le_sens": diagnostic.get("embedding") == "ok"},
+        "couverture": couverture, "diagnostic": diagnostic,
         # La PAGE SUIVANTE, mécanique : le modèle n'a rien à calculer.
         "pour_continuer": (
             f"Pour les {limite} documents SUIVANTS, rappelle rechercher_documents avec les "
@@ -192,9 +207,7 @@ async def rechercher_documents(data: dict, user) -> dict:
             "(champ `source`) quand tu t'appuies dessus. "
             + ("Le détail ne couvre pas tout : dis-le, et propose la page suivante ou des "
                "termes plus précis. " if suite else "")
-            + ("La recherche par le sens est indisponible : seuls les mots exacts ont été "
-               "cherchés, un document formulé autrement peut manquer. " if diagnostic.get("embedding")
-               == "indisponible" else "")),
+            + avertissement),
         "resultats": resultats,
     }
 

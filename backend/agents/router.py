@@ -7,6 +7,7 @@ reprise via runtime.resume_turn().
 """
 import datetime
 import logging
+import asyncio
 
 from langgraph.graph import StateGraph, END
 from langgraph.types import interrupt
@@ -47,7 +48,14 @@ async def classify_node(state: AgentState) -> dict:
     else:
         target = "agent1"
 
-    return {"target_agent": target, "llm_tier": tier.value}
+    import asyncio
+    from ressources.travail import commencer
+    travail = await asyncio.to_thread(commencer, state.get("user_id"), state.get("thread_id"), query, len(state.get("messages") or []))
+    from skills.trames import travail_en_cours
+    from types import SimpleNamespace
+    reference=await asyncio.to_thread(travail_en_cours,SimpleNamespace(id=state.get("user_id")),state.get("thread_id"))
+    if reference: travail={**travail,"reference_documentaire":reference}
+    return {"target_agent": target, "llm_tier": tier.value, "travail": travail}
 
 
 async def check_schedule_node(state: AgentState) -> dict:
@@ -206,14 +214,27 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     # perdue laissait la question sans réponse. On RÉCLAME l'opération avant
     # l'appel ; si elle est déjà prise, on ne rappelle pas le fournisseur.
     from skills import operations
-    operation = await operations.ouvrir(action["skill"], state.get("user_id"),
-                                        validation_id=state.get("validation_id"),
-                                        thread_id=state.get("thread_id"), payload_hash=approuve)
-    if not await operations.reclamer(operation):
+    validation_id = state.get("validation_id")
+    if not validation_id:
+        async with get_db() as conn:
+            validation_id = await conn.fetchval(
+                "SELECT id FROM validations WHERE thread_id = $1 AND payload_hash = $2 "
+                "AND status = 'approved' ORDER BY resolved_at DESC NULLS LAST LIMIT 1",
+                state.get("thread_id"), approuve)
+    try:
+        if not validation_id:
+            raise operations.RegistreIndisponible("La validation de cette action ne peut pas être retrouvée.")
+        operation = await operations.ouvrir(action["skill"], state.get("user_id"),
+                                            validation_id=validation_id,
+                                            thread_id=state.get("thread_id"), payload_hash=approuve)
+        reclamee = await operations.reclamer(operation)
+    except operations.RegistreIndisponible as e:
+        return {"pending_action": None, "final_response": str(e)}
+    if not reclamee:
         logger.info("Action %s déjà en cours ou déjà faite : aucune seconde exécution",
                     action.get("skill"))
         return {"pending_action": None,
-                "final_response": (state.get("final_response") or "").strip() or None}
+                "final_response": "Cette action a déjà été prise en charge. Aucun second envoi n'a été lancé ; son résultat reste à vérifier."}
 
     resultat = None
     erreur = None
@@ -224,6 +245,9 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
                          "validated_by": state.get("validated_by")},
             trigger={"type": "resume", "id": state.get("thread_id")},
         )
+    except asyncio.CancelledError:
+        await operations.effet_inconnu(operation, TimeoutError("Tour interrompu pendant l'action"))
+        raise
     except SkillError as e:
         erreur = str(e)
     except Exception as e:  # noqa: BLE001
@@ -242,7 +266,9 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
     # du geste le disait, le compte rendu annonçait pourtant l'action faite.
     if erreur is None and isinstance(resultat, dict) and resultat.get("ok") is False:
         erreur = str(resultat.get("error") or "l'action n'a pas abouti")
-    if erreur is None:
+    if erreur is None and isinstance(resultat, dict) and resultat.get("outcome") in ("pending", "unverified", "partial", "not_found"):
+        await operations.effet_inconnu(operation, "Le résultat ne confirme pas l'effet complet.")
+    elif erreur is None:
         await operations.reussie(operation, recu=(resultat or {}).get("evidence_refs")
                                  if isinstance(resultat, dict) else None)
     else:
@@ -374,6 +400,8 @@ async def _reprise_du_tour(state: AgentState, action: dict, empreinte: str,
         contenu, ok, bloc_garanti = f"ERREUR : {erreur}", False, None
     entree, carte = await resultat_de_geste(
         state, action["skill"], action.get("args") or {}, empreinte, contenu, ok, bloc_garanti)
+    from skills.resultats import metadonnees
+    entree.update(metadonnees(resultat))
     sortie = _reouverture_du_tour()
     sortie.update({
         "tool_results": list(state.get("tool_results") or []) + [entree],
@@ -466,9 +494,57 @@ async def _reponse_apres_action(state: AgentState, skill: str, resultat: dict) -
         brut = _json.dumps(donnees, ensure_ascii=False, default=str)[:1200]
         carte = dict(state.get("entity_map") or {})
         masque, carte = anonymizer.anonymize(brut, carte)
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
+        from skills.resultats import metadonnees
         prose = await _rediger_par_le_modele(
             state.get("anonymized_query") or "",
-            [{"skill": skill, "ok": True, "resultat_masque": masque}],
+            [{"skill": skill, "ok": bool(resultat.get("ok", True)), "resultat_masque": masque,
+              **metadonnees(resultat)}],
             "action_validee")
         if prose:
             prose = anonymizer.rehydrate(prose, carte)
@@ -593,7 +669,7 @@ _VISION_ANNONCE_UNE_RETOUCHE = ("photomontage", "retouche", "rendu final", "visu
 
 
 async def passer_la_main_node(state: AgentState) -> dict:
-    """Prépare le passage de l'expert vision à l'assistant.
+    """Prépare le passage de l’expert qui lit les plans et les photos à l’assistant.
 
     L'analyse est déposée comme un TEXTE JOINT : c'est le canal qu'`agent1`
     consomme déjà pour une pièce jointe lisible (`rag_node`), donc aucun
@@ -612,8 +688,8 @@ async def passer_la_main_node(state: AgentState) -> dict:
         # rendre le tour à l'assistant effacerait ce travail de son compteur, et
         # l'attribution qu'on venait de réparer le 23/08 repartirait à zéro.
         "attachment_b64": None,
-        "attachment_text": (f"ANALYSE DU DOCUMENT JOINT ({nom}), faite par l'expert "
-                            f"qui lit les plans et les photos :\n{analyse}"),
+        "attachment_text": "\n\n".join(x for x in (state.get("attachment_text"),
+                            f"=== Analyse visuelle : {nom} ===\n{analyse}") if x),
         "final_response": None,
         "llm_response": None,
         # La lecture du plan n'a demandé aucun accord ; ce qui suivra le

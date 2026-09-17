@@ -203,19 +203,33 @@ async def validate_skill(name: str, body: ValidateBody, current_user: User = Dep
     if body.status in ("validated", "stable"):
         from mail.skills import EFFETS_NATIFS
         skill = await executor.get_skill(name)
-        if skill and name not in EFFETS_NATIFS and not (skill.get("code") or "").strip():
+        from skills.registre import fonction as native
+        if skill and name not in EFFETS_NATIFS and native(name) is None and not (skill.get("code") or "").strip():
             raise HTTPException(
                 status_code=http.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=("Ce skill n'a pas de code : il documente une manière de faire, "
                         "mais rien ne peut s'exécuter. Ajoutez une fonction "
                         "« def run(data: dict) -> dict » avant de le valider."))
 
+    from mail.skills import SKILLS_NATIFS
+    from skills.registre import fonction as fonction_native
+    natif = name in SKILLS_NATIFS or fonction_native(name) is not None
     async with get_db() as conn:
-        res = await conn.execute(
-            "UPDATE skills SET status=$2, validated_by=$3::uuid, validated_at=NOW(), updated_at=NOW() "
-            "WHERE name=$1",
-            name, body.status, str(current_user.id),
-        )
+        async with conn.transaction():
+            # Le verrou couvre preuve ET promotion : une édition simultanée
+            # ne peut pas substituer un autre code après la vérification.
+            ligne = await conn.fetchrow("SELECT code FROM skills WHERE name=$1 FOR UPDATE", name)
+            if body.status in ("validated", "stable") and not natif and ligne:
+                from learning.qualification import exige_preuve
+                try:
+                    await exige_preuve(conn, name, ligne["code"])
+                except (ValueError, SyntaxError) as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
+            res = await conn.execute(
+                "UPDATE skills SET status=$2, echecs_consecutifs=0, motif_quarantaine=NULL, validated_by=$3::uuid, validated_at=NOW(), updated_at=NOW() "
+                "WHERE name=$1",
+                name, body.status, str(current_user.id),
+            )
     if res.endswith(" 0"):
         raise HTTPException(status_code=http.HTTP_404_NOT_FOUND, detail="skill introuvable")
     await log_action(action="skill_validated", user_id=str(current_user.id),
@@ -274,3 +288,55 @@ async def update_skill(name: str, body: UpdateBody, current_user: User = Depends
     await log_action(action="skill_updated", user_id=str(current_user.id),
                      metadata={"skill": name, "champs": list(fields.keys())})
     return {"skill": name, "modifie": list(fields.keys())}
+
+
+class QualificationBody(BaseModel):
+    cas: list[dict]
+
+@router.post("/{name}/qualifier")
+async def qualifier_skill(name: str, body: QualificationBody, current_user: User = Depends(get_current_user)):
+    _require(current_user)
+    skill = await executor.get_skill(name)
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill introuvable")
+    from learning.qualification import evaluer, enregistrer
+    try:
+        bilan = await evaluer(name, skill.get("code") or "", body.cas)
+        await enregistrer(name, bilan)
+    except (ValueError, SyntaxError) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    return bilan
+
+@router.get("/{name}/versions")
+async def versions_skill(name: str, current_user: User = Depends(get_current_user)):
+    _require(current_user)
+    async with get_db() as conn:
+        lignes = await conn.fetch("SELECT version,description,status,cree_le FROM skill_versions WHERE name=$1 ORDER BY version DESC LIMIT 100", name)
+    return [dict(l) for l in lignes]
+
+@router.post("/{name}/restaurer-version/{version}")
+async def restaurer_version_skill(name: str, version: int, current_user: User = Depends(get_current_user)):
+    _require(current_user)
+    async with get_db() as conn:
+        async with conn.transaction():
+            precedent = await conn.fetchrow("SELECT * FROM skill_versions WHERE name=$1 AND version=$2",name,version)
+            if not precedent:
+                raise HTTPException(status_code=404,detail="Version introuvable")
+            await conn.execute("UPDATE skills SET code=$2,description=$3,prompt_template=$4,status='draft',version=version+1,updated_at=NOW() WHERE name=$1",name,precedent['code'],precedent['description'],precedent['prompt_template'])
+    await log_action(action="skill_version_restored",user_id=str(current_user.id),metadata={"skill":name,"version_source":version})
+    return {"skill":name,"status":"draft","version_source":version,"message":"Version restaurée en brouillon ; qualification et validation requises."}
+
+
+@router.get("/{name}/qualifications")
+async def qualifications_skill(name: str, current_user: User = Depends(get_current_user)):
+    _require(current_user)
+    import json
+    async with get_db() as conn:
+        lignes=await conn.fetch("SELECT code_sha256,passed,sandbox,cas,resultats,cree_le FROM skill_evaluations WHERE name=$1 ORDER BY cree_le DESC LIMIT 10",name)
+    resultat=[]
+    for l in lignes:
+        v=dict(l)
+        for k in ("cas","resultats"):
+            if isinstance(v[k],str):v[k]=json.loads(v[k])
+        resultat.append(v)
+    return resultat

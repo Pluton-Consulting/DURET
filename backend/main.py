@@ -54,6 +54,31 @@ async def lifespan(app: FastAPI):
     travaux_de_fond = role in ("complet", "fond")
     logging.getLogger("duret").info("Rôle du processus : %s (boucles de fond : %s)",
                                     role, "oui" if travaux_de_fond else "non")
+    try:
+        from security.cleanup import start_validation_cleanup
+        await start_validation_cleanup()
+    except Exception as e:
+        logging.getLogger("duret").error("start_validation_cleanup a échoué : %s", e)
+    # Les caches sont prêts AVANT les workers ; l'échec d'un connecteur
+    # ne doit pas empêcher les autres réglages de se charger.
+    try:
+        from llm.cles import rafraichir as rafraichir_cles
+        await rafraichir_cles(force=True)
+    except Exception as e:
+        logging.getLogger("infra").error("Cache llm.cles non chargé : %s", type(e).__name__)
+    try:
+        from llm.reglages import rafraichir as rafraichir_reglages
+        await rafraichir_reglages(force=True)
+    except Exception as e:
+        logging.getLogger("infra").error("Cache llm.reglages non chargé : %s", type(e).__name__)
+    try:
+        from mail.google_perso import rafraichir as rafraichir_google
+        await rafraichir_google(force=True)
+    except Exception as e:
+        logging.getLogger("infra").error("Cache mail.google_perso non chargé : %s", type(e).__name__)
+    if travaux_de_fond:
+        from ressources.documents_file import demarrer as demarrer_documents
+        await demarrer_documents()
     if travaux_de_fond:
         try:
             from vectorstore.worker import start_embedding_worker
@@ -65,31 +90,6 @@ async def lifespan(app: FastAPI):
             await start_task_worker()
         except Exception as e:
             logging.getLogger("duret").error("start_task_worker a échoué : %s", e)
-    try:
-        from security.cleanup import start_validation_cleanup
-        await start_validation_cleanup()
-    except Exception as e:
-        logging.getLogger("duret").error("start_validation_cleanup a échoué : %s", e)
-    try:
-        # Les clés saisies dans Paramètres priment sur le `.env` — encore
-        # faut-il les CHARGER : sans ce rafraîchissement de démarrage, le
-        # cache restait vide jusqu'à l'ouverture de la page Paramètres, et
-        # chaque redéploiement faisait retomber l'application sur les clés
-        # du fichier.
-        from llm.cles import rafraichir as rafraichir_cles
-        await rafraichir_cles(force=True)
-        # Même raison, même piège : un réglage saisi dans Paramètres serait
-        # ignoré après chaque redéploiement si son cache n'était rempli qu'à
-        # l'ouverture de la page.
-        from llm.reglages import rafraichir as rafraichir_reglages
-        await rafraichir_reglages(force=True)
-        # Les boîtes Google reliées par les utilisateurs : même piège que les
-        # clés — le connecteur (qui tourne dans des threads) ne lit qu'un
-        # cache, il faut le remplir dès le démarrage.
-        from mail.google_perso import rafraichir as rafraichir_google
-        await rafraichir_google(force=True)
-    except Exception as e:
-        logging.getLogger("duret").error("rafraichir_cles a échoué : %s", e)
     try:
         # Les tâches de la file tuées par l'arrêt précédent : leur asyncio.Task
         # n'existe plus, les laisser « en cours » afficherait une progression
@@ -118,11 +118,12 @@ async def lifespan(app: FastAPI):
     # démarrage, pour que la première dictée ne paie pas ses secondes de
     # chargement (03/09, « beaucoup trop lent »). Fire-and-forget : rien
     # n'attend, rien ne casse si le modèle manque.
-    try:
-        from voix.transcription import prechauffer
-        asyncio.create_task(prechauffer())
-    except Exception:
-        pass
+    if travaux_de_fond:
+        try:
+            from voix.transcription import prechauffer
+            asyncio.create_task(prechauffer())
+        except Exception:
+            pass
     # LE CATALOGUE DU SERVEUR DE FICHIERS (08/09) : là où un NAS est branché,
     # son arborescence se construit en tâche de fond dès le démarrage et se
     # rafraîchit seule — la recherche par nom devient un filtre en mémoire.
@@ -154,6 +155,8 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     yield
+    from ressources.documents_file import arreter as arreter_documents
+    await arreter_documents()
     try:
         from vectorstore.worker import stop_embedding_worker
         await stop_embedding_worker()
@@ -170,6 +173,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     await shutdown_runtime()
+    from database.connection import close_db
+    await close_db()
     try:
         from observability import flush
         flush()
@@ -198,7 +203,8 @@ app.add_middleware(
 async def _limit_body_size(request, call_next):
     """Anti-DoS mémoire : rejette (413) tout corps dont Content-Length dépasse la limite."""
     cl = request.headers.get("content-length")
-    if cl and cl.isdigit() and int(cl) > settings.max_body_mb * 1024 * 1024:
+    plafond = settings.max_chat_body_mb if request.url.path == "/api/chat/" else settings.max_body_mb
+    if cl and cl.isdigit() and int(cl) > plafond * 1024 * 1024:
         from starlette.responses import JSONResponse
         return JSONResponse(status_code=413, content={"detail": "Corps de requête trop volumineux"})
     return await call_next(request)
@@ -302,7 +308,27 @@ async def _etat_du_service() -> dict:
         etat["checkpointer_type"] = type(saver).__name__
     except Exception as e:  # noqa: BLE001
         etat["erreur_checkpointer"] = str(e)[:200]
-    etat["pret"] = bool(etat["base"] and etat["schema"] and etat["checkpointer"])
+    try:
+        from agents.runtime import get_graph
+        etat["graphe"] = await get_graph() is not None
+    except Exception:
+        etat["graphe"] = False
+    try:
+        import tempfile
+        import os
+        from bureautique.atelier import DOSSIER
+        dossier = DOSSIER
+        os.makedirs(dossier, exist_ok=True)
+        with tempfile.TemporaryFile(dir=dossier) as controle:
+            controle.write(b"controle")
+            controle.flush()
+        from stockage.capacite import etat as capacite_disque
+        etat["disque_documents"] = capacite_disque(dossier)
+        etat["documents"] = True
+    except (OSError, ValueError):
+        etat["documents"] = False
+    etat["pret"] = bool(etat["base"] and etat["schema"] and etat["checkpointer"]
+                        and etat["graphe"] and etat["documents"])
     return etat
 
 

@@ -449,23 +449,37 @@ def _lettre_colonne(indice: int) -> str:
             return lettres
 
 
-def lire_pdf(brut: bytes) -> str:
-    """Texte d'un PDF. Bascule automatiquement sur l'OCR si le fichier n'a pas de
-    couche texte exploitable (PDF scanné : chaque page n'est qu'une image)."""
+PDF_TEXTE_DELAI_S = 30
+
+
+def _extraire_texte_pdf(brut: bytes) -> dict:
+    # Un thread pdfminer ne peut pas être arrêté pendant une page complexe.
+    # Un processus séparé libère réellement son CPU et sa mémoire au délai.
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    _verifier_echeance()
+    restant=PDF_TEXTE_DELAI_S
+    if _ECHEANCE.get() is not None:restant=min(restant,_ECHEANCE.get()-time.monotonic())
+    if restant<=0:raise DelaiDepasse('délai de lecture PDF dépassé')
     try:
-        import pdfplumber
-    except ImportError as e:
-        raise FichierNonSupporte("Lecture PDF indisponible (pdfplumber absent)") from e
+        r=subprocess.run([sys.executable,str(Path(__file__).with_name('pdf_texte.py')),str(MAX_PAGES_PDF)],
+                         input=brut,capture_output=True,timeout=restant)
+    except subprocess.TimeoutExpired:
+        raise DelaiDepasse('lecture PDF interrompue à son échéance') from None
+    if r.returncode:raise FichierNonSupporte('Le PDF ne peut pas être lu par les moteurs disponibles.')
+    resultat=json.loads(r.stdout)
+    if not isinstance(resultat.get('texte'),str) or type(resultat.get('pages_lues')) is not int or not 0<=resultat['pages_lues']<=MAX_PAGES_PDF:
+        raise FichierNonSupporte('Résultat de lecture PDF invalide.')
+    return resultat
 
-    morceaux = []
-    with pdfplumber.open(io.BytesIO(brut)) as pdf:
-        pages_lues = min(len(pdf.pages), MAX_PAGES_PDF)
-        if len(pdf.pages) > MAX_PAGES_PDF:
-            logger.warning("PDF tronqué à %d pages", MAX_PAGES_PDF)
-        for page in pdf.pages[:pages_lues]:
-            morceaux.append(page.extract_text() or "")
 
-    texte = "\n\n".join(morceaux).strip()
+def lire_pdf(brut: bytes) -> str:
+    """Texte PDF borné, puis OCR selon la politique déjà applicable."""
+    resultat=_extraire_texte_pdf(brut)
+    texte=resultat['texte'];pages_lues=resultat['pages_lues']
+    if resultat['pages_total']>MAX_PAGES_PDF:logger.warning("PDF tronqué à %d pages",MAX_PAGES_PDF)
     if pages_lues and len(texte) >= SEUIL_TEXTE_PAR_PAGE * pages_lues:
         return texte
 

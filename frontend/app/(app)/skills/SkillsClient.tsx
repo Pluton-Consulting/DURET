@@ -1,4 +1,5 @@
 "use client"
+import QualificationSkill from "./QualificationSkill"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { nomExpert } from "@/lib/permissions"
 
@@ -276,6 +277,7 @@ export default function SkillsClient({ apiUrl, token }: Props) {
                       <pre style={preStyle}>{detail.detail.prompt_template || "Aucun prompt défini"}</pre>
                       <div style={{ fontSize: 12, color: "var(--marque-text-muted)", margin: "10px 0 4px", fontWeight: 600 }}>code</div>
                       <pre style={preStyle}>{detail.detail.code}</pre>
+                      {detail.detail.code && <QualificationSkill name={s.name} apiUrl={apiUrl} token={token} />}
                     </>
                   )}
                 </div>

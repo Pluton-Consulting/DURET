@@ -72,7 +72,7 @@ async def creer_document(data: dict, user) -> dict:
     # voulait : on rend l'existant, avec son compte d'éléments, et la reprise
     # continue au lieu de cloner. Repartir de zéro reste possible : abandonner
     # d'abord, ouvrir ensuite.
-    for d in ouverts(proprio):
+    for d in ouverts(proprio, fil=(data or {}).get("_fil") or ""):
         if _meme_titre(d.get("titre"), entete["titre"]):
             # CETTE NOTE NE DOIT JAMAIS PROPOSER DE DÉTRUIRE.
             #

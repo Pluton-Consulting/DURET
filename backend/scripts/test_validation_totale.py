@@ -22,6 +22,13 @@ import time
 import types
 
 BACKEND = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend").resolve()
+
+# Contrat réel des résultats, avec les fournisseurs toujours doublés.
+import importlib.util
+_spec_resultats = importlib.util.spec_from_file_location("skills.resultats", pathlib.Path(BACKEND) / "skills/resultats.py")
+_resultats = importlib.util.module_from_spec(_spec_resultats)
+sys.modules["skills.resultats"] = _resultats
+_spec_resultats.loader.exec_module(_resultats)
 FRONTEND = BACKEND.parent / "frontend"
 echecs = []
 

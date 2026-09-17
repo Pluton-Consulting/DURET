@@ -30,20 +30,20 @@ async def _loop() -> None:
         try:
             # Un PRENEUR par processus (audit D-17) : c'est lui qui tient le
             # bail, et qui sera vérifié au moment d'écrire le résultat.
-            import os as _os
-            preneur = f"worker-{_os.getpid()}"
+            # Un PID se répète entre conteneurs et après redémarrage. Une
+            # identité par lot empêche aussi un ancien résultat de reprendre
+            # les droits d'un nouveau bail du même worker.
+            import uuid as _uuid
+            preneur = _uuid.uuid4().hex
             jobs = await vectorstore.get_pending_embedding_jobs(
                 limit=settings.embedding_worker_batch, preneur=preneur)
             if not jobs:
                 await asyncio.sleep(interval)
                 continue
 
-            vectors = await embed_texts([j["content"] for j in jobs])
-            try:
-                from vectorstore.embeddings import modele_courant
-                modele = modele_courant()
-            except Exception:  # noqa: BLE001 — sans nom de modèle, on écrit le vecteur seul
-                modele = None
+            from vectorstore.generation import actif
+            modele = await actif()
+            vectors = await embed_texts([j["content"] for j in jobs],modele_force=modele)
             any_ok = any(v is not None for v in vectors)
             done = 0
             for job, vec in zip(jobs, vectors):
@@ -53,7 +53,8 @@ async def _loop() -> None:
                     done += 1
                 elif any_ok:
                     # Le fournisseur répond mais ce chunk a échoué → consomme un essai.
-                    await vectorstore.mark_job_failed(job["job_id"], "embedding indisponible pour ce chunk")
+                    await vectorstore.mark_job_failed(job["job_id"], "embedding indisponible pour ce chunk",
+                                                      preneur=preneur)
 
             if done:
                 logger.info("Vectorisation : %d/%d chunks", done, len(jobs))

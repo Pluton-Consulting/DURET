@@ -289,7 +289,7 @@ verifier("le démenti passe au rendu de secours QUAND un livrable existe",
 # « Que préférez-vous ? » après trois recherches.
 verifier("proposer de faire une lecture de plus est traité même si des gestes "
          "ont déjà tourné (le tour d'Ophélie, 15:45)",
-         "a_livre = bool(_blocs_livrables" in agent1_src_bis
+         "a_livre = bool(_productions_du_tour" in agent1_src_bis
          and "and not a_livre)" in agent1_src_bis)
 
 # ══════════════════════════════════════════════════════════════════════════

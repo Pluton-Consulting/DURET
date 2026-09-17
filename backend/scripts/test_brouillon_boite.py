@@ -94,6 +94,9 @@ class _Rep:
     def json(self):
         return self._d
 
+    def raise_for_status(self):
+        if self.status_code >= 400: raise RuntimeError("HTTP " + str(self.status_code))
+
 
 class _Client:
     statut = 201
@@ -152,7 +155,7 @@ else:
              APPELS[0][0] == "POST" and APPELS[0][1].endswith("/users/direction@exemple-paysage.fr/messages")
              and not any(u.endswith("/send") for _, u, _ in APPELS), APPELS)
     verifier("les pièces sont téléversées sur le brouillon",
-             any(u.endswith("createUploadSession") for _, u, _ in APPELS))
+             any(u.endswith("/attachments") and d.get("name")=="devis.pdf" for _, u, d in APPELS))
     verifier("le résultat dit : déposé, pas envoyé, dans les Brouillons, avec le lien",
              r.get("depose") and r.get("envoye") is False and r.get("dossier") == "Brouillons"
              and r.get("lien"), r)

@@ -139,8 +139,8 @@ verifier("l'a_faire dit ENCHAÎNE, plus jamais « propose de cibler »",
          "ENCHAÎNE" in r["a_faire"] and "propose de cibler" not in r["a_faire"]
          and "UNE SEULE synthèse" in r["a_faire"])
 routines = (BACKEND / "skills" / "routines.py").read_text(encoding="utf-8")
-verifier("le catalogue de check_mails porte `avant` et l'ordre d'enchaîner",
-         '"avant"],' in routines and "ENCHAINE avec `avant`" in routines)
+verifier("le catalogue expose le curseur et conserve la borne de date",
+         '"avant", "curseur"],' in routines and "curseur prioritaire" in routines)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

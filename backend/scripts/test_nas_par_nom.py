@@ -218,8 +218,8 @@ if callable(getattr(mod, "lire_lot", None)):
 
 if callable(getattr(mod, "ouvrir", None)):
     r = asyncio.run(mod.ouvrir("/03-Appel d'offres etudes/DCE 2031 - VAYRES.pdf"))
-    verifier("`ouvrir` sur un chemin recomposé (barre devant, parent perdu) retombe sur la recherche par nom",
-             r.get("trouve_par") == "nom" and r.get("chemin", "").startswith("/home/Drive/03-"), r)
+    verifier("`ouvrir` résout le dossier alias sans rechercher un homonyme ailleurs",
+             r.get("trouve_par") == "dossier_resolu" and r.get("chemin", "").startswith("/home/Drive/03-"), r)
 
 # 07/09, second export (20:56) : sept listages, jamais un fichier ouvert, puis
 # une liste de fichiers INVENTÉE et un nom de fichier inventé passé à

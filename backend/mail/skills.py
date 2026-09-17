@@ -345,6 +345,9 @@ async def deposer_brouillon(data: dict, user) -> dict:
                 "Ces pièces n'ont pas pu être jointes, aucun brouillon n'a été déposé : "
                 + " ; ".join(f"« {r['nom']} » ({r['raison']})" for r in refusees) + ".")
 
+    from mail.instantanes import verifier as verifier_pieces_figees
+    verifier_pieces_figees(data, pieces)
+
     from mail.signature import apposer
     corps_signe, html, pieces_signees = await apposer(boite, corps, pieces, demandee=data.get("signature"))
     signee = bool(html) or corps_signe != corps or len(pieces_signees) != len(pieces)
@@ -424,6 +427,8 @@ async def envoyer_email(data: dict, user) -> dict:
 
     from mail.attaches import resoudre
     pieces, refusees = await resoudre(brut_pieces, user, boite)
+    from mail.instantanes import verifier as verifier_pieces_figees
+    verifier_pieces_figees(data, pieces)
     # UNE PIÈCE QUI NE PEUT PAS PARTIR ARRÊTE L'ENVOI. Le compte rendu d'un
     # envoi incomplet est un mensonge par omission : le destinataire lit
     # « veuillez trouver ci-joint » et ne trouve rien. On refuse en nommant la
@@ -935,6 +940,7 @@ async def lire_mails(data: dict, user) -> dict:
                                 # `apercu` : la longueur d'extrait voulue par un
                                 # appelant qui connaît son budget (check_mails).
                                 apercu=data.get("apercu"),
+                                curseur=data.get("curseur"),
                                 # Les dossiers ouverts à CE profil (11/09).
                                 autorises=await dossiers_autorises(user))
     except DossierInterdit as e:

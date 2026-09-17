@@ -133,7 +133,7 @@ async def request_magic_link(body: MagicLinkRequest, request: Request):
     borne mord, la réponse NE CHANGE PAS — sinon elle dirait, à qui insiste,
     quelles adresses existent : on cesse simplement d'envoyer.
     """
-    origine = _origine(request)
+    origine = "lien:" + _origine(request)
     if tentatives.saturee(origine):
         logger.warning("Demandes de lien de connexion trop nombreuses depuis une origine")
         return {"ok": True}
@@ -141,6 +141,9 @@ async def request_magic_link(body: MagicLinkRequest, request: Request):
         raise HTTPException(status_code=status.HTTP_410_GONE,
                             detail="La connexion par lien magique est désactivée : entrez par votre "
                                    "carte, ou par le bouton « Admin » et votre code.")
+    # Chaque demande consomme la borne, y compris vers une adresse connue :
+    # compter seulement les inconnues laissait envoyer des mails sans limite.
+    tentatives.noter_echec(origine)
     async with get_db() as conn:
         # Insensible à la casse, et plusieurs comptes possibles sur l'adresse
         # (profils d'une boîte partagée, 040) : il suffit qu'UN soit actif.
@@ -155,7 +158,6 @@ async def request_magic_link(body: MagicLinkRequest, request: Request):
             success=False,
             error_message="Email non enregistré",
         )
-        tentatives.noter_echec(origine)
         # Réponse UNIFORME (anti-énumération de comptes) — voir aussi le chemin "connu".
         return {"ok": True}
 

@@ -751,7 +751,7 @@ async def check_mails(data: dict, user) -> dict:
     # léger qu'une fiche de lire_mails (~180 caractères hors extrait), et le
     # résultat est « généreux » (12 000) : on demande la longueur qui remplit
     # ce budget — 240 pour 25 messages, 520 pour 15, 800 dès 10.
-    apercu = max(160, min(800, (10500 - limite * 180) // limite))
+    apercu = max(450, min(800, (10500 - limite * 180) // limite))
     brut = await lire_mails({"mailbox": data.get("mailbox"),
                              "dossier": data.get("dossier") or "recus",
                              "limite": limite, "depuis": depuis,
@@ -761,9 +761,31 @@ async def check_mails(data: dict, user) -> dict:
                              # ne transmettait même pas `avant`. Le point
                              # s'enchaîne désormais page par page.
                              "avant": data.get("avant") or data.get("avant_le"),
+                             "curseur": data.get("curseur"),
                              "apercu": apercu}, user)
 
-    messages = brut.get("messages") or brut.get("mails") or []
+    messages = list(brut.get("messages") or brut.get("mails") or [])
+    # La pagination IMAP est mécanique, pas une décision à redemander au LLM
+    # à chaque lot. Les UID gardent les mails du même jour ; les contrôles de
+    # droits de lire_mails sont rejoués pour chaque page.
+    total_initial = brut.get('total_periode')
+    suivant = brut.get('curseur_suivant')
+    vus_curseurs = set()
+    if _periode and not data.get('limite') and not data.get('avant') and not data.get('curseur'):
+        while suivant and suivant not in vus_curseurs and len(messages)<250:
+            vus_curseurs.add(suivant)
+            page = await lire_mails({'mailbox':data.get('mailbox'),'dossier':data.get('dossier') or 'recus',
+                'depuis':depuis,'limite':min(25,250-len(messages)),'curseur':suivant,'apercu':apercu},user)
+            messages.extend(page.get('messages') or [])
+            suivant=page.get('curseur_suivant')
+        if vus_curseurs:
+            uniques={m['ref']:m for m in messages if isinstance(m,dict) and m.get('ref')}
+            messages=list(uniques.values())
+            brut={**brut,'nombre':len(messages),'total_periode':total_initial,
+                'tronque':bool(suivant or (total_initial is not None and len(messages)<total_initial)),
+                'curseur_suivant':suivant,
+                'compte':f'{total_initial} message(s) sur la période ; {len(messages)} aperçus consultés.',
+                'plus_ancien':min((m.get('date_iso') for m in messages if m.get('date_iso')),default=None)}
     if not isinstance(messages, list):
         raise SkillError("La messagerie a répondu dans un format inattendu.")
 
@@ -814,6 +836,7 @@ async def check_mails(data: dict, user) -> dict:
     tronque = bool(brut.get("tronque"))
     compte = brut.get("compte") or f"{len(releve)} message(s)."
     plus_ancien = brut.get("plus_ancien")
+    curseur = brut.get("curseur_suivant")
 
     return {
         "nombre": len(releve),
@@ -824,10 +847,13 @@ async def check_mails(data: dict, user) -> dict:
         "non_lus": non_lus,
         "boite": brut.get("boite") or brut.get("mailbox"),
         "plus_ancien": plus_ancien,
+        "curseur_suivant": curseur,
         # LA PAGE SUIVANTE, MÉCANIQUE (01/09, règle « une recherche ne se
         # bloque jamais ») : quand la période compte plus de messages que le
         # détail, le point s'ENCHAÎNE — le modèle n'a rien à calculer.
         "pour_continuer": (
+            f"Rappelle check_mails avec les MÊMES filtres et curseur={curseur}. Ne remplace pas ce curseur par une date, cela sauterait les messages du même jour."
+            if curseur else
             f"Le détail couvre {len(releve)} message(s) sur {total} : rappelle "
             f"check_mails avec les MÊMES paramètres et avant={plus_ancien} pour "
             "les précédents, et enchaîne jusqu'à couvrir le total AVANT de rédiger."
@@ -845,7 +871,7 @@ async def check_mails(data: dict, user) -> dict:
             # mes mails » sur 63 messages rendait 25 et s'arrêtait là — TOUT
             # SIGNIFIE TOUT, la suite s'enchaîne, elle ne se propose pas.
             + ("Le détail ne couvre PAS toute la période : ENCHAÎNE — rappelle "
-               "ce skill avec `avant` (voir pour_continuer) jusqu'à couvrir le "
+               "ce skill selon pour_continuer (curseur prioritaire, sinon avant) jusqu'à couvrir le "
                "compte, PUIS rédige UNE SEULE synthèse pour l'ensemble. Ne "
                "présente jamais les premiers messages comme le tout. "
                if tronque else "")
@@ -1340,9 +1366,9 @@ SKILLS = {
             "periode est nommee (« cette semaine » → \"7j\", « ce mois » → \"30j\", ou "
             "une date AAAA-MM-JJ) : le resultat donne alors le TOTAL EXACT de la "
             "periode en plus du detail des 25 plus recents — s'il y en a PLUS, "
-            "ENCHAINE avec `avant` (rendu par pour_continuer) jusqu'a tout couvrir, "
+            "La pagination IMAP de la période est automatique jusqu’à 250 messages. ENCHAINE selon pour_continuer si nécessaire (curseur prioritaire, sinon avant), "
             "PUIS redige UNE synthese. `limite` : 1 a 25 (defaut 15)"),
-        requis=[], optionnels=["mailbox", "dossier", "limite", "depuis", "avant"],
+        requis=[], optionnels=["mailbox", "dossier", "limite", "depuis", "avant", "curseur"],
         effet="lecture",
         libelle="je fais le point sur les mails"),
 }

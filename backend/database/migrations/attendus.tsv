@@ -63,3 +63,9 @@
 046_requetes_chat.sql	SELECT to_regclass('public.requetes_chat') IS NOT NULL
 047_baux_embeddings.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='embedding_jobs' AND column_name='lease_until')
 048_lecons_qualifiees.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='lecons' AND column_name='confiance')
+049_requetes_signe_de_vie.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='requetes_chat' AND column_name='proprietaire')
+050_baux_taches.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='agent_task_runs' AND column_name='lease_until')
+051_rls_connexions_utilisateur.sql	SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='infra_ia_lecteur_rls' AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin) AND has_table_privilege('infra_ia_lecteur_rls','public.threads','SELECT')
+052_versions_et_qualification_skills.sql	SELECT to_regclass('public.skill_versions') IS NOT NULL AND to_regclass('public.skill_evaluations') IS NOT NULL AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='skills_archive_version')
+053_quarantaine_skills.sql	SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='skills' AND column_name='motif_quarantaine')
+054_generation_vectorielle.sql	SELECT to_regclass('public.embedding_actif') IS NOT NULL AND to_regclass('public.embedding_candidats') IS NOT NULL AND to_regclass('public.embedding_preparations') IS NOT NULL;

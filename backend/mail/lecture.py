@@ -751,12 +751,12 @@ async def _ouvrir_gmail(boite: str, identifiant: str) -> dict:
 async def _lire_imap(boite: str, dossier: str, limite: int,
                      depuis: Optional[datetime], recherche: Optional[str] = None,
                      avant: Optional[datetime] = None,
-                     apercu=None) -> tuple[list[dict], Optional[int]]:
+                     apercu=None, curseur=None) -> tuple[list[dict], Optional[int]]:
     import asyncio
     from mail import imap
     longueur = _longueur_apercu(limite, apercu)
     return await asyncio.to_thread(
-        imap.lister, boite, imap.dossier_imap(dossier), limite, depuis, recherche, avant, longueur)
+        imap.lister, boite, imap.dossier_imap(dossier), limite, depuis, recherche, avant, longueur, curseur)
 
 
 async def _ouvrir_imap(boite: str, identifiant: str) -> dict:
@@ -770,7 +770,7 @@ async def _ouvrir_imap(boite: str, identifiant: str) -> dict:
 
 async def lire_boite(boite: str, dossier: str = "recus",
                      limite: int = 10, depuis=None, recherche=None, avant=None,
-                     apercu=None, autorises=None) -> dict:
+                     apercu=None, autorises=None, curseur=None) -> dict:
     """Derniers messages d'une boîte, lus en direct — et leur nombre.
 
     `dossier` : « recus » ou « envoyes ». `depuis` : une période (« 7j »,
@@ -783,6 +783,8 @@ async def lire_boite(boite: str, dossier: str = "recus",
     DOIT avoir vérifié l'accès.
     """
     nom = fournisseur()                       # lève si rien n'est configuré
+    if curseur and nom != 'imap':
+        raise ValueError('Ce curseur ne correspond pas au fournisseur de messagerie.')
     cle = "envoyes" if str(dossier).lower().startswith("env") else "recus"
     if nom == "imap":
         # LES DOSSIERS DE LA BOÎTE PARTAGÉE (11/09) : un nom de dossier se lit
@@ -807,7 +809,7 @@ async def lire_boite(boite: str, dossier: str = "recus",
                                               recherche=mots, avant=borne, apercu=apercu)
     elif nom == "imap":
         messages, total = await _lire_imap(boite, cle, limite, debut,
-                                           recherche=mots, avant=borne, apercu=apercu)
+                                           recherche=mots, avant=borne, apercu=apercu, curseur=curseur)
     else:
         messages, total = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite, debut,
                                             recherche=mots, avant=borne, apercu=apercu)
@@ -819,6 +821,7 @@ async def lire_boite(boite: str, dossier: str = "recus",
     # « 25 messages » et « 84 messages dont voici les 25 derniers » ne sont pas
     # la même information, et c'est la seconde qu'on demande.
     plus_ancien = min((m.get("date_iso") for m in messages if m.get("date_iso")), default=None)
+    suivant=messages[-1].get('curseur_suivant') if messages and total and total>len(messages) else None
     if mots and total is None:
         compte = (f"{len(messages)} message(s) trouvé(s) pour « {mots} »"
                   + (f" (avant le {borne.date().strftime('%d/%m/%Y')})" if borne else "")
@@ -854,8 +857,11 @@ async def lire_boite(boite: str, dossier: str = "recus",
         "recherche": mots,
         "avant": borne.isoformat() if borne else None,
         "plus_ancien": plus_ancien,
+        "curseur_suivant": suivant,
         # La PAGE SUIVANTE, mécanique : le modèle n'a rien à calculer.
         "pour_continuer": (
+            f"Rappelle lire_mails avec les mêmes filtres et curseur={suivant} (ne remplace pas le curseur par une date)."
+            if suivant else
             f"Pour les {limite} messages PRÉCÉDENTS, rappelle lire_mails avec les mêmes "
             f"paramètres et avant={plus_ancien}."
             if plus_ancien and (len(messages) >= limite) else None),

@@ -88,6 +88,9 @@ if V:
     verifier("la rédaction reprise reçoit ce que le relecteur a vu", "RELECTEUR" in txt and "a" in txt and "dis-le" in txt)
     c = V.consigne("apprends ma signature", "1. apprendre_signature() → ok", "- apprendre_signature : …",
                    "La signature a bien été apprise.", ["keyvalue · Signature"], lecons="- Quand …")
+    preuves=' '.join(f'MAIL-{i} : merci de confirmer le rendez-vous {i}. '+('Contexte factuel du chantier. '*20) for i in range(147))
+    verif=V.consigne('Fais le point sur mes mails','147 mails lus',preuves,'Synthèse complète',[])
+    verifier('le dernier mail de la semaine reste visible au relecteur', 'MAIL-146' in verif)
     verifier("la consigne relève un livrable CREUX présenté comme fait (15/09 : une page de titres)",
              "LIVRABLE CREUX" in c and "reproduire_document" in c)
     verifier("la consigne borne le relecteur (pas le style, dans le doute ok) et porte les leçons",
@@ -203,6 +206,14 @@ if "verifier_node" in esp:
                                        "llm_response": "J'ai repéré un dossier MEMOIRES TECHNIQUES."}))
     verifier("le relecteur voit les LIGNES des tableaux posés par le serveur",
              APPELS and "MEMOIRES TECHNIQUES | Dossier" in APPELS[-1], APPELS[-1:] and APPELS[-1][-600:])
+    APPELS.clear()
+    preuves_mails=json.dumps({'messages':[{'ref':str(i),'apercu':('Fait vérifiable. '*35)+f'TEMOIN-MAIL-{i}'} for i in range(147)]})
+    asyncio.run(esp['verifier_node']({'query':'Point sur les mails','tool_results':[{'skill':'check_mails','ok':True,'resultat_masque':preuves_mails}], 'llm_response':'Les 147 aperçus ont été consultés.'}))
+    verifier('verifier_node transmet aussi le dernier des 147 aperçus', APPELS and 'TEMOIN-MAIL-146' in APPELS[-1])
+    APPELS.clear()
+    carte_reponse={'type':'reponses_mail','items':[{'ref':'preuve-mail','objet':'Fiche chape','synthese':'Demande fiche et photos','reponse':'La fiche et les photos restent à joindre avant envoi.'}]}
+    asyncio.run(esp['verifier_node']({'query':'Point mails','tool_results':[{'skill':'check_mails','ok':True,'resultat_masque':'Demande fiche et photos'}], 'llm_response':'Réponse à préparer.\n```ui\n'+json.dumps(carte_reponse)+'\n```'}))
+    verifier('la relecture voit le contenu des réponses proposées dans les cartes', APPELS and 'preuve-mail' in APPELS[-1] and 'restent à joindre' in APPELS[-1])
     _LLM.panne = True
     r6 = asyncio.run(esp["verifier_node"](etat))
     _LLM.panne = False

@@ -1,5 +1,6 @@
 "use client"
 import { useEffect, useRef, useState, useCallback } from "react"
+import { useSession } from "next-auth/react"
 import Echanges from "@/components/dashboard/Echanges"
 
 interface Props { apiUrl: string; token: string }
@@ -16,7 +17,11 @@ const C = {
 
 async function getJSON(apiUrl: string, path: string, token: string) {
   const res = await fetch(`${apiUrl}${path}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    const erreur = new Error(`HTTP ${res.status}`) as Error & { status: number }
+    erreur.status = res.status
+    throw erreur
+  }
   return res.json()
 }
 
@@ -31,7 +36,9 @@ function metaEntries(m: any): [string, string][] {
   return Object.entries(m).map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : String(v)])
 }
 
-export default function SuperviseurClient({ apiUrl, token }: Props) {
+export default function SuperviseurClient({ apiUrl, token: tokenInitial }: Props) {
+  const { data: session, update } = useSession()
+  const token = (session as any)?.backendToken || tokenInitial
   const [system, setSystem] = useState<any>(null)
   const [logs, setLogs] = useState<any[]>([])
   const [agents, setAgents] = useState<any[]>([])
@@ -44,9 +51,9 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
   const refresh = useCallback(async () => {
     try {
       const [sys, act, ag] = await Promise.all([
-        getJSON(apiUrl, "/api/dashboard/system", token).catch(() => null),
-        getJSON(apiUrl, "/api/dashboard/activity?limit=60", token).catch(() => []),
-        getJSON(apiUrl, "/api/dashboard/agents-activity", token).catch(() => []),
+        getJSON(apiUrl, "/api/dashboard/system", token),
+        getJSON(apiUrl, "/api/dashboard/activity?limit=60", token),
+        getJSON(apiUrl, "/api/dashboard/agents-activity", token),
       ])
       if (sys) setSystem(sys)
       setLogs(Array.isArray(act) ? act : [])
@@ -54,9 +61,20 @@ export default function SuperviseurClient({ apiUrl, token }: Props) {
       setErr("")
       setTick((t) => t + 1)
     } catch (e: any) {
-      setErr(e?.message || "erreur")
+      if (e?.status === 401) {
+        // Le jeton serveur initial peut expirer pendant qu'une page reste
+        // ouverte. La session authentifiée le renouvelle, sans nouvelle connexion.
+        try {
+          const sessionNeuve = await update()
+          if ((sessionNeuve as any)?.backendToken && (sessionNeuve as any).backendToken !== token) return
+        } catch { /* L'erreur visible remplace le faux journal vide. */ }
+        setLive(false)
+        setErr("La session doit être renouvelée. Rechargez la page pour reprendre le suivi.")
+        return
+      }
+      setErr(e?.message || "Le journal n'a pas pu être actualisé.")
     }
-  }, [apiUrl, token])
+  }, [apiUrl, token, update])
 
   useEffect(() => {
     refresh()

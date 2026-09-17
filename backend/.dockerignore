@@ -11,3 +11,8 @@ __pycache__
 # L'effet est masqué à l'exécution par le montage de ./backend, mais l'image,
 # elle, les contient — et une image se pousse, se copie et se conserve.
 secrets/
+
+.env.*
+secrets
+.venv
+venv

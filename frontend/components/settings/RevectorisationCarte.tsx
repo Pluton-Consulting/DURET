@@ -277,12 +277,10 @@ export default function RevectorisationCarte(
                       background: "var(--marque-warning-bg, #fff8e6)",
                       border: "1px solid var(--marque-warning-border, #f0d69a)",
                       fontSize: 12, color: "var(--marque-text-body)" }}>
-          <b>Le modèle choisi ne correspond pas à la base.</b> Il rend{" "}
-          {etat.dimension_modele} dimensions, la base en attend {etat.dimension_base} :
-          rien ne peut être vectorisé tant que les deux ne concordent pas.
-          Re-vectoriser efface les {etat.morceaux.toLocaleString("fr-FR")} vecteurs
-          actuels et les recalcule avec le nouveau modèle. Pendant l&apos;opération,
-          la recherche continue de répondre par sa voie textuelle.
+          <b>Un nouvel index doit être préparé.</b> Le modèle choisi rend {etat.dimension_modele}
+          dimensions. L’ancien index reste actif pendant le calcul des {etat.morceaux.toLocaleString("fr-FR")}
+          morceaux. La bascule intervient lorsque tous les textes courants sont prêts.
+
         </div>
       )}
 
@@ -290,8 +288,7 @@ export default function RevectorisationCarte(
         <div style={{ ...petit, marginTop: 8 }}>
           Les dimensions concordent. Si vous venez de CHANGER de modèle sans
           changer de dimension, re-vectorisez quand même : deux modèles ne
-          produisent pas des vecteurs comparables, et la recherche répondrait
-          sans rien signaler.
+          produisent pas des vecteurs comparables. Le modèle actif est conservé jusqu’à la bascule.
         </div>
       )}
 
@@ -300,15 +297,13 @@ export default function RevectorisationCarte(
       {operation?.phase === "en_cours" && (
         <div data-testid="revectorisation-en-cours" style={{ ...petit, marginTop: 10, color: "var(--marque-text-body)" }}>
           Re-vectorisation vers {operation.dimension} dimensions en cours depuis {heure(operation.debut)} :
-          effacement des vecteurs et reconstruction de l&apos;index. Les comptes
-          ci-dessus reprendront à la fin.
+          préparation du nouvel index avec conservation de l’ancien. Une interruption permet de reprendre les lots déjà préparés.
         </div>
       )}
       {operation?.phase === "terminee" && (
         <div style={{ ...petit, marginTop: 10, color: "var(--marque-text-body)" }}>
           Re-vectorisation lancée à {heure(operation.debut)}, base passée à {operation.dimension} dimensions
-          {operation.index_recree === false && " (sans index : dimension trop grande)"} ; les morceaux
-          se re-vectorisent en fond.
+          {operation.index_recree === false && " (sans index : dimension trop grande)"} ; le nouvel index est actif.
         </div>
       )}
       {operation?.phase === "echec" && (

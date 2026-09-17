@@ -646,6 +646,8 @@ class ResilientLLM:
         self.last_model_used: Optional[str] = None
 
     async def ainvoke(self, messages: Any, **kwargs) -> Any:
+        extraction_documentaire = kwargs.pop("_extraction_documentaire", False)
+        secours_timeout_documentaire = kwargs.pop("_secours_timeout_documentaire", False)
         chain = _filtrer_quarantaine(_tier_chain(self.tier))
         if not chain:
             raise RuntimeError(
@@ -694,8 +696,17 @@ class ResilientLLM:
                     # bas, reste HORS de la porte : attendre en tenant un
                     # créneau serait absurde.
                     from llm.concurrence import porte_llm
-                    async with porte_llm():
-                        result = await llm.ainvoke(messages, **kwargs)
+                    from llm.budget import delai_disponible
+                    async with asyncio.timeout(delai_disponible(tier_timeout(self.tier.value))):
+                        async with porte_llm():
+                            options = dict(kwargs)
+                            # L’extraction cite des faits contrôlés mot à mot ;
+                            # la rédaction et la relecture restent au palier puissant.
+                            # Cette option n’est envoyée qu’aux modèles testés
+                            # qui savent explicitement désactiver le raisonnement.
+                            if extraction_documentaire and provider == "ollama_cloud" and (model or "").startswith("deepseek-v4"):
+                                options.update(reasoning_effort="none", max_tokens=8192)
+                            result = await llm.ainvoke(messages, **options)
                     # CE QUE L'APPEL A COÛTÉ, compté ICI parce que c'est le seul
                     # endroit que TOUS les appels traversent. Les nœuds du
                     # graphe sont une vingtaine et il en naît de nouveaux :
@@ -726,6 +737,13 @@ class ResilientLLM:
                     return result
                 except Exception as e:
                     last_error = e
+                    if secours_timeout_documentaire and isinstance(e, TimeoutError) and idx + 1 < len(chain):
+                        # Le délai entier du candidat a déjà été consommé.
+                        # Pour une étape documentaire reprenable, essayer le
+                        # secours disponible avant de refaire la même attente.
+                        # Sans secours, les tentatives ordinaires sont gardées.
+                        logger.warning("LLM %s : délai documentaire dépassé — candidat suivant", label)
+                        break
                     if _is_hard_fail(e):
                         logger.warning("LLM %s indispo (quota/auth) : %s — candidat suivant", label, e)
                         # Et on le RETIENT : sans cela, l'appel suivant referait
@@ -738,7 +756,8 @@ class ResilientLLM:
                         label, attempt + 1, tentatives, e, delay,
                     )
                     if attempt < tentatives - 1:
-                        await asyncio.sleep(delay)
+                        from llm.budget import delai_disponible
+                        await asyncio.sleep(delai_disponible(delay))
 
         raise RuntimeError(f"Tous les modèles LLM ont échoué (dernier : {last_error})") from last_error
 
@@ -824,6 +843,9 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
                             ("google", s.model_google_vision_secours),
                             ("groq", s.model_groq_vision))):
         if not _provider_available(provider):
+            continue
+        if any(m in str(model).lower() for m in ("deepseek-v4", "deepseek-chat", "deepseek-reasoner")):
+            logger.warning("Modèle texte ignoré pour la vision : %s", model)
             continue
         try:
             sortie.append((_build_model(provider, model), f"{provider}:{model}"))

@@ -266,6 +266,9 @@ async def _collecter(connecteur: str, nom: str, lance_par: str, lance_par_id) ->
     logger.info("Enrichissement documents : collecte %s → %s", connecteur, _ETAT["collecte"])
 
 
+from stockage.processus import unique
+
+@unique("campagne:enrichissement_docs")
 async def executer(lance_par: str, max_lots_par_niveau: int = 0,
                    exiger_modele_principal: bool = True,
                    sources: tuple = SOURCES_DOCUMENTS,

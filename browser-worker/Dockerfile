@@ -1,12 +1,14 @@
 # Image officielle browser-use : inclut browser-use + Chromium + dépendances système,
 # via un venv à /app/.venv (appartenant à root) et un utilisateur d'exécution `browseruse`.
-FROM browseruse/browseruse:latest
+FROM browseruse/browseruse@sha256:689123c4998749972d320d6560f81f13595135ee5caea4093fbbc99b8bd039eb
 
 # Installer les deps du worker DANS le venv de l'image. Le venv est géré par `uv`
 # (pas de `pip` dedans) et appartient à root → on installe via uv, en root.
 USER root
-RUN uv pip install --python /app/.venv/bin/python --no-cache \
-    fastapi "uvicorn[standard]" asyncpg httpx pillow pydantic
+COPY requirements.lock /tmp/worker-requirements.lock
+RUN uv pip install --python /app/.venv/bin/python --no-cache --require-hashes -r /tmp/worker-requirements.lock
+
+RUN mkdir -p /sessions && chown browseruse:browseruse /sessions
 
 WORKDIR /app
 COPY . .

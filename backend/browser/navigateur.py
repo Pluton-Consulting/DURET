@@ -81,7 +81,7 @@ class ClientNavigateur:
             # secondes coupait donc la connexion pendant que le conteneur
             # travaillait encore, et l'échec ressemblait à une panne.
             async with httpx.AsyncClient(timeout=delai_s + 60) as client:
-                r = await client.post(url, json=charge)
+                r = await client.post(url, json=charge, headers={"X-Navigateur-Secret": settings.browser_worker_secret})
                 r.raise_for_status()
                 d = r.json()
         except httpx.HTTPStatusError as e:

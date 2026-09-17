@@ -18,7 +18,8 @@ import json
 import re
 import sys
 
-sys.path.insert(0, ".")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.agent1 import llm_node  # noqa: E402
 

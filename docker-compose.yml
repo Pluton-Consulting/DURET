@@ -66,7 +66,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./backend:/app
+      - ./backend/secrets:/app/secrets
       - documents_produits:/documents
     # Rend Ollama (LLM local, palier LIGHT) accessible sur l'hôte Windows/WSL
     extra_hosts:
@@ -83,12 +83,31 @@ services:
     # backend, qui porte désormais le guichet par lequel il rend compte.
     depends_on:
       - backend
-    env_file: .env
+    # Liste explicite : jamais DATABASE_URL, JWT_SECRET_KEY, clés du coffre,
+    # secrets des sessions ou mot de passe PostgreSQL dans le navigateur.
     environment:
+      BROWSER_LLM_PROVIDER: ${BROWSER_LLM_PROVIDER:-deepseek}
+      BROWSER_LLM_MODEL: ${BROWSER_LLM_MODEL:-deepseek-chat}
+      BROWSER_AGENT_MAX_STEPS: ${BROWSER_AGENT_MAX_STEPS:-40}
+      BROWSER_APPROVAL_TIMEOUT_S: ${BROWSER_APPROVAL_TIMEOUT_S:-1800}
+      BROWSER_USE_VISION: ${BROWSER_USE_VISION:-false}
+      BROWSER_READONLY: ${BROWSER_READONLY:-true}
+      BROWSER_SCREENSHOT_MAX_WIDTH: ${BROWSER_SCREENSHOT_MAX_WIDTH:-1000}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LONGCAT_API_KEY: ${LONGCAT_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      LONGCAT_BASE_URL: ${LONGCAT_BASE_URL:-https://api.longcat.chat/openai}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       # Overrides propres au worker (chemins internes au conteneur)
       SITE_CREDENTIALS_FILE: /secrets/site_credentials.json
       # /tmp est inscriptible par l'utilisateur non-root du conteneur (le volume /sessions est root).
-      BROWSER_SESSIONS_DIR: /tmp/sessions
+      ANONYMIZED_TELEMETRY: "false"
+      BROWSER_SESSIONS_DIR: /sessions
       BACKEND_URL: http://backend:8000
       # LE WORKER N'ÉCRIT PLUS EN BASE : il raconte au backend, qui écrit.
       # Ce secret authentifie ses appels au guichet interne. Il ne le
@@ -102,7 +121,7 @@ services:
       TIMEOUT_NavigateToUrlEvent: "60"
       TIMEOUT_BrowserStateRequestEvent: "60"
     volumes:
-      - ./backend/secrets:/secrets:ro      # identifiants par site (lecture seule)
+      - ./backend/secrets/site_credentials.json:/secrets/site_credentials.json:ro
       - browser_sessions:/sessions         # sessions connectées persistées (rw)
     shm_size: '2gb'                        # obligatoire pour la stabilité de Chromium
 

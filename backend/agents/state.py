@@ -13,6 +13,8 @@ class AgentState(TypedDict):
 
     # Requête entrante
     query: str
+    anonymized_travail: Optional[str]
+    travail: Optional[dict]  # objectif, citations, références et progression durables
     has_attachment: bool
     attachment_type: Optional[str]  # 'pdf', 'image', 'sketchup'
     attachment_b64: Optional[str]   # contenu encodé base64 (image nettoyée / page PDF rendue)
@@ -134,6 +136,7 @@ class AgentState(TypedDict):
     # Agent 3 — Skill learning
     out_of_scope: bool
     skill_generated: Optional[str]   # Code Python généré
+    skill_test_cases: Optional[list[dict]]
     skill_test_result: Optional[dict]
     skill_confidence: Optional[float]
 

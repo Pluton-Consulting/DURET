@@ -6,9 +6,12 @@ class Settings(BaseSettings):
     # App
     environment: str = "production"
     debug: bool = False
+    demande_delai_s: int = 600  # budget total partagé par tous les étages d’un tour
     allowed_hosts: str = "100.64.0.1"
     # Sécurité transverse
     max_body_mb: int = 10                          # limite de taille du corps HTTP (anti-DoS mémoire)
+    max_chat_body_mb: int = 40                    # JSON + base64, uniquement le chat
+    max_pieces_total_mb: int = 25                 # originaux cumulés, dix pièces de 10 Mo au plus
     # LA RELECTURE AVANT L'ÉCRAN (15/09, agents/verificateur.py) : le modèle
     # puissant vérifie qu'une réponse n'affirme rien que le tour ne prouve.
     # Un appel de plus, seulement quand il y a quelque chose à vérifier.

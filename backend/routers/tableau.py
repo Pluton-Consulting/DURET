@@ -129,7 +129,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
               COUNT(*) FILTER (WHERE success = false)                                                     AS echecs
             FROM audit_log
             WHERE created_at >= NOW() - INTERVAL '30 days' AND {perso.format(col='user_id')}{plancher}
-        """, uid, global_)
+        """, uid)
 
         # Activité par jour (14 jours) : des barres, pas des courbes de dev.
         par_jour = await _sur(conn, f"""
@@ -139,7 +139,7 @@ async def tableau(current_user: User = Depends(get_current_user)):
             FROM audit_log
             WHERE created_at >= NOW() - INTERVAL '14 days' AND {perso.format(col='user_id')}{plancher}
             GROUP BY 1 ORDER BY 1
-        """, uid, global_)
+        """, uid)
 
         # La MATIÈRE du ROI, par jour sur 60 jours : les mêmes gestes que
         # `faits`, datés. Les 30 derniers dessinent la courbe ; les 30 d'avant

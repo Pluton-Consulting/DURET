@@ -340,6 +340,17 @@ def normaliser_element(brut) -> dict | None:
             sortie["legende"] = _texte(brut.get("legende"), 300)
         else:
             sortie["nom"] = _texte(brut.get("nom"), 31) or "Feuille"
+            colonnes=brut.get("colonnes_numeriques") or []
+            if colonnes:
+                import math
+                if not isinstance(colonnes,list) or any(type(i) is not int or i<0 or i>=MAX_COLONNES for i in colonnes):raise ValueError("Colonnes numériques invalides.")
+                for ligne in lignes:
+                    for i in colonnes:
+                        if i<len(ligne) and ligne[i]!="":
+                            valeur=float(ligne[i].replace(",","."))
+                            if not math.isfinite(valeur):raise ValueError("Quantité non finie.")
+                            ligne[i]=valeur
+                sortie["colonnes_numeriques"]=colonnes
         return sortie
 
     return None

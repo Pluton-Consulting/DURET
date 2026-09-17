@@ -80,6 +80,8 @@ async def _construire():
                 except Exception:
                     pass
                 _pool = None
+            if getattr(settings, "environment", "production") not in ("test", "dev", "development"):
+                raise RuntimeError("Mémoire persistante indisponible : le chat attend la base au lieu de perdre ses conversations") from e
 
     from langgraph.checkpoint.memory import MemorySaver
     _checkpointer = MemorySaver()

@@ -194,7 +194,7 @@ async def resoudre(brut, user, boite: str, plafond: int | None = None) -> tuple:
         if not octets:
             refusees.append({
                 "nom": etiquette,
-                "raison": "introuvable — un document produit ne vit que 24 h ; "
+                "raison": "introuvable ou retiré — "
                           "reproduis-le, ou ouvre d'abord la pièce à joindre"})
             continue
         if len(octets) > plafond:

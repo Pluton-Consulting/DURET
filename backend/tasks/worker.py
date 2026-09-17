@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+import contextvars
+
+_PROPRIETAIRE = contextvars.ContextVar("proprietaire_tache", default=None)
 from typing import Optional
 
 from database.connection import get_db
@@ -47,10 +51,10 @@ async def _requalifier_runs_interrompus() -> None:
                    SET status = 'failed', error = 'interrompu par un redémarrage',
                        updated_at = NOW()
                    WHERE status = 'running'
-                     AND updated_at < NOW() - INTERVAL '15 minutes'
+                     AND COALESCE(lease_until, updated_at + INTERVAL '15 minutes') < NOW()
                    RETURNING (SELECT COUNT(*) FROM agent_task_runs
                                WHERE status = 'running'
-                                 AND updated_at < NOW() - INTERVAL '15 minutes')""")
+                                 AND COALESCE(lease_until, updated_at + INTERVAL '15 minutes') < NOW())""")
         if n:
             logger.warning("%s exécution(s) interrompue(s) requalifiée(s) en échec", n)
     except Exception as e:  # noqa: BLE001 - la table peut ne pas exister avant migration
@@ -92,7 +96,8 @@ async def _reclamer_run() -> Optional[dict]:
     async with get_db() as conn:
         ligne = await conn.fetchrow(
             """UPDATE agent_task_runs
-               SET status = 'running', started_at = NOW(), updated_at = NOW()
+               SET status = 'running', started_at = NOW(), updated_at = NOW(),
+                   lease_owner = $1, lease_until = NOW() + INTERVAL '120 seconds'
                WHERE id = (
                    SELECT id FROM agent_task_runs
                    WHERE status = 'pending'
@@ -100,18 +105,22 @@ async def _reclamer_run() -> Optional[dict]:
                    LIMIT 1
                    FOR UPDATE SKIP LOCKED
                )
-               RETURNING *""")
+               RETURNING *""", uuid.uuid4())
     return dict(ligne) if ligne else None
 
 
 async def _terminer(run_id, statut: str, resultat=None, erreur: Optional[str] = None) -> None:
     import json
     async with get_db() as conn:
-        await conn.execute(
+        modifie = await conn.execute(
             """UPDATE agent_task_runs
                SET status = $1, result = $2, error = $3, updated_at = NOW()
-               WHERE id = $4""",
-            statut, json.dumps(resultat) if resultat is not None else None, erreur, run_id)
+               WHERE id = $4 AND status = 'running' AND lease_owner = $5::uuid
+                 AND lease_until > NOW()""",
+            statut, json.dumps(resultat) if resultat is not None else None, erreur, run_id, _PROPRIETAIRE.get())
+
+    if modifie.endswith(" 0"):
+        raise RuntimeError("Le bail de cette tâche n’est plus valide ; résultat non publié.")
 
 
 def texte_annonce(titre: str, statut: str, reponse: str, quand: str) -> str:
@@ -168,6 +177,29 @@ async def _annoncer_dans_la_conversation(tache: dict, utilisateur, statut: str, 
                        tache.get("id"), str(e)[:160])
 
 
+async def _sous_bail(run: dict) -> None:
+    jeton = _PROPRIETAIRE.set(run["lease_owner"])
+    async def battre():
+        while True:
+            await asyncio.sleep(20)
+            async with get_db() as conn:
+                ok = await conn.fetchval("UPDATE agent_task_runs SET updated_at=NOW(), lease_until=NOW()+INTERVAL '120 seconds' WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_until>NOW() RETURNING id", run["id"], run["lease_owner"])
+            if not ok:
+                raise RuntimeError("Bail de tâche perdu ; état des effets externes à vérifier avant toute reprise.")
+    travail = asyncio.create_task(_executer(run))
+    battement = asyncio.create_task(battre())
+    try:
+        finis, _ = await asyncio.wait({travail, battement}, return_when=asyncio.FIRST_COMPLETED)
+        if travail in finis:
+            await travail
+        else:
+            await battement
+    finally:
+        travail.cancel(); battement.cancel()
+        await asyncio.gather(travail, battement, return_exceptions=True)
+        _PROPRIETAIRE.reset(jeton)
+
+
 async def _executer(run: dict) -> None:
     """Exécute une tâche, au nom de son créateur, dans le graphe habituel."""
     from agents import runtime
@@ -197,8 +229,8 @@ async def _executer(run: dict) -> None:
 
     fil = f"task:{run['id']}"
     async with get_db() as conn:
-        await conn.execute("UPDATE agent_task_runs SET thread_id = $1 WHERE id = $2",
-                           fil, run["id"])
+        await conn.execute("UPDATE agent_task_runs SET thread_id = $1 WHERE id = $2 AND lease_owner=$3",
+                           fil, run["id"], _PROPRIETAIRE.get())
 
     await log_action(action="task_triggered", user_id=str(utilisateur.id),
                      on_behalf_of=str(utilisateur.id),
@@ -292,6 +324,7 @@ async def _boucle() -> None:
 
     while not _stop:
         try:
+            await _requalifier_runs_interrompus()
             await _reveiller_taches_dues()
             await _passe_profils_si_due()
 
@@ -300,7 +333,7 @@ async def _boucle() -> None:
                 run = await _reclamer_run()
                 if run is None:
                     break
-                await _executer(run)
+                await _sous_bail(run)
                 traites += 1
 
             await asyncio.sleep(1 if traites else INTERVALLE_TICK_S)

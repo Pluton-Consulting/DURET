@@ -111,7 +111,7 @@ verifier("« complet » reste le défaut : le déploiement d'aujourd'hui ne chan
          'role_processus: str = "complet"' in (BACKEND / "config.py").read_text(encoding="utf-8"))
 worker_src = (BACKEND / "tasks" / "worker.py").read_text(encoding="utf-8")
 verifier("au démarrage, on ne requalifie que ce qui ne donne plus signe de vie",
-         "updated_at < NOW() - INTERVAL '15 minutes'" in worker_src)
+         "COALESCE(lease_until, updated_at + INTERVAL '15 minutes') < NOW()" in worker_src and "lease_owner = $5" in worker_src)
 
 print("4. La garde du navigateur résout, elle ne devine pas (D-21/S-21)")
 from browser.sandbox_filter import SandboxFilter, _adresse_interne  # noqa: E402

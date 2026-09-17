@@ -22,3 +22,7 @@ services:
     # locale. Le redéclarer ici le republierait sur 0.0.0.0 : Compose
     # AJOUTE les listes de ports au lieu de les remplacer, et les deux
     # liaisons se disputeraient le port 3000 de l'hôte.
+
+  backend:
+    volumes:
+      - ./backend:/app

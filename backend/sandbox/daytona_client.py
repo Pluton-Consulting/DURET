@@ -7,9 +7,12 @@ Fonctionnement :
 3. Le code est exécuté avec des données de test fictives
 4. Le résultat (succès/échec, output, métriques) est retourné
 5. Le sandbox est détruit immédiatement après
-6. Aucune donnée client ne transite par Daytona — uniquement du code Python
+6. Les tests de qualification utilisent des cas fictifs. L’exécution d’un skill
+   validé transmet au sandbox son code et les arguments fournis, sans les clés
+   ni les montages du backend ; son réseau sortant est bloqué.
 
-Si DAYTONA_API_KEY est absent, bascule automatiquement sur subprocess local.
+Sans Daytona, aucun code généré n'est exécuté sauf dérogation explicite de
+l'exploitant AUTORISER_CODE_NON_ISOLE. Les tests de génération suivent la même règle.
 """
 import asyncio
 import os
@@ -53,7 +56,7 @@ MOCK_TEST_DATA = {
 class DaytonaClient:
     """
     Client pour l'exécution de code dans des sandboxes Daytona isolés.
-    Fallback automatique sur subprocess si Daytona non configuré.
+    Sans Daytona, exécution locale uniquement sur activation explicite.
     """
 
     def __init__(self):
@@ -64,7 +67,7 @@ class DaytonaClient:
             try:
                 from daytona_sdk import Daytona, DaytonaConfig
                 self._daytona = Daytona(DaytonaConfig(api_key=self.api_key))
-            except ImportError:
+            except Exception:
                 self.daytona_available = False
                 self._daytona = None
         else:
@@ -78,7 +81,34 @@ class DaytonaClient:
     ) -> SandboxTestResult:
         if self.daytona_available:
             return await self._test_in_daytona(skill_code, skill_name, max_execution_seconds)
+        if not self._local_autorise():
+            return SandboxTestResult(False, None, "Aucun exécuteur isolé configuré : test non exécuté.",
+                                     0, None, 0.0, "indisponible")
         return await self._test_in_subprocess(skill_code, skill_name, max_execution_seconds)
+
+    @staticmethod
+    def _local_autorise() -> bool:
+        return os.environ.get("AUTORISER_CODE_NON_ISOLE", "").strip().lower() in ("1", "true", "oui")
+
+    async def _executer_isole(self, code: str, timeout: int):
+        """SDK synchrone hors de la boucle du chat ; code encodé, jamais cité en shell."""
+        import base64
+        charge = base64.b64encode(code.encode()).decode()
+        def lancer():
+            from daytona_sdk import CreateSandboxFromImageParams
+            sandbox = None
+            try:
+                sandbox = self._daytona.create(
+                    CreateSandboxFromImageParams(image="python:3.12-slim", language="python",
+                                                 network_block_all=True, ephemeral=True,
+                                                 auto_stop_interval=5))
+                return sandbox.process.exec(
+                    'python3 -c "import base64; exec(base64.b64decode(\'' + charge + '\'))"',
+                    timeout=timeout)
+            finally:
+                if sandbox is not None:
+                    self._daytona.delete(sandbox)
+        return await asyncio.to_thread(lancer)
 
     async def _test_in_daytona(
         self,
@@ -90,15 +120,8 @@ class DaytonaClient:
         start_time = time.monotonic()
 
         try:
-            from daytona_sdk import CreateSandboxFromImageParams
             test_code = self._wrap_with_test_data(skill_code)
-            sandbox = self._daytona.create(
-                CreateSandboxFromImageParams(image="python:3.12-slim", language="python")
-            )
-            result = sandbox.process.exec(
-                f"python3 -c '{test_code}'",
-                timeout=timeout,
-            )
+            result = await self._executer_isole(test_code, timeout)
             execution_time = int((time.monotonic() - start_time) * 1000)
             passed = result.exit_code == 0
             return SandboxTestResult(
@@ -252,6 +275,30 @@ except Exception as e:
             "_res = run(_data)\n"
             f"print({marker!r} + json.dumps(_res, ensure_ascii=False, default=str))\n"
         )
+        if self.daytona_available:
+            # La déclaration d'isolement DOIT correspondre au chemin pris.
+            # Auparavant une clé Daytona ouvrait la garde, puis ce code
+            # lançait tout de même un sous-processus sur le serveur.
+            import base64
+            charge = base64.b64encode(_json.dumps(data or {}).encode()).decode()
+            programme = ("import io, sys, base64\n"
+                         f"sys.stdin = io.StringIO(base64.b64decode({charge!r}).decode())\n" + wrapper)
+            try:
+                result = await self._executer_isole(programme, max_execution_seconds)
+                parsed = None
+                for line in str(result.result or "").splitlines():
+                    if line.startswith(marker):
+                        parsed = _json.loads(line[len(marker):])
+                ok = result.exit_code == 0 and parsed is not None
+                return {"ok": ok, "output": parsed if ok else None,
+                        "error": None if ok else "L'exécution isolée a échoué ou sa sortie est illisible.",
+                        "execution_time_ms": int((time.monotonic() - start) * 1000), "sandbox_type": "daytona"}
+            except Exception as e:
+                return {"ok": False, "output": None, "error": f"Exécuteur isolé indisponible ({type(e).__name__}).",
+                        "execution_time_ms": int((time.monotonic() - start) * 1000), "sandbox_type": "daytona"}
+        if not self._local_autorise():
+            return {"ok": False, "output": None, "error": "Aucun exécuteur isolé configuré.",
+                    "execution_time_ms": 0, "sandbox_type": "indisponible"}
         tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -274,6 +321,7 @@ except Exception as e:
                 )
             except asyncio.TimeoutError:
                 proc.kill()
+                await proc.wait()
                 return {"ok": False, "output": None, "error": f"Timeout après {max_execution_seconds}s",
                         "execution_time_ms": max_execution_seconds * 1000, "sandbox_type": "subprocess"}
 

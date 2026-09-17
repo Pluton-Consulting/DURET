@@ -406,6 +406,9 @@ async def _creer_skills(competences: list[dict],
     return crees
 
 
+from stockage.processus import unique
+
+@unique("campagne:enrichissement")
 async def executer(lance_par: str, collecter: bool = True,
                    max_lots_par_boite: int = MAX_LOTS_PAR_BOITE,
                    exiger_modele_principal: bool = True,

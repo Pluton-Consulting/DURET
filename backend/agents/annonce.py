@@ -552,8 +552,8 @@ _SANS_COMMANDE = re.compile(
     r"il n['’]existe pas (?:de |d['’])(?:commande|outil|fonction|action)",
     re.I)
 _OFFRE_DE_FAIRE = re.compile(
-    r"(?:voulez-vous|souhaitez-vous|préférez-vous|preferez-vous|que préférez-vous|que preferez-vous|"
-    r"dois-je|puis-je|faut-il que je|je peux (?:vous proposer|commencer par)|je peux ?:)",
+    r"(?:veux-tu|souhaites-tu|tu veux|tu souhaites|voulez-vous|souhaitez-vous|préférez-vous|preferez-vous|que préférez-vous|que preferez-vous|"
+    r"dois-je|puis-je|faut-il que je|je (?:le|la|les) fais|je peux (?:vous proposer|commencer par)|je peux ?:)",
     re.I)
 
 
@@ -573,7 +573,7 @@ def propose_au_lieu_d_agir(texte: str) -> bool:
         # « lequel » — demande une DONNÉE : on ne force pas.
         demande_une_donnee = re.search(
             r"\b(?:quel|quelle|quels|quelles|lequel|laquelle|lesquels|lesquelles|combien|"
-            r"ou|quand|a qui|a quel|a quelle|pour qui|comment)\b", t, re.I)
+            r"quand|a qui|a quel|a quelle|pour qui|comment)\b", t, re.I) or re.search(r"(?:^|[.!?\n])\s*ou\b[^?]*\?", t, re.I)
         return not demande_une_donnee
     return False
 

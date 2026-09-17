@@ -140,8 +140,7 @@ async def retrieve_detaille(
     try:
         chunks = await vectorstore.search_hybrid(
             query, embedding, user_role, top_k=top_k, source_types=types,
-            boites=mailboxes) or []
-        diagnostic["voies"] = ["vecteur", "texte"] if embedding else ["texte"]
+            boites=mailboxes, diagnostic=diagnostic) or []
     except Exception as e:  # noqa: BLE001
         logger.warning("Recherche hybride en échec (rôle=%s, %s) : voie plein texte seule",
                        user_role, type(e).__name__)

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from difflib import SequenceMatcher
 
@@ -76,7 +77,8 @@ def consigne_extraction(question_precedente: str, reponse_corrigee: str, correct
         '{"lecon": {"situation": "<quand cela se présente, en une phrase : « quand on demande de… »>", '
         '"erreur": "<ce que l\'assistant a mal fait, en une phrase>", '
         '"conduite": "<ce qu\'il doit faire à la place, à l\'impératif, une ou deux phrases>", '
-        '"gestes": ["<noms des gestes concernés, s\'il y en a>"]}}'
+        '"gestes": ["<noms des gestes concernés, s\'il y en a>"], "type": "procedure", '
+        '"confiance": 0.6, "preuve": "<correction explicite sans nom propre>"}}'
     )
 
 
@@ -101,7 +103,16 @@ def lire_lecon(brut) -> dict | None:
     if _BALISE.search(situation + erreur + conduite):
         return None            # une leçon qui porte un nom masqué raconte un cas, pas une règle
     gestes = [str(g)[:60] for g in (lecon.get("gestes") or []) if str(g).strip()][:6]
-    return {"situation": situation, "erreur": erreur, "conduite": conduite, "gestes": gestes}
+    type_ = str(lecon.get("type") or "procedure").lower()
+    if type_ not in ("preference", "fait", "procedure"):
+        type_ = "procedure"
+    try:
+        confiance = float(lecon.get("confiance", 0.6))
+    except (TypeError, ValueError):
+        confiance = 0.6
+    confiance = min(1.0, max(0.0, confiance)) if math.isfinite(confiance) else 0.6
+    return {"situation": situation, "erreur": erreur, "conduite": conduite, "gestes": gestes,
+            "type": type_, "confiance": confiance, "preuve": str(lecon.get("preuve") or "")[:800]}
 
 
 def _echange_du_tour(messages: list) -> dict | None:
@@ -150,7 +161,14 @@ def _texte(lecon: dict) -> str:
 
 
 def est_un_doublon(neuve: dict, existante: dict) -> bool:
-    return SequenceMatcher(None, _texte(neuve), _texte(existante)).ratio() >= SEUIL_DOUBLON
+    # « utiliser » et « ne pas utiliser » sont presque identiques à l'œil
+    # d'une distance de texte, mais ne renforcent jamais la même règle.
+    conduite=lambda l: " ".join(str(l.get('conduite') or '').casefold().split())
+    return conduite(neuve)==conduite(existante) and SequenceMatcher(None, _texte(neuve), _texte(existante)).ratio() >= SEUIL_DOUBLON
+
+def conflit_possible(neuve,existante):
+    return (not est_un_doublon(neuve,existante)
+            and SequenceMatcher(None,str(neuve.get('situation') or '').casefold(),str(existante.get('situation') or '').casefold()).ratio() >= .9)
 
 
 async def enregistrer(user_id: str, lecon: dict, fil: str = "") -> str:
@@ -167,21 +185,27 @@ async def enregistrer(user_id: str, lecon: dict, fil: str = "") -> str:
                     "UPDATE lecons SET occurrences = occurrences + 1, derniere_maj = NOW() WHERE id = $1",
                     e["id"])
                 return "renforcee"
+        conflit=any(conflit_possible(lecon,dict(e)) for e in existantes)
         # CE QU'ELLE EST, ET CE QU'ELLE VAUT (16/09, audit D-14/S-14) : une tournure
         # de politesse et une règle de facturation ne s'injectent pas pareil, et
         # une leçon tirée d'une correction EXPLICITE vaut mieux qu'une déduction.
         type_lecon = str(lecon.get("type") or "procedure").strip().lower()
         if type_lecon not in ("preference", "fait", "procedure"):
             type_lecon = "procedure"
-        confiance = float(lecon.get("confiance") or (0.9 if lecon.get("preuve") else 0.6))
+        try:
+            confiance = float(lecon.get("confiance", 0.6))
+        except (TypeError, ValueError):
+            confiance = 0.6
+        if not math.isfinite(confiance):
+            confiance = 0.6
         try:
             await conn.execute(
                 """INSERT INTO lecons (user_id, situation, erreur, conduite, gestes, source_fil,
-                                       type_lecon, confiance, preuve)
-                   VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)""",
+                                       type_lecon, confiance, preuve, statut)
+                   VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)""",
                 user_id, lecon["situation"], lecon["erreur"], lecon["conduite"],
                 json.dumps(lecon.get("gestes") or [], ensure_ascii=False), (fil or "")[:200],
-                type_lecon, max(0.0, min(1.0, confiance)), (lecon.get("preuve") or "")[:800] or None)
+                type_lecon, max(0.0, min(1.0, confiance)), (lecon.get("preuve") or "")[:800] or None, "brouillon" if conflit else "active")
         except Exception as e:  # noqa: BLE001
             from database.connection import schema_incomplet
             if not schema_incomplet(e):
@@ -192,7 +216,7 @@ async def enregistrer(user_id: str, lecon: dict, fil: str = "") -> str:
                    VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6)""",
                 user_id, lecon["situation"], lecon["erreur"], lecon["conduite"],
                 json.dumps(lecon.get("gestes") or [], ensure_ascii=False), (fil or "")[:200])
-    return "creee"
+    return "a_verifier" if conflit else "creee"
 
 
 # UNE PANNE PASSAGÈRE N'EST PAS UNE RÈGLE MÉTIER (16/09, audit D-14/S-14). Quand le
@@ -205,6 +229,10 @@ _PANNES_PASSAGERES = ("timeout", "timed out", "connection", "connexion", "429",
 
 def _panne_passagere(state: dict) -> bool:
     texte = " ".join(str(state.get(c) or "") for c in ("error", "derniere_erreur", "note_sortie")).lower()
+    for r in state.get("tool_results") or []:
+        if r.get("outcome") in ("failed", "denied", "pending") or r.get("effect_status") in ("unknown", "pending"):
+            return True
+        texte += " " + str(r.get("error") or r.get("warnings") or "").lower()
     return any(mot in texte for mot in _PANNES_PASSAGERES)
 
 
@@ -234,7 +262,8 @@ def apprendre_en_fond(state: dict) -> None:
         return
     import asyncio
     try:
-        tache = asyncio.get_running_loop().create_task(apprendre_du_tour(dict(state)))
+        from contextvars import Context
+        tache = asyncio.get_running_loop().create_task(apprendre_du_tour(dict(state)), context=Context())
     except RuntimeError:
         return
     _EN_COURS.add(tache)

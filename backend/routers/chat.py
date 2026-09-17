@@ -71,7 +71,7 @@ async def _texte_piece_jointe(nom: Optional[str], b64: Optional[str],
 
 
 async def _piece_jointe(nom: Optional[str], b64: Optional[str],
-                        mime: Optional[str]) -> tuple[Optional[str], Optional[dict]]:
+                        mime: Optional[str], *, texte_integral: Optional[str] = None) -> tuple[Optional[str], Optional[dict]]:
     """Extrait le texte d'un fichier joint au chat (Excel, Word, CSV, PDF, texte…),
     et, pour un tableau, ses LIGNES complètes — {nom, colonnes, lignes}.
 
@@ -85,6 +85,12 @@ async def _piece_jointe(nom: Optional[str], b64: Optional[str],
         return None, None
     if (mime or "").lower().startswith("image/"):
         return None, None                # une photo/un plan : c'est le travail de la vision
+
+    # Dans un dossier, cette lecture identifiée par pages sert aussi de source
+    # à la rédaction. La refaire avec pdfplumber coûtait une minute par lot.
+    # Les scans et PDF mixtes gardent le lecteur/OCR historique en complément.
+    if texte_integral and '[LECTURE VISUELLE REQUISE' not in texte_integral and len(texte_integral.strip()) >= 300:
+        return texte_integral, None
 
     try:
         brut = base64.b64decode(b64)
@@ -172,10 +178,15 @@ def _normaliser_pieces(attachments, nom=None, mime=None, b64=None) -> tuple:
                            "mime": d.get("mime") or "", "b64": d["b64"]})
     if not pieces and b64:
         pieces.append({"nom": nom or "document", "mime": mime or "", "b64": b64})
+    # Vérifier avant le décodage parallèle : un lot autorisé ne doit pas
+    # saturer la mémoire ni être partiellement lu après un rejet de taille.
+    from bureautique.limites_pieces import verifier_lot
+    verifier_lot(pieces[:MAX_PIECES_JOINTES], settings.max_body_mb,
+                 getattr(settings, "max_pieces_total_mb", 25))
     return pieces[:MAX_PIECES_JOINTES], max(0, len(pieces) - MAX_PIECES_JOINTES)
 
 
-async def _pieces_jointes(pieces: list, surplus: int = 0) -> tuple:
+async def _pieces_jointes(pieces: list, surplus: int = 0, utilisateur=None, fil=None) -> tuple:
     """Lit TOUS les fichiers d'un message. Rend `(texte, tableau, visuels)`.
 
     * `texte`   : le contenu des fichiers lisibles en texte (Excel, Word, CSV,
@@ -190,14 +201,52 @@ async def _pieces_jointes(pieces: list, surplus: int = 0) -> tuple:
     if not pieces:
         return None, None, []
 
+    integrales = {}
+    if utilisateur is not None and fil:
+        from bureautique.lecture_integrale import lire as lecture_integrale
+        # Les PDF sont lus en série hors de la boucle réseau : PyMuPDF évite
+        # ainsi des accès concurrents, et chaque fichier n’est extrait qu’une fois.
+        for indice, piece in enumerate(pieces):
+            if str(piece.get("nom") or "").lower().endswith(".pdf"):
+                brut = base64.b64decode(piece["b64"], validate=True)
+                if len(brut) > settings.max_body_mb * 1024 * 1024:
+                    raise ValueError("Pièce jointe trop volumineuse.")
+                integrales[indice] = await asyncio.to_thread(lecture_integrale, piece["nom"], brut)
     lus = await asyncio.gather(*[
-        _piece_jointe(p["nom"], p["b64"], p["mime"]) for p in pieces
+        _piece_jointe(p["nom"], p["b64"], p["mime"], **({"texte_integral": integrales[i]} if i in integrales else {}))
+        for i, p in enumerate(pieces)
     ])
 
     textes: list = []
     tableaux: list = []
     visuels: list = []
-    for piece, (texte, lignes) in zip(pieces, lus):
+    for indice, (piece, (texte, lignes)) in enumerate(zip(pieces, lus)):
+        if utilisateur is not None and fil:
+            # Conserver aussi l'original : le DOCX modèle et toutes les feuilles
+            # Excel doivent rester accessibles après le premier tour.
+            from bureautique.lecture_integrale import lire as lecture_integrale
+            from bureautique.atelier import deposer_fichier
+            from ressources.dossiers import enregistrer
+            import hashlib
+            octets = base64.b64decode(piece["b64"], validate=True)
+            if len(octets) > settings.max_body_mb * 1024 * 1024:
+                raise ValueError("Pièce jointe trop volumineuse ; aucun document incomplet ne sera préparé.")
+            ref = await asyncio.to_thread(deposer_fichier, piece["nom"], octets, str(utilisateur.id), "piece_jointe")
+            if texte:
+                integral = integrales.get(indice)
+                if integral is None:
+                    integral = await asyncio.to_thread(lecture_integrale, piece["nom"], octets, texte)
+                elif integral.startswith('[LECTURE VISUELLE REQUISE'):
+                    integral = texte  # Le PDF intégralement scanné a été lu par l’OCR historique.
+                await asyncio.to_thread(enregistrer, str(utilisateur.id), fil, piece["nom"], integral,
+                                        "/api/documents/" + ref, hashlib.sha256(octets).hexdigest())
+            else:
+                # Le visuel conserve sa référence ; l'analyse rejoindra le dossier
+                # au retour de l'expert sans effacer les pièces textuelles.
+                piece["reference_documentaire"] = "/api/documents/" + ref
+                await asyncio.to_thread(enregistrer, str(utilisateur.id), fil, piece["nom"],
+                    "[LECTURE VISUELLE REQUISE : pièce graphique conservée dans son intégralité]",
+                    "/api/documents/" + ref, hashlib.sha256(octets).hexdigest())
         if texte:
             # LE NOM DU FICHIER EN TÊTE dès qu'il y en a plusieurs : sans lui,
             # deux tableaux collés bout à bout deviennent un seul document sans
@@ -420,113 +469,143 @@ async def _persist_messages(current_user: User, thread_pk: str,
         logger.warning("Persistance des messages échouée : %s", e)
 
 
+@router.get("/demandes/{request_id}")
+async def suivre_demande(request_id: str, current_user: User = Depends(get_current_user)):
+    if not has_permission(current_user.role, "chat_agent1"):
+        raise HTTPException(status_code=403, detail="Permission refusée")
+    if not request_id or len(request_id) > 120:
+        raise HTTPException(status_code=422, detail="Identifiant de demande invalide")
+    from agents import requetes
+    try:
+        demande = await requetes.consulter(current_user.id, request_id)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Le suivi de la demande est momentanément indisponible")
+    if demande is None:
+        raise HTTPException(status_code=404, detail="Demande introuvable")
+    return requetes.reponse_de_reprise(demande)
+
+
 @router.post("/")
 async def chat(body: ChatRequest, current_user: User = Depends(get_current_user)):
     if not has_permission(current_user.role, "chat_agent1"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission refusée")
+
+    # Reprendre un résultat acquis ne consomme pas un nouveau quota et reste
+    # possible après la fermeture de la plage horaire de travail.
+    from agents import requetes as _requetes
+    if body.request_id:
+        try:
+            connue = await _requetes.consulter(current_user.id, body.request_id)
+        except Exception:
+            raise HTTPException(status_code=503, detail="Le suivi des demandes est indisponible ; aucun nouveau traitement n'a été lancé")
+        if connue is not None:
+            return _requetes.reponse_de_reprise(connue)
 
     await _check_schedule(current_user)
     await _check_quota(current_user)
 
     start = time.monotonic()
     thread_id = body.thread_id or str(uuid.uuid4())
+    thread_pk = await _claim_thread(current_user, thread_id, body.query)
     # UNE DEMANDE, UN SEUL TOUR (16/09, audit D-13). La reprise HTTP après une
     # socket perdue porte le MÊME `request_id` : si le tour d'origine tourne
     # encore (ou s'il est fini), on ne le rejoue pas.
     from agents import requetes as _requetes
     demande = await _requetes.reclamer(current_user.id, body.request_id, thread_id)
     if not demande["nouvelle"]:
-        return {"response": None, "thread_id": demande.get("thread_id") or thread_id,
-                "reprise": True, "etat": demande.get("etat"),
-                "message": ("Cette demande est déjà en cours : l'écran reprend le suivi du même "
-                            "tour au lieu d'en lancer un second.")}
-    # Réservation + contrôle d'appartenance AVANT le tour : run_turn charge le
-    # checkpoint LangGraph (qui contient désormais l'historique de conversation).
-    thread_pk = await _claim_thread(current_user, thread_id, body.query)
-    success = True
-    error_msg: Optional[str] = None
+        return _requetes.reponse_de_reprise(demande)
+    async with _requetes.suivre(current_user.id, body.request_id):
+        # Réservation + contrôle d'appartenance AVANT le tour : run_turn charge le
+        # checkpoint LangGraph (qui contient désormais l'historique de conversation).
+        success = True
+        error_msg: Optional[str] = None
 
-    pieces, surplus = _normaliser_pieces(body.attachments, body.attachment_name,
-                                        body.attachment_mime, body.attachment_b64)
-    texte_joint, tableau_joint, visuels = await _pieces_jointes(pieces, surplus)
-    # Les champs au singulier désignent LE PREMIER fichier visuel : c'est ce que
-    # relisent les chemins qui ne comptent pas encore (tâches, reprises).
-    tete = visuels[0] if visuels else {}
+        pieces = []
+        try:
+            pieces, surplus = _normaliser_pieces(body.attachments, body.attachment_name,
+                                                body.attachment_mime, body.attachment_b64)
+            texte_joint, tableau_joint, visuels = await _pieces_jointes(pieces, surplus, current_user, thread_id)
+            # Les champs au singulier désignent LE PREMIER fichier visuel : c'est ce que
+            # relisent les chemins qui ne comptent pas encore (tâches, reprises).
+            tete = visuels[0] if visuels else {}
+            result = await runtime.run_turn(
+                query=body.query,
+                user_id=str(current_user.id),
+                user_role=current_user.role,
+                has_attachment=body.has_attachment or bool(pieces),
+                thread_id=thread_id,
+                attachment_b64=tete.get("b64"),
+                attachment_mime=tete.get("mime"),
+                attachment_name=tete.get("nom"),
+                attachment_text=texte_joint,
+                attachment_rows=tableau_joint,
+                attachments=visuels or None,
+            )
+        except HTTPException as e:
+            await _requetes.terminer(current_user.id, body.request_id, "echouee", {"response": str(e.detail), "status": "error"})
+            raise
+        except asyncio.CancelledError:
+            await _requetes.terminer(current_user.id, body.request_id, "echouee", {"response": "Traitement interrompu ; vérifiez son résultat avant de relancer.", "status": "error"})
+            raise
+        except runtime.FilOccupe as e:
+            # Un tour tourne déjà sur ce fil, ou il attend une décision humaine. Ce
+            # n'est pas une panne : c'est le garde-fou qui empêche deux exécutions
+            # d'écrire le même historique. Le message est écrit pour être lu tel
+            # quel — et le 409 distingue ce refus d'une erreur de traitement, ce que
+            # l'écran utilise pour proposer la file d'attente.
+            await _requetes.terminer(current_user.id, body.request_id, "echouee", {"response": str(e), "status": "error"})
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        except Exception as e:
+            success = False
+            error_msg = str(e)
+            result = {
+                "status": "error", "thread_id": thread_id,
+                "response": "Une erreur est survenue, veuillez réessayer.",
+                "agent_used": "agent1", "tokens_in": 0, "tokens_out": 0,
+                "cost_eur": 0.0, "model_used": None, "validation_id": None,
+            }
 
-    try:
-        result = await runtime.run_turn(
-            query=body.query,
+        tokens_in = result.get("tokens_in", 0)
+        tokens_out = result.get("tokens_out", 0)
+        cost_eur = result.get("cost_eur", 0.0)
+        agent_used = result.get("agent_used", "agent1")
+        duration_ms = int((time.monotonic() - start) * 1000)
+
+        await _persist_messages(current_user, thread_pk, body.query, result.get("response") or "",
+                                _pieces_persistables(pieces, result.get("pieces")))
+        # La demande est close : une reprise tardive sait qu'elle n'a rien à relancer.
+        await _requetes.terminer(current_user.id, body.request_id,
+                                 "terminee" if success else "echouee", resultat=result)
+        await _actualiser_expert(current_user, thread_pk, agent_used)
+        await _increment_usage(current_user, tokens=tokens_in + tokens_out, cost=cost_eur)
+        await log_action(
+            action="chat_request",
             user_id=str(current_user.id),
-            user_role=current_user.role,
-            has_attachment=body.has_attachment or bool(pieces),
-            thread_id=thread_id,
-            attachment_b64=tete.get("b64"),
-            attachment_mime=tete.get("mime"),
-            attachment_name=tete.get("nom"),
-            attachment_text=texte_joint,
-            attachment_rows=tableau_joint,
-            attachments=visuels or None,
+            agent_id=agent_used,
+            model_used=result.get("model_used"),
+            success=success,
+            error_message=error_msg,
+            duration_ms=duration_ms,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_eur=cost_eur,
+            # LE FIL ET LES GESTES (07/09). Sans le fil, rien ne rattachait cette
+            # ligne technique à l'échange qu'elle décrit ; sans les gestes, le
+            # journal disait qu'un tour avait duré 4 minutes sans dire à quoi.
+            trigger_type="chat",
+            trigger_id=thread_id,
+            metadata={"gestes": result.get("gestes") or [],
+                      "pieces": len(pieces)},
         )
-    except HTTPException:
-        raise
-    except runtime.FilOccupe as e:
-        # Un tour tourne déjà sur ce fil, ou il attend une décision humaine. Ce
-        # n'est pas une panne : c'est le garde-fou qui empêche deux exécutions
-        # d'écrire le même historique. Le message est écrit pour être lu tel
-        # quel — et le 409 distingue ce refus d'une erreur de traitement, ce que
-        # l'écran utilise pour proposer la file d'attente.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
-        success = False
-        error_msg = str(e)
-        result = {
-            "status": "error", "thread_id": thread_id,
-            "response": "Une erreur est survenue, veuillez réessayer.",
-            "agent_used": "agent1", "tokens_in": 0, "tokens_out": 0,
-            "cost_eur": 0.0, "model_used": None, "validation_id": None,
+
+        return {
+            "thread_id": thread_id,
+            "response": result.get("response"),
+            "agent_used": agent_used,
+            "status": result.get("status", "completed"),
+            "validation_id": result.get("validation_id"),
+            "validation": result.get("validation"),
         }
-
-    tokens_in = result.get("tokens_in", 0)
-    tokens_out = result.get("tokens_out", 0)
-    cost_eur = result.get("cost_eur", 0.0)
-    agent_used = result.get("agent_used", "agent1")
-    duration_ms = int((time.monotonic() - start) * 1000)
-
-    await _persist_messages(current_user, thread_pk, body.query, result.get("response") or "",
-                            _pieces_persistables(pieces, result.get("pieces")))
-    # La demande est close : une reprise tardive sait qu'elle n'a rien à relancer.
-    await _requetes.terminer(current_user.id, body.request_id,
-                             "terminee" if success else "echouee")
-    await _actualiser_expert(current_user, thread_pk, agent_used)
-    await _increment_usage(current_user, tokens=tokens_in + tokens_out, cost=cost_eur)
-    await log_action(
-        action="chat_request",
-        user_id=str(current_user.id),
-        agent_id=agent_used,
-        model_used=result.get("model_used"),
-        success=success,
-        error_message=error_msg,
-        duration_ms=duration_ms,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        cost_eur=cost_eur,
-        # LE FIL ET LES GESTES (07/09). Sans le fil, rien ne rattachait cette
-        # ligne technique à l'échange qu'elle décrit ; sans les gestes, le
-        # journal disait qu'un tour avait duré 4 minutes sans dire à quoi.
-        trigger_type="chat",
-        trigger_id=thread_id,
-        metadata={"gestes": result.get("gestes") or [],
-                  "pieces": len(pieces)},
-    )
-
-    return {
-        "thread_id": thread_id,
-        "response": result.get("response"),
-        "agent_used": agent_used,
-        "status": result.get("status", "completed"),
-        "validation_id": result.get("validation_id"),
-        "validation": result.get("validation"),
-    }
 
 
 # LA CONVERSATION SUIT LA PERSONNE, PAS L'APPAREIL (09/09). Les fils vivent
@@ -606,7 +685,7 @@ async def get_thread_messages(thread_id: str, current_user: User = Depends(get_c
 # À la place : le client échange son JWT (en-tête Authorization) contre un ticket
 # court à usage unique (~30 s) via POST /ws-ticket, puis ouvre le WS avec ?ticket=.
 # Store en mémoire (OK car uvicorn mono-worker ; à externaliser si scaling multi-worker).
-_WS_TICKETS: dict[str, tuple[str, float]] = {}   # ticket -> (user_id, expiry_monotonic)
+# Les tickets sont consommés atomiquement sur le volume partagé.
 _WS_TICKET_TTL_S = 30
 
 # Les tours dont la socket est partie mais qui finissent leur course : asyncio
@@ -667,11 +746,12 @@ async def transcrire_voix(body: TranscriptionRequest, current_user: User = Depen
 @router.post("/ws-ticket")
 async def create_ws_ticket(current_user: User = Depends(get_current_user)):
     """Émet un ticket éphémère à usage unique pour ouvrir le WebSocket chat."""
-    now = time.monotonic()
-    for k in [k for k, (_, exp) in _WS_TICKETS.items() if exp < now]:  # purge opportuniste
-        _WS_TICKETS.pop(k, None)
+    from security.jetons_ephemeres import emettre
     ticket = secrets.token_urlsafe(24)
-    _WS_TICKETS[ticket] = (str(current_user.id), now + _WS_TICKET_TTL_S)
+    try:
+        await asyncio.to_thread(emettre, "websocket", ticket, str(current_user.id), _WS_TICKET_TTL_S)
+    except Exception as e:
+        raise HTTPException(503, "Connexion momentanément indisponible ; réessayez.") from e
     return {"ticket": ticket}
 
 
@@ -680,11 +760,12 @@ async def _ws_authenticate(websocket: WebSocket) -> Optional[User]:
     ticket = websocket.query_params.get("ticket")
     if not ticket:
         return None
-    entry = _WS_TICKETS.pop(ticket, None)   # usage unique : consommé quoi qu'il arrive
-    if not entry:
+    from security.jetons_ephemeres import consommer
+    try:
+        user_id = await asyncio.to_thread(consommer, "websocket", ticket)
+    except Exception:
         return None
-    user_id, exp = entry
-    if time.monotonic() > exp:
+    if not user_id:
         return None
     async with get_db() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE id = $1::uuid AND actif = true", user_id)
@@ -705,7 +786,13 @@ async def _dire(websocket: WebSocket, payload: dict) -> bool:
         return False
 
 
-async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
+async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str, data: dict) -> None:
+    from agents import requetes
+    async with requetes.suivre(user.id, data.get("request_id")):
+        await _executer_tour_ws(websocket, user, thread_id, data)
+
+
+async def _executer_tour_ws(websocket: WebSocket, user: User, thread_id: str,
                          data: dict) -> None:
     """Un tour complet, dans une tâche À PART pour rester ANNULABLE.
 
@@ -715,10 +802,12 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     exactement le moment où il ne servait plus à rien. Le sortir en tâche rend
     la boucle libre d'écouter, donc l'arrêt possible.
     """
+    from agents import requetes as _requetes
     try:
         await _check_schedule(user)
         await _check_quota(user)
     except HTTPException as e:
+        await _requetes.terminer(user.id, data.get("request_id"), "echouee", {"response": str(e.detail)})
         await _dire(websocket, {"type": "error", "detail": e.detail})
         return
 
@@ -734,15 +823,21 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     try:
         thread_pk = await _claim_thread(user, thread_id, data.get("query", ""))
     except HTTPException as e:
+        await _requetes.terminer(user.id, data.get("request_id"), "echouee", {"response": str(e.detail), "status": "error"})
         await _dire(websocket, {"type": "error", "detail": e.detail})
         return
 
-    pieces, surplus = _normaliser_pieces(
-        data.get("attachments"), data.get("attachment_name"),
-        data.get("attachment_mime"), data.get("attachment_b64"),
-    )
-    texte_joint, tableau_joint, visuels = await _pieces_jointes(pieces, surplus)
-    tete = visuels[0] if visuels else {}
+    try:
+        pieces, surplus = _normaliser_pieces(
+            data.get("attachments"), data.get("attachment_name"),
+            data.get("attachment_mime"), data.get("attachment_b64"),
+        )
+        texte_joint, tableau_joint, visuels = await _pieces_jointes(pieces, surplus, user, thread_id)
+        tete = visuels[0] if visuels else {}
+    except Exception:
+        await _requetes.terminer(user.id, data.get("request_id"), "echouee", {"response": "Impossible de lire les pièces jointes.", "status": "error"})
+        await _dire(websocket, {"type": "error", "detail": "Impossible de lire les pièces jointes."})
+        return
 
     final_response = ""
     # L'échange a-t-il déjà été écrit pendant la boucle ? Un tour qui se termine
@@ -756,6 +851,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     # ce n'est pas un échec : il attend la personne (15/09, Duret — l'envoi d'un
     # mail approuvé huit secondes plus tard s'affichait en rouge).
     attend_un_accord = False
+    validation_du_tour = None
     try:
         async for event in runtime.stream_turn(
             query=data.get("query", ""),
@@ -782,6 +878,7 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
                 pieces_tour = event["pieces"]
             if event.get("type") == "pending_validation":
                 attend_un_accord = True
+                validation_du_tour = event.get("validation_id")
             if event.get("type") == "final":
                 final_response = event.get("response") or ""
                 # CE QUE LE TOUR A COÛTÉ. Cette variable valait 0 depuis
@@ -838,18 +935,21 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
         if not persistance_faite:
             await _persist_messages(user, thread_pk, data.get("query", ""), mot)
             persistance_faite = True
+        await _requetes.terminer(user.id, data.get("request_id"), "echouee", {"response": mot, "status": "error"})
         await _dire(websocket, {"type": "arrete", "detail": mot})
         await log_action(action="chat_interrompu", user_id=str(user.id),
                          agent_id=agent_used, success=True,
                          duration_ms=int((time.monotonic() - start) * 1000))
         raise
     except runtime.FilOccupe as e:
+        await _requetes.terminer(user.id, data.get("request_id"), "echouee", {"response": str(e), "status": "error"})
         # Refus délibéré, pas une panne : le client ne doit PAS se
         # rabattre sur le POST, qui retomberait sur le même fil occupé.
         # Un type distinct le lui dit.
         await _dire(websocket, {"type": "fil_occupe", "detail": str(e)})
         return
     except Exception as e:  # noqa: BLE001
+        await _requetes.terminer(user.id, data.get("request_id"), "echouee", {"response": "Une erreur est survenue ; vérifiez les actions déjà effectuées avant de relancer.", "status": "error"})
         # UN TOUR QUI PLANTE DOIT LAISSER UNE TRACE. Cette branche rendait
         # « Une erreur est survenue » à l'écran et sortait SANS RIEN journaliser :
         # la tuile « Erreurs (24 h) » et l'onglet Erreurs du pilotage ne
@@ -875,7 +975,10 @@ async def _derouler_tour(websocket: WebSocket, user: User, thread_id: str,
     # La demande est close (audit D-13) : une reprise tardive ne relance rien.
     from agents import requetes as _requetes
     await _requetes.terminer(user.id, data.get("request_id"),
-                             "terminee" if (final_response or attend_un_accord) else "echouee")
+                             "terminee" if (final_response or attend_un_accord) else "echouee",
+                             resultat={"response": final_response, "thread_id": thread_id,
+                                       "status": "pending_validation" if attend_un_accord else "ok",
+                                       "validation_id": validation_du_tour})
     await _actualiser_expert(user, thread_pk, agent_used)
     await _increment_usage(user, tokens=tokens, cost=cout)
     # LE JOURNAL DISAIT « RÉUSSI » ET « MODÈLE — » À TOUS LES COUPS. Il porte
@@ -957,6 +1060,11 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
             # l'écran rejoue son `request_id` (reconnexion), on le dit au lieu
             # de relancer un tour.
             from agents import requetes as _requetes
+            try:
+                await _claim_thread(user, thread_id, query)
+            except HTTPException as e:
+                await _dire(websocket, {"type": "error", "detail": e.detail})
+                continue
             demande = await _requetes.reclamer(user.id, data.get("request_id"), thread_id)
             if not demande["nouvelle"]:
                 await websocket.send_json({
@@ -965,6 +1073,9 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
                               "même tour."})
                 continue
 
+            # Accuser réception avant l’extraction des PDF et classeurs :
+            # sinon l’écran croit la connexion muette et réenvoie tout le lot.
+            await _dire(websocket, {"type": "reception", "thread_id": thread_id})
             en_cours = asyncio.create_task(
                 _derouler_tour(websocket, user, thread_id, data))
     except WebSocketDisconnect:
@@ -988,3 +1099,43 @@ async def chat_ws(websocket: WebSocket, thread_id: str):
         if en_cours is not None and not en_cours.done():
             _TOURS_DETACHES.add(en_cours)
             en_cours.add_done_callback(_TOURS_DETACHES.discard)
+
+
+@router.get("/threads/{thread_id}/travail")
+async def get_travail(thread_id: str, current_user: User = Depends(get_current_user)):
+    async with get_rls_db(str(current_user.id), current_user.role) as conn:
+        existe = await conn.fetchval("SELECT id FROM threads WHERE langgraph_thread_id=$1 AND user_id=$2",thread_id,current_user.id)
+    if not existe:
+        raise HTTPException(status_code=404, detail="Conversation introuvable")
+    from ressources.travail import lire
+    travail = await asyncio.to_thread(lire,str(current_user.id),thread_id)
+    # L'interface consulte l'état, jamais le journal brut des demandes.
+    return {k:travail.get(k) for k in ("objectif","revision","contraintes","etapes","resultats","references")}
+
+
+async def _verifier_fil_documentaire(thread_id: str, user: User):
+    if not has_permission(user.role, "chat_agent1"):
+        raise HTTPException(status_code=403, detail="Permission refusée")
+    async with get_rls_db(str(user.id), user.role) as conn:
+        existe = await conn.fetchval("SELECT id FROM threads WHERE langgraph_thread_id=$1 AND user_id=$2", thread_id, user.id)
+    if not existe:
+        raise HTTPException(status_code=404, detail="Conversation introuvable")
+
+
+@router.get("/threads/{thread_id}/redactions")
+async def get_redactions(thread_id: str, current_user: User = Depends(get_current_user)):
+    await _verifier_fil_documentaire(thread_id, current_user)
+    from ressources.documents_file import progression
+    return await asyncio.to_thread(progression, str(current_user.id), thread_id)
+
+
+@router.post("/threads/{thread_id}/redactions/{redaction_id}/{action}")
+async def piloter_redaction(thread_id: str, redaction_id: str, action: str, current_user: User = Depends(get_current_user)):
+    await _verifier_fil_documentaire(thread_id, current_user)
+    if action not in ("reprendre", "suspendre"):
+        raise HTTPException(status_code=400, detail="Action inconnue")
+    from ressources.documents_file import piloter
+    try:
+        return await asyncio.to_thread(piloter, str(current_user.id), thread_id, redaction_id, action == "reprendre")
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Rédaction introuvable dans cette conversation")

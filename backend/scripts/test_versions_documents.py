@@ -155,8 +155,9 @@ for j in (brouillon, vide):
 f = atelier._lire_fiche(autre_fil)
 f["termine"] = vieux
 atelier._ecrire_fiche(f["document_id"], f)
+os.environ["DOCUMENTS_RETENTION_JOURS"] = "1"
 atelier.purger()
-verifier("un brouillon REMPLI de trois jours survit (sept jours avant de partir)",
+verifier("un brouillon REMPLI de trois jours survit à la rétention",
          atelier.fiche(brouillon, MOI) is not None)
 verifier("un document ouvert et VIDE de trois jours part", atelier.fiche(vide, MOI) is None)
 verifier("un rendu périmé part ENTIER : fiche, contenu, rendu et images ensemble",

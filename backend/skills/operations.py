@@ -22,9 +22,8 @@ ne réclame rien et n'appelle pas le fournisseur.
 prouve ni l'envoi ni l'échec. On ne relance JAMAIS tout seul — on le dit, et la
 réconciliation (chercher le message chez le fournisseur) tranche.
 
-SANS LA MIGRATION, TOUT CONTINUE. Chaque fonction est best-effort : si la table
-n'existe pas encore, l'opération s'exécute comme avant et le journal le dit. Le
-registre ajoute une garantie, il n'ajoute pas une panne.
+Sans registre disponible, aucun nouvel effet n'est lancé : une panne de la
+garantie d'unicité ne doit pas se transformer en double envoi.
 """
 from __future__ import annotations
 
@@ -38,6 +37,10 @@ DECISIONS = ("preparee", "approuvee", "refusee")
 EXECUTIONS = ("en_attente", "en_cours", "reussie", "echouee", "effet_inconnu")
 
 
+class RegistreIndisponible(RuntimeError):
+    """L'unicité n'a pas pu être établie ; le fournisseur n'est pas appelé."""
+
+
 def _indisponible(e: Exception) -> bool:
     from database.connection import schema_incomplet
     return schema_incomplet(e)
@@ -49,16 +52,12 @@ async def ouvrir(skill: str, user_id, validation_id=None, thread_id=None,
     from database.connection import get_db
     try:
         async with get_db() as conn:
-            if validation_id:
-                connue = await conn.fetchval(
-                    "SELECT id::text FROM operations_externes WHERE validation_id = $1::uuid",
-                    str(validation_id))
-                if connue:
-                    return connue
             return await conn.fetchval(
                 """INSERT INTO operations_externes
                        (validation_id, user_id, thread_id, skill, effet, payload_hash, decision)
                    VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, 'approuvee')
+                   ON CONFLICT (validation_id) WHERE validation_id IS NOT NULL
+                   DO UPDATE SET validation_id = EXCLUDED.validation_id
                    RETURNING id::text""",
                 str(validation_id) if validation_id else None,
                 str(user_id) if user_id else None, str(thread_id or "") or None,
@@ -67,8 +66,8 @@ async def ouvrir(skill: str, user_id, validation_id=None, thread_id=None,
         if not _indisponible(e):
             logger.warning("Registre des opérations indisponible (%s)", type(e).__name__)
         else:
-            logger.info("Migration 045 absente : l'effet externe s'exécute sans registre.")
-        return None
+            logger.info("Migration 045 absente : effet externe suspendu.")
+        raise RegistreIndisponible("Le registre des actions est indisponible : aucune action n'a été lancée.") from e
 
 
 async def reclamer(operation_id: Optional[str]) -> bool:
@@ -76,7 +75,7 @@ async def reclamer(operation_id: Optional[str]) -> bool:
     prise (ou si elle est déjà finie). C'est CE refus qui empêche un second
     envoi après une reprise."""
     if not operation_id:
-        return True                     # sans registre, on garde le comportement d'avant
+        raise RegistreIndisponible("L'opération n'a pas pu être enregistrée : aucune action n'a été lancée.")
     from database.connection import get_db
     try:
         async with get_db() as conn:
@@ -86,9 +85,9 @@ async def reclamer(operation_id: Optional[str]) -> bool:
                 RETURNING id::text""", str(operation_id))
         return bool(pris)
     except Exception as e:  # noqa: BLE001
-        logger.warning("Opération %s non réclamée (%s) : exécution quand même",
+        logger.warning("Opération %s non réclamée (%s) : exécution suspendue",
                        str(operation_id)[:8], type(e).__name__)
-        return True
+        raise RegistreIndisponible("Impossible de réserver cette action : aucun nouvel appel n'a été lancé.") from e
 
 
 async def _etat(operation_id: Optional[str], execution: str, recu=None, erreur=None) -> None:

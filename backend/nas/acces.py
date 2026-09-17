@@ -326,7 +326,7 @@ async def _lister_ouvert(client, base, sid, chemin: str, tout: bool = False) -> 
         # devant le vrai logo, pris pour lui, ouvert à sa place. Ni listés, ni
         # catalogués, ni cherchés.
         nom_f = str(f.get("name") or "")
-        if nom_f.startswith("._") or nom_f in (".DS_Store", "__MACOSX", "Thumbs.db", "desktop.ini"):
+        if nom_f.startswith(("._", "~$")) or nom_f in (".DS_Store", "__MACOSX", "Thumbs.db", "desktop.ini"):
             continue
         add = f.get("additional") or {}
         entrees.append({
@@ -338,7 +338,8 @@ async def _lister_ouvert(client, base, sid, chemin: str, tout: bool = False) -> 
             "modifie": ((add.get("time") or {}).get("mtime")
                         if not f.get("isdir") else None),
         })
-    total = int(total or len(entrees))
+    total = int(total if total is not None else len(bruts))
+    total -= len(bruts if tout else bruts[:MAX_ENTREES]) - len(entrees)
     # Ce que la personne n'a pas le droit de voir n'existe pas pour elle : ni
     # dans la liste, ni dans le compte (13/09, niveaux par dossier).
     from security.lecteur import role_lecteur
@@ -485,6 +486,18 @@ async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None 
     # minutes de transfert. Si le serveur ne sait pas répondre, on télécharge
     # comme avant : ne pas savoir n'est pas une raison de refuser.
     taille, raison = await _taille_ouverte(client, base, sid, vise)
+    # Certains fichiers du NAS portent littéralement « %C3%A9 » dans leur nom.
+    # Le chemin décodé est toujours confiné ci-dessus ; si l'entrée exacte
+    # existe, elle prime sur l'interprétation URL. Aucun fichier NAS n'est renommé.
+    litteral=posixpath.normpath(str(chemin).strip().replace('\\','/'))
+    if litteral.startswith('/') and litteral!=vise and '%' in litteral:
+        from security.lecteur import role_lecteur
+        from nas import niveaux
+        if (any(litteral==r or litteral.startswith(r+'/') for r in dossiers_autorises())
+                and niveaux.visible_pour(litteral,role_lecteur())):
+            taille_exacte,raison_exacte=await _taille_ouverte(client,base,sid,litteral)
+            if taille_exacte>0 and not raison_exacte:
+                vise,nom,taille,raison=litteral,posixpath.basename(litteral),taille_exacte,''
     if not taille and raison:
         # LE NOM EXACT N'EXISTE PAS : ON RATTRAPE PAR LE DOSSIER. Si le
         # rattrapage échoue, on dit la raison du serveur ET ce que le dossier
@@ -530,6 +543,20 @@ async def _lire_ouvert(client, base, sid, chemin: str, proprietaire: str | None 
     except FichierNonSupporte as e:
         return {"chemin": vise, "message": str(e), **depot}
 
+    try:
+        from security.conversation import fil_courant
+        if proprietaire and fil_courant.get():
+            from bureautique.lecture_integrale import lire as lire_integral
+            from ressources.dossiers import enregistrer
+            integral = await asyncio.to_thread(lire_integral, nom, brut, structure.get("text") or "")
+            if integral.strip():
+                import hashlib
+                source = await asyncio.to_thread(enregistrer, proprietaire, fil_courant.get(), nom, integral, vise, hashlib.sha256(brut).hexdigest())
+                depot = {**depot, "source_dossier": source,
+                         "pour_continuer": {"skill": "lire_source_dossier", "args": {"source": source, "fragment": 1}},
+                         "lecture_integrale_disponible": True}
+    except Exception as e:
+        depot={**depot,"lecture_integrale_disponible":False,"avertissement_lecture":"Lecture intégrale non enregistrée ("+type(e).__name__+"). Utilise ajouter_source_dossier pour reprendre avant toute synthèse complète."}
     if structure["kind"] == "tabulaire":
         lignes = structure["rows"]
         return {"chemin": vise, "type": "tableau", "colonnes": structure["columns"],
@@ -860,6 +887,19 @@ def _sans_accent_nas(texte: str) -> str:
                    if unicodedata.category(c) != "Mn")
 
 
+def _nom_correspond(nom: str, motif: str) -> bool:
+    """Tolérer espaces/tirets/underscores et CCTP17 ↔ CCTP 17, sans deviner."""
+    import re
+    nom, motif = _sans_accent_nas(nom), _sans_accent_nas(motif).strip()
+    if not motif:return False
+    if motif in nom:return True
+    def mots(t):
+        t=re.sub(r'(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])',' ',t)
+        return re.findall(r'[a-z0-9]+',t)
+    termes=mots(motif);disponibles=set(mots(nom))
+    return bool(termes) and all(m in disponibles for m in termes)
+
+
 async def _chercher_ouvert(client, base, sid, motif: str,
                            dossier: Optional[str] = None) -> dict:
     """Cherche par nom dans une session DÉJÀ ouverte."""
@@ -944,7 +984,7 @@ async def _chercher_ouvert(client, base, sid, motif: str,
         cible = _sans_accent_nas(motif)
 
         def _correspond(e):
-            return cible in _sans_accent_nas(e.get("nom") or "")
+            return _nom_correspond(e.get("nom") or "",motif)
 
         cat = catalogue_pret()
         if cat is not None:

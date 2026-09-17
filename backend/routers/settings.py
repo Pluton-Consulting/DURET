@@ -254,6 +254,9 @@ async def ecrire_reglage(body: ReglageBody, current_user: User = Depends(get_cur
     if refus:
         raise HTTPException(status_code=422, detail=refus)
     try:
+        if body.cle == "modele_embedding":
+            from vectorstore.generation import conserver_actif
+            await conserver_actif()
         effective = await enregistrer(body.cle, body.valeur, str(current_user.id))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -683,7 +686,9 @@ async def etat_des_embeddings(current_user: User = Depends(get_current_user)):
     from vectorstore import revectorisation as rv
 
     etat = await rv.etat()
-    mesuree, detail = await rv.mesurer_dimension()
+    from vectorstore.embeddings import modele_courant
+    choisi = modele_courant()
+    mesuree, detail = await rv.mesurer_dimension(choisi)
     attendue = await rv.dimension_attendue()
     return {
         **etat,
@@ -692,7 +697,7 @@ async def etat_des_embeddings(current_user: User = Depends(get_current_user)):
         "detail": detail,
         # LE VERDICT EST CALCULÉ ICI, PAS À L'ÉCRAN : c'est la même donnée qui
         # décide de l'affichage et qui autorisera l'opération.
-        "revectorisation_necessaire": bool(mesuree and mesuree != attendue),
+        "revectorisation_necessaire": bool(mesuree and (mesuree != attendue or choisi != await __import__("vectorstore.generation", fromlist=["actif"]).actif())),
         "mesure_possible": mesuree is not None,
     }
 
@@ -715,7 +720,9 @@ async def lancer_revectorisation(body: RevectoriserRequest,
     # peut dater de plusieurs minutes, et le modèle a pu changer entre-temps
     # (deux onglets, deux administrateurs). Effacer un corpus sur une valeur
     # périmée le laisserait à une dimension que plus aucun modèle ne rend.
-    mesuree, detail = await rv.mesurer_dimension()
+    from vectorstore.embeddings import modele_courant
+    choisi = modele_courant()
+    mesuree, detail = await rv.mesurer_dimension(choisi)
     if mesuree is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
     if mesuree != body.dimension:
@@ -735,15 +742,11 @@ async def lancer_revectorisation(body: RevectoriserRequest,
     await log_action(action="revectorisation_lancee",
                      user_id=str(current_user.id),
                      metadata={"dimension": mesuree})
-    rv.lancer_en_fond(mesuree)
+    rv.lancer_en_fond(mesuree, choisi)
     return {
         "lancee": True,
         "dimension": mesuree,
-        "note": (f"La re-vectorisation a démarré : les vecteurs s'effacent et la "
-                 f"base passe à {mesuree} dimensions, puis les morceaux se "
-                 "re-vectorisent en tâche de fond. L'avancement s'affiche ici. "
-                 "Pendant ce temps, la recherche continue de répondre par sa "
-                 "voie textuelle : les résultats sont moins fins, pas absents."),
+        "note": "Le nouvel index se prépare en conservant l’ancien. La bascule aura lieu après vérification de tous les morceaux. Une interruption conserve les lots préparés pour la reprise.",
     }
 
 

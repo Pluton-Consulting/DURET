@@ -246,7 +246,11 @@ async def memoriser_echange(thread_id: str, user_id: Optional[str], rang: int,
         texte = f"{question}\n\n{_tailler(reponse, 1200)}"
         vecteur = await embed_query(texte)
         async with get_db() as conn:
-            await conn.execute(
+            async with conn.transaction():
+                from vectorstore.generation import verifier_vecteur
+                await conn.execute('LOCK TABLE conversation_memoire IN ROW EXCLUSIVE MODE')
+                if vecteur and not await verifier_vecteur(conn,vecteur): vecteur=None
+                await conn.execute(
                 "INSERT INTO conversation_memoire "
                 "(thread_id, user_id, rang, question, reponse, embedding) "
                 "VALUES ($1, $2::uuid, $3, $4, $5, $6::vector) "
@@ -388,12 +392,16 @@ async def rappeler_echanges(thread_id: str, question: str, avant_rang: int) -> l
             return []
         v = "[" + ",".join(f"{x:.6f}" for x in vecteur) + "]"
         async with get_db() as conn:
-            lignes = await conn.fetch(
-                "SELECT rang, question, reponse, 1 - (embedding <=> $3::vector) AS score "
-                "FROM conversation_memoire "
-                "WHERE thread_id = $1 AND rang < $2 AND embedding IS NOT NULL "
-                "ORDER BY embedding <=> $3::vector LIMIT $4",
-                thread_id, avant_rang, v, k)
+            async with conn.transaction():
+                from vectorstore.generation import verifier_vecteur
+                await conn.execute('LOCK TABLE conversation_memoire IN ACCESS SHARE MODE')
+                if not await verifier_vecteur(conn,vecteur): return []
+                lignes = await conn.fetch(
+                    "SELECT rang, question, reponse, 1 - (embedding <=> $3::vector) AS score "
+                    "FROM conversation_memoire "
+                    "WHERE thread_id = $1 AND rang < $2 AND embedding IS NOT NULL "
+                    "ORDER BY embedding <=> $3::vector LIMIT $4",
+                    thread_id, avant_rang, v, k)
         seuil = float(_reglage("memoire_rappels_seuil", 0.45))
         return [dict(l) for l in lignes if float(l["score"] or 0) >= seuil]
     except Exception as e:  # noqa: BLE001

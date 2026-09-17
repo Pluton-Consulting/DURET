@@ -10,7 +10,7 @@ def _bool(name: str, default: bool) -> bool:
     return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
 
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = ""  # aucune connexion SQL depuis le navigateur
 
 # LLM
 LLM_PROVIDER = os.environ.get("BROWSER_LLM_PROVIDER", "deepseek").lower()
@@ -29,7 +29,6 @@ SESSIONS_DIR = os.environ.get("BROWSER_SESSIONS_DIR", "/sessions")
 
 # Réinjection RAG via le webhook d'ingestion du backend
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:8000")
-INGESTION_WEBHOOK_SECRET = os.environ.get("INGESTION_WEBHOOK_SECRET", "")
 
 # Capture d'écran : largeur max (downscale) pour limiter la taille en base
 SCREENSHOT_MAX_WIDTH = int(os.environ.get("BROWSER_SCREENSHOT_MAX_WIDTH", "1000"))

@@ -64,7 +64,7 @@ async def produire(titre: str, blocs: list, proprietaire: str,
     voulue = {"entete_image": entete_image or "", "pied_image": pied_image or "",
               "image_couverture": str(presentation.get("image_couverture") or ""),
               "style": str(presentation.get("style") or "")}
-    for d in termines(proprietaire)[:5]:
+    for d in termines(proprietaire, fil=fil or "")[:5]:
         avant = d.get("presentation") or {}
         # REFAIRE AVEC UN LOGO N'EST PAS RALLONGER (15/09, 18:43) : le document
         # produit sans en-tête, puis le logo trouvé, le second appel qui l'ajoutait

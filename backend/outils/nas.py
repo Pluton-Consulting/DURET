@@ -568,7 +568,10 @@ async def ouvrir(nom_ou_chemin: str, proprietaire: str | None = None) -> dict:
     """
     from nas.acces import connexion, _lire_ouvert, _chercher_ouvert, NasRefuse, decoder
 
-    demande = decoder((nom_ou_chemin or "").strip())
+    brut=(nom_ou_chemin or "").strip()
+    # Un chemin provenant du NAS peut contenir un %XX littéral ; la lecture
+    # vérifie les deux interprétations sous les racines et droits autorisés.
+    demande=brut if brut.startswith('/') else decoder(brut)
     if not demande:
         raise NasRefuse("Donne le nom ou le chemin du fichier à ouvrir.")
 
@@ -586,13 +589,15 @@ async def ouvrir(nom_ou_chemin: str, proprietaire: str | None = None) -> dict:
                 # pareil — deux appels lents pour rien.
                 return {**lu, "trouve_par": "chemin"}
             except NasRefuse:
-                # Un chemin recomposé (« /03-Appel d'offres etudes/DCE.pdf »)
-                # n'est pas une tentative de sortir du périmètre : la
-                # recherche qui suit ne regarde que sous les racines ouvertes,
-                # et `_lire_ouvert` revérifie ce qu'elle trouve (08/09).
-                pass
-            except Exception:
-                pass             # inexistant : on retombe sur la recherche
+                # Un alias de dossier peut être résolu, mais le parent reste
+                # obligatoire : jamais de remplacement par un homonyme ailleurs.
+                parent=await _resoudre(client,base,sid,posixpath.dirname(demande))
+                exact=posixpath.join(parent,posixpath.basename(demande))
+                if exact==demande:raise
+                lu=await _lire_ouvert(client,base,sid,exact,proprietaire)
+                return {**lu,"trouve_par":"dossier_resolu"}
+            except Exception as e:
+                raise NasRefuse("Le chemin exact ne peut pas être lu. Vérifie son accès ou recherche le fichier ; aucun homonyme n’a été ouvert.") from e
 
         motif = posixpath.basename(demande) or demande
         trouve = await _chercher_ouvert(client, base, sid, motif)

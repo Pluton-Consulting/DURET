@@ -54,6 +54,7 @@ import tempfile
 import types
 
 BACKEND = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend").resolve()
+sys.path.insert(0, str(BACKEND))
 RACINE = BACKEND.parent
 echecs = []
 
@@ -474,8 +475,8 @@ verifier("règle du prompt : CHAQUE LIVRABLE SE PRÉSENTE PAR CE QU'IL CONTIENT"
          "CHAQUE LIVRABLE SE PRÉSENTE PAR CE QU'IL CONTIENT." in ag1
          and "Un inventaire de fichiers n'est pas un quantitatif" in ag1
          and "Une recherche web faite en chemin se dit en une phrase" in ag1)
-verifier("la liste des documents terminés explique `contenu` et dit que l'atelier est par personne",
-         "`contenu` est le DÉBUT " in ag1 and "toutes conversations confondues" in ag1)
+verifier("la liste des documents terminés explique `contenu` et isole le fil",
+         "`contenu` est le DÉBUT " in ag1 and '_docs_termines, _uid, state.get("thread_id") or ""' in ag1)
 verifier("le tableau web fondu garde la recherche et l'extrait",
          '"columns": ["Recherche", "Adresse consultée", "Ce qu\'on y a lu"]' in ag1)
 

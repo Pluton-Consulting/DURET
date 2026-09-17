@@ -42,7 +42,7 @@ MIGRATIONS="backend/database/migrations"
 echo "==> 1/7  Version livrée…"
 # Le commit est écrit dans un fichier lu par l'application : `/api/ready` le
 # rend, et l'on sait enfin QUELLE version tourne (audit D-26). Le conteneur n'a
-# pas le dépôt git ; ce fichier, lui, est monté avec le code.
+# pas le dépôt git ; ce fichier, lui, est copié dans l’image construite.
 {
   echo "commit=$(git rev-parse HEAD 2>/dev/null || echo inconnu)"
   echo "branche=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo inconnue)"
@@ -68,7 +68,13 @@ fi
 echo "==> 4/7  Base de données seule, et son healthcheck…"
 $COMPOSE up -d postgres
 cid="$($COMPOSE ps -q postgres)"
+attentes=0
 until [ "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo starting)" = "healthy" ]; do
+  attentes=$((attentes + 1))
+  if [ "$attentes" -ge 60 ]; then
+    echo "ERREUR : PostgreSQL ne devient pas disponible après 180 secondes." >&2
+    exit 1
+  fi
   printf '.'; sleep 3
 done
 echo " ok"

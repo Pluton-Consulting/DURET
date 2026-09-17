@@ -273,10 +273,10 @@ if fusion and "MAX_LIMITE" in src_skill:
         verifier("page 3 de 20 : les documents 41 à 57", r["nombre"] == 17 and r["resultats"][0]["source"] == "CR-40.pdf" and r["pour_continuer"] is None)
         taille = sum(len(e["texte"]) for d in r["resultats"] for e in d["extraits"])
         verifier("une page de 17 documents tient dans le budget (extraits raccourcis)", taille <= 9000 + 17 * 2 * 8, str(taille))
-        r = asyncio.run(skill({"requete": "drainage", "page": 50}, user))
+        r = asyncio.run(skill({"sources_directes": False, "requete": "drainage", "page": 50}, user))
         verifier("une page au-delà de la dernière le dit, sans inventer", r["nombre"] == 0 and "page(s)" in r["message"] and "page 10" in r["a_faire"])
         etat["docs"] = 0
-        r = asyncio.run(skill({"requete": "licorne"}, user))
+        r = asyncio.run(skill({"sources_directes": False, "requete": "licorne"}, user))
         verifier("rien trouvé : l'inventaire côté humain, la consigne côté modèle", r["nombre"] == 0 and "1 398 devis" in r["message"] and "connaissances_acquises" in r["a_faire"])
         # 16/09 (audit D-06) : une recherche EN PANNE n'est pas un « rien trouvé ».
         async def _rechercher_en_panne(*a, **k):
@@ -291,7 +291,7 @@ if fusion and "MAX_LIMITE" in src_skill:
         exec(src_skill[src_skill.index("MAX_RESULTATS = 6"): src_skill.index("async def _inventaire(")], espace)  # noqa: S102
         skill = espace["rechercher_documents"]
         try:
-            asyncio.run(skill({}, user))
+            asyncio.run(skill({"sources_directes": False, }, user))
             verifier("sans requête : refus", False)
         except _HTTPException:
             verifier("sans requête : refus", True)

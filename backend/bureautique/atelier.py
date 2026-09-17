@@ -30,8 +30,8 @@ logger = logging.getLogger("duret.bureautique.atelier")
 # survivent à un redémarrage, le temps que la personne les télécharge.
 DOSSIER = os.environ.get("DOCUMENTS_DIR", "/tmp/duret-documents")
 
-# Un document non téléchargé finit par disparaître : ce sont des données
-# d'entreprise, elles ne doivent pas s'accumuler indéfiniment sur le disque.
+# Valeurs historiques conservées pour compatibilité. La purge est désormais
+# activée uniquement par DOCUMENTS_RETENTION_JOURS ; aucun effacement par défaut.
 DUREE_VIE_S = 24 * 3600
 # UN BROUILLON REMPLI VIT PLUS LONGTEMPS (16/09, audit D-04). La purge
 # balayait les fichiers un par un, à l'ancienneté : elle pouvait emporter le
@@ -68,12 +68,23 @@ _VERROUS: dict = {}
 _VERROU_DES_VERROUS = threading.Lock()
 
 
-def _verrou(jeton: str) -> threading.RLock:
-    with _VERROU_DES_VERROUS:
-        if len(_VERROUS) > 500:                 # mémoire d'appoint bornée
-            for cle in [c for c in list(_VERROUS) if c != jeton][:400]:
-                _VERROUS.pop(cle, None)
-        return _VERROUS.setdefault(jeton, threading.RLock())
+def _verrou(jeton: str):
+    from stockage.verrous import verrou_fichier
+    return verrou_fichier(DOSSIER, jeton)
+
+
+def _serialise(fonction):
+    from functools import wraps
+    @wraps(fonction)
+    def execute(jeton, *args, **kwargs):
+        with _verrou(jeton):
+            from security.conversation import fil_courant
+            fil = fil_courant.get()
+            f = _lire_fiche(jeton) or {}
+            if fonction.__name__ != "fiche" and fil and f.get("fil") and f["fil"] != fil:
+                raise ValueError("Ce document appartient à une autre conversation. Crée une copie dans ce fil avant de le modifier.")
+            return fonction(jeton, *args, **kwargs)
+    return execute
 
 
 def _chemin(jeton: str, suffixe: str) -> str:
@@ -147,55 +158,59 @@ def _groupe(jeton: str) -> list:
 
 
 def purger() -> int:
-    """Supprime les documents dont personne n'a plus besoin, PAR GROUPE.
+    """Rétention explicite, par document, sans toucher aux registres voisins.
 
-    (16/09, audit D-04) Avant, la purge balayait les FICHIERS un par un, à
-    l'ancienneté : elle pouvait retirer les images d'un document encore cité
-    par un brouillon de mail, ou le contenu d'un document ouvert, en laissant
-    la fiche promettre un fichier disparu. On ne retire plus qu'un document
-    ENTIER, et seulement : fini depuis plus de 24 h, ou ouvert et VIDE depuis
-    plus de 24 h, ou ouvert avec du travail depuis plus de sept jours. Les
-    fichiers orphelins (sans fiche) suivent l'ancienne règle.
-    Ne lève jamais."""
-    retires = 0
+    Zéro (défaut) conserve les données. Une rétention positive se configure
+    par DOCUMENTS_RETENTION_JOURS. La purge saute les documents utilisés et
+    ne tente jamais d'attendre un second verrou pendant une révision.
+    """
+    from stockage.verrous import verrou_fichier
+    import re
+    try:
+        jours = max(0, int(os.environ.get("DOCUMENTS_RETENTION_JOURS", "0")))
+    except ValueError:
+        logger.error("DOCUMENTS_RETENTION_JOURS invalide : aucune suppression")
+        return 0
+    if not jours:
+        return 0
     maintenant = time.time()
+    duree = jours * 86400
+    retires = 0
     try:
         noms = os.listdir(DOSSIER)
     except OSError:
         return 0
-    jetons = {n[:-5] for n in noms if n.endswith(".json")}
+    # Une SQLite d'authentification, un registre ou un index n'est PAS un
+    # document orphelin. Seules les identités produites par l'atelier comptent.
+    jetons = {n.split(".")[0] for n in noms
+              if re.fullmatch(r"[A-Za-z0-9_-]{32}(?:\..+)?", n)}
     for jeton in jetons:
-        f = _lire_fiche(jeton)
-        if not f:
-            continue
-        rempli = int(f.get("elements") or 0) > 0
-        age = maintenant - float(f.get("termine") or f.get("ouvert") or maintenant)
-        if f.get("fini"):
-            perime = age > DUREE_VIE_S
-        elif rempli:
-            perime = age > DUREE_VIE_BROUILLON_S
-        else:
-            perime = age > DUREE_VIE_S
-        if not perime:
-            continue
-        for chemin in _groupe(jeton):
-            try:
-                os.remove(chemin)
-                retires += 1
-            except OSError:
+        with verrou_fichier(DOSSIER, jeton, bloquant=False) as acquis:
+            if not acquis:
                 continue
-    # Les orphelins : un fichier dont plus aucune fiche ne parle.
-    for nom in noms:
-        racine = nom.split(".")[0]
-        if racine in jetons or nom.endswith(".json"):
-            continue
-        chemin = os.path.join(DOSSIER, nom)
-        try:
-            if os.path.isfile(chemin) and os.path.getmtime(chemin) < maintenant - DUREE_VIE_S:
-                os.remove(chemin)
-                retires += 1
-        except OSError:
-            continue
+            fiche_ = _lire_fiche(jeton)
+            if fiche_:
+                # Un travail rempli non terminé ou un document épinglé garde
+                # ses octets jusqu'à une action explicite de son propriétaire.
+                if fiche_.get("conserver") or (not fiche_.get("fini") and fiche_.get("elements")):
+                    continue
+                age = maintenant - float(fiche_.get("termine") or fiche_.get("ouvert") or maintenant)
+                minimum = max(duree, DUREE_VIE_BROUILLON_S) if fiche_.get("origine") == "piece_validation" else duree
+                if age <= minimum:
+                    continue
+            else:
+                groupe = _groupe(jeton)
+                try:
+                    if not groupe or any(os.path.getmtime(c) >= maintenant - duree for c in groupe):
+                        continue
+                except FileNotFoundError:
+                    continue
+            for chemin in _groupe(jeton):
+                try:
+                    os.remove(chemin)
+                    retires += 1
+                except OSError:
+                    continue
     return retires
 
 
@@ -212,44 +227,50 @@ def ouvrir(entete: dict, proprietaire: str, fil: str | None = None,
     os.makedirs(DOSSIER, exist_ok=True)
     purger()
 
-    ouverts = [j for j in _ouverts_de(proprietaire)]
-    if len(ouverts) >= MAX_OUVERTS_PAR_PERSONNE:
-        # On ferme le plus ancien plutôt que de refuser : un document oublié ne
-        # doit pas empêcher d'en commencer un nouveau.
-        #
-        # LES VIDES D'ABORD. Relevé en production (projet jumeau) : quatre
-        # documents ouverts par des tentatives interrompues, zéro élément
-        # chacun — et le cinquième `ouvrir` fermait LE PLUS ANCIEN,
-        # c'est-à-dire le seul document REMPLI (21 blocs de rédaction). Le
-        # quota détruisait précisément ce qu'il devait protéger. Un document
-        # vide ne coûte rien à perdre ; un document rempli coûte tout le
-        # travail versé.
-        # (16/09, audit D-04) ET SI AUCUN N'EST VIDE, ON NE DÉTRUIT RIEN : on
-        # refuse en nommant les documents ouverts. Effacer un brouillon rempli
-        # pour faire de la place, c'est perdre le travail qu'on protégeait.
-        vides = [j for j in ouverts
-                 if not int((_lire_fiche(j) or {}).get("elements") or 0)]
-        if not vides:
-            raise TropDeDocuments([{"document_id": j,
-                                    "titre": ((_lire_fiche(j) or {}).get("entete") or {}).get("titre"),
-                                    "elements": int((_lire_fiche(j) or {}).get("elements") or 0)}
-                                   for j in ouverts])
-        vieux = min(vides, key=lambda j: (_lire_fiche(j) or {}).get("ouvert", 0))
-        abandonner(vieux, proprietaire)
+    from stockage.verrous import verrou_fichier
+    from stockage.capacite import verifier as verifier_place
+    verifier_place(DOSSIER)
+    with verrou_fichier(DOSSIER, "quota:" + str(proprietaire), bloquant=False) as acquis:
+        if not acquis:
+            raise ValueError("Un document est déjà en préparation pour ce compte ; réessayez dans un instant.")
+        ouverts = [j for j in _ouverts_de(proprietaire)]
+        if len(ouverts) >= MAX_OUVERTS_PAR_PERSONNE:
+            # On ferme le plus ancien plutôt que de refuser : un document oublié ne
+            # doit pas empêcher d'en commencer un nouveau.
+            #
+            # LES VIDES D'ABORD. Relevé en production (projet jumeau) : quatre
+            # documents ouverts par des tentatives interrompues, zéro élément
+            # chacun — et le cinquième `ouvrir` fermait LE PLUS ANCIEN,
+            # c'est-à-dire le seul document REMPLI (21 blocs de rédaction). Le
+            # quota détruisait précisément ce qu'il devait protéger. Un document
+            # vide ne coûte rien à perdre ; un document rempli coûte tout le
+            # travail versé.
+            # (16/09, audit D-04) ET SI AUCUN N'EST VIDE, ON NE DÉTRUIT RIEN : on
+            # refuse en nommant les documents ouverts. Effacer un brouillon rempli
+            # pour faire de la place, c'est perdre le travail qu'on protégeait.
+            vides = [j for j in ouverts
+                     if not int((_lire_fiche(j) or {}).get("elements") or 0)]
+            if not vides:
+                raise TropDeDocuments([{"document_id": j,
+                                        "titre": ((_lire_fiche(j) or {}).get("entete") or {}).get("titre"),
+                                        "elements": int((_lire_fiche(j) or {}).get("elements") or 0)}
+                                       for j in ouverts])
+            vieux = min(vides, key=lambda j: (_lire_fiche(j) or {}).get("ouvert", 0))
+            abandonner(vieux, proprietaire)
 
-    # Jeton imprévisible : il sert de clé de téléchargement, il ne doit pas se
-    # deviner à partir d'un autre.
-    jeton = secrets.token_urlsafe(24)
-    _ecrire_fiche(jeton, {"entete": entete, "proprietaire": proprietaire,
-                          "ouvert": time.time(), "elements": 0, "fini": False,
-                          # La lignée : le jeton EST l'identifiant de révision ;
-                          # `document_id` traverse les révisions.
-                          "document_id": document_id or jeton, "revision": jeton,
-                          "parent_revision": parent_revision, "fil": fil,
-                          "source_ref": source_ref})
-    open(_chemin(jeton, "jsonl"), "w", encoding="utf-8").close()
-    logger.info("Document %s ouvert (%s)", jeton[:8], entete.get("format"))
-    return jeton
+        # Jeton imprévisible : il sert de clé de téléchargement, il ne doit pas se
+        # deviner à partir d'un autre.
+        jeton = secrets.token_urlsafe(24)
+        _ecrire_fiche(jeton, {"entete": entete, "proprietaire": proprietaire,
+                              "ouvert": time.time(), "elements": 0, "fini": False,
+                              # La lignée : le jeton EST l'identifiant de révision ;
+                              # `document_id` traverse les révisions.
+                              "document_id": document_id or jeton, "revision": jeton,
+                              "parent_revision": parent_revision, "fil": fil,
+                              "source_ref": source_ref})
+        open(_chemin(jeton, "jsonl"), "w", encoding="utf-8").close()
+        logger.info("Document %s ouvert (%s)", jeton[:8], entete.get("format"))
+        return jeton
 
 
 def _ouverts_de(proprietaire: str) -> list[str]:
@@ -268,7 +289,7 @@ def _ouverts_de(proprietaire: str) -> list[str]:
     return out
 
 
-def ouverts(proprietaire: str) -> list[dict]:
+def ouverts(proprietaire: str, fil: str | None = None) -> list[dict]:
     """Les documents encore ouverts de cette personne, identifiants compris.
 
     CE QUE LE MODÈLE DOIT SAVOIR D'UN TOUR À L'AUTRE. Relevé en production
@@ -283,6 +304,8 @@ def ouverts(proprietaire: str) -> list[dict]:
     sortie = []
     for jeton in _ouverts_de(proprietaire):
         f = _lire_fiche(jeton) or {}
+        if fil is not None and (f.get("fil") or "") != fil:
+            continue
         entete = f.get("entete") or {}
         sortie.append({"document_id": jeton, "titre": entete.get("titre"),
                        "format": entete.get("format"),
@@ -311,7 +334,7 @@ def produit(fiche: dict) -> bool:
     return str((fiche or {}).get("origine") or "") in ORIGINES_PRODUITES
 
 
-def termines(proprietaire: str) -> list[dict]:
+def termines(proprietaire: str, fil: str | None = None) -> list[dict]:
     """Les documents FINIS de cette personne — encore téléchargeables.
 
     PRODUITS seulement (`produit`) : un fichier reçu ou lu ailleurs reste
@@ -339,7 +362,8 @@ def termines(proprietaire: str) -> list[dict]:
             continue
         jeton = nom[:-5]
         f = _lire_fiche(jeton)
-        if not f or f.get("proprietaire") != proprietaire or not f.get("fini"):
+        if (not f or f.get("proprietaire") != proprietaire or not f.get("fini")
+                or (fil is not None and (f.get("fil") or "") != fil)):
             continue
         if not produit(f):
             continue          # reçu ou lu sur le serveur : pas produit
@@ -363,6 +387,7 @@ def termines(proprietaire: str) -> list[dict]:
     return sortie
 
 
+@_serialise
 def fiche(jeton: str, proprietaire: str) -> dict | None:
     """Fiche du document SI elle appartient à cette personne, sinon None.
 
@@ -463,6 +488,7 @@ def plan(jeton: str, limite: int = 30) -> list[str]:
     return titres
 
 
+@_serialise
 def ajouter(jeton: str, elements: list[dict], proprietaire: str,
             refuser_repetition: bool = True) -> int:
     """Ajoute des éléments. Rend le nombre retenu.
@@ -503,6 +529,7 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str,
     return len(retenus)
 
 
+@_serialise
 def ranger_image(jeton: str, proprietaire: str, octets: bytes, extension: str) -> str:
     """Range les octets d'une image SOUS LE JETON du document (`<jeton>.img<n>.<ext>`)
     et rend ce nom de fichier — la seule forme que le rendu lit. L'image suit
@@ -536,6 +563,7 @@ def chemin_image(fichier: str) -> str | None:
     return chemin if os.path.exists(chemin) else None
 
 
+@_serialise
 def mettre_a_jour_entete(jeton: str, proprietaire: str, entete: dict) -> None:
     """Remplace l'en-tête d'un document ouvert (images d'en-tête/pied rangées)."""
     f = fiche(jeton, proprietaire)
@@ -626,6 +654,7 @@ def _pages_estimees(jeton: str, extension: str) -> int | None:
     return max(1, 1 + sauts, -(-caracteres // 2800))
 
 
+@_serialise
 def terminer(jeton: str, proprietaire: str) -> dict:
     """Rend le fichier et marque le document comme fini."""
     from bureautique.rendu import rendre
@@ -633,6 +662,11 @@ def terminer(jeton: str, proprietaire: str) -> dict:
     f = fiche(jeton, proprietaire)
     if f is None:
         raise KeyError("document inconnu")
+    if f.get("fini"):
+        chemin = chemin_fichier(jeton, proprietaire)
+        if not chemin:
+            raise ValueError("Le fichier terminé est manquant ; restaurez-le ou créez une nouvelle révision.")
+        return f  # Une seconde demande ne réécrit jamais le rendu approuvé.
     if not f.get("elements"):
         raise ValueError("document vide : rien à rendre")
 
@@ -640,11 +674,18 @@ def terminer(jeton: str, proprietaire: str) -> dict:
     extension = entete.get("format", "docx")
     sortie = _chemin(jeton, extension)
     with _verrou(jeton):
-        rendre(entete, elements(jeton), sortie)
+        temporaire = f"{sortie}.{os.getpid()}.tmp"
+        try:
+            rendre(entete, elements(jeton), temporaire)
+            os.replace(temporaire, sortie)
+        finally:
+            if os.path.exists(temporaire):
+                os.remove(temporaire)
         # L'EMPREINTE DU RENDU (16/09, audit D-04) : une révision terminée ne
         # change plus sous le même identifiant. On sait dire, plus tard, si le
         # fichier qu'on tient est bien celui qui a été validé.
-        empreinte = hashlib.sha256(open(sortie, "rb").read()).hexdigest()[:32]
+        with open(sortie, "rb") as fichier_rendu:
+            empreinte = hashlib.sha256(fichier_rendu.read()).hexdigest()[:32]
         f.update({"fini": True, "fichier": os.path.basename(sortie),
                   "octets": os.path.getsize(sortie), "termine": time.time(),
                   "extrait": _extrait(jeton),
@@ -657,6 +698,7 @@ def terminer(jeton: str, proprietaire: str) -> dict:
     return f
 
 
+@_serialise
 def abandonner(jeton: str, proprietaire: str) -> bool:
     """Supprime un document et tout ce qui lui appartient."""
     if fiche(jeton, proprietaire) is None:
@@ -676,23 +718,25 @@ def abandonner(jeton: str, proprietaire: str) -> bool:
     return True
 
 
-def deposer_fichier(nom: str, octets: bytes, proprietaire: str, origine: str = "depot") -> str:
+def deposer_fichier(nom: str, octets: bytes, proprietaire: str, origine: str = "depot", fil: str | None = None) -> str:
     """Range un fichier REÇU (pièce jointe d'un mail) comme un document fini :
     téléchargeable par `/api/documents/{jeton}`, avec aperçu pour PDF / Word /
-    Excel, à cette personne seulement, 24 h. `origine` = « piece_jointe » le
+    Excel, à cette personne seulement. Conservation selon la politique explicite. `origine` = « piece_jointe » le
     tient hors de la liste des documents PRODUITS : il n'a pas été rédigé."""
     os.makedirs(DOSSIER, exist_ok=True)
     purger()
     base, _, ext = (nom or "piece").rpartition(".")
     extension = (ext.lower() if base and 1 <= len(ext) <= 5 else "bin")
     extension = "".join(c for c in extension if c.isalnum()) or "bin"
+    from stockage.capacite import verifier as verifier_place
+    verifier_place(DOSSIER, len(octets))
     jeton = secrets.token_urlsafe(24)
     with open(_chemin(jeton, extension), "wb") as f:
         f.write(octets)
     _ecrire_fiche(jeton, {"entete": {"titre": base or nom or "piece", "format": extension},
                           "proprietaire": proprietaire, "ouvert": time.time(), "elements": 0,
                           "fini": True, "fichier": f"{jeton}.{extension}", "octets": len(octets),
-                          "termine": time.time(), "origine": origine})
+                          "termine": time.time(), "origine": origine, "fil": fil})
     logger.info("Fichier reçu %s déposé (%s, %d octets)", jeton[:8], extension, len(octets))
     return jeton
 
@@ -736,16 +780,39 @@ def manifeste(jeton: str, fiche_: dict, extension: str, empreinte: str) -> dict:
             "termine_le": fiche_.get("termine") or time.time()}
 
 
+@_serialise
 def nouvelle_revision(jeton: str, proprietaire: str, entete: dict | None = None) -> str:
     """Ouvre la révision SUIVANTE d'un document (même `document_id`, ce rendu
     pour parent). C'est ce qui fait qu'une retouche reste le même document."""
     precedent = fiche(jeton, proprietaire)
     if precedent is None:
         raise KeyError("document inconnu")
-    return ouvrir(entete or precedent.get("entete") or {}, proprietaire,
-                  fil=precedent.get("fil"), source_ref=precedent.get("source_ref"),
-                  document_id=precedent.get("document_id") or jeton,
-                  parent_revision=jeton)
+    nouveau = ouvrir(entete or precedent.get("entete") or {}, proprietaire,
+                      fil=precedent.get("fil"), source_ref=precedent.get("source_ref"),
+                      document_id=precedent.get("document_id") or jeton,
+                      parent_revision=jeton)
+    correspondances = {}
+    try:
+        # Copier les médias : la purge de l'ancienne révision ne doit pas
+        # casser celle qui vient d'être ouverte.
+        for nom in os.listdir(DOSSIER):
+            if nom.startswith(f"{jeton}.img"):
+                with open(os.path.join(DOSSIER, nom), "rb") as image:
+                    correspondances[nom] = ranger_image(nouveau, proprietaire, image.read(), nom.rsplit(".", 1)[-1])
+        def remplacer(valeur):
+            if isinstance(valeur, dict):
+                return {k: remplacer(v) for k, v in valeur.items()}
+            if isinstance(valeur, list):
+                return [remplacer(v) for v in valeur]
+            return correspondances.get(valeur, valeur) if isinstance(valeur, str) else valeur
+        mettre_a_jour_entete(nouveau, proprietaire, remplacer(entete or precedent.get("entete") or {}))
+        blocs = [remplacer(e) for e in elements(jeton)]
+        if blocs:
+            ajouter(nouveau, blocs, proprietaire, refuser_repetition=False)
+        return nouveau
+    except Exception:
+        abandonner(nouveau, proprietaire)
+        raise
 
 
 def revisions(proprietaire: str, document_id: str) -> list[dict]:

@@ -15,8 +15,10 @@ Ce lanceur :
   · écrit un rapport daté (texte et JSON) sous `DOCUMENTS_DIR/recettes/`, avec
     le commit, la branche, l'interpréteur et la durée de chacun.
 
-⚠️ Il ne charge JAMAIS d'identifiants de production : les bancs tournent sans
-base, sans réseau et sans clé — c'est ce qui les rend rejouables partout.
+Les bancs d'intégration qui exigent une base ou un fournisseur se lancent
+séparément et sont signalés comme non joués ici. Les bancs locaux reçoivent
+un environnement filtré et un dossier temporaire sans .env ; ce lanceur
+ne constitue pas une isolation réseau système.
 
 USAGE :
     python backend/scripts/recette_usages.py                 # tout
@@ -30,6 +32,7 @@ import pathlib
 import subprocess
 import sys
 import time
+import tempfile
 
 RACINE = pathlib.Path(__file__).resolve().parents[2]
 BACKEND = RACINE / "backend"
@@ -62,6 +65,11 @@ def _classer(code: int, texte: str) -> tuple:
     il a vérifié ce qu'il pouvait. Le rapport garde la mention, pour qu'on ne
     lise pas « vert » là où il manque une partie.
     """
+    import re
+    manquant=re.search(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)",texte)
+    internes={'agents','skills','ressources','bureautique','vectorstore','security','learning','stockage','mail','database','routers','auth','tasks','nas','outils'}
+    if code and manquant and manquant.group(1).split('.')[0] in internes:
+        return "FAIL", False
     saute = any(m in texte for m in MOTS_DE_SAUT)
     if code != 0:
         # Un banc qui n'a PAS PU tourner (il lui manque le conteneur, une
@@ -98,12 +106,24 @@ def main() -> int:
     print(f"Recette de {RACINE.name} — commit {commit} ({branche}), {len(bancs)} banc(s), "
           f"{pathlib.Path(args.python).name}\n")
 
+    atelier = tempfile.TemporaryDirectory(prefix="recette-usages-")
+    environnement = {k: v for k, v in os.environ.items()
+                     if k in ("PATH", "LANG", "SYSTEMROOT", "TMPDIR")}
+    environnement.update(HOME=atelier.name, PYTHONDONTWRITEBYTECODE="1",
+                         DOCUMENTS_DIR=str(pathlib.Path(atelier.name) / "documents"))
+    integration = {"test_e2e.py", "test_composants.py", "test_microsoft.py"}
     resultats = []
     debut = time.monotonic()
     for banc in bancs:
         t0 = time.monotonic()
+        if banc.name in integration:
+            resultats.append({"banc": banc.name, "etat": "SKIP", "code": 0,
+                "sauts": True, "duree_s": 0, "dernier": "Banc d'intégration à lancer séparément dans une copie de recette configurée"})
+            print(f"  · SKIP {banc.name} — exige une copie de recette configurée")
+            continue
         try:
             lance = subprocess.run([args.python, str(banc), str(BACKEND)],
+                                   cwd=atelier.name, env=environnement,
                                    capture_output=True, text=True, timeout=args.delai,
                                    stdin=subprocess.DEVNULL)
             texte, code = (lance.stdout or "") + (lance.stderr or ""), lance.returncode
@@ -111,7 +131,7 @@ def main() -> int:
             # quelques-uns ont leurs propres options et le refusent. On les
             # relance tels quels plutôt que de les compter en échec.
             if code != 0 and "unrecognized arguments" in texte:
-                lance = subprocess.run([args.python, str(banc)], cwd=str(RACINE),
+                lance = subprocess.run([args.python, str(banc)], cwd=atelier.name, env=environnement,
                                        capture_output=True, text=True, timeout=args.delai,
                                        stdin=subprocess.DEVNULL)
                 texte, code = (lance.stdout or "") + (lance.stderr or ""), lance.returncode
@@ -153,6 +173,7 @@ def main() -> int:
     except OSError as e:
         print(f"(rapport non écrit : {e})")
 
+    atelier.cleanup()
     if comptes["FAIL"]:
         print("\nÉCHECS :")
         for r in resultats:

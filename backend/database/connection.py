@@ -40,6 +40,7 @@ async def get_rls_db(user_id: str, role: str) -> AsyncGenerator[asyncpg.Connecti
     """
     async with get_db() as conn:
         async with conn.transaction():
+            await conn.execute("SET LOCAL ROLE infra_ia_lecteur_rls")
             await conn.execute("SELECT set_config('app.current_user_id', $1, true)", user_id)
             await conn.execute("SELECT set_config('app.current_role', $1, true)", role)
             yield conn
@@ -73,3 +74,11 @@ def schema_incomplet(e: BaseException) -> bool:
     texte = str(e).lower()
     return ("does not exist" in texte
             and ("column" in texte or "relation" in texte or "table" in texte))
+
+
+async def close_db() -> None:
+    """Libère le pool à l'arrêt, y compris lors des redémarrages du serveur."""
+    global _pool
+    if _pool is not None:
+        pool, _pool = _pool, None
+        await pool.close()

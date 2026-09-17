@@ -17,7 +17,7 @@ services:
   backend:
     restart: unless-stopped
     # Prod : pas de --reload (économise le CPU).
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "41943040", "--ws-max-queue", "2"]
   browser-worker:
     restart: unless-stopped
   nginx:

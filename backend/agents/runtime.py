@@ -76,17 +76,31 @@ class _Verrou:
                 "Un traitement est déjà en cours sur cette conversation. "
                 "Attendez qu'il se termine, ou lancez votre demande en file "
                 "d'attente.")
+        from stockage.processus import VerrouProcessus, Occupe
+        self.partage = VerrouProcessus("conversation:" + self.fil)
+        try:
+            self.partage.__enter__()
+        except Occupe as e:
+            raise FilOccupe("Cette conversation est déjà traitée par un autre processus.") from e
         _FILS_EN_COURS.add(self.fil)
         return self
 
     def __exit__(self, *exc):
+        self.partage.__exit__(*exc)
         _FILS_EN_COURS.discard(self.fil)
         return False
 
 
 def fil_occupe(thread_id: str) -> bool:
     """Un tour tourne-t-il en ce moment sur ce fil ?"""
-    return thread_id in _FILS_EN_COURS
+    if thread_id in _FILS_EN_COURS:
+        return True
+    from stockage.processus import VerrouProcessus, Occupe
+    try:
+        with VerrouProcessus("conversation:" + thread_id):
+            return False
+    except Occupe:
+        return True
 
 
 async def fil_suspendu(thread_id: str) -> bool:
@@ -242,6 +256,7 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         # 07/09 montre « affiche cette image » archivé sous la question
         # « ajoute une piscine sur le devant » — celle du tour précédent.
         "anonymized_query": None,
+        "anonymized_travail": None,
         "trigger_kind": trigger_kind,
         "thread_id": thread_id,
         "session_id": thread_id,
@@ -373,6 +388,15 @@ def _extract_interrupt(result: Any):
             first = intr[0] if isinstance(intr, (list, tuple)) else intr
             return getattr(first, "value", first)
     return None
+
+
+async def _noter_travail(state: dict) -> None:
+    from ressources.travail import constater
+    try:
+        await asyncio.to_thread(constater, state.get("user_id"), state.get("thread_id"),
+                                state.get("plan_valide"), state.get("tool_results"))
+    except Exception as e:
+        logger.error("État de travail non complété : %s", type(e).__name__)
 
 
 def gestes_du_tour(state: dict) -> list:
@@ -511,6 +535,7 @@ async def run_turn(*, query: str, user_id: str, user_role: str, has_attachment: 
     paused = bool(snapshot.next)
 
     state = snapshot.values if isinstance(snapshot.values, dict) else result
+    await _noter_travail(state)
     # Le compteur PRIME sur l'état : il a vu tous les appels, y compris ceux
     # des nœuds qui ne renseignent rien. L'état sert de repli pour la vision,
     # qui, elle, compte déjà de son côté.
@@ -637,6 +662,7 @@ async def resume_turn(*, thread_id: str, approved: bool, validated_by: Optional[
             _REPRISES.pop(str(thread_id), None)
         snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else {}
+    await _noter_travail(state)
 
     commun = {
         "thread_id": thread_id,
@@ -744,6 +770,7 @@ async def stream_turn(*, query: str, user_id: str, user_role: str,
 
         snapshot = await graph.aget_state(config)
     state = snapshot.values if isinstance(snapshot.values, dict) else {}
+    await _noter_travail(state)
     if snapshot.next:
         # run_turn persiste la validation, pas stream_turn : une demande levée par le
         # WebSocket n'atteignait donc JAMAIS la file de validation. On comble ici.
@@ -806,3 +833,10 @@ def _safe(update: Any) -> dict:
         if k in update and update[k] is not None:
             out[k] = update[k]
     return out
+
+
+# Le même budget couvre modèles, outils et reprises, y compris en streaming.
+from llm.budget import borner_tour
+run_turn = borner_tour(run_turn)
+resume_turn = borner_tour(resume_turn)
+stream_turn = borner_tour(stream_turn)

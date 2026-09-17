@@ -108,8 +108,7 @@ async def dimension_attendue() -> int:
     l'être ; celle qu'on lit ne se désynchronise jamais.
     """
     global _DIMENSION_BASE
-    if _DIMENSION_BASE:
-        return _DIMENSION_BASE
+    # Relire la dimension : la bascule peut venir d’un autre processus.
     from config import settings
     defaut = int(getattr(settings, "embedding_dimensions", 1536) or 1536)
     try:
@@ -323,7 +322,8 @@ def lancer_en_fond(dimension: int, modele: str = "") -> None:
 
     async def _courir() -> None:
         try:
-            resultat = await revectoriser(dimension, modele)
+            from vectorstore.generation import preparer
+            resultat = await preparer(dimension, modele, _OPERATION)
             _OPERATION.update(phase="terminee", fin=time.time(),
                               morceaux_en_file=resultat["morceaux_en_file"],
                               index_recree=resultat["index_recree"])

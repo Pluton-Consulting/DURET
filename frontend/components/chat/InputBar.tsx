@@ -327,6 +327,12 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
       })
     }
 
+    const totalOctets = pieces.reduce((s, p) => s + p.b64.length / 4 * 3 - (p.b64.endsWith("==") ? 2 : p.b64.endsWith("=") ? 1 : 0), 0)
+    if (totalOctets > 25 * 1024 * 1024) {
+      setErreur("Les pièces dépassent 25 Mo au total. Répartissez-les sur plusieurs messages de la même conversation.")
+      // PromptInput garde les fichiers quand la soumission échoue.
+      throw new Error("Lot de pièces jointes trop volumineux")
+    }
     if (!contenu && !pieces.length) return
     // La dictée s'arrête à l'envoi : sans cela, la phrase suivante s'écrirait
     // dans un champ qu'on vient de vider, à la suite d'un message déjà parti.

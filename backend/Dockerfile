@@ -11,10 +11,14 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     tesseract-ocr \
     tesseract-ocr-fra \
+    libreoffice-writer \
+    fonts-crosextra-carlito \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements.lock ./
+# Versions et empreintes verrouillées : une reconstruction ne change pas le socle.
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # Modèle spaCy français (NER pour l'anonymisation RGPD) — OBLIGATOIRE.
 # `md` plutôt que `lg` : ~10× plus léger et nettement plus rapide par requête, pour une
@@ -34,4 +38,4 @@ RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', dev
 
 COPY . .
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "41943040", "--ws-max-queue", "2", "--reload"]

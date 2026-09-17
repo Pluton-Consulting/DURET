@@ -34,29 +34,74 @@ cd "$(dirname "$0")"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/duret-backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 GARDER_AU_MOINS="${GARDER_AU_MOINS:-3}"
-SAUVEGARDER_SESSIONS="${SAUVEGARDER_SESSIONS:-0}"
-STAMP="$(date +%Y-%m-%d_%H%M)"
+SAUVEGARDER_SESSIONS="${SAUVEGARDER_SESSIONS:-1}"
+STAMP="$(date +%Y-%m-%d_%H%M%S)_$$"
 mkdir -p "$BACKUP_DIR"
 
-COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
-# Lit une variable du .env (1re occurrence, robuste aux doublons et commentaires).
-env_get() { awk -F= -v k="$1" '$1==k{sub(/^[^=]*=/,"");sub(/[[:space:]]+#.*$/,"");sub(/[[:space:]]*$/,"");print;exit}' .env; }
-PG_USER="$(env_get POSTGRES_USER)"
-PG_DB="$(env_get POSTGRES_DB)"
-PROJET="$(env_get COMPOSE_PROJECT_NAME)"
-PROJET="${PROJET:-duret-sols}"
-: "${PG_USER:?POSTGRES_USER manquant dans .env}"
-: "${PG_DB:?POSTGRES_DB manquant dans .env}"
+COMPOSE="docker compose $(python3 scripts/compose_livraison.py "$PWD")"
+# Utiliser la configuration réellement résolue : guillemets, export et
+# substitutions de .env sont interprétés par Compose, jamais par awk/eval.
+champ_config() {
+  $COMPOSE config --format json | python3 -c 'import sys,json; c=json.load(sys.stdin); k=sys.argv[1]; print(c["name"] if k=="projet" else c["services"]["postgres"]["environment"][k])' "$1"
+}
+PG_USER="$(champ_config POSTGRES_USER)"
+PG_DB="$(champ_config POSTGRES_DB)"
+PROJET="$(champ_config projet)"
+: "${PG_USER:?POSTGRES_USER absent de la configuration effective}"
+: "${PG_DB:?POSTGRES_DB absent de la configuration effective}"
+
+# Les anciennes commandes/cron suivent le dossier réellement actif après une
+# livraison en parallèle. Un backend arrêté ne redirige pas la sauvegarde de bascule.
+ACTIF_ID="$(docker ps -q --filter "label=com.docker.compose.project=${PROJET}" --filter label=com.docker.compose.service=backend)"
+if [ -n "$ACTIF_ID" ] && [ "$(printf '%s\n' "$ACTIF_ID" | wc -l | tr -d ' ')" = "1" ]; then
+  ACTIF_DOSSIER="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$ACTIF_ID")"
+  if [ -n "$ACTIF_DOSSIER" ] && [ -f "$ACTIF_DOSSIER/backup.sh" ] && [ "$(cd "$ACTIF_DOSSIER" && pwd -P)" != "$(pwd -P)" ]; then
+    exec bash "$ACTIF_DOSSIER/backup.sh" "$@"
+  fi
+fi
+
+
+# Sérialiser aussi les appels issus d'anciens dossiers/cron sur le même hôte.
+if [ "${INFRA_BACKUP_VERROU:-}" != "$PROJET" ]; then
+  exec python3 scripts/verrou_backup.py "$PROJET" "$PWD/backup.sh" "$@"
+fi
 
 # ON ÉCRIT DANS UN DOSSIER PROVISOIRE, ON PUBLIE À LA FIN. Un jeu à moitié écrit
 # ne doit jamais ressembler à un jeu utilisable : c'est ce qui fait qu'on croit
 # avoir une sauvegarde le jour où l'on en a besoin.
-TMP="$BACKUP_DIR/.en-cours_$STAMP"
+TMP="$(mktemp -d "$BACKUP_DIR/.en-cours_${STAMP}.XXXXXX")"
 CIBLE="$BACKUP_DIR/duret_$STAMP"
-rm -rf "$TMP"
-mkdir -p "$TMP"
-nettoyer() { rm -rf "$TMP"; }
+ARRETES=()
+reprendre() {
+  local echec=0 identifiant
+  for identifiant in ${ARRETES[@]+"${ARRETES[@]}"}; do
+    docker start "$identifiant" >/dev/null || echec=1
+  done
+  if [ "$echec" -ne 0 ]; then
+    echo "ERREUR : redémarrage applicatif incomplet après sauvegarde ; vérifier docker ps." >&2
+    return 1
+  fi
+  ARRETES=()
+}
+nettoyer() {
+  local resultat=$?
+  trap - EXIT
+  rm -rf "$TMP"
+  reprendre || resultat=1
+  exit "$resultat"
+}
 trap nettoyer EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# Un pg_dump cohérent ne suffit pas si SQLite, les documents ou les cookies
+# changent pendant le tar. Seuls les producteurs actuellement actifs sont arrêtés.
+for service in backend browser-worker; do
+  while IFS= read -r identifiant; do
+    [ -n "$identifiant" ] || continue
+    ARRETES+=("$identifiant")
+    docker stop --time 60 "$identifiant" >/dev/null
+  done < <(docker ps -q --filter "label=com.docker.compose.project=${PROJET}" --filter "label=com.docker.compose.service=${service}")
+done
 
 echo "==> 1/6  Base de données ($PG_DB)…"
 $COMPOSE exec -T postgres pg_dump -U "$PG_USER" --clean --if-exists "$PG_DB" | gzip > "$TMP/base.sql.gz"
@@ -84,8 +129,11 @@ if ! sauver_volume "${PROJET}_documents_produits" documents.tar.gz; then
   exit 1
 fi
 if [ "$SAUVEGARDER_SESSIONS" = "1" ]; then
-  sauver_volume "${PROJET}_browser_sessions" sessions.tar.gz \
-    || echo "    (pas de volume de sessions navigateur — ignoré)"
+  if docker volume inspect "${PROJET}_browser_sessions" >/dev/null 2>&1; then
+    sauver_volume "${PROJET}_browser_sessions" sessions.tar.gz || { echo "ERREUR : sauvegarde des sessions impossible." >&2; exit 1; }
+  else
+    echo "    (aucun volume de sessions navigateur existant)"
+  fi
 fi
 
 echo "==> 3/6  Secrets (.env, backend/secrets)…"
@@ -116,14 +164,15 @@ echo "==> 4/6  Manifeste et empreintes…"
 
 echo "==> 5/6  Publication du jeu…"
 mv "$TMP" "$CIBLE"
-trap - EXIT
+reprendre
+trap - EXIT INT TERM
 chmod 700 "$CIBLE"
 ln -sfn "$CIBLE" "$BACKUP_DIR/DERNIER"
 
 if [ -n "${BACKUP_DISTANT:-}" ]; then
-  echo "    copie hors de la machine vers $BACKUP_DISTANT…"
+  echo "    copie hors de la machine vers ${BACKUP_DISTANT}…"
   rsync -a --chmod=D700,F600 "$CIBLE" "$BACKUP_DISTANT/" \
-    || echo "    ⚠ copie distante ÉCHOUÉE — le jeu local, lui, est complet"
+    || { echo "    ⚠ copie distante ÉCHOUÉE — le jeu local, lui, est complet" >&2; exit 1; }
 fi
 
 # RÉTENTION : on ne supprime QU'APRÈS avoir publié un jeu complet, et l'on garde

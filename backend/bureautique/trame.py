@@ -486,7 +486,8 @@ def _segments(paragraphe) -> tuple[list, bool]:
         elif tag == _W + "t":
             texte = el.text or ""
             if texte:
-                morceaux.append((None if dans_resultat_champ else el, texte))
+                champ_simple = any(a.tag == _W + "fldSimple" for a in el.iterancestors())
+                morceaux.append((None if dans_resultat_champ or champ_simple else el, texte))
         elif tag == _W + "tab" and el.getparent() is not None and el.getparent().tag == _W + "r":
             morceaux.append((None, "\t"))
         elif tag in (_W + "br", _W + "cr"):
@@ -520,9 +521,26 @@ def _occurrences(texte: str, table: dict) -> list[tuple[int, int, str]]:
 
 
 def _poser_texte(noeud, texte: str) -> None:
-    noeud.text = texte
-    if texte != texte.strip() or "  " in texte:
+    # Les caractères de contrôle ne sont pas des instructions de mise en page
+    # dans w:t. On remplace ce seul nœud, jamais le run et ses dessins/champs.
+    import re
+    morceaux = re.split(r"(\r\n|\r|\n|\t)", texte)
+    noeud.text = morceaux[0]
+    if morceaux[0] != morceaux[0].strip() or "  " in morceaux[0]:
         noeud.set(_XML_ESPACE, "preserve")
+    precedent = noeud
+    for morceau in morceaux[1:]:
+        if not morceau:
+            continue
+        if morceau in ("\r\n", "\r", "\n", "\t"):
+            suivant = noeud.makeelement(_W + ("tab" if morceau == "\t" else "br"))
+        else:
+            suivant = noeud.makeelement(_W + "t")
+            suivant.text = morceau
+            if morceau != morceau.strip() or "  " in morceau:
+                suivant.set(_XML_ESPACE, "preserve")
+        precedent.addnext(suivant)
+        precedent = suivant
 
 
 def _remplacer_dans_paragraphe(paragraphe, table: dict, limites: Optional[set] = None) -> int:
@@ -567,9 +585,13 @@ def _remplacer_dans_paragraphe(paragraphe, table: dict, limites: Optional[set] =
                 nouveau = t[local_fin:]
             else:
                 nouveau = ""
-            _poser_texte(noeud, nouveau)
+            # Les positions restent celles du texte initial pendant toute la
+            # passe. La conversion des sauts est différée jusqu'à sa fin.
             morceaux[i] = (noeud, nouveau)
         faits += 1
+    for noeud, nouveau in morceaux:
+        if noeud is not None and nouveau != (noeud.text or ""):
+            _poser_texte(noeud, nouveau)
     if champ_vu and limites is not None and faits:
         limites.add("le texte affiché par un champ Word (date, numéro de page…) n'est pas "
                     "réécrit : Word le recalcule à l'ouverture")
@@ -704,7 +726,11 @@ def remplir_detaille(octets: bytes, genre: str, table: dict) -> dict:
     sortie = io.BytesIO()
     doc.save(sortie)
     produits = sortie.getvalue()
-    controle = _controle().comparer_docx(octets, produits)
+    textes_attendus = {part.partname.lstrip("/"): _controle().textes_xml(part.blob)
+                       for part in doc.part.package.parts
+                       if str(part.partname).startswith("/word/") and str(part.partname).endswith(".xml")
+                       and hasattr(part, "element")}
+    controle = _controle().comparer_docx(octets, produits, textes_attendus=textes_attendus)
     if not controle["ok"]:
         # UN FICHIER ABÎMÉ NE SORT PAS (audit D-02) : on garde l'original
         # intact et on dit ce qui a été détecté.

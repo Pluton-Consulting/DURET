@@ -42,9 +42,9 @@ class Budget:
 
     def delai(self, souhaite: float, plancher: float = 1.0) -> float:
         """Le délai à donner à une étape : ce qu'elle voudrait, borné par ce
-        qu'il reste. Jamais moins que `plancher` — un délai de zéro ferait
-        échouer l'appel avant même de partir, ce qui n'aide personne."""
-        return max(plancher, min(float(souhaite), self.restant()))
+        qu'il reste. Le plancher ne recrée jamais du temps après échéance :
+        un appel sans budget doit échouer avant de partir."""
+        return min(self.restant(), max(plancher, float(souhaite)))
 
     def assez_pour(self, secondes: float) -> bool:
         """Reste-t-il de quoi tenter une étape de cette durée ?"""
@@ -85,3 +85,48 @@ def classer(erreur: BaseException) -> str:
 def a_retenter(famille: str) -> bool:
     """Retenter tout de suite a-t-il une chance d'aboutir ?"""
     return famille in (RESEAU, QUOTA)
+
+
+from contextvars import ContextVar
+from contextlib import asynccontextmanager
+import asyncio
+import functools
+import inspect
+
+_courant = ContextVar("budget_demande", default=None)
+
+
+def delai_disponible(souhaite: float) -> float:
+    budget = _courant.get()
+    restant = budget.delai(souhaite) if budget else float(souhaite)
+    if restant <= 0:
+        raise TimeoutError("Le temps disponible pour cette demande est écoulé")
+    return restant
+
+
+@asynccontextmanager
+async def tour():
+    from config import settings
+    courant = _courant.get()
+    budget = courant or Budget(getattr(settings, "demande_delai_s", 600))
+    jeton = _courant.set(budget)
+    try:
+        async with asyncio.timeout(budget.restant()):
+            yield budget
+    finally:
+        _courant.reset(jeton)
+
+
+def borner_tour(fonction):
+    if inspect.isasyncgenfunction(fonction):
+        @functools.wraps(fonction)
+        async def flux(*args, **kwargs):
+            async with tour():
+                async for evenement in fonction(*args, **kwargs):
+                    yield evenement
+        return flux
+    @functools.wraps(fonction)
+    async def appel(*args, **kwargs):
+        async with tour():
+            return await fonction(*args, **kwargs)
+    return appel

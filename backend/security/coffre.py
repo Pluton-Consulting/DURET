@@ -23,9 +23,8 @@ TROIS PRÉCAUTIONS, apprises ailleurs :
     du déploiement : on les lit telles quelles, et `a_rechiffrer` dit à
     l'appelant de les réécrire — la migration se fait toute seule, à l'usage.
   * **SANS BIBLIOTHÈQUE NI CLÉ, ON NE MENT PAS.** Si `cryptography` manque ou
-    qu'aucun secret n'est posé, `chiffrer` rend le clair (et le DIT par
-    `disponible()`), au lieu d'écrire un faux chiffré qu'on ne saurait pas
-    relire. Le défaut se voit dans l'écran d'état, il ne se cache pas.
+    qu'aucun secret n'est posé, `chiffrer` refuse l'écriture. Les anciennes
+    valeurs en clair restent lisibles pour permettre leur migration.
 """
 from __future__ import annotations
 
@@ -62,7 +61,7 @@ def _cles(usage: str) -> list:
             graine = hashlib.sha256(f"pluton:{usage}:".encode() + secret.encode()).digest()
             cles.append(Fernet(base64.urlsafe_b64encode(graine)))
     except Exception as e:  # noqa: BLE001 — bibliothèque absente : pas de coffre
-        logger.debug("Coffre indisponible (%s) : les secrets restent en clair", e)
+        logger.debug("Coffre indisponible (%s) : écriture des secrets suspendue", e)
         return []
     return cles
 
@@ -78,14 +77,14 @@ def chiffre(valeur: Optional[str]) -> bool:
 
 
 def chiffrer(secret: Optional[str], usage: str) -> Optional[str]:
-    """Le secret, chiffré pour cet usage — ou tel quel si le coffre est absent."""
+    """Le secret chiffré pour cet usage ; refuse une écriture sans coffre."""
     if not secret:
         return secret
     if chiffre(secret):
         return secret
     cles = _cles(usage)
     if not cles:
-        return secret
+        raise RuntimeError("Coffre indisponible : le secret n'a pas été enregistré en clair.")
     return MARQUE + cles[0].encrypt(str(secret).encode()).decode()
 
 
@@ -109,7 +108,17 @@ def dechiffrer(valeur: Optional[str], usage: str) -> Optional[str]:
     return None
 
 
-def a_rechiffrer(valeur: Optional[str]) -> bool:
-    """Faut-il réécrire cette valeur chiffrée ? (elle est en clair, et le
-    coffre est disponible) — la rotation se fait à l'usage, sans migration."""
-    return bool(valeur) and not chiffre(valeur) and disponible()
+def a_rechiffrer(valeur: Optional[str], usage: str = "google") -> bool:
+    """Migrer le clair et les valeurs encore chiffrées avec l'ancienne clé."""
+    if not valeur:
+        return False
+    cles = _cles(usage)
+    if not cles:
+        return False
+    if not chiffre(valeur):
+        return True
+    try:
+        cles[0].decrypt(str(valeur)[len(MARQUE):].encode())
+        return False
+    except Exception:
+        return dechiffrer(valeur, usage) is not None

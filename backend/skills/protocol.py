@@ -518,7 +518,7 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "(cherche alors plusieurs mots du métier, un appel par mot). `avant` : une date "
         "AAAA-MM-JJ pour REMONTER LE TEMPS page par page — le résultat donne "
         "`plus_ancien` et `pour_continuer` : redonne cette date en `avant` pour les 25 "
-        "précédents. Le DÉTAIL est borné à 25 par appel ; le TOTAL ne l'est pas, "
+        "précédents. Si un curseur_suivant est fourni, utilise plutôt `curseur` : il évite de sauter les messages du même jour. Le DÉTAIL est borné à 25 par appel ; le TOTAL ne l'est pas, "
         "c'est lui qu'on cite pour « combien ». Sans `depuis` ni `recherche` : les "
         "plus récents et le total du dossier. N'en tire jamais de conclusion sur "
         "l'entreprise entière (pour cela, `lancer_enrichissement`). dossier : recus "
@@ -527,7 +527,7 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "connectée. Chaque `apercu` rendu est un EXTRAIT, pas le message : pour le "
         "corps complet, `lire_mail` avec la `ref`. Pour un POINT complet avec "
         "résumés et propositions de réponse, préfère `check_mails`",
-        [], ["mailbox", "dossier", "limite", "depuis", "recherche", "avant"]),
+        [], ["mailbox", "dossier", "limite", "depuis", "recherche", "avant", "curseur"]),
     "lire_mail": (
         "OUVRE UN message EN ENTIER : le corps complet (jusqu'à 10 000 caractères) et "
         "ses pièces jointes nommées. L'`apercu` rendu par `lire_mails` ou `check_mails` "

@@ -46,6 +46,7 @@ async def start_task(job_id: str, task_prompt: str, allowed_domains: list[str],
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"{settings.browser_worker_url}/run",
+            headers={"X-Navigateur-Secret": settings.browser_worker_secret},
             json={
                 "job_id": job_id,
                 "task_prompt": task_prompt,
@@ -81,6 +82,6 @@ async def start_task_sur(job_id: str, task_prompt: str, allowed_domains: list[st
 
 async def cancel_task(job_id: str) -> dict:
     async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.post(f"{settings.browser_worker_url}/jobs/{job_id}/cancel")
+        r = await client.post(f"{settings.browser_worker_url}/jobs/{job_id}/cancel", headers={"X-Navigateur-Secret": settings.browser_worker_secret})
         r.raise_for_status()
         return r.json()

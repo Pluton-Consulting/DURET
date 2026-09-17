@@ -34,7 +34,7 @@ _CAUSES = {
     "ConnectTimeout": "le NAS n'a pas repondu a temps (relais QuickConnect lent, "
                       "ou adresse injoignable)",
     "ReadTimeout": "le NAS a accepte la connexion mais n'a pas repondu a temps",
-    "SSLError": "le certificat du NAS a ete refuse (mettre SYNOLOGY_VERIFY_TLS=false)",
+    "SSLError": "le certificat du NAS a ete refuse : installez le certificat ou l’autorité de confiance correcte sur le serveur",
     "JSONDecodeError": "la reponse n'est pas du JSON : l'adresse ne pointe pas sur "
                        "l'API DSM (page HTML QuickConnect ?)",
     "NotImplementedError": "Synology n'est pas configure (identifiants manquants)",

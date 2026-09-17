@@ -61,13 +61,14 @@ git fetch origin && git checkout audit/duret && git pull
 
 `deploy.sh` fait, **dans cet ordre** : version livrée → construction des images →
 **sauvegarde** → démarrage de la base seule → **migrations** (**044**, **045**,
-**046**, **047**, **048** sont nouvelles, toutes additives et idempotentes ; un
+**046**, **047**, **048**, **049** sont nouvelles, toutes additives et idempotentes ; un
 échec ARRÊTE la livraison) → vérification que le schéma est complet → bascule →
 attente de `/api/ready`.
 
 **À VÉRIFIER** : la dernière ligne affiche l'état prêt, avec le commit. Sinon, le
-script dit ce qui manque et rappelle le retour arrière — l'ancienne version est
-restée en service.
+script dit ce qui manque et rappelle le retour arrière. Avant la bascule, un échec
+arrête la livraison en conservant les conteneurs précédents. Après la bascule,
+un échec de readiness exige un retour arrière explicite : il n'est pas automatique.
 
 ```bash
 # la version réellement en ligne, à tout moment
@@ -224,3 +225,13 @@ tâches planifiées et lecture du NAS coupées.
   modes de confidentialité (D-22), écran détaillé du tri NAS (D-27).
 * La bascule du rôle applicatif PostgreSQL (D-20) est une opération de serveur :
   `scripts/controle_droits_base.py` dit seulement où l'on en est.
+
+## Complément de fiabilisation du 16 septembre 2026
+
+- Inclure `backend/requirements.lock` et la migration `049_requetes_signe_de_vie.sql` dans la livraison. La branche locale contient aussi des fichiers nouveaux non suivis tant que les corrections ne sont pas enregistrées dans Git.
+- Construire le backend depuis le fichier verrouillé avec empreintes ; NumPy reste en version 1.x pour spaCy 3.7. Le frontend utilise Next 15.5.25, PostCSS 8.5.28 et Sharp 0.35.4.
+- Le code backend de production est désormais dans l’image ; les secrets et les documents restent montés. Le montage intégral du code n’existe que dans `docker-compose.dev.yml`. Une simple réouverture du navigateur ne livre donc pas ces changements.
+- Le signe de vie des requêtes bat toutes les 15 secondes ; une demande sans signe de vie depuis 120 secondes devient interrompue lors de sa consultation, sans relance automatique. Le budget total d’un tour est de 600 secondes (`DEMANDE_DELAI_S`).
+- Les pièces jointes des nouveaux accords sont copiées avant validation, contrôlées par SHA-256 avant envoi et conservées sept jours. Après cette durée, préparer un nouvel accord.
+- Une recherche sans résultat en mémoire complète la lecture avec le stockage et/ou la boîte autorisés, avec 15 secondes par source. Les noms trouvés doivent encore être ouverts ; cette recherche n’est pas exhaustive.
+- Les tests de la dernière revue et leurs limites sont détaillés dans `FIABILISATION-20260916.md`. Ne pas classer la production validée avant la recette des services réels.

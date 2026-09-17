@@ -172,7 +172,7 @@ _poser("bureautique")
 _poser("bureautique.atelier", deposer_fichier=lambda *a, **k: "J")
 _poser("visuels")
 _poser("visuels.depot", deposer_octets=lambda *a, **k: "c")
-_poser("security")
+_poser("security", __path__=[str(BACKEND / "security")])
 _poser("security.acces", niveaux_visibles=lambda role: ["all"],
        NIVEAUX=("all", "commercial_plus", "bureau_etudes_plus", "direction_only", "admin_only"))
 

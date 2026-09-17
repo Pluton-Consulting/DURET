@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 
 /**
- * LE RENDU VISUEL GÉNÉRÉ, affiché dans le chat comme une planche.
+ * LES IMAGES, importées ou générées, affichées dans le chat comme une planche.
  *
  * Quand l'assistant génère un visuel d'aménagement, les images sont rangées
  * côté serveur (elles ont été payées, elles ne dépendent plus d'un CDN
@@ -113,8 +113,8 @@ function Image({
                      position: "relative", aspectRatio: "16 / 10", cursor: src ? "zoom-in" : "default" }}
             onClick={ouvrir} title={src ? "Ouvrir en grand" : undefined}>
       {etat === "pret" && src && (
-        <img src={src} alt={image.legende || "Visuel d'aménagement"}
-             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <img src={src} alt={image.legende || titre || "Image"}
+             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
       )}
       {etat === "pret" && blob.current && (
         <BoutonTelecharger titre="Télécharger cette image"
@@ -132,8 +132,8 @@ function Image({
 }
 
 export function VisuelPaysager({
-  titre, images = [], principale, apiUrl, backendToken,
-}: { titre?: string; images?: ImageVisuel[]; principale?: string; apiUrl?: string; backendToken?: string }) {
+  titre, images = [], principale, apiUrl, backendToken, genereParIA = false,
+}: { titre?: string; images?: ImageVisuel[]; principale?: string; apiUrl?: string; backendToken?: string; genereParIA?: boolean }) {
   const liste = images.filter((i) => i && (i.cle || i.url))
   // LE RÉSULTAT EN GRAND, L'AVANT / APRÈS EN DESSOUS (07/09, relevé de Noa :
   // « il affiche en grand l'image de départ et, en petit dessous, encore
@@ -160,7 +160,7 @@ export function VisuelPaysager({
                                         background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
                                         boxShadow: "var(--marque-shadow-card)" }}>
       <div style={{ padding: "12px 16px 10px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ fontWeight: 700, fontSize: 14.5, color: "var(--marque-text-primary)" }}>{titre || "Visuel d'aménagement"}</div>
+        <div style={{ fontWeight: 700, fontSize: 14.5, color: "var(--marque-text-primary)" }}>{titre || (genereParIA ? "Visuel généré" : "Image")}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, whiteSpace: "nowrap" }}>
           {prets > 1 && (
             <button onClick={toutTelecharger} className="sym-tap"
@@ -170,7 +170,7 @@ export function VisuelPaysager({
               ⤓ Tout télécharger
             </button>
           )}
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)" }}>généré par IA</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--marque-text-muted)" }}>{genereParIA ? "généré par IA" : "Image"}</span>
         </div>
       </div>
       {grande && (
@@ -197,10 +197,10 @@ export function VisuelPaysager({
         ))}
         {liste.length === 0 && <div style={{ padding: 24, textAlign: "center", color: "var(--marque-text-muted)", fontSize: 13 }}>Aucune image.</div>}
       </div>
-      <div style={{ padding: "9px 16px 12px", fontSize: 11.5, color: "var(--marque-text-muted)", lineHeight: 1.45 }}>
+      {genereParIA && <div style={{ padding: "9px 16px 12px", fontSize: 11.5, color: "var(--marque-text-muted)", lineHeight: 1.45 }}>
         Illustration d'intention d'aménagement, générée à partir d'une description — ce n'est ni un plan
         ni une simulation du terrain réel.
-      </div>
+      </div>}
     </div>
   )
 }

@@ -115,6 +115,13 @@ verifier("une photo seule n'a pas d'en-tête de pages", court == "", court)
 
 print("4. La suite du tour est nommée, pas devinée")
 suite = espace["suite_du_tour"]
+for demande in (
+    "Remplis le cadre mémoire et livre un Word. Ne consulte ni ne modifie le NAS ou les mails.",
+    "Modifie ce document Word en ajoutant le logo et conserve les rubriques.",
+    "Génère un Excel pour les métrés. N’invente aucune dimension.",
+):
+    verifier("un livrable reste documentaire malgré une interdiction ou une modification : " + demande,
+             suite(demande, False) == espace["SUITE_DOCUMENT"])
 verifier("« prépare le devis » appelle un document",
          suite("analyse ce plan puis prépare le devis", True) == espace["SUITE_DOCUMENT"])
 verifier("« enlève les oliviers » appelle une retouche, là où elle existe",

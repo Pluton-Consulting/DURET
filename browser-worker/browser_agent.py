@@ -9,6 +9,9 @@ Exécution d'une tâche de navigation agentique via browser-use.
 - Extraction structurée optionnelle → réinjection RAG via le webhook d'ingestion.
 """
 import asyncio
+import logging
+
+logger = logging.getLogger("browser-worker.agent")
 import base64
 import io
 import json
@@ -92,15 +95,9 @@ def build_tools(job_id: str, user_id: str, readonly: bool = True):
     exclude = _MUTATING if readonly else []
     try:
         tools = Tools(exclude_actions=exclude) if exclude else Tools()
-    except TypeError:
-        tools = Tools()  # API browser-use différente : fallback (voir limites README)
+    except TypeError as e:
+        raise RuntimeError("API des outils navigateur incompatible ; navigation arrêtée avant toute action.") from e
 
-    @tools.action(description=(
-        "OBLIGATOIRE avant TOUTE action modifiante (soumettre un formulaire, "
-        "envoyer, acheter, écrire, supprimer, confirmer). Demande l'approbation "
-        "d'un humain avec un résumé clair de l'action et l'URL. N'exécute l'action "
-        "réelle QUE si la réponse commence par APPROVED ; si REJECTED, n'exécute "
-        "PAS l'action et termine la tâche."))
     async def request_human_approval(summary: str, target_url: str, browser_session=None):
         screenshot_b64 = await _capture_screenshot(browser_session)
         payload = {"job_id": job_id, "url": target_url, "summary": summary}
@@ -134,6 +131,32 @@ def build_tools(job_id: str, user_id: str, readonly: bool = True):
                                "Termine la tâche proprement sans la réaliser.")
         )
 
+    # Le contrôle s'exécute au goulot réel, y compris si browser-use ajoute
+    # un outil dynamiquement après la construction du registre.
+    import copy
+    lectures = {"search", "navigate", "go_back", "wait", "switch", "close", "extract",
+                "search_page", "find_elements", "scroll", "find_text", "screenshot", "dropdown_options", "done"}
+    modifications = {"click", "input", "send_keys", "select_dropdown", "upload_file",
+                     "click_element_by_index", "input_text", "select_dropdown_option", "drag_drop", "clear_text"}
+    original = tools.registry.execute_action
+    async def execute_avec_accord(action_name, params, *args, **kwargs):
+        if action_name not in lectures:
+            if readonly or action_name not in modifications:
+                raise RuntimeError("Cette action n'est pas autorisée dans cette navigation.")
+            charge = copy.deepcopy(params)
+            session = kwargs.get("browser_session")
+            url = await session.get_current_page_url() if session else ""
+            decision = await request_human_approval(
+                action_name + " : " + json.dumps(charge, ensure_ascii=False, default=str), url, session)
+            if not str(getattr(decision,"extracted_content","")).startswith("APPROVED"):
+                raise RuntimeError("Action non approuvée ; aucune interaction exécutée.")
+            params = charge
+        return await original(action_name, params, *args, **kwargs)
+    tools.registry.execute_action = execute_avec_accord
+    # Ne pas annoncer les actions interdites au modèle. Le verrou d'exécution
+    # ci-dessus reste déterminant même si une nouvelle version les réintroduit.
+    for nom in list(tools.registry.registry.actions):
+        if nom not in lectures and (readonly or nom not in modifications):tools.exclude_action(nom)
     return tools
 
 
@@ -152,26 +175,11 @@ def _build_output_model(output_schema):
 
 
 async def _post_to_rag(job_id: str, structured: dict | None, final_text: str) -> None:
-    if not wconfig.INGESTION_WEBHOOK_SECRET:
-        return
-    text = final_text or (json.dumps(structured, ensure_ascii=False) if structured else "")
-    if not text.strip():
-        return
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            await client.post(
-                f"{wconfig.BACKEND_URL}/api/ingestion/webhook",
-                headers={"X-Ingestion-Secret": wconfig.INGESTION_WEBHOOK_SECRET},
-                json={
-                    "source_type": "web_extraction",
-                    "source_id": job_id,
-                    "filename": f"browser-{job_id}",
-                    "text": text,
-                    "anonymize": True,
-                },
-            )
-    except Exception:
-        pass
+    # Le backend reprend le résultat déjà enregistré pour CE job ; le worker
+    # ne détient plus le secret d'ingestion générale.
+    resultat = await db._dire("POST", "/tache/" + job_id + "/indexer", {})
+    if not resultat or not resultat.get("ok"):
+        logger.warning("Navigation terminée ; indexation non confirmée pour %s", job_id)
 
 
 # ── Point d'entrée : exécuter une tâche complète ──────────────────────────

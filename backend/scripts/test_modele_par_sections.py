@@ -235,5 +235,56 @@ verifier("nginx transmet l'adresse posée par Caddy, pas celle de Caddy",
 ignore = (BACKEND / ".dockerignore").read_text(encoding="utf-8")
 verifier("les modes d'emploi entrent dans l'image", "!outils/docs/*.md" in ignore)
 
+print("9. Le quantitatif : pièces rejointes, contexte borné, suspension qui tient")
+# Relevé du 17/09 : « Source inconnue ou ambiguë » — le DPGF du lot 11 figurait
+# CINQ fois dans le dossier (un exemplaire par envoi du même fichier) ; et chaque
+# appel du quantitatif portait 181 666 caractères, donc expirait.
+with tempfile.TemporaryDirectory() as dossier:
+    os.environ["DOCUMENTS_DIR"] = dossier
+    for nom in [m for m in sys.modules if m.startswith(("ressources.", "bureautique.atelier"))]:
+        del sys.modules[nom]
+    from ressources import documents_file as fd, dossiers
+    contenu = "Feuille DPGF — ligne 4 : A4=\"Carrelage 45x45\" | B4=\"1250\" | C4=\"m²\"\n" * 20
+    a = dossiers.enregistrer("u1", "fil-Q", "DPGF-LOT 11 CARRELAGE.xlsx", contenu, "/api/documents/jeton-1", "sha-dpgf")
+    b = dossiers.enregistrer("u1", "fil-Q", "DPGF-LOT 11 CARRELAGE.xlsx", contenu, "/api/documents/jeton-2", "sha-dpgf")
+    verifier("le même fichier rejoint reste UNE pièce, sa référence se rafraîchit",
+             a == b and dossiers.sources("u1", "fil-Q", [a])[0]["reference"].endswith("jeton-2"))
+    verifier("le manifeste ne la compte qu'une fois", len(dossiers.manifeste("u1", "fil-Q")) == 1)
+    verifier("un nom raccourci par le modèle se résout (« DPGF-LOT 11 »)",
+             dossiers.sources("u1", "fil-Q", ["DPGF-LOT 11"])[0]["id"] == a)
+    dossiers.enregistrer("u1", "fil-Q", "Devis.pdf", "devis du client A, 1 200 m² de sol " * 5, "/api/documents/x", "sha-A")
+    dossiers.enregistrer("u1", "fil-Q", "Devis.pdf", "devis du client B, 300 m² de faïence " * 5, "/api/documents/y", "sha-B")
+    try:
+        dossiers.sources("u1", "fil-Q", ["Devis.pdf"]); refus = ""
+    except ValueError as e:
+        refus = str(e)
+    verifier("deux fichiers DIFFÉRENTS du même nom restent une ambiguïté, et le refus donne les identifiants",
+             "Plusieurs pièces" in refus and "IDENTIFIANT" in refus, refus)
+    verifier("…et ils restent deux pièces au manifeste", len(dossiers.manifeste("u1", "fil-Q")) == 3)
+    # la suspension tient, « retirer » masque sans effacer
+    r = fd.soumettre("u1", "fil-Q", "quantitatif", {"demande": "métrés", "_demande_utilisateur": "fais les métrés"})
+    cle = r["tache_documentaire"]
+    fd.piloter("u1", "fil-Q", cle, reprendre=False)
+    fd._maj(cle, statut="attente", prochain=0)          # ce que fait l'essai en cours en se terminant
+    verifier("une suspension n'est PAS écrasée par l'essai qui se termine",
+             [p["statut"] for p in fd.progression("u1", "fil-Q")] == ["suspendu"])
+    fd.piloter("u1", "fil-Q", cle, retirer=True)
+    verifier("« retirer » masque le travail du suivi", fd.progression("u1", "fil-Q") == [])
+    with dossiers.base() as c:
+        verifier("…sans rien effacer en base", c.execute("select statut from file_documentaire where id=?", (cle,)).fetchone()[0] == "retire")
+quanti = (BACKEND / "skills" / "quantitatifs.py").read_text(encoding="utf-8")
+arbre = ast.parse(quanti)
+corps = [n for n in arbre.body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in ("_QUANTITE", "PLAFOND_CONTEXTE")]
+esp = {"re": re}
+exec(compile(ast.Module(body=corps, type_ignores=[]), "quanti_extrait", "exec"), esp)
+verifier("un passage de métré porte une quantité (« 1 250 m² », « 42,5 ml », « 12 u »)",
+         all(esp["_QUANTITE"].search(x) for x in ("Carrelage 45x45 : 1 250 m²", "plinthes 42,5 ml", "siphons : 12 u")))
+verifier("une clause administrative n'en porte pas : elle n'est pas interrogée",
+         not esp["_QUANTITE"].search("Le titulaire remet son mémoire avant la date limite fixée au règlement."))
+verifier("le contexte commun est BORNÉ et ne transmet plus les analyses entières",
+         esp["PLAFOND_CONTEXTE"] <= 20000 and "'affectations':contexte}" not in quanti and "contexte_pour(s)" in quanti)
+suivi = (BACKEND.parent / "frontend" / "components" / "chat" / "SuiviRedactions.tsx").read_text(encoding="utf-8")
+verifier("l'écran propose « retirer » sur un travail arrêté", '"retirer"' in suivi and "Retirer ce travail du suivi" in suivi)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

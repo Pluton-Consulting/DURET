@@ -43,7 +43,7 @@ export default function SuiviRedactions({ threadId, token, enCours, actualiser }
     return () => { actif = false; if (minuterie) clearTimeout(minuterie) }
   }, [threadId, token, enCours, revision])
 
-  const piloter = async (r: Redaction, geste: "reprendre" | "suspendre") => {
+  const piloter = async (r: Redaction, geste: "reprendre" | "suspendre" | "retirer") => {
     if (!threadId || !token || action) return
     const fil = threadId
     setAction(r.id); setErreur("")
@@ -72,7 +72,13 @@ export default function SuiviRedactions({ threadId, token, enCours, actualiser }
             <button type="button" disabled={!!action} onClick={() => void piloter(r, actif ? "suspendre" : "reprendre")}
                     style={{ textDecoration: "underline", fontSize: 12, color: "var(--marque-text-secondary)" }}>
               {action === r.id ? "enregistrement…" : actif ? "suspendre" : "reprendre"}
-            </button></>}
+            </button>
+            {/* Un travail arrêté ne reste pas collé en bas : on le retire du suivi
+                (ses étapes restent conservées côté serveur, rien n'est effacé). */}
+            {!actif && <>{" · "}<button type="button" disabled={!!action} onClick={() => void piloter(r, "retirer")}
+                    aria-label="Retirer ce travail du suivi"
+                    style={{ textDecoration: "underline", fontSize: 12, color: "var(--marque-text-secondary)" }}>retirer</button></>}
+          </>}
         </span>
       </div>
     })}

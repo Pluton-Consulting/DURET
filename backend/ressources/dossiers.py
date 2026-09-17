@@ -39,6 +39,10 @@ def fragments(texte,taille=TAILLE_FRAGMENT):
         sortie.append({'numero':len(sortie)+1,'debut':debut,'fin':fin,'texte':texte[debut:fin]});debut=fin
     return sortie
 
+def _televerse(reference):
+    """Une pièce jointe au chat : sa référence est un jeton, neuf à chaque envoi."""
+    return str(reference or '').startswith('/api/documents/')
+
 def enregistrer(uid,fil,nom,texte,reference='',empreinte=None):
     uid,fil=identite(uid,fil);texte=str(texte or '')
     if not texte.strip():raise ValueError('Source sans texte : la lecture visuelle doit être faite et identifiée avant la rédaction.')
@@ -52,6 +56,20 @@ def enregistrer(uid,fil,nom,texte,reference='',empreinte=None):
         # Retrouver aussi les identifiants anciens sans casser les citations persistées.
         ancienne=c.execute('SELECT id FROM sources_dossier WHERE utilisateur=? AND fil=? AND nom=? AND empreinte=? AND contenu=? AND reference=?',(uid,fil,nom,sha,texte,reference)).fetchone()
         if ancienne:return ancienne['id']
+        # UN FICHIER REJOINT N'EST PAS UNE NOUVELLE PIÈCE (17/09). Chaque envoi du
+        # même DPGF lui donnait un nouveau jeton, donc une nouvelle source : cinq
+        # exemplaires du même classeur dans le dossier, et « le DPGF lot 11 »
+        # devenait « source ambiguë » — le quantitatif refusait de partir. Même
+        # nom, mêmes octets, même texte = LA MÊME pièce ; seule sa référence se
+        # rafraîchit (le jeton le plus récent est celui qui survivra aux purges).
+        # Cela ne vaut que pour un TÉLÉVERSEMENT (référence = jeton du chat, neuf à
+        # chaque envoi). Deux fichiers du NAS de même nom et de même contenu sont
+        # deux fichiers : leur chemin les distingue, on ne les fond jamais.
+        if _televerse(reference):
+            jumelle=c.execute("SELECT id FROM sources_dossier WHERE utilisateur=? AND fil=? AND nom=? AND empreinte=? AND contenu=? AND reference LIKE '/api/documents/%' ORDER BY cree DESC LIMIT 1",(uid,fil,nom,sha,texte)).fetchone()
+            if jumelle:
+                c.execute('UPDATE sources_dossier SET reference=? WHERE id=?',(reference,jumelle['id']))
+                return jumelle['id']
         if not c.execute('SELECT 1 FROM sources_dossier WHERE id=?',(cle,)).fetchone():
             taille=c.execute('SELECT COALESCE(SUM(length(contenu)),0) FROM sources_dossier WHERE utilisateur=? AND fil=?',(uid,fil)).fetchone()[0]
             if taille+len(texte)>MAX_CARACTERES_FIL:raise ValueError('Dossier trop volumineux pour cette conversation ; ouvrez une nouvelle conversation pour la suite.')
@@ -82,8 +100,23 @@ def sources(uid,fil,ids=None):
             # Le modèle reprend parfois l'URL de la pièce au lieu de son id de
             # dossier. Résoudre uniquement parmi les pièces de CE compte/fil.
             candidats=[r for r in rows if i==r['reference'] or i==r['nom']]
+            if not candidats:
+                # Le modèle raccourcit souvent le nom (« DPGF lot 11 ») : un seul
+                # nom qui le contient suffit, plusieurs restent une ambiguïté.
+                plat=' '.join(i.casefold().split())
+                proches=[r for r in rows if plat and plat in ' '.join(r['nom'].casefold().split())]
+                if len({r['nom'] for r in proches})==1:candidats=proches
+            # …mais deux fichiers DIFFÉRENTS du même nom restent deux pièces : seule
+            # une lecture dérivée refaite (« — lecture visuelle ») se remplace par nom.
+            memes_octets=len({r['empreinte'] for r in candidats})==1 and all(_televerse(r['reference']) for r in candidats)
+            relecture=len({r['nom'] for r in candidats})==1 and ' — lecture visuelle' in candidats[0]['nom']
+            if len(candidats)>1 and (memes_octets or relecture):
+                # Des exemplaires de la MÊME pièce (rejointe, ou relue) : le plus récent.
+                candidats=[max(candidats,key=lambda r:r['cree'])]
             if len(candidats)!=1:
-                raise ValueError('Source inconnue ou ambiguë dans cette conversation ; utilise son identifiant exact dans lister_sources_dossier.')
+                detail=' ; '.join(r['id']+' = « '+r['nom'][:60]+' »' for r in (candidats or rows)[:12])
+                raise ValueError(('Plusieurs pièces différentes répondent à « '+i[:60]+' »' if candidats else 'Aucune pièce ne s’appelle « '+i[:60]+' »')
+                                 +' dans cette conversation. Reprends l’IDENTIFIANT exact : '+detail)
             resolus.append(candidats[0]['id'])
         rows=[disponibles[i] for i in dict.fromkeys(resolus)]
     return rows
@@ -98,7 +131,15 @@ def normaliser_selection(uid,fil,data):
 def manifeste(uid,fil):
     # Deux fichiers homonymes ne sont pas deux versions. Sans référence stable,
     # conserver chaque source distincte ; le nom seul ne prouve aucune filiation.
-    derniers={(('reference',r['reference'],r['nom']) if r['reference'] else ('id',r['id'])):r for r in sources(uid,fil)}
+    # …mais le MÊME fichier rejoint cinq fois (même nom, mêmes octets) est UNE
+    # pièce : sans cela le quantitatif lisait — et comptait — cinq fois le DPGF.
+    # Une lecture dérivée (« — lecture visuelle page 1 ») refaite garde la dernière.
+    derniers={}
+    for r in sources(uid,fil):
+        if _televerse(r['reference']):
+            cle=(('lecture',r['nom']) if ' — lecture visuelle' in r['nom'] else ('televerse',r['nom'],r['empreinte']))
+        else:cle=(('reference',r['reference'],r['nom']) if r['reference'] else ('id',r['id']))
+        derniers[cle]=r
     return [{'id':r['id'],'nom':r['nom'],'caracteres':len(r['contenu']),
              'fragments':len(fragments(r['contenu'])),'reference':r['reference'],'empreinte':r['empreinte']} for r in derniers.values()]
 

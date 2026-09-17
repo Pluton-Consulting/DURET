@@ -69,6 +69,10 @@ def dedoublonner(lignes):
         else:retenues.setdefault(cle,l)
     return list(retenues.values()),conflits
 
+PLAFOND_CONTEXTE = 12000
+# Un nombre suivi d'une unité de métré : ce qu'une citation de quantitatif doit porter.
+_QUANTITE = re.compile(r"\d[\d\s.,]*\s?(?:m²|m2|m³|m3|ml\b|m\.l|mL\b|m\b|cm\b|mm\b|u\b|U\b|unit[ée]s?\b|ens\b|forfait|ft\b|kg\b|t\b|l\b|%)", re.I)
+
 async def _produire(data,user):
     uid,fil=dossiers.identite(getattr(user,'id',None),data.get('_fil'))
     demande=str(data.get('_demande_utilisateur') or data.get('demande') or '')
@@ -82,12 +86,36 @@ async def _produire(data,user):
     sources=await completer_visuels(uid,fil,tache,sources,user,demande)
     analyses=await _analyses(uid,fil,tache,demande,sources)
     # Les contraintes et affectations sont communes à tous les fragments à quantifier.
-    contexte=[a for a in analyses if any(f.get('nature')=='exigence' for f in a['faits'])]
-    fragments=[];preuves={}
+    # LE CONTEXTE COMMUN SE BORNE (17/09). Il portait TOUTES les analyses du
+    # dossier, entières, dans CHAQUE appel : « 181 666 caractères à contrôler »
+    # pour un fragment utile de 5 000. Chaque appel expirait, aucune étape
+    # n'était jamais acquise, et la file rejouait le tout huit fois. On ne
+    # transmet plus que les EXIGENCES (le fait, sa référence), d'abord celles de
+    # la pièce du fragment puis du même lot, dans un plafond fixe.
+    exigences=[{'source':a.get('source'),'preuve':a.get('preuve'),'fait':str(f.get('fait') or f.get('texte') or '')[:280]}
+               for a in analyses for f in a['faits'] if f.get('nature')=='exigence']
+    noms={s['id']:s['nom'] for s in sources}
+    def _lot(nom):
+        m=re.search(r'lot\s*n?°?\s*(\d+)',str(nom or ''),re.I);return m.group(1) if m else None
+    def contexte_pour(source):
+        lot=_lot(source['nom'])
+        rang=lambda e:(0 if e['source']==source['id'] else 1 if lot and _lot(noms.get(e['source']))==lot else 2)
+        retenus=[];taille=0
+        for e in sorted(exigences,key=rang):
+            cout=len(e['fait'])+60
+            if taille+cout>PLAFOND_CONTEXTE:break
+            retenus.append(e);taille+=cout
+        return retenus
+    fragments=[];preuves={};sans_quantite=[]
     for s in sources:
         for f in dossiers.fragments(s['contenu'],taille=5000):
             cle=s['id']+':q'+str(f['numero']);texte=f['texte']
-            fragments.append((s,cle,texte));preuves[cle]=texte
+            preuves[cle]=texte
+            # Une ligne de quantitatif exige une citation « portant valeur et
+            # unité » : un fragment qui n'en contient aucune (règlement, clauses
+            # administratives) ne peut rien rendre — inutile de payer l'appel.
+            if _QUANTITE.search(texte):fragments.append((s,cle,texte))
+            else:sans_quantite.append(cle)
         for f in dossiers.fragments(s['contenu']):preuves[f"{s['id']}:{f['numero']}"]=f['texte']
     semaphore=asyncio.Semaphore(3)
     async def extraire(s,cle,texte):
@@ -107,13 +135,19 @@ async def _produire(data,user):
                 'La formule emploie UNIQUEMENT c1, c2, etc. dans l’ordre des opérandes et les signes + - * / : '
                 'pour longueur fois largeur, écris c1*c2, jamais longueur x largeur. '
                 'Les identifiants, dates et numéros de plan ne sont pas des quantités. Une estimation visuelle est une réserve, pas une mesure exacte.',
-                {'demande':demande,'source':s['nom'],'preuve_fragment':cle,'fragment':texte,'affectations':contexte},verifier)
+                {'demande':demande,'source':s['nom'],'preuve_fragment':cle,'fragment':texte,'affectations':contexte_pour(s)},verifier)
             await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle,r);return r
     lus=await asyncio.gather(*(extraire(s,c,t) for s,c,t in fragments),return_exceptions=True)
     erreurs=['Un fragment n’a pas pu être quantifié ('+type(x).__name__+').' for x in lus if isinstance(x,BaseException)]
     bons=[x for x in lus if isinstance(x,dict)]
     lignes,conflits=dedoublonner([l for r in bons for l in r['lignes']])
     reserves=list(dict.fromkeys([x for r in bons for x in r['reserves']]+conflits+erreurs))
+    if sans_quantite:reserves.append(str(len(sans_quantite))+' passage(s) sans aucun nombre suivi d’une unité (clauses, règlement) n’ont pas été interrogés : ils ne peuvent porter aucune ligne de métré.')
+    # Le contrôle final reçoit les exigences, bornées elles aussi.
+    contexte_global=[];_t=0
+    for e in exigences:
+        if _t+len(e['fait'])+60>PLAFOND_CONTEXTE*2:break
+        contexte_global.append(e);_t+=len(e['fait'])+60
     visuels={s['id'] for s in sources if 'lecture visuelle' in s['nom'].casefold() or 'analyse visuelle' in s['contenu'][:150].casefold()}
     for l in lignes:
         l['lecture']='Visuelle : à contrôler sur le plan' if any(o['preuve'].split(':')[0] in visuels for o in l['operandes']) else 'Texte extrait'
@@ -121,7 +155,7 @@ async def _produire(data,user):
     if lignes:
         avis=await _json('Vérifie chaque ligne quantitative : affectation réelle au poste et au local, absence de double comptage, ancienne opération non réemployée, cotes et unités lisibles. '
             'Pour chaque ligne invalide, donne son indice zéro-based dans rejeter et une réserve précise. JSON {"rejeter":[0],"reserves":["..."]}. Une simple surface habitable ne prouve pas automatiquement une surface de revêtement.',
-            {'demande':demande,'lignes':lignes,'affectations':contexte})
+            {'demande':demande,'lignes':lignes,'affectations':contexte_global})
         rejeter=avis.get('rejeter');notes=avis.get('reserves')
         if not isinstance(rejeter,list) or any(type(i) is not int or not 0<=i<len(lignes) for i in rejeter) or not isinstance(notes,list):raise ValueError('Contrôle quantitatif invalide.')
         lignes=[l for i,l in enumerate(lignes) if i not in rejeter];reserves.extend(str(n) for n in notes)

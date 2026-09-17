@@ -1132,10 +1132,11 @@ async def get_redactions(thread_id: str, current_user: User = Depends(get_curren
 @router.post("/threads/{thread_id}/redactions/{redaction_id}/{action}")
 async def piloter_redaction(thread_id: str, redaction_id: str, action: str, current_user: User = Depends(get_current_user)):
     await _verifier_fil_documentaire(thread_id, current_user)
-    if action not in ("reprendre", "suspendre"):
+    if action not in ("reprendre", "suspendre", "retirer"):
         raise HTTPException(status_code=400, detail="Action inconnue")
     from ressources.documents_file import piloter
     try:
-        return await asyncio.to_thread(piloter, str(current_user.id), thread_id, redaction_id, action == "reprendre")
+        return await asyncio.to_thread(piloter, str(current_user.id), thread_id, redaction_id,
+                                       action == "reprendre", action == "retirer")
     except ValueError:
         raise HTTPException(status_code=404, detail="Rédaction introuvable dans cette conversation")

@@ -79,7 +79,7 @@ def progression(uid,fil):
     with dossiers.base() as c:
         _table(c)
         actifs=c.execute("SELECT rowid,genre,statut FROM file_documentaire WHERE statut IN ('attente','en_cours') ORDER BY rowid").fetchall()
-        for r in c.execute('SELECT rowid,id,genre,statut,donnees,annonce,essais,prochain FROM file_documentaire WHERE utilisateur=? AND fil=? ORDER BY rowid DESC LIMIT 30',(uid,fil)).fetchall():
+        for r in c.execute("SELECT rowid,id,genre,statut,donnees,annonce,essais,prochain FROM file_documentaire WHERE utilisateur=? AND fil=? AND statut!='retire' ORDER BY rowid DESC LIMIT 30",(uid,fil)).fetchall():
             data=json.loads(r['donnees']);tache=data.get('tache')
             etapes={x[0]:json.loads(x[1]) if x[0] in ('plan','suivi_controle') else True for x in c.execute("SELECT cle,CASE WHEN cle IN ('plan','suivi_controle') THEN valeur ELSE 'null' END FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache=?",(uid,fil,tache or ''))}
             total=len(etapes.get('plan',{}).get('sections',[]))
@@ -119,7 +119,11 @@ def _maj(cle,**valeurs):
     autorises={'statut','essais','prochain','resultat','annonce','donnees'}
     if not valeurs or set(valeurs)-autorises:raise ValueError('Champ de file invalide.')
     with dossiers.base() as c:
-        _table(c);c.execute('UPDATE file_documentaire SET '+','.join(k+'=?' for k in valeurs)+' WHERE id=?',(*valeurs.values(),cle))
+        # UNE SUSPENSION TIENT (17/09) : l'essai en cours, en se terminant, réécrivait
+        # « attente » par-dessus le « suspendu » que la personne venait de poser —
+        # le travail repartait tout seul. Seul `piloter` sort d'une suspension.
+        garde=" AND statut NOT IN ('suspendu','retire')" if 'statut' in valeurs else ''
+        _table(c);c.execute('UPDATE file_documentaire SET '+','.join(k+'=?' for k in valeurs)+' WHERE id=?'+garde,(*valeurs.values(),cle))
 
 async def annoncer(job,user,resultat):
     from database.connection import get_rls_db
@@ -233,7 +237,7 @@ def verifier_poursuite():
         r=c.execute('SELECT statut FROM file_documentaire WHERE id=?',(cle,)).fetchone()
     if r and r[0]=='suspendu':raise ValueError('Rédaction suspendue à la demande de l’utilisateur ; les étapes sont conservées.')
 
-def piloter(uid,fil,cle,reprendre=False):
+def piloter(uid,fil,cle,reprendre=False,retirer=False):
     uid,fil=dossiers.identite(uid,fil)
     with dossiers.base() as c:
         _table(c);c.execute('BEGIN IMMEDIATE');r=c.execute('SELECT statut FROM file_documentaire WHERE id=? AND utilisateur=? AND fil=?',(cle,uid,fil)).fetchone()
@@ -245,6 +249,11 @@ def piloter(uid,fil,cle,reprendre=False):
             if len(correspondances)!=1:raise ValueError('Rédaction inconnue ou ambiguë dans cette conversation ; utilise son identifiant de file.')
             cle=correspondances[0]['id'];r=(correspondances[0]['statut'],)
         if r[0]=='termine':return {'ok':True,'statut':'termine','note':'Le document a déjà été livré.'}
+        if retirer:
+            # RETIRER DE L'ÉCRAN, PAS EFFACER : la ligne et ses étapes restent en base
+            # (rien ne se supprime sans le mot), elle cesse seulement d'être suivie.
+            c.execute("UPDATE file_documentaire SET statut='retire',annonce=1,prochain=0 WHERE id=?",(cle,))
+            return {'ok':True,'statut':'retire','note':'Travail retiré du suivi ; ses étapes restent conservées.'}
         if reprendre and r[0] in ('attente','en_cours'):
             return {'ok':True,'statut':r[0],'en_cours':True,'tache_documentaire':cle,'production_verifiee':False,
                     'note':'La rédaction est déjà en cours. Ses étapes et sa progression sont conservées.'}

@@ -166,9 +166,15 @@ def _repartir_les_mots(plan,structure):
     # une rubrique se rédige, elle ne se titre pas. Le dépassement éventuel est DIT au rendu.
     total=int(restantes*300)
     voulu=sum(max(1,int(s.get('mots_cibles') or 300)) for s in redigees)
+    # LE CONTENU DE PROJET PASSE AVANT LA LIMITE (sonde du 17/09 : 18,5 pages de reprises sur 20
+    # ne laissaient que 245 mots à « Principes de réalisation », le cœur de la note technique,
+    # que la trame écrit en 1 400 mots). Une rubrique remplacée ne descend pas sous la longueur
+    # que l'entreprise lui donne dans sa trame (bornée) ; le dépassement de pages est DIT au rendu.
+    mots_modele={f['index']:int(f.get('mots') or 0) for f in (structure or {}).get('sections',[])}
     for s in redigees:
         part=total*max(1,int(s.get('mots_cibles') or 300))/voulu if voulu else 0
-        s['mots_cibles']=int(max(150,min(1500,part)))
+        plancher=max(300,min(1200,mots_modele.get(s.get('remplace_modele'),0))) if type(s.get('remplace_modele')) is int else 250
+        s['mots_cibles']=int(max(plancher,min(1500,part)))
     plan['pages_modele_reprises']=round(prises,1)
 
 def _place_modele(s):
@@ -724,7 +730,8 @@ async def composer_immediat(data,user):
                     'ou une entrée de "rubriques_modele_retirees": {"index":"raison"}. '
                     'N’AJOUTE une rubrique (sans index, avec "apres_modele": index pour la placer) QUE si la demande ou le règlement de consultation l’exige et qu’aucune rubrique du modèle ne la couvre '
                     '(ex. la réponse aux critères de jugement) ; jamais une rubrique dont le sujet est déjà celui d’une rubrique reprise. Une rubrique ajoutée de réponse aux critères se RÉDIGE vraiment : ce que l’entreprise apporte sur chaque critère, avec renvoi aux rubriques. '
-                    'Chaque rubrique du modèle porte son poids en "pages" : si une limite de pages est imposée et que le modèle seul la dépasse, retire d’abord ce qui sert le moins la notation et dis-le dans rubriques_modele_retirees. '
+                    'Chaque rubrique du modèle porte son poids en "pages". Si une limite de pages est imposée, les rubriques RÉDIGÉES portent la note technique : réserve-leur AU MOINS un tiers de la limite '
+                    '(limite − pages de garde − pages des rubriques reprises) ; pour y arriver, retire d’abord les rubriques d’entreprise qui servent le moins les critères de jugement (pages de logos, annexes générales) et dis-le dans rubriques_modele_retirees. '
                     'La date de la garde est la date du jour (date_du_jour), jamais "[À CONFIRMER]". '
                     if structure_modele else '')+'Établis le plan du LIVRABLE demandé, applicable à tout type de document. Reprends exactement les rubriques imposées par la demande ou le RC. '
                     'Un exemple sert de présentation et de faits stables d’entreprise ; ne réemploie pas ses anciens faits de chantier. '

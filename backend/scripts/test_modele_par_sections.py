@@ -374,7 +374,11 @@ verifier("une rubrique ajoutée qui DOUBLE une rubrique reprise est refusée au 
 _repartir_les_mots(bon, _struct)
 mots = {x["titre"]: x.get("mots_cibles") for x in bon["sections"] if "reprise_modele" not in x}
 verifier("les pages qui restent après la garde et les reprises se partagent entre les rubriques RÉDIGÉES, au prorata",
-         bon["pages_modele_reprises"] == 9.0 and mots[_TITRES[4]] == 1500 and mots[_TITRES[3]] == 660 and all(v >= 150 for v in mots.values()), str(mots))
+         bon["pages_modele_reprises"] == 9.0 and mots[_TITRES[4]] == 1500 and mots[_TITRES[3]] == 660 and all(v >= 250 for v in mots.values()), str(mots))
+serre = {"pages_max": 6, "sections": [{"titre": "a", "remplace_modele": 4, "mots_cibles": 200}, {"titre": "c", "mots_cibles": 100}] + [{"titre": "x", "reprise_modele": i} for i in (0, 1)]}
+_repartir_les_mots(serre, {"pages_garde": 4, "sections": [{"index": i, "titre": t, "pages": 1.0, "mots": 1409 if i == 4 else 100} for i, t in enumerate(_TITRES)]})
+verifier("limite déjà mangée par les reprises : la rubrique de chantier garde la longueur que la trame lui donne (bornée), l'ajout 250 mots",
+         serre["sections"][0]["mots_cibles"] == 1200 and serre["sections"][1]["mots_cibles"] == 250, str(serre["sections"][:2]))
 _dater_la_garde(bon)
 verifier("la date de la garde est celle du jour, jamais « à confirmer »", bon["remplacements_modele"]["Date : le 24/07/2026"] == "Date : le " + _date_du_jour()
          and bon["remplacements_modele"]["Projet : ancien"] == "Projet : neuf", str(bon["remplacements_modele"]))

@@ -568,8 +568,10 @@ async def composer_immediat(data,user):
             ids=[s["id"] for s in sources]
             analyses=await _analyses(uid,fil,tache,demande,sources)
             from bureautique.illustrations import analyser as analyser_illustrations
+            await dire(uid,fil,tache,'lecture des images et schémas des documents Word (organigramme, photos de chantier, logos)')
             analyses += await analyser_illustrations(uid,fil,tache,sources,user,demande)
             plan=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan')
+            if not plan:await dire(uid,fil,tache,'établissement du plan du document à partir de '+str(sum(len(a.get('faits',[])) for a in analyses))+' faits relevés dans '+str(len(sources))+' pièces (rubriques du modèle à garder, rubriques à rédiger)')
             structure_modele=None
             if not plan and contrat.get('modele_source'):
                 try:

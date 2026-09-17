@@ -43,6 +43,10 @@ async def analyser(uid,fil,tache,sources,user,demande):
         cle=f"illustration:v2:{source['id']}:{image['numero']}"
         connu=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle)
         if connu:return connu
+        try:
+            from skills.documents_dossier import dire
+            await dire(uid,fil,tache,'lecture de l’image '+str(image['numero'])+' de « '+source['nom'][:60]+' »')
+        except Exception:pass
         if image.get('indisponible'):
             return {'source':source['id'],'nom':source['nom'],'fragment':'image'+str(image['numero']),'preuve':source['id']+':image'+str(image['numero']),
                 'faits':[],'limites':[image['indisponible']+' ; illustration '+str(image['numero'])+' non lue et non réutilisable.']}

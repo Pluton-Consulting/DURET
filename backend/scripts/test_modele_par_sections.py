@@ -420,5 +420,29 @@ verifier("le rédacteur d'une rubrique remplacée reçoit le texte ENTIER de l'e
 verifier("ce texte type est passé au rédacteur, au relecteur et au correcteur", composeur.count("**base}") == 3 and "PARS DE CE TEXTE" in composeur)
 verifier("un sous-titre du rédacteur ne devient jamais une rubrique de niveau 1", "'niveau':3 if plan.get('modele_source')" in composeur)
 
+print("13. Ce que la consultation EXIGE de couvrir est relié à une rubrique, et prouvé (17/09 nuit)")
+from skills.documents_dossier import _couverture_du_cadre
+_src = [{"id": "cadre", "contenu": "Éléments techniques à couvrir dans le mémoire technique :\n• Organisation générale du chantier\n• Planning détaillé et phases d’exécution\n•  Gestion   des risques et imprévus"}]
+def _plan_cadre(elements):
+    return {"sections": [{"titre": "CHANTIERS", "sources": []}, {"titre": "PERSONNEL ET OUVRIERS SUR CHANTIER / PLANNINGS", "sources": []}], "elements_exiges": elements}
+ok_ = _plan_cadre([{"element": "Organisation générale du chantier", "source": "cadre", "rubrique": "chantiers"},
+                   {"element": "Planning détaillé et phases d'exécution", "source": "cadre", "rubrique": "PERSONNEL ET OUVRIERS SUR CHANTIER / PLANNINGS"},
+                   {"element": "Gestion des risques et imprévus", "source": "cadre", "rubrique": None}])
+_couverture_du_cadre(ok_, _src, strict=True)
+verifier("un élément qui se LIT dans la pièce est gardé (puces, espaces, apostrophes tolérés) et rattaché à SA rubrique",
+         len(ok_["elements_exiges"]) == 3 and ok_["sections"][0]["elements_a_couvrir"] == ["Organisation générale du chantier"] and ok_["elements_exiges"][0]["rubrique"] == "CHANTIERS")
+verifier("un élément exigé sans rubrique est rendu NON COUVERT, jamais caché", ok_["elements_exiges"][2]["rubrique"] is None)
+faux_ = _plan_cadre([{"element": "Bilan carbone détaillé du chantier", "source": "cadre", "rubrique": "CHANTIERS"},
+                     {"element": "Organisation générale du chantier", "source": "cadre", "rubrique": "Une rubrique qui n'existe pas"}])
+try:
+    _couverture_du_cadre(faux_, _src, strict=True); refus = ""
+except ValueError as e:
+    refus = str(e)
+verifier("premier essai : un élément INVENTÉ ou une rubrique inconnue sont refusés, nommés", "Bilan carbone" in refus and "n’est pas une rubrique du plan" in refus, refus[:200])
+_couverture_du_cadre(faux_, _src, strict=False)
+verifier("second essai : l'élément inventé est écarté, le vrai reste — signalé sans rubrique", [e["element"] for e in faux_["elements_exiges"]] == ["Organisation générale du chantier"] and faux_["elements_exiges"][0]["rubrique"] is None)
+verifier("le rédacteur et le relecteur connaissent les éléments exigés ; le résultat rend la table de couverture",
+         composeur.count("elements_a_couvrir") >= 4 and "'couverture_de_la_consultation'" in composeur and "Un PLANNING ne se reconstruit pas" in composeur)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

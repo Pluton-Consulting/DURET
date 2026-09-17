@@ -177,6 +177,45 @@ def _repartir_les_mots(plan,structure):
         s['mots_cibles']=int(max(plancher,min(1500,part)))
     plan['pages_modele_reprises']=round(prises,1)
 
+def _plat(t):
+    import unicodedata
+    t=unicodedata.normalize('NFKC',str(t or '')).replace('’',"'").replace('‘',"'").casefold()
+    return re.sub(r'[\s\u00a0\u202f•·\-–—*▪◦]+',' ',t).strip()
+
+def _couverture_du_cadre(plan,sources,strict):
+    """CE QUE LA CONSULTATION EXIGE DE COUVRIR, RELIÉ À LA RUBRIQUE QUI Y RÉPOND (17/09).
+
+    Le règlement de Domofrance demande un cadre de réponse « dûment complété sans omission » ; rien
+    ne prouvait qu'aucun élément n'était oublié. Le plan recopie chaque élément exigé (`elements_exiges` :
+    élément, source, rubrique) ; le CODE vérifie que l'élément se LIT bien dans la pièce citée — un
+    élément inventé ne passe pas — et que la rubrique existe. Premier essai : refus nommé ; second :
+    on garde ce qui est prouvé, et un élément sans rubrique est rendu « non couvert », jamais caché."""
+    elements=plan.get('elements_exiges')
+    if not isinstance(elements,list):
+        plan['elements_exiges']=[];return
+    sections=[s for s in plan.get('sections',[]) if isinstance(s,dict)]
+    titres={_plat(s.get('titre')):s for s in sections}
+    contenus={s['id']:_plat(s.get('contenu')) for s in sources}
+    gardes,problemes=[],[]
+    for e in elements[:80]:
+        if not isinstance(e,dict):continue
+        texte=' '.join(str(e.get('element') or '').split())[:400];source=e.get('source')
+        if len(texte)<6:continue
+        lu=contenus.get(source,'')
+        forts=_mots_forts(texte)
+        prouve=bool(lu) and (_plat(texte) in lu or (len(forts)>=3 and all(m in _mots_forts(lu) for m in forts)))
+        if not prouve:
+            problemes.append('« '+texte[:90]+' » ne se lit pas dans la pièce citée : recopie le texte EXACT de la pièce, ou retire cet élément.');continue
+        section=titres.get(_plat(e.get('rubrique')))
+        if section is None and e.get('rubrique'):
+            problemes.append('« '+texte[:70]+' » est rattaché à « '+str(e.get('rubrique'))[:60]+' », qui n’est pas une rubrique du plan : reprends un titre EXACT du plan.')
+        gardes.append({'element':texte,'source':source,'rubrique':section['titre'] if section else None})
+    if strict and problemes:raise ValueError('Éléments exigés par la consultation : '+' '.join(problemes[:8]))
+    plan['elements_exiges']=gardes
+    for s in sections:s.pop('elements_a_couvrir',None)
+    for g in gardes:
+        if g['rubrique']:titres[_plat(g['rubrique'])].setdefault('elements_a_couvrir',[]).append(g['element'])
+
 def _planchers_de_mots(plan,structure):
     mots_modele={f['index']:int(f.get('mots') or 0) for f in (structure or {}).get('sections',[])}
     for s in plan['sections']:
@@ -743,6 +782,14 @@ async def composer_immediat(data,user):
                     logger.warning('Structure du modèle illisible (%s) : présentation seule reprise',type(e).__name__)
             _limite_dite=re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', str(contrat.get('demande') or demande), re.I)
             essai_plan={'n':0,'limite_personne':bool(_limite_dite)}
+            def _verifier_le_plan(r):
+                # LE COMPTE DES ESSAIS AVANCE QUOI QU'IL ARRIVE : `_json` n'en accorde que deux. Un refus
+                # « de fond » (trame, couverture, limite) ne vaut qu'au PREMIER ; s'il tombait aussi au
+                # second parce qu'une autre vérification avait levé avant lui, le document ne sortait plus.
+                strict=not essai_plan['n'];essai_plan['n']+=1
+                _plan_valide(_normaliser_plan(r,ids,contrat.get('modele_source'),structure_modele,{x['id'] for x in sources if x['nom'].lower().endswith('.docx')}),ids)
+                _couverture_du_cadre(r,sources,strict)
+                _plan_suit_modele(r,structure_modele,{'n':0 if strict else 1,'limite_personne':essai_plan.get('limite_personne')})
             if not plan:
                 plan=await _json((
                     'UN MODÈLE DE L’ENTREPRISE EST IMPOSÉ (modele_entreprise) : le document final est CE modèle, rempli. Sa page de garde est conservée : '
@@ -762,7 +809,9 @@ async def composer_immediat(data,user):
                     if structure_modele else '')+'Établis le plan du LIVRABLE demandé, applicable à tout type de document. Reprends exactement les rubriques imposées par la demande ou le RC. '
                     'Un exemple sert de présentation et de faits stables d’entreprise ; ne réemploie pas ses anciens faits de chantier. '
                     'Chaque pièce doit être affectée à une rubrique, ou écartée avec une raison explicite. '
-                    'Schéma {"titre":"...","sections":[{"titre":"...","objectif":"...","sources":["id"],"mots_cibles":350,"reprise_modele":null,"remplace_modele":null,"apres_modele":null,"illustrations":[{"source":"id","numero":1,"legende":"..."}]}],"rubriques_modele_retirees":{},'
+                    'Si une pièce de la consultation (cadre de réponse, règlement) LISTE ce que le document doit couvrir, recopie CHAQUE élément dans "elements_exiges" : son texte EXACT tel qu’il se lit dans la pièce, sa source, '
+                    'et le titre EXACT de la rubrique du plan qui y répond — chaque élément doit avoir sa rubrique (celle du modèle qui traite ce sujet, sinon une rubrique ajoutée). Rien à lister : tableau vide. '
+                    'Schéma {"titre":"...","sections":[{"titre":"...","objectif":"...","sources":["id"],"mots_cibles":350,"reprise_modele":null,"remplace_modele":null,"apres_modele":null,"illustrations":[{"source":"id","numero":1,"legende":"..."}]}],"rubriques_modele_retirees":{},"elements_exiges":[{"element":"texte exact","source":"id","rubrique":"titre exact"}],'
                     '"sources_ecartees":{"id":"raison"},"modele_source":"id du DOCX à utiliser ou null","pages_max":null}. '
                     'Respecte la limite de pages éventuelle et répartis la longueur ; une rubrique demandée ne doit pas disparaître. '
                     'Sélectionne les illustrations réellement lues qui répondent à la rubrique (organigramme, moyens, schéma, etc.), '
@@ -773,8 +822,7 @@ async def composer_immediat(data,user):
                      'analyses':_faits_pour_synthese(analyses),
                      'date_du_jour':_date_du_jour(),
                      **({'modele_entreprise':{'garde':structure_modele['garde'],'rubriques':structure_modele['sections']}} if structure_modele else {})},
-                    lambda r:(_plan_valide(_normaliser_plan(r,ids,contrat.get('modele_source'),structure_modele,{x['id'] for x in sources if x['nom'].lower().endswith('.docx')}),ids),
-                              _plan_suit_modele(r,structure_modele,essai_plan)))
+                    _verifier_le_plan)
                 if contrat.get('modele_source'):plan['modele_source']=contrat['modele_source']
                 _plan_valide(plan,ids)
                 limite = re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', demande, re.I)
@@ -846,6 +894,9 @@ async def composer_immediat(data,user):
                           'PARS DE CE TEXTE et adapte-le à ce projet : garde ses méthodes et son équipe type comme ce que l’entreprise PRÉVOIT ici (ajustable selon le planning), retire ce qui ne concerne pas les ouvrages de ce dossier, '
                           'ajoute ce que les pièces exigent (lots, locaux, produits, phases, délais, contraintes). N’écris AUCUNE réserve sur l’origine de ces données (« issu du mémoire type », « à valider pour ce chantier ») : c’est l’entreprise qui parle. Seuls le nom, les lieux, les quantités, les dates et les engagements chiffrés de l’ANCIEN chantier ne se reprennent pas. '
                           'Garde ses sous-titres utiles avec des blocs {"bloc":"titre","niveau":3,"texte":"..."}. ' if texte_type else '')+
+                        'Si section.elements_a_couvrir existe, ce sont des éléments EXIGÉS par la consultation pour cette rubrique : traite CHACUN explicitement, dans l’ordre, sans en omettre. '
+                        'Un PLANNING ne se reconstruit pas : donne les jalons et phases TELS QU’ILS SE LISENT dans la preuve (mêmes bornes, mêmes mois), sans borne intermédiaire déduite ; ce qui est illisible ou incertain se dit, il ne s’arrondit pas. '
+                        'Pour un chiffre de l’entreprise présent sous plusieurs valeurs dans son modèle (effectif d’une fiche et d’un tableau annuel), prends la valeur de l’année la plus récente et garde-la partout. '
                         'Les données de l’entreprise (effectifs, encadrement, moyens, matériel, fournisseurs, références, SAV, formation) figurent dans les preuves issues de SON modèle : UTILISE-LES, ne les déclare pas manquantes. '
                         'N’écris une réserve que pour une information INDISPENSABLE à cette rubrique et introuvable dans toutes les preuves reçues : deux réserves au plus, une phrase chacune, jamais sur le fonctionnement du dossier (pièces, fragments, preuves, modèle). '
                         'Seule une donnée d’entreprise réellement introuvable reste [À CONFIRMER] ; ne reprends jamais le nom, les quantités ou les engagements d’un ancien chantier. '
@@ -859,6 +910,7 @@ async def composer_immediat(data,user):
                     avis=revision['avis'] if revision else await _json('Vérifie le contenu rédigé contre la demande de section et les preuves. Détecte faits inventés, ancien chantier recopié, '
                         'rubrique seulement décrite au lieu d’être rédigée, contradiction et manque important. Contrôle aussi les réserves : pieces_disponibles est l’inventaire COMPLET ; les preuves reçues ici sont une sélection. Une pièce non sélectionnée n’est pas absente. Ne valide pas une fausse affirmation globale d’absence. '
                         'Les illustrations choisies par le plan sont insérées À LA MISE EN PAGE, pas par le rédacteur : leur absence du texte n’est PAS un problème. '
+                        'Si section.elements_a_couvrir existe, vérifie que CHAQUE élément exigé est réellement traité et signale nommément tout élément omis. '
                         'Si texte_type_de_l_entreprise est fourni, la rubrique ADAPTE la façon de faire écrite par l’entreprise : ses méthodes, ses contrôles et son équipe type sont légitimes et valent preuve ; seuls le nom, les lieux, les quantités et les dates de l’ancien chantier sont interdits. '
                         'Schéma {"valide":true,"problemes":[]} ou {"valide":false,"problemes":["..."]}. Les réserves explicites sur une donnée absente sont acceptables.',
                         {'demande':demande,'section':section,'redaction':r,'pieces_disponibles':inventaire,'preuves':utiles,**base})
@@ -1478,15 +1530,23 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
         url='/api/documents/'+pdf_id
         r={**r,'document_id':pdf_id,'format':'pdf','url':url,'octets':f_pdf['octets'],
            'bloc_ui':{'type':'fichier','url':url,'nom':titre+'.pdf','titre':titre,'format':'pdf','octets':f_pdf['octets']}}
+    _reprises_du_plan={x['titre'] for x in plan['sections'] if type(x.get('reprise_modele')) is int}
     return {**r,'ok':True,'production_verifiee':True,'tache':tache,'sources_lues':len(sources),
             'fragments_lus':sum(len(dossiers.fragments(s['contenu'])) for s in sources),
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
             **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
             'reserves_hors_document':reserves_ecartees[:30],'rubriques_a_relire':a_relire[:20],
             **({'longueur':information_longueur} if information_longueur else {}),
+            **({'couverture_de_la_consultation':{'elements_exiges':len(plan['elements_exiges']),
+                'non_couverts':[e['element'] for e in plan['elements_exiges'] if not e.get('rubrique')][:20],
+                # « reprise » : l'élément n'est couvert que par le texte GÉNÉRAL de l'entreprise, gardé tel quel —
+                # à la personne de juger s'il faut un complément propre au projet. Le dire vaut mieux que le taire.
+                'rubrique_de_chaque_element':[{'element':e['element'][:160],'rubrique':e.get('rubrique'),
+                    'mode':('non couvert' if not e.get('rubrique') else 'reprise telle quelle du modèle' if e.get('rubrique') in _reprises_du_plan else 'rédigée pour ce projet')}
+                    for e in plan['elements_exiges']][:60]}} if plan.get('elements_exiges') else {}),
             **({'rubriques_du_modele_retirees':plan['rubriques_modele_retirees']} if isinstance(plan.get('rubriques_modele_retirees'),dict) and plan['rubriques_modele_retirees'] else {}),
             'controles_automatiques':'faits' if controles_bloquants else 'non faits : document livré dès sa mise en page, à relire',
-            'a_faire':('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
+            'a_faire':('Si couverture_de_la_consultation existe, dis en une ou deux phrases combien d’éléments exigés sont couverts, lesquels ne le sont PAS, et lesquels ne le sont que par une rubrique d’entreprise reprise telle quelle. ' if plan.get('elements_exiges') else '')+('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
 
 _PLAN_D_ARCHITECTE=re.compile(r'(\brdc\b|r\s?\+\s?\d|coupes?|fa[cç]ades?|nature des|surfaces?|toiture|typologie|d[ée]tails?|volumes?|situation|masse|plan\b)',re.I)
 

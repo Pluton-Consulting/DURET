@@ -55,7 +55,7 @@ async def _octets_modele(source,user):
     if not pretes:raise ValueError('Modèle non accessible avec les droits actuels.')
     return pretes[0]['octets']
 
-async def _imposer_modele(uid,fil,demande,ids):
+async def _imposer_modele(uid,fil,demande,ids,trame_proposee=None):
     """(id du modèle imposé ou None, ids éventuellement complétés par la trame)."""
     import unicodedata
     plat=lambda s:''.join(c for c in unicodedata.normalize('NFD',str(s or '').casefold()) if unicodedata.category(c)!='Mn')
@@ -66,7 +66,20 @@ async def _imposer_modele(uid,fil,demande,ids):
             trames=[dict(r) for r in await c.fetch("SELECT nom,nom_fichier,contenu FROM trames WHERE actif AND genre='document' AND lower(type_fichier)='docx' AND contenu IS NOT NULL")]
     except Exception as e:
         logger.warning('Trames illisibles pour le choix du modèle (%s)',type(e).__name__);trames=[]
-    choisie=next((t for t in trames if plat(t['nom']) in plat(demande)),None)
+    # L'ORDRE (17/09) : la trame que la PERSONNE nomme ; sinon le Word de la maison présent dans
+    # les pièces de CE travail (« remplis ce mémoire » + le modèle vierge du dossier) ; sinon
+    # seulement la trame que le modèle de langage a proposée de lui-même. Avant, cette
+    # proposition passait devant le modèle vierge du dossier — un ancien mémoire déjà
+    # rempli servait alors de trame.
+    choisie=next((t for t in trames if plat(t['nom']) in plat(courante)),None)
+    if not choisie:
+        maison=[s for s in await asyncio.to_thread(dossiers.sources,uid,fil,ids)
+                if s['nom'].lower().endswith('.docx') and s.get('reference') and not s['reference'].startswith('trame:') and _MODELE_MAISON.search(s['nom']) and not _PIECE_CONSULTATION.search(s['nom'])]
+        if len(maison)==1:
+            logger.info('Modèle imposé : Word de l’entreprise « %s »',maison[0]['nom'])
+            return maison[0]['id'],ids
+    if not choisie and trame_proposee:
+        choisie=next((t for t in trames if plat(t['nom'])==plat(trame_proposee) or plat(trame_proposee) in plat(t['nom'])),None)
     if not choisie:
         proches=[t for t in trames if _mots_forts(t['nom'])&_mots_forts(courante)]
         if len(proches)==1:choisie=proches[0]
@@ -549,7 +562,7 @@ async def composer_immediat(data,user):
         if (charge and not charge.get('introuvable')) or not ids:ids=[s['id'] for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)]
         if not ids:raise ValueError('Aucune pièce dans ce dossier'+(' : « '+charge['dossier']+' » n’a pas pu être ouvert ('+charge.get('introuvable','aucun fichier lisible')+')' if charge else '')+'. Ajoute les documents trouvés avec ajouter_source_dossier.')
         if not data.get('modele_source') and data.get('format','docx')=='docx':
-            impose,ids=await _imposer_modele(uid,fil,demande+(' '+str(data['trame']) if data.get('trame') else ''),list(ids))
+            impose,ids=await _imposer_modele(uid,fil,demande,list(ids),data.get('trame'))
             if impose:data['modele_source']=impose
         tache=hashlib.sha256(json.dumps([demande,ids,data.get('titre'),data.get('modele_source'),data.get('format','docx')],ensure_ascii=False).encode()).hexdigest()[:24]
         contrat={'demande':demande,'sources':ids,'titre':data.get('titre') or 'Document',
@@ -1360,7 +1373,9 @@ def _inclure_sources_derivees(plan,sources):
 
 async def verifier_acces(sources,user):
     """Recontrôler les sources distantes avec les droits actuels avant réutilisation."""
-    references={s['reference']:s for s in sources if s.get('reference') and not s['reference'].startswith('/api/documents/')}
+    # Une TRAME enregistrée (« trame:<nom> ») vit en base, pas sur le serveur de fichiers : la
+    # chercher sur le NAS rendait « source distante devenue inaccessible » à chaque essai (17/09).
+    references={s['reference']:s for s in sources if s.get('reference') and not s['reference'].startswith(('/api/documents/','trame:'))}
     if not references:return
     from mail.attaches import resoudre
     for ref,s in references.items():

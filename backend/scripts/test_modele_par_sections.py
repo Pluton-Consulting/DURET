@@ -324,5 +324,9 @@ verifier("ce qui est écarté est rendu à part, pas perdu", len(e) == 3 + 20 - 
 verifier("une rubrique REPRISE du modèle ne se corrige jamais et n'apporte aucune réserve", "if type(section.get('reprise_modele')) is int:\n                        await asyncio.to_thread(dossiers.etape,uid,fil,tache,marque,True);return" in composeur and "if type(section.get('reprise_modele')) is not int:reserves.extend(" in composeur)
 verifier("le rédacteur reçoit les données de l'entreprise (les preuves du modèle) pour chaque rubrique", "or (modele_id and a['source']==modele_id)" in composeur)
 
+verifier("une trame enregistrée (trame:…) n'est pas recherchée sur le serveur de fichiers", "startswith(('/api/documents/','trame:'))" in composeur)
+verifier("le modèle vierge du dossier passe AVANT une trame que le modèle de langage propose de lui-même",
+         composeur.index("if len(maison)==1:") < composeur.index("if not choisie and trame_proposee:") and "_imposer_modele(uid,fil,demande,list(ids),data.get('trame'))" in composeur)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

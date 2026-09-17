@@ -177,6 +177,13 @@ def _repartir_les_mots(plan,structure):
         s['mots_cibles']=int(max(plancher,min(1500,part)))
     plan['pages_modele_reprises']=round(prises,1)
 
+def _planchers_de_mots(plan,structure):
+    mots_modele={f['index']:int(f.get('mots') or 0) for f in (structure or {}).get('sections',[])}
+    for s in plan['sections']:
+        if not isinstance(s,dict) or type(s.get('reprise_modele')) is int:continue
+        plancher=max(300,min(1200,mots_modele.get(s.get('remplace_modele'),0))) if type(s.get('remplace_modele')) is int else 250
+        s['mots_cibles']=int(max(plancher,min(2500,int(s.get('mots_cibles') or 0))))
+
 def _place_modele(s):
     for cle in ('reprise_modele','remplace_modele'):
         if type(s.get(cle)) is int:return s[cle]
@@ -219,7 +226,10 @@ def _plan_suit_modele(plan,structure,essai):
     # LA LIMITE DE PAGES SE TIENT AU PLAN, CHIFFRES EN MAIN (sonde du 17/09 : 14 pages de reprises
     # + 4 de garde sur 20, et douze pages de rubriques rédigées par-dessus). La consigne « réserve
     # un tiers » ne suffisait pas : le refus donne le poids de chaque rubrique reprise.
-    limite=plan.get('pages_max')
+    # …et seulement quand LA PERSONNE a fixé cette limite dans sa demande (décision de Noa, 17/09 :
+    # « un mémoire peut être très long s'il est intéressant »). Une limite lue dans le règlement de
+    # consultation est une INFORMATION rendue avec le document ; elle ne retire jamais une rubrique.
+    limite=plan.get('pages_max') if essai.get('limite_personne') else None
     if type(limite) is int and limite>0 and reprises:
         poids={f['index']:float(f.get('pages') or 1) for f in structure['sections']}
         garde=float(structure.get('pages_garde',2))
@@ -731,7 +741,8 @@ async def composer_immediat(data,user):
                     if structure_modele and not structure_modele['sections']:structure_modele=None
                 except Exception as e:
                     logger.warning('Structure du modèle illisible (%s) : présentation seule reprise',type(e).__name__)
-            essai_plan={'n':0}
+            _limite_dite=re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', str(contrat.get('demande') or demande), re.I)
+            essai_plan={'n':0,'limite_personne':bool(_limite_dite)}
             if not plan:
                 plan=await _json((
                     'UN MODÈLE DE L’ENTREPRISE EST IMPOSÉ (modele_entreprise) : le document final est CE modèle, rempli. Sa page de garde est conservée : '
@@ -744,8 +755,9 @@ async def composer_immediat(data,user):
                     'ou une entrée de "rubriques_modele_retirees": {"index":"raison"}. '
                     'N’AJOUTE une rubrique (sans index, avec "apres_modele": index pour la placer) QUE si la demande ou le règlement de consultation l’exige et qu’aucune rubrique du modèle ne la couvre '
                     '(ex. la réponse aux critères de jugement) ; une présentation du projet se place AVANT les rubriques de chantier (apres_modele = l’index de la rubrique qui les précède), la réponse aux critères en fin de document ; jamais une rubrique dont le sujet est déjà celui d’une rubrique reprise. Une rubrique ajoutée de réponse aux critères se RÉDIGE vraiment : ce que l’entreprise apporte sur chaque critère, avec renvoi aux rubriques. '
-                    'Chaque rubrique du modèle porte son poids en "pages". Si une limite de pages est imposée, les rubriques RÉDIGÉES portent la note technique : réserve-leur AU MOINS un tiers de la limite '
-                    '(limite − pages de garde − pages des rubriques reprises) ; pour y arriver, retire d’abord les rubriques d’entreprise qui servent le moins les critères de jugement (pages de logos, annexes générales) et dis-le dans rubriques_modele_retirees. '
+                    'Chaque rubrique du modèle porte son poids en "pages". La longueur suit l’INTÉRÊT du contenu : ne rogne aucune rubrique pour tenir un nombre de pages. '
+                    'Si la consultation annonce une limite de pages, note-la dans pages_max (elle sera SIGNALÉE avec le document) mais ne retire pour elle AUCUNE rubrique d’entreprise : seule la personne en décide. '
+                    'rubriques_modele_retirees ne sert qu’à une rubrique sans objet pour ce projet (ex. un détail de l’ancien chantier absorbé ailleurs). '
                     'La date de la garde est la date du jour (date_du_jour), jamais "[À CONFIRMER]". '
                     if structure_modele else '')+'Établis le plan du LIVRABLE demandé, applicable à tout type de document. Reprends exactement les rubriques imposées par la demande ou le RC. '
                     'Un exemple sert de présentation et de faits stables d’entreprise ; ne réemploie pas ses anciens faits de chantier. '
@@ -767,8 +779,13 @@ async def composer_immediat(data,user):
                 _plan_valide(plan,ids)
                 limite = re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', demande, re.I)
                 if limite:plan['pages_max']=int(limite[1])
-                if plan.get('pages_max'):
+                if plan.get('pages_max') and limite:
                     _repartir_les_mots(plan,structure_modele)
+                else:
+                    # Sans limite fixée par la personne : aucune rubrique n'est rognée. Seuls les PLANCHERS
+                    # s'appliquent (une rubrique de chantier ne descend pas sous la longueur que la trame lui donne).
+                    if plan.get('pages_max'):plan['limite_de_la_consultation']=plan['pages_max']
+                    _planchers_de_mots(plan,structure_modele)
                 _dater_la_garde(plan)
                 await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan',plan)
             # Une lecture visuelle appartient à la pièce originale : le plan ne
@@ -1424,11 +1441,15 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             if await corriger_ou_livrer(correction):raise ValueError('Contradictions factuelles détectées ; correction ciblée conservée.')
     await dire(uid,fil,tache,'conversion du Word pour compter ses pages')
     controle_pages=await asyncio.to_thread(verifier_pages,provisoire,plan.get('pages_max'))
+    information_longueur=''
     if plan.get('pages_max') and not controle_pages.get('conforme') and not controles_bloquants:
         # LA LIMITE DE PAGES NE BLOQUE PLUS NON PLUS (17/09) : le mémoire réel repartait
         # raccourcir ses 22 rubriques, essai après essai, sans jamais sortir. Le
         # dépassement est DIT ; raccourcir se demande ensuite, sur le document livré.
-        restants.append('Longueur : '+str(controle_pages.get('pages') or '?')+' page(s) pour un maximum de '+str(plan['pages_max'])+' demandé par le règlement — à raccourcir.')
+        # …et ce n'est pas un DÉFAUT du document (Noa, 17/09 : « un mémoire peut être très long s'il est
+        # intéressant ») : une information rendue à part, qui ne classe pas le document « à reprendre ».
+        information_longueur=(str(controle_pages.get('pages') or '?')+' page(s). La consultation annonce '+str(plan['pages_max'])
+            +' pages maximum : rien n’a été coupé, à vous de décider s’il faut raccourcir et quoi.')
     elif plan.get('pages_max') and not controle_pages.get('conforme'):
         if controle_pages.get('pages'):
             await _a_corriger(uid,fil,tache,jeton,{'problemes':['Limiter la longueur en conservant toutes les rubriques.'],'facteur_longueur':max(.2,plan['pages_max']/controle_pages['pages']*.85)})
@@ -1462,6 +1483,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
             **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
             'reserves_hors_document':reserves_ecartees[:30],'rubriques_a_relire':a_relire[:20],
+            **({'longueur':information_longueur} if information_longueur else {}),
             **({'rubriques_du_modele_retirees':plan['rubriques_modele_retirees']} if isinstance(plan.get('rubriques_modele_retirees'),dict) and plan['rubriques_modele_retirees'] else {}),
             'controles_automatiques':'faits' if controles_bloquants else 'non faits : document livré dès sa mise en page, à relire',
             'a_faire':('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}

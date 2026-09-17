@@ -220,6 +220,15 @@ async def traiter(job):
             await journaliser(job,user,essais,resultat,usage)
             if resultat.get('tache'):donnees['tache']=resultat['tache']
             with dossiers.base() as c:
+                # L'IDENTITÉ DE LA TÂCHE NE SE PERD PLUS (17/09, mémoire réel de Noa). Le
+                # travail inscrit sa tâche EN BASE dès qu'il la connaît (`associer_tache`),
+                # mais un dépassement du délai de 15 min ne la portait pas : on réécrivait
+                # les données du DÉBUT de l'essai, sans elle. L'essai suivant recalculait
+                # une autre tâche (les lectures visuelles avaient changé la liste des
+                # pièces) et repartait de zéro — 17 analyses et 4 plans perdus.
+                if not donnees.get('tache'):
+                    en_base=json.loads(c.execute('SELECT donnees FROM file_documentaire WHERE id=?',(job['id'],)).fetchone()[0]).get('tache')
+                    if en_base:donnees['tache']=en_base
                 courant=c.execute('SELECT statut FROM file_documentaire WHERE id=?',(job['id'],)).fetchone()[0]
                 # Seules les étapes métier de cette rédaction constituent un progrès.
                 progression=c.execute("SELECT count(*) FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache=? AND cle NOT LIKE 'consommation:%' AND cle NOT IN ('contrat','correction')",(job['utilisateur'],job['fil'],donnees.get('tache') or '')).fetchone()[0]

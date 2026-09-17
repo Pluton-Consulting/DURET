@@ -282,6 +282,8 @@ dossiers.etape(uid, fil2, "tache-ecran", "suivi_lecture", {"pieces": 23, "partie
 asyncio.run(dd.dire(uid, fil2, "tache-ecran", "analyse de « CCAP.pdf » — partie 3 sur 8"))
 phase = next(x["phase"] for x in df.progression(uid, fil2) if x["id"] == j1["tache_documentaire"])
 verifier("…et l'avancement : « 1 sur 41 parties (23 pièces) », la partie en cours nommée", "1 sur 41 parties analysées (23 pièces)" in phase and "partie 3 sur 8" in phase, phase)
+source_f = (BACKEND / "ressources" / "documents_file.py").read_text()
+verifier("un dépassement de délai ne fait plus perdre l'identité de la tâche (relue en base avant réécriture)", "en_base=json.loads(" in source_f and source_f.index("en_base=json.loads(") < source_f.index("progression=c.execute("))
 source_q = (BACKEND / "skills" / "quantitatifs.py").read_text()
 verifier("un nouvel essai du quantitatif reprend le CONTRAT du premier (pièces et demande)", "contrat['sources']" in source_q and "if not contrat:await" in source_q)
 

@@ -138,6 +138,9 @@ SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
 # Les gestes à qui le SERVEUR donne la conversation en cours (`_fil`).
 SKILLS_QUI_CONNAISSENT_LE_FIL = frozenset({
     "creer_tache_agent", "redaction_email", "deposer_brouillon", "abandonner_document",
+    # les gestes de messagerie : la conversation retient les mails qu'elle a vus (mail/vus.py)
+    "lire_mails", "lire_mail", "check_mails", "courrier_entrant", "lire_piece_jointe", "modifier_indicateurs_mail",
+    "resume_fil_email", "triage_email_entrant",
     "ajouter_document", "ajouter_source_dossier", "analyser_plan_source", "calculer_chiffres_sources",
     "chercher_source_dossier", "composer_document_dossier", "compte_rendu_reunion", "consulter_travail",
     "creer_document", "drive_deposer_document", "drive_lire", "drive_ouvrir", "habiller_document",
@@ -1143,6 +1146,7 @@ Voici les messages trouvés :
     # Les références d'images du fil, pour que « retouche celle-là » soit une
     # action possible sans fouille de l'historique (voir cles_images_du_fil).
     system_prompt += _consigne_images(state)
+    system_prompt += _consigne_mails(state)
     system_prompt += _consigne_classement(state.get("user_role") or "")
     try:
         from security.validation_totale import consigne as _consigne_accord
@@ -3752,6 +3756,25 @@ def _consigne_classement(role: str = "") -> str:
             "pièce, appelle `ou_chercher` avec le sujet : il rend les chemins exacts depuis "
             "cette carte, sans parcourir le stockage. Ne devine jamais un emplacement, ne "
             "reparcours pas l'arborescence pour le retrouver.")
+
+
+def _consigne_mails(state: AgentState) -> str:
+    """LES MAILS QUE CETTE CONVERSATION A DÉJÀ VUS, avec leur `ref` (17/09). Un
+    résultat de geste n'entre pas dans l'historique : sans ce rappel, « ce mail »,
+    « marque-le comme lu », « réponds-lui » n'avaient plus de référence au tour
+    suivant, et la personne devait reciter le mail à chaque message."""
+    try:
+        from mail import vus
+        boite, liste = vus.du_fil(state.get("thread_id"))
+    except Exception:  # noqa: BLE001
+        return ""
+    if not liste:
+        return ""
+    lignes = "\n".join(f"- ref {x.get('ref')} — « {x.get('objet') or '(sans objet)'} » — {x.get('de') or '?'} — {x.get('date') or ''}" for x in liste[:12])
+    return ("\n\nMAILS DÉJÀ VUS DANS CETTE CONVERSATION (boîte " + (boite or "?") + ", le plus récemment vu en tête). "
+            "« ce mail », « le mail », « celui-là », « réponds-lui », « marque-le » désignent LE PREMIER de cette liste, ou celui dont l'objet "
+            "ou l'expéditeur est cité. Réutilise sa `ref` TELLE QUELLE (ouvrir, lire une pièce jointe, répondre, marquer) : "
+            "ne demande JAMAIS qu'on te recite le mail, n'invente jamais une référence, et ne relance une recherche que si le mail voulu n'est pas ici.\n" + lignes)
 
 
 def _consigne_images(state: AgentState) -> str:

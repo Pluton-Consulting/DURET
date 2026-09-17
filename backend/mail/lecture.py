@@ -186,6 +186,15 @@ def _ref(identifiant: str) -> str:
     return hashlib.sha256((identifiant or "").encode("utf-8")).hexdigest()[:16]
 
 
+def _noter_vus(messages, boite) -> None:
+    """Mémoire de confort (mail/vus.py) : ne fait JAMAIS échouer une lecture."""
+    try:
+        from mail import vus
+        vus.noter(messages, boite)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _registre():
     """Le registre durable des références (16/09, audit D-07), ou None si le
     module n'est pas là (bancs qui doublent le paquet)."""
@@ -878,6 +887,9 @@ async def lire_boite(boite: str, dossier: str = "recus",
         compte = (f"La période « {', '.join(non_comprise)} » n'a pas été comprise : aucun filtre "
                   f"de date n'a été appliqué. {compte}")
 
+    # Ce que la conversation vient de VOIR se retient (17/09) : au tour suivant, « ce mail »
+    # doit encore désigner quelque chose. Voir mail/vus.py.
+    _noter_vus(messages, boite)
     return {
         "boite": boite, "dossier": cle, "nombre": len(messages),
         "periode_non_comprise": non_comprise or None,
@@ -1172,6 +1184,7 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
     if not inline:
         fiche.pop("corps_html", None)
     fiche.pop("apercu", None)
+    _noter_vus([fiche], boite)
     return fiche
 
 

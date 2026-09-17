@@ -140,6 +140,14 @@ async def modifier(data,user):
     from mail.lecture import _resoudre,_controler_identifiant
     reference=str(data.get('ref') or '')
     identifiant=_resoudre(reference,boite)
+    if identifiant and nom=='imap' and '|' not in identifiant:identifiant=None   # une ref inventée par le modèle
+    if not identifiant:
+        # « MARQUE-LE COMME LU » SANS RECITER LE MAIL (17/09) : la conversation sait quel mail
+        # elle vient de voir — par son objet, son expéditeur, ou le dernier vu.
+        from mail import vus
+        from security.conversation import fil_courant
+        reference=vus.retrouver(data.get('_fil') or fil_courant.get(),boite,data.get('objet'),data.get('de')) or ''
+        identifiant=_resoudre(reference,boite) if reference else None
     if not identifiant:raise ValueError('Ouvre d’abord le message pour obtenir sa référence.')
     if nom=='outlook':preuve=await _outlook_modifier(boite,identifiant,change)
     elif nom=='imap':preuve=await asyncio.to_thread(_imap_modifier,identifiant,change,autorises)
@@ -152,5 +160,5 @@ async def modifier(data,user):
 
 SKILLS={
  'capacites_messagerie':Declaration(capacites,'Lister les opérations de messagerie et les autorisations nécessaires de la boîte choisie.',optionnels=['boite'],effet='lecture',libelle='je vérifie les capacités de cette boîte'),
- 'modifier_indicateurs_mail':Declaration(modifier,'Modifier puis vérifier les indicateurs d’un message existant : lu/non lu, suivi actif/termine/aucun, ajout ou retrait de catégories. Aucun envoi. Sur Gmail/IMAP, suivi signifie étoile/drapeau ; termine retire cet indicateur.',requis=['ref'],optionnels=['boite','lu','suivi','ajouter_categories','retirer_categories'],effet='externe',libelle='je mets à jour les indicateurs du message'),
+ 'modifier_indicateurs_mail':Declaration(modifier,'`ref` du message si tu l’as (liste MAILS DÉJÀ VUS) ; sans elle, `objet` ou `de` le désignent, et sans rien c’est le DERNIER mail vu dans la conversation. Modifier puis vérifier les indicateurs d’un message existant : lu/non lu, suivi actif/termine/aucun, ajout ou retrait de catégories. Aucun envoi. Sur Gmail/IMAP, suivi signifie étoile/drapeau ; termine retire cet indicateur.',requis=[],optionnels=['ref','objet','de','boite','lu','suivi','ajouter_categories','retirer_categories'],effet='externe',libelle='je mets à jour les indicateurs du message'),
 }

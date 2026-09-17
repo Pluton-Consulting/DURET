@@ -61,6 +61,46 @@ def _niveau(paragraphe) -> int | None:
     return None
 
 
+def _niveau_par_style(paragraphe) -> int | None:
+    try:
+        nom = paragraphe.style.name if paragraphe.style is not None else ""
+    except Exception:  # noqa: BLE001
+        return None
+    m = _TITRE.match(nom or "")
+    return int(m.group(1)) if m else None
+
+
+def _pages_du_sommaire(garde, titres: list[str]) -> dict[int, int]:
+    """La page de DÉBUT de chaque rubrique, lue dans le sommaire du modèle (« ETUDES 8 »).
+    Sert à savoir combien de pages pèsent les rubriques reprises : c'est ce qui reste
+    qui se rédige. Rien de lisible → dictionnaire vide, l'appelant estime."""
+    from docx.oxml.ns import qn
+    norme = lambda t: re.sub(r"[^a-z0-9]+", "", _sans_accents(t))  # noqa: E731
+    lignes = []
+    for el in garde:
+        for p in ([el] if el.tag == qn("w:p") else el.iter(qn("w:p"))):
+            t = "".join((x.text or "") for x in p.iter(qn("w:t"))).strip()
+            m = re.search(r"(\d{1,3})\s*$", t)
+            if m:
+                lignes.append((norme(t[:m.start()]), int(m.group(1))))
+    pages = {}
+    for i, titre in enumerate(titres):
+        cle = norme(titre)
+        if not cle:
+            continue
+        for texte, page in lignes:
+            if texte.endswith(cle):
+                pages[i] = page
+                break
+    return pages
+
+
+def _sans_accents(t) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(t or "").casefold())
+                   if unicodedata.category(c) != "Mn")
+
+
 def _decoupe(doc):
     """(garde, sections) — des listes d'ÉLÉMENTS vivants du corps."""
     from docx.oxml.ns import qn
@@ -77,6 +117,13 @@ def _decoupe(doc):
         return corps, []
     haut = min(niveaux.values())
     debuts = [i for i, n in sorted(niveaux.items()) if n == haut]
+    # UN PARAGRAPHE DE LISTE N'EST PAS UNE RUBRIQUE (17/09). Le modèle de Duret titre ses
+    # rubriques en « Heading 1 », et trois lignes de liste (« Habillage de l'escalier »…)
+    # portent un niveau de plan 1 par accident : elles coupaient « Principes de réalisation »
+    # en quatre rubriques. Dès qu'un vrai STYLE de titre existe à ce niveau, lui seul découpe.
+    styles = [i for i in debuts if _niveau_par_style(Paragraph(corps[i], doc)) == haut]
+    if styles:
+        debuts = styles
     garde = corps[:debuts[0]]
     sections = []
     for rang, debut in enumerate(debuts):
@@ -116,7 +163,40 @@ def structure(octets: bytes) -> dict:
                           for el in elements),
             "tableaux": sum(1 for el in elements if el.tag == qn("w:tbl")),
         })
-    return {"garde": _texte(garde)[:EXTRAIT], "sections": fiches}
+    # LE POIDS EN PAGES de chaque rubrique : lu au sommaire quand il existe (l'écart entre
+    # deux débuts), estimé sinon (mots, images, tableaux). La dernière rubrique n'a pas de
+    # suivante : toujours estimée.
+    debuts = _pages_du_sommaire(garde, [f["titre"] for f in fiches])
+    for i, f in enumerate(fiches):
+        estime = round(max(0.3, f["mots"] / 320 + f["images"] * 0.35 + f["tableaux"] * 0.3), 1)
+        if i in debuts and i + 1 in debuts and debuts[i + 1] >= debuts[i]:
+            f["pages"] = max(0.3, float(debuts[i + 1] - debuts[i])) if debuts[i + 1] > debuts[i] else min(estime, 0.6)
+        else:
+            f["pages"] = estime
+    pages_garde = max(1, debuts[0] - 1) if 0 in debuts else 2
+    return {"garde": _texte(garde)[:EXTRAIT], "sections": fiches, "pages_garde": pages_garde}
+
+
+def textes_des_rubriques(octets: bytes, index: list[int], plafond: int = 12000) -> dict[int, str]:
+    """Le TEXTE ENTIER des rubriques demandées, paragraphe par paragraphe : le rédacteur
+    d'une rubrique de chantier part de la façon de faire écrite par l'entreprise, il ne
+    la réinvente pas. `structure()` n'en rend qu'un extrait de 700 caractères."""
+    from docx import Document
+    from docx.oxml.ns import qn
+    doc = Document(io.BytesIO(octets))
+    _, sections = _decoupe(doc)
+    textes = {}
+    for i in index:
+        if not 0 <= i < len(sections):
+            continue
+        lignes = []
+        for el in sections[i][1:]:
+            for p in ([el] if el.tag == qn("w:p") else el.iter(qn("w:p"))):
+                t = "".join((x.text or "") for x in p.iter(qn("w:t"))).strip()
+                if t:
+                    lignes.append(t)
+        textes[i] = "\n".join(lignes)[:plafond]
+    return textes
 
 
 def _groupes_du_rendu(rendu, titres: list[str]) -> dict[int, list]:

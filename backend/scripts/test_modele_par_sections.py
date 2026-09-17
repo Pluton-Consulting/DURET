@@ -152,7 +152,7 @@ print("5. Le choix du modèle et le plan")
 src = (BACKEND / "skills" / "documents_dossier.py").read_text(encoding="utf-8")
 import ast, re, json, hashlib, logging  # noqa: E401,E402
 arbre = ast.parse(src)
-noms = {"_mots_forts", "_normaliser_plan"}
+noms = {"_mots_forts", "_normaliser_plan", "_ranger_comme_le_modele", "_place_modele"}
 corps = [n for n in arbre.body if (isinstance(n, ast.FunctionDef) and n.name in noms)
          or (isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in ("_PIECE_CONSULTATION", "_MODELE_MAISON", "_MOTS_CREUX"))]
 esp = {"re": re, "json": json, "hashlib": hashlib, "logger": logging.getLogger("banc")}
@@ -331,6 +331,71 @@ verifier("le modèle vierge du dossier passe AVANT une trame que le modèle de l
 illus = (BACKEND / "bureautique" / "illustrations.py").read_text(encoding="utf-8")
 verifier("les illustrations d'un Word ne sont jamais un motif d'arrêt (original introuvable, trame en base, image illisible)",
          "Word original non accessible" not in illus and "le travail continue" in illus and "startswith('trame:')" in illus and "if erreurs:raise" not in illus)
+
+print("12. Le plan SUIT le modèle : ordre, titres, pas de doublon, pages qui restent (17/09 soir)")
+from skills.documents_dossier import _normaliser_plan, _plan_suit_modele, _repartir_les_mots, _dater_la_garde, _date_du_jour
+from bureautique.sections_modele import structure as _st, textes_des_rubriques
+_TITRES = ["ORGANIGRAMME", "MOYENS HUMAINS / FICHE SIGNALETIQUE", "ETUDES", "PERSONNEL ET OUVRIERS SUR CHANTIER / PLANNINGS",
+           "Principes de réalisations propre au chantier", "MOYENS TECHNIQUES", "DEMARCHES ENVIRONNEMENTALES"]
+_struct = {"pages_garde": 4, "sections": [{"index": i, "titre": t, "pages": 1.0} for i, t in enumerate(_TITRES)]}
+def _plan_rate():
+    # La forme EXACTE du plan du mémoire livré à 17:18 : dix titres inventés EN TÊTE, les deux
+    # rubriques de chantier du modèle (3 et 4) ignorées, l'environnement en double.
+    return {"sections": [{"titre": "PRESENTATION GENERALE DU PROJET", "sources": []}, {"titre": "RESSOURCES HUMAINES MOBILISEES", "sources": []},
+                         {"titre": "DEMARCHE ENVIRONNEMENTALE", "sources": []}, {"titre": "REPONSES AUX CRITERES", "sources": []}]
+                        + [{"titre": "x", "reprise_modele": i, "sources": []} for i in (0, 1, 2, 5, 6)], "pages_max": 20}
+essai = {"n": 0}
+plan = _normaliser_plan(_plan_rate(), [], None, _struct)
+try:
+    _plan_suit_modele(plan, _struct, essai); refus = ""
+except ValueError as e:
+    refus = str(e)
+verifier("premier essai : les rubriques de chantier du modèle laissées sans décision sont REFUSÉES, nommées", "PERSONNEL ET OUVRIERS" in refus and "remplace_modele" in refus, refus[:200])
+ordre = [x["titre"] for x in plan["sections"]]
+verifier("même sans correction, rien d'ajouté ne passe EN TÊTE : les ajouts prennent la place des rubriques de chantier",
+         ordre[:3] == _TITRES[:3] and ordre.index("PRESENTATION GENERALE DU PROJET") == 3 and ordre[-2:] == _TITRES[5:], str(ordre))
+_plan_suit_modele(plan, _struct, essai)
+verifier("second essai : on LIVRE avec le rangement mécanique (aucun refus)", essai["n"] == 2)
+bon = _normaliser_plan({"sections": [{"titre": "Réponse aux critères de jugement", "apres_modele": 4, "sources": [], "mots_cibles": 300},
+                                     {"titre": "mon titre à moi", "remplace_modele": 4, "sources": [], "mots_cibles": 900},
+                                     {"titre": "équipe", "remplace_modele": 3, "sources": [], "mots_cibles": 300}]
+                        + [{"titre": "x", "reprise_modele": i, "sources": []} for i in (6, 5, 2, 1, 0)], "pages_max": 20,
+                        "remplacements_modele": {"Date : le 24/07/2026": "Date : [À CONFIRMER]", "Projet : ancien": "Projet : neuf"}}, [], None, _struct)
+ordre = [x["titre"] for x in bon["sections"]]
+verifier("une rubrique remplacée garde le TITRE et la PLACE du modèle, l'ajout se range après son repère",
+         ordre == _TITRES[:5] + ["Réponse aux critères de jugement"] + _TITRES[5:], str(ordre))
+_plan_suit_modele(bon, _struct, {"n": 0})
+double = _normaliser_plan({"sections": [{"titre": "DEMARCHE ENVIRONNEMENTALE", "sources": []}] + [{"titre": "x", "reprise_modele": i, "sources": []} for i in range(7)]}, [], None, _struct)
+try:
+    _plan_suit_modele(double, _struct, {"n": 0}); refus = ""
+except ValueError as e:
+    refus = str(e)
+verifier("une rubrique ajoutée qui DOUBLE une rubrique reprise est refusée au premier essai", "double la rubrique reprise" in refus, refus[:160])
+_repartir_les_mots(bon, _struct)
+mots = {x["titre"]: x.get("mots_cibles") for x in bon["sections"] if "reprise_modele" not in x}
+verifier("les pages qui restent après la garde et les reprises se partagent entre les rubriques RÉDIGÉES, au prorata",
+         bon["pages_modele_reprises"] == 9.0 and mots[_TITRES[4]] == 1500 and mots[_TITRES[3]] == 660 and all(v >= 150 for v in mots.values()), str(mots))
+_dater_la_garde(bon)
+verifier("la date de la garde est celle du jour, jamais « à confirmer »", bon["remplacements_modele"]["Date : le 24/07/2026"] == "Date : le " + _date_du_jour()
+         and bon["remplacements_modele"]["Projet : ancien"] == "Projet : neuf", str(bon["remplacements_modele"]))
+
+d = Document()
+d.add_heading("ENTREPRISE", 1); d.add_paragraph("Nous sommes douze.")
+d.add_heading("Principes de réalisation", 1); d.add_paragraph("Pose collée en plein.")
+faux = d.add_paragraph("Habillage de l'escalier", style="List Paragraph")
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn as _qn
+niv = OxmlElement("w:outlineLvl"); niv.set(_qn("w:val"), "0"); faux._p.get_or_add_pPr().append(niv)
+d.add_paragraph("Nez de marche antidérapant.")
+d.add_heading("SAV", 1); d.add_paragraph("Sous 96 heures.")
+t = io.BytesIO(); d.save(t)
+fiches = _st(t.getvalue())["sections"]
+verifier("une ligne de LISTE au niveau de plan 1 ne coupe pas une rubrique titrée par un vrai style", [f["titre"] for f in fiches] == ["ENTREPRISE", "Principes de réalisation", "SAV"], str([f["titre"] for f in fiches]))
+verifier("chaque rubrique du modèle porte son poids en pages", all(f.get("pages", 0) > 0 for f in fiches))
+txt = textes_des_rubriques(t.getvalue(), [1])
+verifier("le rédacteur d'une rubrique remplacée reçoit le texte ENTIER de l'entreprise", "Pose collée en plein." in txt[1] and "Nez de marche" in txt[1] and "96 heures" not in txt[1], str(txt))
+verifier("ce texte type est passé au rédacteur, au relecteur et au correcteur", composeur.count("**base}") == 3 and "PARS DE CE TEXTE" in composeur)
+verifier("un sous-titre du rédacteur ne devient jamais une rubrique de niveau 1", "'niveau':3 if plan.get('modele_source')" in composeur)
 
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

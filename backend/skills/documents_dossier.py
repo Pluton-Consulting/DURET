@@ -115,13 +115,111 @@ def _normaliser_plan(plan,ids,modele,structure,sources_word=None):
         if not isinstance(s,dict):continue
         i=s.get('reprise_modele')
         if type(i) is int and i in titres and i not in vus:
-            vus.add(i);s['titre']=titres[i];s.setdefault('sources',[])
+            vus.add(i);s['titre']=titres[i];s.setdefault('sources',[]);s.pop('remplace_modele',None)
         else:s.pop('reprise_modele',None)
+    # UNE RUBRIQUE DE PROJET SE RÉDIGE À LA PLACE DE CELLE DU MODÈLE, SOUS SON TITRE (17/09).
+    # Le plan ignorait « Personnel et plannings » et « Principes de réalisation » — les deux
+    # rubriques de chantier de la trame — et inventait dix titres posés EN TÊTE du document,
+    # dont trois doublaient une rubrique reprise. `remplace_modele` garde la place et le titre.
+    for s in plan['sections']:
+        if not isinstance(s,dict):continue
+        i=s.get('remplace_modele')
+        if type(i) is int and i in titres and i not in vus:vus.add(i);s['titre']=titres[i]
+        else:s.pop('remplace_modele',None)
+    if titres:_ranger_comme_le_modele(plan,titres,vus)
     if modele:
         plan['modele_source']=modele
         if isinstance(plan.get('sources_ecartees'),dict) and not any(modele in (s.get('sources') or []) for s in plan['sections'] if isinstance(s,dict)):
             plan['sources_ecartees'].setdefault(modele,'Modèle de présentation de l’entreprise : ses rubriques sont reprises ou servent de trame.')
     return plan
+
+_MOIS=('janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre')
+def _date_du_jour():
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        j=datetime.now(ZoneInfo('Europe/Paris'))
+    except Exception:j=datetime.now()
+    return j.strftime('%d/%m/%Y')
+
+def _dater_la_garde(plan):
+    """La date d'un mémoire est celle du jour où il sort : elle ne se « confirme » pas."""
+    table=plan.get('remplacements_modele')
+    if not isinstance(table,dict):return
+    for ancien,nouveau in list(table.items()):
+        if re.match(r'\s*date\b',str(ancien),re.I) and re.search(r'confirmer|compl[ée]ter',str(nouveau),re.I):
+            prefixe=re.match(r'\s*date\s*:?\s*(?:le\s+)?',str(ancien),re.I).group()
+            table[ancien]=prefixe+_date_du_jour()
+
+def _repartir_les_mots(plan,structure):
+    """Les pages qui restent APRÈS la garde et les rubriques reprises se partagent entre les
+    rubriques rédigées. L'ancien calcul divisait la limite par TOUTES les rubriques : treize
+    reprises mangeaient le budget, dix rubriques à 180 mots, dont une « réponse aux critères »
+    de 32 mots — et 22 pages pour 20."""
+    sections=[s for s in plan['sections'] if isinstance(s,dict)]
+    redigees=[s for s in sections if type(s.get('reprise_modele')) is not int]
+    if not redigees:return
+    poids={f['index']:float(f.get('pages') or 1) for f in (structure or {}).get('sections',[])}
+    prises=float((structure or {}).get('pages_garde',2))+sum(poids.get(s['reprise_modele'],1.) for s in sections if type(s.get('reprise_modele')) is int)
+    restantes=max(0.,int(plan['pages_max'])-prises)
+    # 300 mots par page rédigée (titres, listes et tableaux compris) ; jamais sous 150 mots :
+    # une rubrique se rédige, elle ne se titre pas. Le dépassement éventuel est DIT au rendu.
+    total=int(restantes*300)
+    voulu=sum(max(1,int(s.get('mots_cibles') or 300)) for s in redigees)
+    for s in redigees:
+        part=total*max(1,int(s.get('mots_cibles') or 300))/voulu if voulu else 0
+        s['mots_cibles']=int(max(150,min(1500,part)))
+    plan['pages_modele_reprises']=round(prises,1)
+
+def _place_modele(s):
+    for cle in ('reprise_modele','remplace_modele'):
+        if type(s.get(cle)) is int:return s[cle]
+    return None
+
+def _ranger_comme_le_modele(plan,titres,vus):
+    """L'ordre du document est celui du MODÈLE. Une rubrique ajoutée se range après celle
+    qu'elle désigne (`apres_modele`) ; sans repère, là où le modèle parle du chantier —
+    à la place de sa première rubrique ni reprise ni remplacée —, jamais en tête."""
+    sections=[s for s in plan['sections'] if isinstance(s,dict)]
+    libres=[i for i in sorted(titres) if i not in vus]
+    defaut=(libres[0]-.5) if libres else max(titres)+.5
+    dernier_remplace=max((s['remplace_modele'] for s in sections if type(s.get('remplace_modele')) is int),default=None)
+    if dernier_remplace is not None:defaut=dernier_remplace+.5
+    def cle(rang_section):
+        rang,s=rang_section;place=_place_modele(s)
+        if place is not None:return (float(place),0,rang)
+        apres=s.get('apres_modele')
+        if type(apres) is int and apres in titres:return (apres+.5,1,rang)
+        s.pop('apres_modele',None)
+        return (defaut,1,rang)
+    plan['sections']=[s for _,s in sorted(enumerate(sections),key=cle)]
+
+def _plan_suit_modele(plan,structure,essai):
+    """Refus AU PREMIER essai seulement : le modèle de langage a une chance de corriger son
+    plan ; au second, on livre avec le rangement mécanique (livrer d'abord)."""
+    if not structure or essai['n']:essai['n']+=1;return
+    essai['n']+=1
+    titres={s['index']:s['titre'] for s in structure['sections']}
+    sections=[s for s in plan['sections'] if isinstance(s,dict)]
+    places={_place_modele(s) for s in sections}-{None}
+    retirees={int(k) for k in (plan.get('rubriques_modele_retirees') or {}) if str(k).lstrip('-').isdigit()}
+    oubliees=[i for i in sorted(titres) if i not in places and i not in retirees]
+    ajoutees=[s for s in sections if _place_modele(s) is None]
+    if oubliees and ajoutees:
+        raise ValueError('Rubriques du modèle sans décision : '+' ; '.join(str(i)+' « '+titres[i]+' »' for i in oubliees)
+            +'. Pour chacune : "reprise_modele" (gardée telle quelle), "remplace_modele" (rédigée à neuf pour ce projet, sous SON titre, à SA place) '
+             'ou une entrée de rubriques_modele_retirees avec sa raison. Le contenu de projet va dans ces rubriques du modèle, pas dans des rubriques ajoutées.')
+    reprises=[s for s in sections if type(s.get('reprise_modele')) is int]
+    for a in ajoutees:
+        mots=_mots_forts(_singulier(a['titre']))
+        for r in reprises:
+            autres=_mots_forts(_singulier(r['titre']))
+            if mots and autres and len(mots&autres)>=max(1,min(len(mots),len(autres))) :
+                raise ValueError('La rubrique ajoutée « '+a['titre']+' » double la rubrique reprise du modèle « '+r['titre']+' ». '
+                    'Retire-la, ou donne-lui un titre propre à ce projet et place-la avec "apres_modele": '+str(r['reprise_modele'])+'.')
+
+def _singulier(titre):
+    return ' '.join(m[:-1] if len(m)>5 and m.endswith(('s','x')) else m for m in re.findall(r"\w+",str(titre or '').casefold()))
 
 async def _json(consigne,donnees,verifier=None,*,extraction=False):
     from ressources.documents_file import verifier_poursuite
@@ -613,18 +711,25 @@ async def composer_immediat(data,user):
                     if structure_modele and not structure_modele['sections']:structure_modele=None
                 except Exception as e:
                     logger.warning('Structure du modèle illisible (%s) : présentation seule reprise',type(e).__name__)
+            essai_plan={'n':0}
             if not plan:
                 plan=await _json((
                     'UN MODÈLE DE L’ENTREPRISE EST IMPOSÉ (modele_entreprise) : le document final est CE modèle, rempli. Sa page de garde est conservée : '
                     'donne dans remplacements_modele chaque texte EXACT de la garde à actualiser (projet, lieu, maître d’ouvrage, maître d’œuvre, adresses, téléphone, date) -> sa valeur prouvée par les pièces, ou "[À CONFIRMER]". '
-                    'Pour chaque rubrique du plan, choisis : soit "reprise_modele": index — la rubrique du modèle est gardée TELLE QUELLE avec ses tableaux et ses images ; réserve-le aux rubriques dont l’extrait ne parle QUE de l’entreprise '
-                    '(organigramme, fiche signalétique, capacités, encadrement, moyens, SAV, formation, sécurité, environnement, fournisseurs) ; soit une rubrique RÉDIGÉE (sans reprise_modele) pour tout ce qui dépend du projet. '
-                    'Une rubrique du modèle qui décrit l’ANCIEN chantier ne se reprend jamais : elle se rédige à neuf pour ce projet, en gardant son titre si la demande n’en impose pas un autre. '
-                    'Si la demande n’impose pas d’arborescence, suis celle du modèle, dans son ordre. N’oublie aucune rubrique d’entreprise du modèle qui reste utile. '
+                    'LE PLAN EST CELUI DU MODÈLE, rubrique par rubrique, dans son ordre. Pour CHAQUE rubrique du modèle, une décision : '
+                    '"reprise_modele": index — gardée TELLE QUELLE avec ses tableaux et ses images ; réservé aux rubriques dont l’extrait ne parle QUE de l’entreprise '
+                    '(organigramme, fiche signalétique, capacités, encadrement, études, SAV, formation, sécurité, moyens, environnement, fournisseurs) ; '
+                    'ou "remplace_modele": index — la rubrique qui décrit l’ANCIEN chantier (personnel et plannings du chantier, principes de réalisation propres au chantier…) est RÉDIGÉE À NEUF pour ce projet, sous le titre du modèle et à sa place : '
+                    'c’est LÀ que va le contenu de projet (effectifs affectés, planning et phases, méthodes de pose par lot, points singuliers, qualité, engagements environnementaux du chantier), avec un objectif détaillé et les sources utiles ; '
+                    'ou une entrée de "rubriques_modele_retirees": {"index":"raison"}. '
+                    'N’AJOUTE une rubrique (sans index, avec "apres_modele": index pour la placer) QUE si la demande ou le règlement de consultation l’exige et qu’aucune rubrique du modèle ne la couvre '
+                    '(ex. la réponse aux critères de jugement) ; jamais une rubrique dont le sujet est déjà celui d’une rubrique reprise. Une rubrique ajoutée de réponse aux critères se RÉDIGE vraiment : ce que l’entreprise apporte sur chaque critère, avec renvoi aux rubriques. '
+                    'Chaque rubrique du modèle porte son poids en "pages" : si une limite de pages est imposée et que le modèle seul la dépasse, retire d’abord ce qui sert le moins la notation et dis-le dans rubriques_modele_retirees. '
+                    'La date de la garde est la date du jour (date_du_jour), jamais "[À CONFIRMER]". '
                     if structure_modele else '')+'Établis le plan du LIVRABLE demandé, applicable à tout type de document. Reprends exactement les rubriques imposées par la demande ou le RC. '
                     'Un exemple sert de présentation et de faits stables d’entreprise ; ne réemploie pas ses anciens faits de chantier. '
                     'Chaque pièce doit être affectée à une rubrique, ou écartée avec une raison explicite. '
-                    'Schéma {"titre":"...","sections":[{"titre":"...","objectif":"...","sources":["id"],"mots_cibles":350,"illustrations":[{"source":"id","numero":1,"legende":"..."}]}],'
+                    'Schéma {"titre":"...","sections":[{"titre":"...","objectif":"...","sources":["id"],"mots_cibles":350,"reprise_modele":null,"remplace_modele":null,"apres_modele":null,"illustrations":[{"source":"id","numero":1,"legende":"..."}]}],"rubriques_modele_retirees":{},'
                     '"sources_ecartees":{"id":"raison"},"modele_source":"id du DOCX à utiliser ou null","pages_max":null}. '
                     'Respecte la limite de pages éventuelle et répartis la longueur ; une rubrique demandée ne doit pas disparaître. '
                     'Sélectionne les illustrations réellement lues qui répondent à la rubrique (organigramme, moyens, schéma, etc.), '
@@ -633,15 +738,17 @@ async def composer_immediat(data,user):
                     {'demande':demande,'sources':[{'id':s['id'],'nom':s['nom'],
                         'texte_court_integral':s['contenu'] if len(s['contenu'])<=16000 else None} for s in sources],
                      'analyses':_faits_pour_synthese(analyses),
+                     'date_du_jour':_date_du_jour(),
                      **({'modele_entreprise':{'garde':structure_modele['garde'],'rubriques':structure_modele['sections']}} if structure_modele else {})},
-                    lambda r:_plan_valide(_normaliser_plan(r,ids,contrat.get('modele_source'),structure_modele,{x['id'] for x in sources if x['nom'].lower().endswith('.docx')}),ids))
+                    lambda r:(_plan_valide(_normaliser_plan(r,ids,contrat.get('modele_source'),structure_modele,{x['id'] for x in sources if x['nom'].lower().endswith('.docx')}),ids),
+                              _plan_suit_modele(r,structure_modele,essai_plan)))
                 if contrat.get('modele_source'):plan['modele_source']=contrat['modele_source']
                 _plan_valide(plan,ids)
                 limite = re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', demande, re.I)
                 if limite:plan['pages_max']=int(limite[1])
                 if plan.get('pages_max'):
-                    budget=max(100, (int(plan['pages_max'])-2)*230//len(plan['sections']))
-                    for section in plan['sections']:section['mots_cibles']=budget
+                    _repartir_les_mots(plan,structure_modele)
+                _dater_la_garde(plan)
                 await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan',plan)
             # Une lecture visuelle appartient à la pièce originale : le plan ne
             # doit pas pouvoir garder son texte seul et oublier les graphiques.
@@ -663,6 +770,18 @@ async def composer_immediat(data,user):
             # L’inventaire commun empêche de prendre cette sélection pour une absence.
             inventaire=[{'source':s['id'],'nom':s['nom']} for s in sources]
             semaphore=asyncio.Semaphore(CONCURRENCE)
+            # LE TEXTE TYPE DE L'ENTREPRISE pour chaque rubrique de chantier à réécrire (17/09) :
+            # sans lui, le rédacteur écrivait « effectifs non fournis » alors que la trame dit
+            # « carrelage : 1 chef d'équipe, 2 carreleurs, 1 aide », et réinventait les méthodes de pose.
+            textes_modele={}
+            a_remplacer=[s['remplace_modele'] for s in plan['sections'] if type(s.get('remplace_modele')) is int]
+            if a_remplacer and (plan.get('modele_source') or contrat.get('modele_source')):
+                try:
+                    from bureautique.sections_modele import textes_des_rubriques
+                    source_modele=next((s for s in sources if s['id']==(plan.get('modele_source') or contrat.get('modele_source'))),None)
+                    if source_modele:textes_modele=await asyncio.to_thread(textes_des_rubriques,await _octets_modele(source_modele,user),a_remplacer)
+                except Exception as e:
+                    logger.warning('Texte type des rubriques illisible (%s) : rédaction depuis les seules preuves',type(e).__name__)
             async def rediger(i,section):
                 cle='section:'+str(i);connu=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle)
                 if connu:return connu
@@ -675,7 +794,9 @@ async def composer_immediat(data,user):
                 # LES DONNÉES DE L'ENTREPRISE VIVENT DANS SON MODÈLE (17/09). Le rédacteur ne recevait
                 # que les pièces choisies pour SA rubrique : il écrivait « effectifs non fournis, à
                 # compléter » alors que la fiche signalétique du modèle dit « 12 personnes ».
-                modele_id=contrat.get('modele_source')
+                modele_id=plan.get('modele_source') or contrat.get('modele_source')
+                texte_type=textes_modele.get(section.get('remplace_modele')) if type(section.get('remplace_modele')) is int else None
+                base={'texte_type_de_l_entreprise':texte_type} if texte_type else {}
                 utiles=[a for a in analyses if a['source'] in section['sources'] or (modele_id and a['source']==modele_id)]
                 refs={a['preuve'] for a in utiles}
                 async with semaphore:
@@ -683,6 +804,10 @@ async def composer_immediat(data,user):
                     revision=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'revision:'+str(i))
                     r=revision['redaction'] if revision else await _json('Rédige intégralement cette section du document demandé, en français, avec un contenu concret et adapté. '
                         'Les faits et chiffres doivent venir des preuves. Les démarches proposées doivent être présentées comme proposées si elles ne sont pas établies. '
+                        +('Cette rubrique REMPLACE celle du modèle : texte_type_de_l_entreprise est la façon de faire HABITUELLE de l’entreprise (composition type des équipes par lot, méthodes de pose, contrôles, organisation). '
+                          'PARS DE CE TEXTE et adapte-le à ce projet : garde ses méthodes et son équipe type comme ce que l’entreprise PRÉVOIT ici (ajustable selon le planning), retire ce qui ne concerne pas les ouvrages de ce dossier, '
+                          'ajoute ce que les pièces exigent (lots, locaux, produits, phases, délais, contraintes). Seuls le nom, les lieux, les quantités, les dates et les engagements chiffrés de l’ANCIEN chantier ne se reprennent pas. '
+                          'Garde ses sous-titres utiles avec des blocs {"bloc":"titre","niveau":3,"texte":"..."}. ' if texte_type else '')+
                         'Les données de l’entreprise (effectifs, encadrement, moyens, matériel, fournisseurs, références, SAV, formation) figurent dans les preuves issues de SON modèle : UTILISE-LES, ne les déclare pas manquantes. '
                         'N’écris une réserve que pour une information INDISPENSABLE à cette rubrique et introuvable dans toutes les preuves reçues : deux réserves au plus, une phrase chacune, jamais sur le fonctionnement du dossier (pièces, fragments, preuves, modèle). '
                         'Seule une donnée d’entreprise réellement introuvable reste [À CONFIRMER] ; ne reprends jamais le nom, les quantités ou les engagements d’un ancien chantier. '
@@ -691,20 +816,21 @@ async def composer_immediat(data,user):
                         'Schéma {"blocs":[{"bloc":"paragraphe","texte":"..."} ou {"bloc":"liste","items":["..."]} ou '
                         '{"bloc":"tableau","entetes":["..."],"lignes":[["..."]]}],"preuves":["source:fragment"],"reserves":["informations manquantes"]}. '
                         'Ne promets pas une action ultérieure et ne demande pas de reformuler : produis le contenu utile dès maintenant.',
-                        {'demande':demande,'plan':[s['titre'] for s in plan['sections']],'section':section,'pieces_disponibles':inventaire,'preuves':utiles},lambda r:_section_valide(r,refs))
+                        {'demande':demande,'plan':[s['titre'] for s in plan['sections']],'section':section,'pieces_disponibles':inventaire,'preuves':utiles,**base},lambda r:_section_valide(r,refs))
                     # Relecture indépendante par section : contenu de la demande et preuves réelles.
                     avis=revision['avis'] if revision else await _json('Vérifie le contenu rédigé contre la demande de section et les preuves. Détecte faits inventés, ancien chantier recopié, '
                         'rubrique seulement décrite au lieu d’être rédigée, contradiction et manque important. Contrôle aussi les réserves : pieces_disponibles est l’inventaire COMPLET ; les preuves reçues ici sont une sélection. Une pièce non sélectionnée n’est pas absente. Ne valide pas une fausse affirmation globale d’absence. '
                         'Les illustrations choisies par le plan sont insérées À LA MISE EN PAGE, pas par le rédacteur : leur absence du texte n’est PAS un problème. '
+                        'Si texte_type_de_l_entreprise est fourni, la rubrique ADAPTE la façon de faire écrite par l’entreprise : ses méthodes, ses contrôles et son équipe type sont légitimes et valent preuve ; seuls le nom, les lieux, les quantités et les dates de l’ancien chantier sont interdits. '
                         'Schéma {"valide":true,"problemes":[]} ou {"valide":false,"problemes":["..."]}. Les réserves explicites sur une donnée absente sont acceptables.',
-                        {'demande':demande,'section':section,'redaction':r,'pieces_disponibles':inventaire,'preuves':utiles})
+                        {'demande':demande,'section':section,'redaction':r,'pieces_disponibles':inventaire,'preuves':utiles,**base})
                     if avis.get('valide') is not True:
                         # Une reprise corrige le défaut constaté ; elle ne recommence
                         # pas un brouillon qui risque de reproduire la même erreur.
                         await asyncio.to_thread(dossiers.etape,uid,fil,tache,'revision:'+str(i),{'redaction':r,'avis':avis})
                         r=await _json('Corrige la section selon les problèmes détectés. JSON à la racine, sans enveloppe redaction ni section : {"blocs":[{"bloc":"paragraphe","texte":"..."} ou {"bloc":"liste","items":["..."]} ou {"bloc":"tableau","entetes":["..."],"lignes":[["..."]]}],"preuves":["source:fragment"],"reserves":[]}. Aucun fait non sourcé. '
                             'Si une donnée est introuvable, indique clairement la réserve dans le texte au lieu de l’inventer.',
-                            {'demande':demande,'section':section,'redaction':r,'problemes':avis.get('problemes'),'pieces_disponibles':inventaire,'preuves':utiles},lambda r:_section_valide(r,refs))
+                            {'demande':demande,'section':section,'redaction':r,'problemes':avis.get('problemes'),'pieces_disponibles':inventaire,'preuves':utiles,**base},lambda r:_section_valide(r,refs))
                         avis=await _json('Vérifie la correction contre les preuves et les problèmes. JSON {"valide":true/false,"problemes":[]}.',
                             {'section':section,'redaction':r,'pieces_disponibles':inventaire,'preuves':utiles,'problemes':avis.get('problemes')})
                         import os as _os
@@ -1117,7 +1243,10 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     await asyncio.to_thread(dossiers.effacer_etapes,uid,fil,tache,['suivi_controle'])
     blocs=[];reserves=[]
     for section,r in zip(plan['sections'],sections):
-        blocs.append({'bloc':'titre','niveau':1,'texte':section['titre']});blocs.extend(r['blocs'])
+        blocs.append({'bloc':'titre','niveau':1,'texte':section['titre']})
+        # Un sous-titre écrit par le rédacteur ne devient JAMAIS une rubrique : l'assemblage
+        # découpe le rendu sur les titres de niveau 1 du plan. Le modèle sous-titre en niveau 3.
+        blocs.extend({**b,'niveau':3 if plan.get('modele_source') else max(2,int(b.get('niveau') or 2))} if isinstance(b,dict) and b.get('bloc')=='titre' else b for b in r['blocs'])
         if type(section.get('reprise_modele')) is not int:reserves.extend((r.get('reserves') or [])[:3])
     reserves,reserves_ecartees=points_a_confirmer(reserves)
     a_relire=['« '+str(sec.get('titre'))[:60]+' » : '+x for sec,rr in zip(plan['sections'],sections) for x in (rr.get('a_relire') or [])]
@@ -1143,6 +1272,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             raise ValueError('Le modèle DOCX original doit être accessible ; ajoute-le par référence avant reprise.')
         from bureautique.document_modele import preparer_modele
         original=await _octets_modele(source,user)
+        _dater_la_garde(plan)
         if plan.get('remplacements_modele'):
             from bureautique.trame import remplir
             try:original,_=await asyncio.to_thread(remplir,original,'docx',plan['remplacements_modele'])
@@ -1311,6 +1441,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
             **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
             'reserves_hors_document':reserves_ecartees[:30],'rubriques_a_relire':a_relire[:20],
+            **({'rubriques_du_modele_retirees':plan['rubriques_modele_retirees']} if isinstance(plan.get('rubriques_modele_retirees'),dict) and plan['rubriques_modele_retirees'] else {}),
             'controles_automatiques':'faits' if controles_bloquants else 'non faits : document livré dès sa mise en page, à relire',
             'a_faire':('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
 

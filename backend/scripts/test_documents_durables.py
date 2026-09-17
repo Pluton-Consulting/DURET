@@ -539,7 +539,8 @@ class Recette(unittest.TestCase):
           '_tier_chain':lambda _:chain,'_filtrer_quarantaine':lambda x:x,
           '_build_model':lambda p,m,*a: lent if m=='lent' else secours,
           '_is_hard_fail':lambda e:False,'_contenu_vide':lambda r:not r.content,
-          'tier_timeout':lambda _:10,'tier_max_tokens':lambda _:100}
+          'tier_timeout':lambda _:10,'tier_max_tokens':lambda _:100,
+          'reflexion_mesuree':lambda *a,**k:None,'_BUDGET_REFLEXION_BASSE':12000}
       tree=ast.parse((BACKEND/'llm/router.py').read_text())
       classe=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='ResilientLLM')
       exec(compile(ast.Module(body=[classe],type_ignores=[]),'routeur_test','exec'),ns)

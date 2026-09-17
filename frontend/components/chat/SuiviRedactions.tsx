@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react"
 import { apiRequest } from "@/lib/api"
 
-type Redaction = { id: string; genre: string; statut: string; phase: string; annonce: boolean }
+type Redaction = { id: string; genre: string; statut: string; phase: string; annonce: boolean; titre?: string }
 type Props = { threadId: string | null; token: string | null; enCours: boolean; actualiser: (fil: string) => Promise<boolean> }
 
 export default function SuiviRedactions({ threadId, token, enCours, actualiser }: Props) {
@@ -54,16 +54,28 @@ export default function SuiviRedactions({ threadId, token, enCours, actualiser }
       if (filRef.current === fil) setErreur("L’action n’a pas été confirmée. Vérifiez le suivi avant de réessayer.")
     } finally { if (filRef.current === fil) setAction("") }
   }
-  if (!redactions.length && !erreur) return null
-  return <section aria-label="Suivi des documents" data-testid="suivi-redactions" style={{ padding: "10px 16px", borderBottom: "1px solid var(--marque-border)", maxHeight: 200, overflowY: "auto", fontSize: 13 }}>
-    {redactions.map(r => {
+  // Un document prêt ET déjà annoncé n'a plus rien à dire ici : sa carte est dans le fil.
+  const visibles = redactions.filter(r => !(r.statut === "termine" && r.annonce))
+  if (!visibles.length && !erreur) return null
+  return <section aria-label="Travaux en cours" data-testid="suivi-redactions" style={{ padding: "2px 32px 8px", maxHeight: 168, overflowY: "auto" }}>
+    {visibles.map(r => {
       const actif = ["attente", "en_cours"].includes(r.statut)
-      return <div key={r.id} style={{ marginBottom: 8 }}>
-        <div role="status" aria-live="polite"><strong>{r.genre === "quantitatif" ? "Quantitatif" : "Document"}</strong> — {r.phase}{actif && "…"}</div>
-        {actif && <div>Vous pouvez continuer à utiliser le chat. Le fichier apparaîtra ici après les vérifications.</div>}
-        {r.statut !== "termine" && <button type="button" disabled={!!action} onClick={() => void piloter(r, actif ? "suspendre" : "reprendre")} style={{ marginTop: 4, textDecoration: "underline" }}>{action === r.id ? "Enregistrement…" : actif ? "Suspendre la rédaction" : "Reprendre la rédaction"}</button>}
+      const nom = r.genre === "quantitatif" ? "Quantitatif" : "Document"
+      return <div key={r.id} className="sym-step" role="status" aria-live="polite"
+                  style={{ alignItems: "flex-start", fontWeight: 500, fontSize: 13, padding: "4px 0", color: "var(--marque-text-secondary)" }}>
+        {actif
+          ? <span className="sym-grille" aria-hidden style={{ marginTop: 3 }}><i /><i /><i /><i /><i /><i /><i /><i /><i /></span>
+          : <span aria-hidden style={{ width: 16, textAlign: "center" }}>•</span>}
+        <span style={{ minWidth: 0 }}>
+          <b style={{ color: "var(--marque-text-primary)" }}>{nom}{r.titre ? ` « ${r.titre} »` : ""}</b> — {r.phase}{actif && "…"}
+          {r.statut !== "termine" && <>{" "}
+            <button type="button" disabled={!!action} onClick={() => void piloter(r, actif ? "suspendre" : "reprendre")}
+                    style={{ textDecoration: "underline", fontSize: 12, color: "var(--marque-text-secondary)" }}>
+              {action === r.id ? "enregistrement…" : actif ? "suspendre" : "reprendre"}
+            </button></>}
+        </span>
       </div>
     })}
-    {erreur && <p role="alert">{erreur}</p>}
+    {erreur && <p role="alert" style={{ fontSize: 12 }}>{erreur}</p>}
   </section>
 }

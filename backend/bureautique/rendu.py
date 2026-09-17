@@ -21,6 +21,7 @@ remarque qu'une fois le document envoyé.
 from __future__ import annotations
 
 import logging
+import os
 
 logger = logging.getLogger("duret.bureautique.rendu")
 
@@ -532,6 +533,19 @@ def _docx(entete: dict, elements, sortie: str) -> str:
             doc.add_paragraph("―" * 30).alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.save(sortie)
+    # LE CONTENU RÉDIGÉ ENTRE DANS LE MODÈLE, IL NE LE REMPLACE PAS (17/09) :
+    # garde et rubriques reprises restent celles de l'entreprise, à leur place.
+    # Voir bureautique/sections_modele.py. Un échec d'assemblage ne publie pas
+    # un document à moitié composé : il remonte.
+    original = entete.get("_modele_original")
+    if original and os.path.exists(original):
+        from bureautique.sections_modele import assembler
+        with open(original, "rb") as f:
+            octets = f.read()
+        titres_plan = entete.get("_titres_plan") or [
+            e.get("texte") for e in elements if e.get("bloc") == "titre" and int(e.get("niveau") or 1) == 1]
+        bilan = assembler(octets, sortie, titres_plan, entete.get("_reprises") or {})
+        logger.info("Document composé dans son modèle : %s", bilan)
     return sortie
 
 

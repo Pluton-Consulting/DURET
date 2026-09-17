@@ -6,7 +6,12 @@ class Settings(BaseSettings):
     # App
     environment: str = "production"
     debug: bool = False
-    demande_delai_s: int = 600  # budget total partagé par tous les étages d’un tour
+    # 17/09 : 600 s COUPAIT les tours que le projet a toujours laissés durer (plan
+    # approuvé 8 min 43, publipostage 13 min) — et plus court que le plafond
+    # SOUPLE (8 min + rédaction + relecteur), il tombait pendant la rédaction :
+    # tour perdu, rien de persisté. 3600 s = le délai de nginx sur le chat ; le
+    # plafond souple (`TOUR_DUREE_MAX_S`) reste celui qui rend la main proprement.
+    demande_delai_s: int = 3600  # budget total partagé par tous les étages d’un tour
     allowed_hosts: str = "100.64.0.1"
     # Sécurité transverse
     max_body_mb: int = 10                          # limite de taille du corps HTTP (anti-DoS mémoire)
@@ -207,8 +212,13 @@ class Settings(BaseSettings):
     model_ollama_cloud_puissant: str = "deepseek-v4-pro:0813"   # 1M de contexte
     # Vision et OCR : les deux modèles du catalogue qui déclarent lire les
     # images, un très gros lecteur et un très rapide.
-    model_ollama_cloud_vision: str = "qwen3.5:397b"
-    model_ollama_cloud_vision_secours: str = "glm-5.3-flash"
+    # 17/09, MESURÉ (planche de coupes réelle, 1 600 px) : deepseek-v4.1-flash
+    # 4,7 s, kimi-k3 8,3 s, glm-5.3-flash 10 s ; qwen3.5:397b 44 s ou VIDE.
+    model_ollama_cloud_vision: str = "deepseek-v4.1-flash"
+    model_ollama_cloud_vision_secours: str = "kimi-k3"
+    # « mesuree » : la réflexion des modèles raisonnants est bridée d'après la
+    # table de llm/router.py ; « libre » : rien n'est envoyé (comportement d'avant).
+    ollama_cloud_reflexion: str = "mesuree"
 
     # ── Appels de modèle simultanés (llm/concurrence.py) ─────────────────
     # L'abonnement autorise 10 appels de front ; au-delà, le fournisseur met en

@@ -21,6 +21,88 @@ def _texte(message):
     if isinstance(c,list):return '\n'.join(str(x.get('text','')) if isinstance(x,dict) else str(x) for x in c)
     return str(c or '')
 
+# ── LE MODÈLE NE SE DEVINE PAS (17/09) ──────────────────────────────────────
+# Relevé de Noa (mémoire Domofrance) : le plan choisissait LUI-MÊME son
+# `modele_source`, et il a pris le cadre de réponse du maître d'ouvrage — une
+# pièce de la CONSULTATION — au lieu du mémoire de l'entreprise ; et une trame
+# enregistrée (« mémoire technique type ») n'était pas éligible du tout, parce
+# qu'elle n'est pas une pièce du dossier. L'ordre est désormais mécanique :
+#   1. la trame que la demande NOMME, ou l'unique trame Word dont le nom
+#      partage un mot fort avec la demande ;
+#   2. le seul Word « maison » du dossier (mémoire, modèle, trame, vierge, type) ;
+#   3. sinon le plan garde la main, comme avant.
+_PIECE_CONSULTATION=re.compile(r"(cadre|r[èe]glement|\brc\b|cctp|ccap|dpgf|bpu|dqe|engagement|planning|notice|charte|annexe|\bdce\b)",re.I)
+_MODELE_MAISON=re.compile(r"(m[ée]moire|mod[èe]le|trame|vierge|\btype\b|ent[êe]te)",re.I)
+_MOTS_CREUX={'pour','avec','dans','document','technique','complet','modele','modèle','trame','type','base','prochains','prochain'}
+
+def _mots_forts(texte):
+    import unicodedata
+    plat=''.join(c for c in unicodedata.normalize('NFD',str(texte or '').casefold()) if unicodedata.category(c)!='Mn')
+    return {m for m in re.findall(r"[a-z0-9]{5,}",plat) if m not in _MOTS_CREUX}
+
+async def _octets_modele(source,user):
+    """Les octets du Word modèle : une trame enregistrée (`trame:<nom>`) se lit
+    en base, toute autre référence par la résolution habituelle et ses droits."""
+    ref=str(source.get('reference') or '')
+    if ref.startswith('trame:'):
+        from database.connection import get_db
+        async with get_db() as c:
+            l=await c.fetchrow("SELECT contenu FROM trames WHERE actif AND lower(nom)=lower($1)",ref[6:])
+        if not l or not l['contenu']:raise ValueError('La trame « '+ref[6:]+' » n’est plus disponible.')
+        return bytes(l['contenu'])
+    from mail.attaches import resoudre
+    pretes,_=await resoudre([ref],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
+    if not pretes:raise ValueError('Modèle non accessible avec les droits actuels.')
+    return pretes[0]['octets']
+
+async def _imposer_modele(uid,fil,demande,ids):
+    """(id du modèle imposé ou None, ids éventuellement complétés par la trame)."""
+    import unicodedata
+    plat=lambda s:''.join(c for c in unicodedata.normalize('NFD',str(s or '').casefold()) if unicodedata.category(c)!='Mn')
+    courante=demande.split('DEMANDES UTILISATEUR ANTÉRIEURES')[0]
+    try:
+        from database.connection import get_db
+        async with get_db() as c:
+            trames=[dict(r) for r in await c.fetch("SELECT nom,nom_fichier,contenu FROM trames WHERE actif AND genre='document' AND lower(type_fichier)='docx' AND contenu IS NOT NULL")]
+    except Exception as e:
+        logger.warning('Trames illisibles pour le choix du modèle (%s)',type(e).__name__);trames=[]
+    choisie=next((t for t in trames if plat(t['nom']) in plat(demande)),None)
+    if not choisie:
+        proches=[t for t in trames if _mots_forts(t['nom'])&_mots_forts(courante)]
+        if len(proches)==1:choisie=proches[0]
+    if choisie:
+        from bureautique.lecture_integrale import lire as lecture
+        octets=bytes(choisie['contenu']);nom=choisie['nom_fichier'] or (choisie['nom']+'.docx')
+        texte=await asyncio.to_thread(lecture,nom,octets)
+        source=await asyncio.to_thread(dossiers.enregistrer,uid,fil,nom,texte or nom,'trame:'+choisie['nom'],hashlib.sha256(octets).hexdigest())
+        logger.info('Modèle imposé : trame « %s »',choisie['nom'])
+        return source,(ids if source in ids else ids+[source])
+    maison=[s for s in await asyncio.to_thread(dossiers.sources,uid,fil,ids)
+            if s['nom'].lower().endswith('.docx') and s.get('reference') and _MODELE_MAISON.search(s['nom']) and not _PIECE_CONSULTATION.search(s['nom'])]
+    if len(maison)==1:
+        logger.info('Modèle imposé : Word de l’entreprise « %s »',maison[0]['nom'])
+        return maison[0]['id'],ids
+    return None,ids
+
+def _normaliser_plan(plan,ids,modele,structure):
+    """Après le modèle de langage, avant la validation : une rubrique REPRISE
+    porte le titre exact du modèle, et le modèle lui-même n'a pas à être
+    « affecté à une rubrique » — il est la présentation."""
+    if not isinstance(plan,dict) or not isinstance(plan.get('sections'),list):return plan
+    titres={s['index']:s['titre'] for s in (structure or {}).get('sections',[])}
+    vus=set()
+    for s in plan['sections']:
+        if not isinstance(s,dict):continue
+        i=s.get('reprise_modele')
+        if type(i) is int and i in titres and i not in vus:
+            vus.add(i);s['titre']=titres[i];s.setdefault('sources',[])
+        else:s.pop('reprise_modele',None)
+    if modele:
+        plan['modele_source']=modele
+        if isinstance(plan.get('sources_ecartees'),dict) and not any(modele in (s.get('sources') or []) for s in plan['sections'] if isinstance(s,dict)):
+            plan['sources_ecartees'].setdefault(modele,'Modèle de présentation de l’entreprise : ses rubriques sont reprises ou servent de trame.')
+    return plan
+
 async def _json(consigne,donnees,verifier=None,*,extraction=False):
     from ressources.documents_file import verifier_poursuite
     await asyncio.to_thread(verifier_poursuite)
@@ -263,6 +345,9 @@ async def composer_immediat(data,user):
     else:
         ids=data.get('sources') or [s['id'] for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)]
         if not ids:raise ValueError('Aucune pièce dans ce dossier. Ajoute les documents trouvés avec ajouter_source_dossier.')
+        if not data.get('modele_source') and data.get('format','docx')=='docx':
+            impose,ids=await _imposer_modele(uid,fil,demande+(' '+str(data['trame']) if data.get('trame') else ''),list(ids))
+            if impose:data['modele_source']=impose
         tache=hashlib.sha256(json.dumps([demande,ids,data.get('titre'),data.get('modele_source'),data.get('format','docx')],ensure_ascii=False).encode()).hexdigest()[:24]
         contrat={'demande':demande,'sources':ids,'titre':data.get('titre') or 'Document',
                  'format':data.get('format','docx'),'modele_source':data.get('modele_source'),'images':data.get('images') or []}
@@ -287,8 +372,24 @@ async def composer_immediat(data,user):
             from bureautique.illustrations import analyser as analyser_illustrations
             analyses += await analyser_illustrations(uid,fil,tache,sources,user,demande)
             plan=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan')
+            structure_modele=None
+            if not plan and contrat.get('modele_source'):
+                try:
+                    from bureautique.sections_modele import structure as _structure
+                    source_modele=next((s for s in sources if s['id']==contrat['modele_source']),None)
+                    if source_modele:structure_modele=await asyncio.to_thread(_structure,await _octets_modele(source_modele,user))
+                    if structure_modele and not structure_modele['sections']:structure_modele=None
+                except Exception as e:
+                    logger.warning('Structure du modèle illisible (%s) : présentation seule reprise',type(e).__name__)
             if not plan:
-                plan=await _json('Établis le plan du LIVRABLE demandé, applicable à tout type de document. Reprends exactement les rubriques imposées par la demande ou le RC. '
+                plan=await _json((
+                    'UN MODÈLE DE L’ENTREPRISE EST IMPOSÉ (modele_entreprise) : le document final est CE modèle, rempli. Sa page de garde est conservée : '
+                    'donne dans remplacements_modele chaque texte EXACT de la garde à actualiser (projet, lieu, maître d’ouvrage, maître d’œuvre, adresses, téléphone, date) -> sa valeur prouvée par les pièces, ou "[À CONFIRMER]". '
+                    'Pour chaque rubrique du plan, choisis : soit "reprise_modele": index — la rubrique du modèle est gardée TELLE QUELLE avec ses tableaux et ses images ; réserve-le aux rubriques dont l’extrait ne parle QUE de l’entreprise '
+                    '(organigramme, fiche signalétique, capacités, encadrement, moyens, SAV, formation, sécurité, environnement, fournisseurs) ; soit une rubrique RÉDIGÉE (sans reprise_modele) pour tout ce qui dépend du projet. '
+                    'Une rubrique du modèle qui décrit l’ANCIEN chantier ne se reprend jamais : elle se rédige à neuf pour ce projet, en gardant son titre si la demande n’en impose pas un autre. '
+                    'Si la demande n’impose pas d’arborescence, suis celle du modèle, dans son ordre. N’oublie aucune rubrique d’entreprise du modèle qui reste utile. '
+                    if structure_modele else '')+'Établis le plan du LIVRABLE demandé, applicable à tout type de document. Reprends exactement les rubriques imposées par la demande ou le RC. '
                     'Un exemple sert de présentation et de faits stables d’entreprise ; ne réemploie pas ses anciens faits de chantier. '
                     'Chaque pièce doit être affectée à une rubrique, ou écartée avec une raison explicite. '
                     'Schéma {"titre":"...","sections":[{"titre":"...","objectif":"...","sources":["id"],"mots_cibles":350,"illustrations":[{"source":"id","numero":1,"legende":"..."}]}],'
@@ -299,7 +400,9 @@ async def composer_immediat(data,user):
                     '(objet texte ancien exact -> texte actuel) pour corriger les en-têtes et pieds du modèle si nécessaire.',
                     {'demande':demande,'sources':[{'id':s['id'],'nom':s['nom'],
                         'texte_court_integral':s['contenu'] if len(s['contenu'])<=16000 else None} for s in sources],
-                     'analyses':_faits_pour_synthese(analyses)},lambda r:_plan_valide(r,ids))
+                     'analyses':_faits_pour_synthese(analyses),
+                     **({'modele_entreprise':{'garde':structure_modele['garde'],'rubriques':structure_modele['sections']}} if structure_modele else {})},
+                    lambda r:_plan_valide(_normaliser_plan(r,ids,contrat.get('modele_source'),structure_modele),ids))
                 if contrat.get('modele_source'):plan['modele_source']=contrat['modele_source']
                 _plan_valide(plan,ids)
                 limite = re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', demande, re.I)
@@ -331,6 +434,12 @@ async def composer_immediat(data,user):
             async def rediger(i,section):
                 cle='section:'+str(i);connu=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle)
                 if connu:return connu
+                if type(section.get('reprise_modele')) is int:
+                    # La rubrique EST celle du modèle : rien à rédiger, rien à payer.
+                    reprise={'blocs':[{'bloc':'paragraphe','texte':'Rubrique reprise telle quelle du modèle de l’entreprise (« '+section['titre']+' »), avec ses tableaux et ses images.'}],
+                             'preuves':[],'reserves':[],'reprise':True}
+                    await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle,reprise)
+                    return reprise
                 utiles=[a for a in analyses if a['source'] in section['sources']]
                 refs={a['preuve'] for a in utiles}
                 async with semaphore:
@@ -738,16 +847,27 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
         source=next((s for s in sources if s['id']==modele),None)
         if not source or not source['nom'].lower().endswith('.docx') or not source['reference']:
             raise ValueError('Le modèle DOCX original doit être accessible ; ajoute-le par référence avant reprise.')
-        from mail.attaches import resoudre
-        pretes,refusees=await resoudre([source['reference']],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
-        if not pretes:raise ValueError('Modèle non accessible avec les droits actuels.')
         from bureautique.document_modele import preparer_modele
-        original=pretes[0]['octets']
+        original=await _octets_modele(source,user)
         if plan.get('remplacements_modele'):
             from bureautique.trame import remplir
             original,_=await asyncio.to_thread(remplir,original,'docx',plan['remplacements_modele'])
         chemin=await asyncio.to_thread(preparer_modele,jeton,uid,original)
         entete['_modele_docx']=chemin
+        # LE CORPS DU MODÈLE N'EST PLUS PERDU : l'original (garde actualisée)
+        # est rangé à côté, et le rendu y pose les rubriques rédigées.
+        chemin_original=atelier._chemin(jeton,'original.docx')
+        def _ranger():
+            import os as _os
+            with open(chemin_original+'.tmp','wb') as f:f.write(original)
+            _os.replace(chemin_original+'.tmp',chemin_original)
+        from bureautique.sections_modele import structure as _structure
+        if (await asyncio.to_thread(_structure,original))['sections']:
+          await asyncio.to_thread(_ranger)
+          entete['_modele_original']=chemin_original
+          entete['_titres_plan']=[s['titre'] for s in plan['sections']]+(['Points à confirmer'] if reserves else [])
+          entete['_reprises']={s['titre']:s['reprise_modele'] for s in plan['sections'] if type(s.get('reprise_modele')) is int}
+          entete['page_de_garde']=False;entete['sommaire']=False
         await asyncio.to_thread(atelier.mettre_a_jour_entete,jeton,uid,entete)
     if any(s.get('illustrations') for s in plan['sections']):
         from bureautique.illustrations import incorporer
@@ -774,6 +894,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     entetes=' '.join(n.text or '' for section in document.sections for partie in (section.header,section.footer,section.first_page_header,section.first_page_footer) for n in partie._element.iter(qn('w:t')))
     avis=await _controle_interne(uid,fil,tache,'Contrôle final du document : respecte-t-il la demande, le plan et les réserves ? '
         'Vérifie les références contradictoires de projet, les noms et adresses réellement périmés, les rubriques manquantes et les incohérences internes substantielles. '
+        'Une rubrique marquée « reprise telle quelle du modèle de l’entreprise » est CONFORME : son contenu est celui du modèle, il n’est ni à rédiger ni à contrôler ici. '
         'La rubrique Points à confirmer est un récapitulatif AUTOMATIQUE autorisé en plus du plan : sa présence et la répétition des réserves ne sont PAS des erreurs. Un en-tête ou pied neutre du modèle, tel que numéro de page et mention Document confidentiel, est conforme et ne doit pas être enrichi arbitrairement. Ne demande pas de remplacer le numéro calculé par un champ Word. '
         'Les notes sur les contrôles ou les corrections effectuées ne sont pas du contenu métier et doivent être supprimées, sans les remplacer par une confirmation de réparation. '
         'JSON {"valide":true/false,"problemes":[],"remplacements_modele":{}}. Si un en-tête est obsolète, '
@@ -834,8 +955,9 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     from docx import Document
     chemin=await asyncio.to_thread(atelier.chemin_fichier,jeton,uid)
     doc=await asyncio.to_thread(Document,chemin)
-    titres=[p.text for p in doc.paragraphs]
-    if any(s['titre'] not in titres for s in plan['sections']):raise ValueError('Rubrique absente du Word rendu.')
+    _n=lambda t:' '.join(str(t or '').split()).casefold()
+    titres={_n(p.text) for p in doc.paragraphs}
+    if any(_n(s['titre']) not in titres for s in plan['sections']):raise ValueError('Rubrique absente du Word rendu.')
     if contrat.get('format')=='pdf':
         from bureautique.document_modele import convertir_pdf
         titre=plan.get('titre') or contrat['titre']
@@ -959,4 +1081,4 @@ SKILLS={
  'lire_source_dossier':Declaration(lire,'Lire intégralement un fragment numéroté d’une pièce : texte, pages/cellules, référence de preuve et suite réelle. Aucun aperçu de couverture imposé.',requis=['source'],optionnels=['fragment','position'],effet='lecture',libelle='je lis la suite du document'),
  'chercher_source_dossier':Declaration(lire,'Trouver le fragment le plus pertinent dans une pièce intégrale, puis lire la suite avec lire_source_dossier.',requis=['source','recherche'],effet='lecture',libelle='je recherche dans le document complet'),
  'ajouter_source_dossier':Declaration(ajouter,'Ouvrir un fichier autorisé du NAS/Drive, du chat ou d’un mail par sa référence et conserver TOUT son texte, toutes ses feuilles/cellules pour cette conversation. À utiliser pour dépasser un aperçu tronqué.',requis=['reference'],effet='lecture',libelle='je prépare la lecture complète du fichier'),
- 'composer_document_dossier':Declaration(composer,'Rédiger un NOUVEAU document long depuis un dossier de pièces : lecture de tous les fragments, plan conforme à la demande, rédaction et contrôle par section, DOCX et présentation du modèle. Fonctionne pour rapports, réponses à consultation, dossiers, études, mémoires et autres documents. Les étapes sont persistantes et reprenables par tache. Ne remplace pas une simple modification ponctuelle du texte original.',requis=['demande'],optionnels=['titre','sources','modele_source','tache','images','format'],effet='ecriture_interne',libelle='je rédige et contrôle le document à partir de toutes les pièces')}
+ 'composer_document_dossier':Declaration(composer,'Rédiger un NOUVEAU document long depuis un dossier de pièces : lecture de tous les fragments, plan conforme à la demande, rédaction et contrôle par section, DOCX et présentation du modèle. `trame` : le NOM d’une trame Word enregistrée (« mémoire technique type ») à REMPLIR — sa page de garde, ses en-têtes et ses rubriques d’entreprise sont gardés, les rubriques de projet sont rédigées dans ses styles ; sans lui, le Word de l’entreprise présent dans les pièces sert de modèle, jamais une pièce de la consultation. Fonctionne pour rapports, réponses à consultation, dossiers, études, mémoires et autres documents. Les étapes sont persistantes et reprenables par tache. Ne remplace pas une simple modification ponctuelle du texte original.',requis=['demande'],optionnels=['titre','sources','modele_source','trame','tache','images','format'],effet='ecriture_interne',libelle='je rédige et contrôle le document à partir de toutes les pièces')}

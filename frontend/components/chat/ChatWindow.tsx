@@ -1,5 +1,4 @@
 "use client"
-import SuiviTravail from "./SuiviTravail"
 import SuiviRedactions from "./SuiviRedactions"
 import { useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
@@ -1567,12 +1566,6 @@ ${texteAffiche}`)
           d'écart et l'écran paraissait plat. */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0,
                     background: "var(--marque-chat-fond)" }}>
-        <SuiviTravail threadId={threadId} token={token || null} enCours={loading} />
-        <SuiviRedactions threadId={threadId} token={token || null} enCours={loading} actualiser={async (tid) => {
-          if (threadIdRef.current !== tid || loading || principalOccupeRef.current) return false
-          await chargerHistorique(tid)
-          return threadIdRef.current === tid
-        }} />
         <MessageList messages={messages} onAction={sendMessage}
                      apiUrl={process.env.NEXT_PUBLIC_API_URL || ""} backendToken={token} />
 
@@ -1617,6 +1610,21 @@ ${texteAffiche}`)
           trace={traceReflexion}
           enCours={loading}
         />
+
+        {/* CE QUI SE PASSE SE LIT EN BAS, PAS EN HAUT (17/09, relevé de Noa :
+            « ça ne doit pas être marqué en haut "travail en cours", mais en bas
+            dans le contenant de "je réfléchis", pour qu'on sache continuellement
+            ce qui se passe »). Le bandeau du haut disait « démarrage en
+            attente » loin du regard, pendant que le fil répondait « je lance » :
+            deux vérités à deux endroits. Les rédactions de fond (lecture des
+            pièces, rubriques, vérifications, position dans la file) vivent
+            désormais ici, dans la même ligne que la réflexion, juste au-dessus
+            de la saisie. */}
+        <SuiviRedactions threadId={threadId} token={token || null} enCours={loading} actualiser={async (tid) => {
+          if (threadIdRef.current !== tid || loading || principalOccupeRef.current) return false
+          await chargerHistorique(tid)
+          return threadIdRef.current === tid
+        }} />
 
         {/* LES ACCORDS EN ATTENTE, AU TÉLÉPHONE (01/09).
             Sur PC, `FileAttente` vit dans la colonne de droite, montée par

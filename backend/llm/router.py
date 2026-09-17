@@ -638,6 +638,61 @@ def sante_cascade() -> list[dict]:
     return etat
 
 
+# LA RÉFLEXION SE BRIDE, MODÈLE PAR MODÈLE (17/09, mesuré sur le compte de prod).
+#
+# Relevé de Noa : « beaucoup de tentatives échouées, des réponses vides, très
+# lent ». Mesure faite depuis le VPS, sur un vrai CCTP de 28 000 caractères et
+# une vraie planche de coupes : les modèles RAISONNANTS d'Ollama Cloud dépensent
+# TOUT leur budget de sortie à réfléchir et rendent un `content` VIDE —
+# deepseek-v4-flash : 4 000 jetons, 0 caractère, 16 s ; idem glm, kimi, qwen,
+# minimax. La relance « budget doublé » ne faisait que payer deux fois.
+# Avec la réflexion bridée, le MÊME modèle rend 12 faits cités mot à mot en
+# 5,6 s. Mais la bride n'est pas la même partout, et la mauvaise valeur est
+# PIRE que rien (glm « none » : 6 000 jetons de pensée en clair ; deepseek
+# flash « low » : vide) : la table ci-dessous ne porte que ce qui a été MESURÉ.
+#   famille            texte court/extraction   palier COMPLEX   vision
+#   deepseek-v4 flash  none  (5,6 s, 11/12)     none             low (4,7 s)
+#   deepseek-v4 pro    none  (24 s, 8/12)       low (61 s, 11/12)  —
+#   kimi-k3            low   (13 s, 10/12)      low              low (8,3 s)
+#   glm-5.3*           low   (12,6 s, 9/12)     low              low (10,2 s)
+#   minimax-m3         none  (13,7 s)           none             —
+# Tout autre modèle : rien n'est envoyé (gpt-oss, gemma4 répondent sans bride).
+# `OLLAMA_CLOUD_REFLEXION=libre` dans le .env rend la main aux modèles.
+_BUDGET_REFLEXION_BASSE = 12000   # « low » pense encore : 5 885 jetons mesurés
+
+
+def reflexion_mesuree(provider: str, model: Optional[str], palier: str = "standard",
+                      usage: str = "texte") -> Optional[str]:
+    """La valeur de `reasoning_effort` à envoyer, ou None pour ne rien envoyer."""
+    if provider != "ollama_cloud":
+        return None
+    if str(getattr(settings, "ollama_cloud_reflexion", "mesuree")).strip().lower() == "libre":
+        return None
+    n = (model or "").lower()
+    if n.startswith("deepseek-v4"):
+        if usage == "vision":
+            return "low"
+        if "pro" in n and palier == "complex":
+            return "low"
+        return "none"
+    if n.startswith("kimi-k3") or n.startswith("glm-5.3"):
+        return "low"
+    if n.startswith("minimax-m3"):
+        return "none"
+    return None
+
+
+# CE QUI NE VOIT PAS (17/09). La garde refusait tout nom contenant
+# « deepseek-v4 » — donc aussi `deepseek-v4.1-flash`, qui VOIT, et qui est le
+# plus rapide des modèles de vision du compte (4,7 s mesurées).
+_TEXTE_SEUL = ("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner")
+
+
+def texte_seul(model: Optional[str]) -> bool:
+    n = (model or "").lower()
+    return any(m in n for m in _TEXTE_SEUL)
+
+
 class ResilientLLM:
     """LLM résilient : parcourt la cascade du palier, retry+backoff par candidat, fallback au suivant."""
 
@@ -704,8 +759,20 @@ class ResilientLLM:
                             # la rédaction et la relecture restent au palier puissant.
                             # Cette option n’est envoyée qu’aux modèles testés
                             # qui savent explicitement désactiver le raisonnement.
+                            effort = reflexion_mesuree(provider, model, self.tier.value)
                             if extraction_documentaire and provider == "ollama_cloud" and (model or "").startswith("deepseek-v4"):
-                                options.update(reasoning_effort="none", max_tokens=8192)
+                                effort = "none"
+                                options.setdefault("max_tokens", 8192)
+                            if effort and not budget_double:
+                                options.setdefault("reasoning_effort", effort)
+                                if effort == "low":
+                                    options.setdefault("max_tokens", max(tier_max_tokens(self.tier.value),
+                                                                         _BUDGET_REFLEXION_BASSE))
+                            elif effort:
+                                # La relance après une réponse vide coupe la réflexion :
+                                # doubler le budget d'un modèle qui pense ne fait que
+                                # doubler ce qu'il pense.
+                                options["reasoning_effort"] = "none"
                             result = await llm.ainvoke(messages, **options)
                     # CE QUE L'APPEL A COÛTÉ, compté ICI parce que c'est le seul
                     # endroit que TOUS les appels traversent. Les nœuds du
@@ -830,6 +897,12 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
     # la tête quand sa clé existe (meilleure lecture de plans).
     for provider, model in (tuple(choisi) +
                            (("anthropic", s.model_anthropic_vision),
+                            # 17/09 : MESURÉ sur une planche de coupes du DCE
+                            # Domofrance — deepseek-v4.1-flash 4,7 s (cotes NGF
+                            # lues), kimi-k3 8,3 s ; OpenRouter Gemini rendait
+                            # VIDE ce matin-là. Ollama Cloud passe donc devant.
+                            ("ollama_cloud", s.model_ollama_cloud_vision),
+                            ("ollama_cloud", s.model_ollama_cloud_vision_secours),
                             ("openrouter", s.model_openrouter_vision),
                             # Ollama Cloud lit aussi les images. Placé DERRIÈRE
                             # Gemini 2.5 Pro tant qu'aucune mesure n'a comparé
@@ -837,18 +910,23 @@ def get_vision_candidates() -> list[tuple[Any, str]]:
                             # en place a été choisi sur un constat, pas sur une
                             # préférence. Pour basculer, remonter ces deux
                             # lignes — après avoir mesuré.
-                            ("ollama_cloud", s.model_ollama_cloud_vision),
-                            ("ollama_cloud", s.model_ollama_cloud_vision_secours),
                             ("google", s.model_google_vision),
                             ("google", s.model_google_vision_secours),
                             ("groq", s.model_groq_vision))):
         if not _provider_available(provider):
             continue
-        if any(m in str(model).lower() for m in ("deepseek-v4", "deepseek-chat", "deepseek-reasoner")):
+        if texte_seul(model):
             logger.warning("Modèle texte ignoré pour la vision : %s", model)
             continue
         try:
-            sortie.append((_build_model(provider, model), f"{provider}:{model}"))
+            if any(etiquette == f"{provider}:{model}" for _, etiquette in sortie):
+                continue   # le modèle choisi à l'écran est souvent aussi celui du défaut
+            llm_vision = _build_model(provider, model)
+            effort = reflexion_mesuree(provider, model, usage="vision")
+            if effort:
+                # Sans bride, qwen3.5 et kimi rendent une image « lue » en 30 s… et VIDE.
+                llm_vision = llm_vision.bind(reasoning_effort=effort, max_tokens=4096)
+            sortie.append((llm_vision, f"{provider}:{model}"))
         except Exception as e:  # noqa: BLE001
             logger.warning("Modèle vision %s non constructible : %s", provider, e)
     return sortie

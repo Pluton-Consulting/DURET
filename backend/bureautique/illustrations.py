@@ -81,20 +81,27 @@ async def incorporer(jeton,uid,selection,sources,user):
     from bureautique.atelier import ranger_image
     blocs=[];cache={}
     for image in selection:
-        source=next((s for s in sources if s['id']==image.get('source')),None)
-        if not source or not source['nom'].lower().endswith('.docx') or not source['reference']:raise ValueError('Illustration sans Word source accessible.')
-        if source['id'] not in cache:
-            pretes,_=await resoudre([source['reference']],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
-            if not pretes:raise ValueError('Illustration non accessible avec les droits actuels.')
-            cache[source['id']]=await asyncio.to_thread(extraire,pretes[0]['octets'])
-        numero=int(image.get('numero',0));images=cache[source['id']]
-        if not 1<=numero<=len(images):raise ValueError('Numéro d’illustration inexistant.')
-        trouve=images[numero-1]
-        if trouve.get('indisponible'):raise ValueError(trouve['indisponible'])
-        from pathlib import Path
-        from bureautique.atelier import DOSSIER
-        # Même illustration, même référence après reprise du document.
-        existante=next((p.name for p in Path(DOSSIER).glob(jeton+'.img*') if p.read_bytes()==trouve['octets']),None)
-        chemin=existante or await asyncio.to_thread(ranger_image,jeton,uid,trouve['octets'],trouve['extension'])
-        blocs.append({'bloc':'image','fichier':chemin,'legende':str(image.get('legende') or ''),'largeur_cm':14,'centre':True})
+        # UNE IMAGE REFUSÉE N'ARRÊTE PAS UN MÉMOIRE (17/09) : la rédaction de fond est
+        # morte en boucle sur « ImageRefusee » (un format que l'atelier ne range pas),
+        # en bloquant la file derrière elle. L'image est sautée, journalisée, le document sort.
+        try:
+            source=next((s for s in sources if s['id']==image.get('source')),None)
+            if not source or not source['nom'].lower().endswith('.docx') or not source['reference']:raise ValueError('Illustration sans Word source accessible.')
+            if source['id'] not in cache:
+                pretes,_=await resoudre([source['reference']],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
+                if not pretes:raise ValueError('Illustration non accessible avec les droits actuels.')
+                cache[source['id']]=await asyncio.to_thread(extraire,pretes[0]['octets'])
+            numero=int(image.get('numero',0));images=cache[source['id']]
+            if not 1<=numero<=len(images):raise ValueError('Numéro d’illustration inexistant.')
+            trouve=images[numero-1]
+            if trouve.get('indisponible'):raise ValueError(trouve['indisponible'])
+            from pathlib import Path
+            from bureautique.atelier import DOSSIER
+            # Même illustration, même référence après reprise du document.
+            existante=next((p.name for p in Path(DOSSIER).glob(jeton+'.img*') if p.read_bytes()==trouve['octets']),None)
+            chemin=existante or await asyncio.to_thread(ranger_image,jeton,uid,trouve['octets'],trouve['extension'])
+            blocs.append({'bloc':'image','fichier':chemin,'legende':str(image.get('legende') or ''),'largeur_cm':14,'centre':True})
+        except Exception as e:
+            import logging
+            logging.getLogger('infra.documents').warning('Illustration sautée (%s) : %s',type(e).__name__,str(e)[:160])
     return blocs

@@ -421,6 +421,31 @@ async def utiliser_trame(parametres: dict, utilisateur) -> dict:
             variables = json.loads(variables or "[]")
         manque = (" Les valeurs attendues : " + ", ".join(variables) + "."
                   if variables else "")
+        # UNE TRAME SANS REMPLACEMENTS N'EST PLUS UNE IMPASSE (17/09). Le forceur a
+        # appelé `utiliser_trame` à vide sur « mémoire technique type » : erreur,
+        # boucle fermée, rien de produit. Or la demande était de REMPLIR le
+        # mémoire avec un contenu nouveau — ce que chercher-remplacer ne sait pas
+        # faire. Un Word rend donc ses rubriques et nomme le geste qui le remplit.
+        if (t["type_fichier"] or "").lower() == "docx":
+            from bureautique.sections_modele import structure
+            try:
+                plan_trame = structure(bytes(t["contenu"]))
+            except Exception:  # noqa: BLE001 — trame illisible : on garde l'ancien refus
+                plan_trame = {"garde": "", "sections": []}
+            if plan_trame["sections"]:
+                return {
+                    "trame": t["nom"], "page_de_garde": plan_trame["garde"],
+                    "rubriques": [{"index": s["index"], "titre": s["titre"], "mots": s["mots"],
+                                   "images": s["images"], "tableaux": s["tableaux"]}
+                                  for s in plan_trame["sections"]],
+                    "a_faire": (
+                        f"Rien n'a été produit. Pour REMPLIR « {t['nom']} » avec un contenu NOUVEAU rédigé "
+                        "depuis des pièces (mémoire, rapport, dossier) : appelle `composer_document_dossier` "
+                        f"avec `trame`: « {t['nom']} » — la garde et les rubriques de l'entreprise sont "
+                        "gardées, les rubriques de projet sont rédigées dans ses styles. Pour ne changer que "
+                        "QUELQUES TEXTES : rappelle `utiliser_trame` avec `remplacements` "
+                        "{texte exact du document: nouveau texte}." + manque),
+                }
         raise TrameInvalide(
             f"Dites ce qu'il faut remplacer dans « {t['nom']} ».{manque}")
 

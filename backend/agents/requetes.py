@@ -151,13 +151,22 @@ async def suivre(user_id, request_id):
                 if not fait:
                     async with get_db() as conn:
                         etat = await conn.fetchval("SELECT etat FROM requetes_chat WHERE user_id=$1::uuid AND request_id=$2", str(user_id), str(request_id)[:120])
+                    # UN REGISTRE D'APPOINT NE TUE PAS UN TOUR VIVANT (17/09). Ce
+                    # battement annulait le tour quand sa ligne avait été marquée
+                    # « échouée » par une lecture voisine (120 s sans battement :
+                    # il suffit d'un pool de connexions occupé par une rédaction
+                    # de fond). Le tour pouvait être au milieu d'une action. On
+                    # le dit au journal, et on le laisse finir : sa réponse
+                    # entre dans l'historique de toute façon.
                     if etat != "terminee":
-                        parent.cancel()
+                        logger.warning("Demande %s : battement perdu (état %s) — le tour continue",
+                                       str(request_id)[:12], etat)
                     return
                 dernier = time.monotonic()
             except Exception:
                 if time.monotonic() - dernier > 75:
-                    parent.cancel()
+                    logger.warning("Demande %s : registre injoignable depuis 75 s — le tour continue",
+                                   str(request_id)[:12])
                     return
     tache = asyncio.create_task(battre())
     try:

@@ -214,6 +214,14 @@ async def ajouter_document(data: dict, user) -> dict:
         from bureautique.atelier import mettre_a_jour_entete
         from bureautique.modele import normaliser_entete
         actuelle = fiche(jeton, _proprietaire(user))
+        if actuelle is not None and actuelle.get("fini"):
+            # 17/09 : « ajoutes=0, présentation inchangée » deux fois de suite sur
+            # un mémoire livré — le geste ne faisait rien et ne le disait pas
+            # comme un refus, donc le modèle le rejouait à l'identique.
+            _echec("Ce document est TERMINÉ : sa présentation ne se change plus ici (un rendu "
+                   "livré ne bouge pas). Pour poser un en-tête ou un pied de page dessus, appelle "
+                   "`habiller_document` avec `entete_de` (le Word ou l'image qui porte l'en-tête) : "
+                   "il rend une nouvelle version. Ne relance pas `ajouter_document`.")
         if actuelle is not None and not actuelle.get("fini"):
             nouvelle = dict(actuelle.get("entete") or {})
             for k in ("entete_image", "pied_image", "image_couverture"):

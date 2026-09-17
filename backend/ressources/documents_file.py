@@ -13,6 +13,9 @@ _task=None
 def _table(c):
     c.execute('CREATE TABLE IF NOT EXISTS file_documentaire (id TEXT PRIMARY KEY, utilisateur TEXT NOT NULL, fil TEXT NOT NULL, genre TEXT NOT NULL, donnees TEXT NOT NULL, statut TEXT NOT NULL, essais INTEGER NOT NULL DEFAULT 0, prochain REAL NOT NULL DEFAULT 0, resultat TEXT, annonce INTEGER NOT NULL DEFAULT 0)')
 
+def _norme_demande(texte):
+    return ' '.join(str(texte or '').casefold().split())
+
 def soumettre(uid,fil,genre,data):
     uid,fil=dossiers.identite(uid,fil)
     data=dossiers.normaliser_selection(uid,fil,data);data['_fil']=fil
@@ -27,7 +30,21 @@ def soumettre(uid,fil,genre,data):
             anciens=c.execute('SELECT id,donnees FROM file_documentaire WHERE utilisateur=? AND fil=? AND genre=? ORDER BY rowid',(uid,fil,genre)).fetchall()
             ancien=next((r for r in anciens if json.loads(r['donnees']).get('tache')==data['tache']),None)
             if ancien:cle=ancien['id']
+        # LA MÊME DEMANDE NE SE FAIT PAS DEUX FOIS (17/09). Le quantitatif du projet
+        # La Teste a été demandé à 07:09 dans une conversation, puis à 07:24 dans
+        # une autre : deux travaux identiques dans une file qui n'en traite qu'un à
+        # la fois, et le second affichait « démarrage en attente » sans dire
+        # pourquoi. On rattache la personne au travail déjà lancé.
+        voulue=_norme_demande(data.get('_demande_utilisateur') or data.get('demande'))
+        if voulue and not data.get('tache'):
+            for autre in c.execute("SELECT id,fil,donnees FROM file_documentaire WHERE utilisateur=? AND genre=? AND fil!=? AND statut IN ('attente','en_cours') ORDER BY rowid",(uid,genre,fil)).fetchall():
+                d=json.loads(autre['donnees'])
+                if _norme_demande(d.get('_demande_utilisateur') or d.get('demande'))==voulue:
+                    return {'ok':True,'en_cours':True,'statut':'pending','tache_documentaire':autre['id'],'production_verifiee':False,'deja_lance':True,
+                            'note':'Ce même travail est déjà en cours dans une autre conversation de cette personne : aucun second travail n’a été lancé. Son résultat arrivera dans la conversation d’origine.',
+                            'a_faire':'Dis que ce travail a DÉJÀ été demandé et tourne dans une autre conversation, où le résultat arrivera. Ne le relance pas.'}
         c.execute('INSERT OR IGNORE INTO file_documentaire(id,utilisateur,fil,genre,donnees,statut) VALUES(?,?,?,?,?,?)',(cle,uid,fil,genre,json.dumps(data,ensure_ascii=False),'attente'))
+        devant=c.execute("SELECT count(*) FROM file_documentaire WHERE statut IN ('attente','en_cours') AND id!=?",(cle,)).fetchone()[0]
         r=dict(c.execute('SELECT * FROM file_documentaire WHERE id=? AND utilisateur=? AND fil=?',(cle,uid,fil)).fetchone())
     if r['statut']=='termine':
         resultat=json.loads(r['resultat'])
@@ -35,9 +52,9 @@ def soumettre(uid,fil,genre,data):
         if resultat.get('document_id') and not chemin_fichier(resultat['document_id'],uid):raise ValueError('Le livrable sauvegardé n’est plus disponible ; demande une nouvelle révision.')
         return resultat
     if r['statut']=='bloque':return {'ok':True,'outcome':'partial','production_verifiee':False,'tache_documentaire':cle,'note':json.loads(r['resultat']).get('note','Rédaction suspendue ; consulte les réserves dans cette conversation.')}
-    return {'ok':True,'en_cours':True,'statut':'pending','tache_documentaire':cle,'production_verifiee':False,
-            'note':'La rédaction est enregistrée et se poursuit en arrière-plan. Les étapes sont conservées après fermeture du chat et redémarrage. Le résultat ou les points bloquants seront ajoutés à cette conversation.',
-            'a_faire':'Annonce le travail en cours. Ne recrée pas un autre document et ne présente pas les sources comme le livrable. Ne prétends pas que le document est déjà prêt.'}
+    return {'ok':True,'en_cours':True,'statut':'pending','tache_documentaire':cle,'production_verifiee':False,'travaux_devant':devant,
+            'note':('Le travail est enregistré ; il démarrera après '+str(devant)+' autre(s) travail(aux) déjà en file (un seul document se rédige à la fois). ' if devant else '')+'La rédaction est enregistrée et se poursuit en arrière-plan. Les étapes sont conservées après fermeture du chat et redémarrage. Le résultat ou les points bloquants seront ajoutés à cette conversation.',
+            'a_faire':('Dis que le travail est EN FILE D’ATTENTE derrière '+str(devant)+' autre(s) et qu’il n’a pas encore commencé ; n’écris pas « je lance ». ' if devant else 'Annonce le travail en cours. ')+'Ne recrée pas un autre document et ne présente pas les sources comme le livrable. Ne prétends pas que le document est déjà prêt.'}
 
 def etats(uid,fil):
     uid,fil=dossiers.identite(uid,fil)
@@ -61,7 +78,8 @@ def progression(uid,fil):
     uid,fil=dossiers.identite(uid,fil);sortie=[]
     with dossiers.base() as c:
         _table(c)
-        for r in c.execute('SELECT id,genre,statut,donnees,annonce FROM file_documentaire WHERE utilisateur=? AND fil=? ORDER BY rowid DESC LIMIT 30',(uid,fil)).fetchall():
+        actifs=c.execute("SELECT rowid,genre,statut FROM file_documentaire WHERE statut IN ('attente','en_cours') ORDER BY rowid").fetchall()
+        for r in c.execute('SELECT rowid,id,genre,statut,donnees,annonce,essais,prochain FROM file_documentaire WHERE utilisateur=? AND fil=? ORDER BY rowid DESC LIMIT 30',(uid,fil)).fetchall():
             data=json.loads(r['donnees']);tache=data.get('tache')
             etapes={x[0]:json.loads(x[1]) if x[0] in ('plan','suivi_controle') else True for x in c.execute("SELECT cle,CASE WHEN cle IN ('plan','suivi_controle') THEN valeur ELSE 'null' END FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache=?",(uid,fil,tache or ''))}
             total=len(etapes.get('plan',{}).get('sections',[]))
@@ -79,8 +97,15 @@ def progression(uid,fil):
             elif total:phase=f'Rédaction et contrôle : {sections}/{total} rubriques'
             elif lectures:phase=f'Lecture des pièces : {lectures} parties analysées'
             elif statut=='en_cours':phase='Lecture et préparation des pièces'
-            else:phase='Rédaction enregistrée — démarrage en attente'
-            sortie.append({'id':r['id'],'genre':r['genre'],'statut':statut,'phase':phase,
+            else:
+                # « Démarrage en attente » ne disait ni combien de temps ni derrière quoi.
+                avant=[a for a in actifs if a['rowid']<r['rowid']]
+                tourne=next((a for a in avant if a['statut']=='en_cours'),None)
+                noms={'quantitatif':'un quantitatif','document':'un document'}
+                if r['essais'] and r['prochain']>time.time():phase=f"Nouvel essai dans {max(1,int((r['prochain']-time.time())//60)+1)} min — étapes conservées (essai {r['essais']+1})"
+                elif avant:phase=f"En file : {len(avant)} travail(aux) avant celui-ci"+(f" ({noms.get(tourne['genre'],'un travail')} est en cours de rédaction)" if tourne else '')+' — un seul se rédige à la fois'
+                else:phase='Démarrage dans quelques secondes'
+            sortie.append({'id':r['id'],'genre':r['genre'],'statut':statut,'phase':phase,'titre':str(data.get('titre') or '')[:120],
                            'sections':sections,'sections_total':total,'lectures':lectures,
                            'annonce':bool(r['annonce'])})
     return sortie

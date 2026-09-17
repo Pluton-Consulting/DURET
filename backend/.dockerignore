@@ -3,6 +3,10 @@ __pycache__
 *.pyo
 .git
 *.md
+# …SAUF les modes d'emploi lus à l'exécution (`outils/docs/*.md`, skill
+# `mode_emploi`). Le montage `./backend:/app` les servait ; depuis que le code
+# vit dans l'image (16/09), les exclure les faisait disparaître en production.
+!outils/docs/*.md
 .env
 
 # LES SECRETS NE PARTENT PAS DANS L'IMAGE.

@@ -54,9 +54,15 @@ verifier("le commentaire explique pourquoi les confondre serait une erreur",
 verifier("Ollama Cloud est en tête des TROIS paliers",
          routeur.count('("ollama_cloud", s.model_ollama_cloud_rapide)') == 2
          and routeur.count('("ollama_cloud", s.model_ollama_cloud_puissant)') == 1)
-verifier("la vision le propose, DERRIÈRE le modèle d'OCR mesuré",
-         re.search(r'"openrouter", s\.model_openrouter_vision\).*?'
-                   r'"ollama_cloud", s\.model_ollama_cloud_vision\)', routeur, re.S))
+# 17/09 : la MESURE a changé l'ordre. Sur une planche de coupes réelle, Ollama
+# Cloud (deepseek-v4.1-flash, 4,7 s) lit mieux et plus vite qu'OpenRouter, qui
+# rendait vide ce matin-là : il passe devant, et le commentaire dit la mesure.
+verifier("la vision le propose, DEVANT OpenRouter depuis la mesure du 17/09",
+         re.search(r'"ollama_cloud", s\.model_ollama_cloud_vision\).*?'
+                   r'"openrouter", s\.model_openrouter_vision\)', routeur, re.S)
+         and "MESURÉ" in routeur)
+verifier("un modèle qui VOIT n'est plus écarté sur son seul nom (deepseek-v4.1-flash)",
+         "_TEXTE_SEUL" in routeur and "if texte_seul(model):" in routeur)
 verifier("le catalogue de l'écran le montre en premier",
          '("ollama_cloud", "Ollama Cloud"' in routeur)
 
@@ -198,8 +204,12 @@ verifier("l'état se lit pour l'écran d'administration",
 
 # ── 3. Le branchement : les trois points d'appel de modèle ───────────────
 verifier("la porte entoure l'appel de la cascade, PAS la cascade elle-même",
-         re.search(r"async with porte_llm\(\):\s*\n\s*result = await llm\.ainvoke\(messages",
-                   routeur))
+         # La porte s'ouvre DANS la boucle des tentatives, et l'appel du modèle
+         # est dedans : les options (réflexion bridée) se préparent sous la porte,
+         # la cascade, elle, reste dehors.
+         re.search(r"async with porte_llm\(\):.{0,2600}?result = await llm\.ainvoke\(messages, \*\*options\)",
+                   routeur, re.S)
+         and routeur.index("for idx, (provider, model) in enumerate(chain)") < routeur.index("async with porte_llm()"))
 verifier("le backoff reste HORS de la porte",
          routeur.index("await asyncio.sleep(delai_disponible(delay))") > routeur.index("async with porte_llm()"))
 a2 = (BACKEND / "agents" / "agent2.py").read_text(encoding="utf-8")

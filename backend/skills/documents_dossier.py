@@ -1001,10 +1001,28 @@ async def _controler_acquis(uid,fil,tache,plan,sections,analyses=None,demande=''
             if isinstance(x,list):return [s for v in x for s in textes(v)]
             if isinstance(x,dict):return [s for v in x.values() for s in textes(v)]
             return []
+        # UNE CITATION APPROXIMATIVE N'ANNULE PLUS TOUTE LA VÉRIFICATION (17/09, mémoire
+        # réel) : sur un appel de 590 000 caractères, le modèle a recopié UNE
+        # affirmation à une espace près — « non citée exactement », deux fois, et
+        # l'essai entier (contrôle final déjà réussi) repartait. La comparaison
+        # ignore espaces et apostrophes typographiques ; un signalement qui ne se
+        # retrouve toujours pas dans le corps est ÉCARTÉ, les autres sont gardés.
+        plat=lambda t:' '.join(str(t or '').replace('\u00a0',' ').replace('’',"'").split()).casefold()
+        gardes=[]
         for p in problemes:
-            if not isinstance(p,dict) or type(p.get('section')) is not int or not 0<=p['section']<len(sections):raise ValueError('Rubrique du contrôle des acquis invalide.')
-            if not isinstance(p.get('affirmation'),str) or not p['affirmation'].strip() or not any(p['affirmation'] in s for s in textes(sections[p['section']]['blocs'])):raise ValueError('Affirmation non citée exactement dans le corps.')
-            if (p.get('reserve') not in reserves and not (analyses is not None and p.get('reserve') is None)) or not isinstance(p.get('raison'),str) or not p['raison'].strip():raise ValueError('Réserve contradictoire non citée exactement.')
+            if not isinstance(p,dict) or type(p.get('section')) is not int or not 0<=p['section']<len(sections):continue
+            if not isinstance(p.get('affirmation'),str) or not p['affirmation'].strip() or not isinstance(p.get('raison'),str) or not p['raison'].strip():continue
+            corps=[plat(x) for x in textes(sections[p['section']]['blocs'])]
+            if not any(plat(p['affirmation']) in x for x in corps):
+                logger.info('Signalement d’acquis écarté (affirmation introuvable dans la rubrique %s)',p['section']);continue
+            if p.get('reserve') is not None and p['reserve'] not in reserves:
+                proche=next((x for x in reserves if plat(x)==plat(p['reserve'])),None)
+                # Une réserve INVENTÉE reste un refus : elle se corrige en un mot, et l'accepter ferait réécrire une rubrique sur un motif faux.
+                if proche is None:raise ValueError('Réserve contradictoire non citée exactement.')
+                p['reserve']=proche
+            if p.get('reserve') is None and analyses is None:raise ValueError('Réserve contradictoire non citée exactement.')
+            gardes.append(p)
+        problemes[:]=gardes;avis['valide']=not gardes
         if avis.get('valide') is not (not problemes):raise ValueError('Verdict des acquis incohérent.')
     avis=await _controle_interne(uid,fil,tache,consigne,donnees,verifier)
     return avis['problemes']

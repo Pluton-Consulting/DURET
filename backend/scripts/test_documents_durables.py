@@ -482,6 +482,20 @@ class Recette(unittest.TestCase):
       await appel('Règle',{'texte':'Corrigé'});self.assertEqual(verifier.await_count,3)
       await appel('Nouvelle règle',{'texte':'Corrigé'});self.assertEqual(verifier.await_count,4)
     asyncio.run(test())
+ def test_acquis_affirmation_approximative_ecartee_sans_annuler_le_controle(self):
+    plan={'sections':[{'titre':'Offre'}]};reserve='Les références restent à fournir.'
+    sections=[{'blocs':[{'bloc':'paragraphe','texte':'Les références  fournies en annexe démontrent notre expérience. Nos équipes sont certifiées.'}],'reserves':[reserve]}]
+    async def test():
+     async def faux(consigne,data,verifier=None):
+      r={'valide':False,'problemes':[{'section':0,'affirmation':'Les références fournies en annexe','reserve':reserve,'raison':'À clarifier.'},
+                                     {'section':0,'affirmation':'Phrase que le corps ne contient pas','reserve':reserve,'raison':'Inventée.'}]}
+      if verifier:verifier(r)
+      return r
+     with patch.object(documents_dossier,'_json',faux):
+      r=await documents_dossier._controler_acquis(self.uid,self.fil,'tache-approx',plan,sections)
+     self.assertEqual([x['affirmation'] for x in r],['Les références fournies en annexe'])
+    asyncio.run(test())
+
  def test_acquis_refuses_uniquement_avec_une_reserve_effectivement_presente(self):
     plan={'sections':[{'titre':'Offre'},{'titre':'Candidature'}]}
     reserve='Les références de notre entreprise restent à fournir.'

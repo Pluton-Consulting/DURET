@@ -232,6 +232,15 @@ def assembler(original: bytes, rendu_chemin: str, titres: list[str], reprises: d
             del modele.part.rels[rid]
             retirees += 1
     tmp = f"{rendu_chemin}.{os.getpid()}.assemble.tmp"
+    # LA TABLE DES MATIÈRES DU MODÈLE SE RECALCULE À L'OUVERTURE : ses lignes sont du
+    # texte figé (celles de l'ancien document) ; Word les refait dès qu'on l'y invite.
+    try:
+        reglages = modele.settings.element
+        if reglages.find(qn("w:updateFields")) is None:
+            champ = reglages.makeelement(qn("w:updateFields"), {qn("w:val"): "true"})
+            reglages.append(champ)
+    except Exception:  # noqa: BLE001 — un confort, jamais un motif d'échec du rendu
+        pass
     modele.save(tmp)
     Document(tmp)            # le fichier produit se ROUVRE, ou il n'est pas publié
     os.replace(tmp, rendu_chemin)
@@ -296,3 +305,81 @@ def copier_entete(document: bytes, source: bytes) -> tuple[bytes, dict]:
     cible.save(sortie)
     Document(io.BytesIO(sortie.getvalue()))
     return sortie.getvalue(), poses
+
+
+
+# ─── LA GARDE D'UN MODÈLE, ÉCRITE EN PARAGRAPHES SÉPARÉS ────────────────────
+#
+# 17/09, modèle réel de Duret : la garde porte « Projet : » / « Réaménagement… »
+# / « a le TAILLAN MEDOC » / « Maître d’ouvrage : » / « BORDEAUX METROPOLE » /
+# l'adresse… chacun dans SON paragraphe (et en zones de texte). Le plan, lui,
+# donne « Projet : Réaménagement … TAILLAN MEDOC » → « Projet : Construction … » :
+# ce texte d'un seul tenant n'existe nulle part, 0 remplacement sur 4, la garde
+# de l'ancien chantier restait — et le contrôle final le re-signalait à chaque
+# tour, sans que rien puisse le corriger.
+
+def _norme_garde(t: str) -> str:
+    t = str(t or "").replace("\u00a0", " ").replace("’", "'").casefold()
+    return " ".join(t.split())
+
+
+def _texte_p(p, qn) -> str:
+    return "".join(x.text or "" for x in p.iter(qn("w:t")))
+
+
+def _ecrire_p(p, texte: str, qn) -> None:
+    noeuds = list(p.iter(qn("w:t")))
+    if not noeuds:
+        return
+    noeuds[0].text = texte
+    noeuds[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    for n in noeuds[1:]:
+        n.text = ""
+
+
+def actualiser_garde(octets: bytes, table: dict) -> tuple[bytes, int]:
+    """Applique à la GARDE les remplacements « Libellé : ancienne valeur » →
+    « Libellé : nouvelle valeur » quand libellé et valeur vivent dans des
+    paragraphes séparés. Rend (octets, nombre de libellés actualisés). Ne touche
+    à rien après le premier titre."""
+    from docx import Document
+    from docx.oxml.ns import qn
+    doc = Document(io.BytesIO(octets))
+    elements, _sections = _decoupe(doc)
+    garde = [p for e in elements for p in ([e] if e.tag == qn("w:p") else []) + [x for x in e.iter(qn("w:p")) if x is not e]]
+    # un paragraphe qui en contient d'autres (zone de texte) n'est pas une ligne de texte
+    garde = [p for p in garde if not any(True for x in p.iter(qn("w:p")) if x is not p)]
+    libelle_de = lambda t: _norme_garde(t).split(":", 1)[0].strip() if ":" in t else ""
+    faits = 0
+    for ancien, nouveau in (table or {}).items():
+        lib = libelle_de(str(ancien))
+        if not lib or libelle_de(str(nouveau)) != lib or len(lib) > 40:
+            continue
+        valeur = str(nouveau).split(":", 1)[1].strip()
+        fait = False
+        for i, p in enumerate(garde):
+            t = _texte_p(p, qn)
+            if libelle_de(t) != lib:
+                continue
+            reste = t.split(":", 1)[1].strip()
+            if reste:                                   # « Date : le 24/07/2026 » : tout dans le même paragraphe
+                _ecrire_p(p, t.split(":", 1)[0] + ": " + valeur, qn)
+                fait = True
+                continue
+            pose = False                                # la valeur suit, en un ou plusieurs paragraphes
+            for q in garde[i + 1:i + 8]:
+                tq = _texte_p(q, qn)
+                if not tq.strip():
+                    continue
+                if libelle_de(tq) and len(libelle_de(tq)) <= 40:
+                    break
+                _ecrire_p(q, valeur if not pose else "", qn)
+                pose = True
+            fait = fait or pose
+        faits += int(fait)
+    if not faits:
+        return octets, 0
+    sortie = io.BytesIO()
+    doc.save(sortie)
+    Document(io.BytesIO(sortie.getvalue()))
+    return sortie.getvalue(), faits

@@ -1052,7 +1052,14 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
         original=await _octets_modele(source,user)
         if plan.get('remplacements_modele'):
             from bureautique.trame import remplir
-            original,_=await asyncio.to_thread(remplir,original,'docx',plan['remplacements_modele'])
+            try:original,_=await asyncio.to_thread(remplir,original,'docx',plan['remplacements_modele'])
+            except ValueError as e:logger.warning('Remplacements du modèle non appliqués tels quels : %s',str(e)[:160])
+            # La garde de la maison écrit libellé et valeur dans des paragraphes SÉPARÉS :
+            # « Projet : ancien chantier » d'un seul tenant n'y existe pas (0 remplacement
+            # sur 4 au test réel, et le contrôle final le re-signalait à chaque tour).
+            from bureautique.sections_modele import actualiser_garde
+            original,actualises=await asyncio.to_thread(actualiser_garde,original,plan['remplacements_modele'])
+            if actualises:logger.info('Garde du modèle actualisée : %d libellé(s)',actualises)
         chemin=await asyncio.to_thread(preparer_modele,jeton,uid,original)
         entete['_modele_docx']=chemin
         # LE CORPS DU MODÈLE N'EST PLUS PERDU : l'original (garde actualisée)
@@ -1096,6 +1103,8 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     avis=await _controle_interne(uid,fil,tache,'Contrôle final du document : respecte-t-il la demande, le plan et les réserves ? '
         'Vérifie les références contradictoires de projet, les noms et adresses réellement périmés, les rubriques manquantes et les incohérences internes substantielles. '
         'Une rubrique marquée « reprise telle quelle du modèle de l’entreprise » est CONFORME : son contenu est celui du modèle, il n’est ni à rédiger ni à contrôler ici. '
+        'Les rubriques listées dans rubriques_reprises_du_modele sont le contenu PROPRE de l’entreprise, gardé tel quel à sa demande : un champ vide, « à compléter », un organigramme en image, une mention ancienne ou une formulation différente des rubriques rédigées n’y sont PAS des problèmes et ne se signalent pas. '
+        'La table des matières du modèle se met à jour à l’ouverture dans Word : ne la compare pas au plan. L’en-tête et le pied sont ceux de l’entreprise : une adresse qui diffère d’une autre rubrique de l’entreprise n’est pas bloquante (propose seulement son remplacement exact dans remplacements_modele si la preuve est dans le document). '
         'La rubrique Points à confirmer est un récapitulatif AUTOMATIQUE autorisé en plus du plan : sa présence et la répétition des réserves ne sont PAS des erreurs. Un en-tête ou pied neutre du modèle, tel que numéro de page et mention Document confidentiel, est conforme et ne doit pas être enrichi arbitrairement. Ne demande pas de remplacer le numéro calculé par un champ Word. '
         'Les notes sur les contrôles ou les corrections effectuées ne sont pas du contenu métier et doivent être supprimées, sans les remplacer par une confirmation de réparation. '
         'JSON {"valide":true/false,"problemes":[],"remplacements_modele":{}}. Si un en-tête est obsolète, '
@@ -1111,23 +1120,34 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
         # des exigences de l’utilisateur. Les lui redonner comme plan ferait
         # confirmer en boucle sa propre suggestion (notamment sur un champ PAGE).
         {'demande':contrat['demande'],'plan':{k:v for k,v in plan.items() if k!='remplacements_modele'},'texte':texte_final,'entetes':entetes,'reserves':reserves,
+         'rubriques_reprises_du_modele':[x['titre'] for x in plan['sections'] if type(x.get('reprise_modele')) is int],
          'faits_controles':sum(len(a.get('faits',[])) for a in analyses or []),'pieces_disponibles':[{'source':s['id'],'nom':s['nom']} for s in sources],
          'sources_courtes':[{'id':s['id'],'nom':s['nom'],'texte':s['contenu']} for s in sources if len(s['contenu'])<=16000]})
+    # UN CONTRÔLE QUI NE CONVERGE PAS NE BLOQUE PLUS LA LIVRAISON (17/09). Mémoire réel :
+    # le contrôle final re-signalait à chaque tour des points que la correction ne
+    # peut pas traiter (garde du modèle, rubriques de l'entreprise) — huit essais,
+    # puis RIEN de livré. Après trois tours, le document est remis avec la liste
+    # de ce qui reste à reprendre à la main : un mémoire à relire vaut mieux que pas de mémoire.
+    tours=int((await asyncio.to_thread(dossiers.etape,uid,fil,tache,'tours_correction') or {}).get('n',0))
+    restants=[]
+    async def corriger_ou_livrer(correction):
+        if tours>=3:
+            restants.extend(str(x)[:400] for x in (correction.get('problemes') or []));return False
+        await asyncio.to_thread(dossiers.etape,uid,fil,tache,'tours_correction',{'n':tours+1})
+        await _a_corriger(uid,fil,tache,jeton,correction);return True
     if avis.get('valide') is not True:
         remplacements=avis.get('remplacements_modele') or {}
         if isinstance(remplacements,dict) and all(isinstance(k,str) and k and k in entetes and isinstance(v,str) for k,v in remplacements.items()):
             plan['remplacements_modele']={**(plan.get('remplacements_modele') or {}),**remplacements}
             await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan',plan)
-        await _a_corriger(uid,fil,tache,jeton,{'problemes':avis.get('problemes')})
-        raise ValueError('Contrôle final à reprendre : '+str(avis.get('problemes'))[:500])
+        if await corriger_ou_livrer({'problemes':avis.get('problemes')}):raise ValueError('Contrôle final à reprendre : '+str(avis.get('problemes'))[:500])
     acquis=await _controler_acquis(uid,fil,tache,plan,sections,analyses,contrat['demande'])
     if acquis:
-        await _a_corriger(uid,fil,tache,jeton,{
+        if await corriger_ou_livrer({
             'problemes':[p['raison']+' — affirmation : '+p['affirmation']+' — réserve : '+(p['reserve'] or 'Acquis non établi par les pièces fournies.') for p in acquis],
             'cibles':sorted({p['section'] for p in acquis}),
             'par_section':{str(i):{'problemes':[p['raison']+' — affirmation : '+p['affirmation']+' — réserve : '+(p['reserve'] or 'Acquis non établi par les pièces fournies.') for p in acquis if p['section']==i]}
-                           for i in sorted({p['section'] for p in acquis})}})
-        raise ValueError('Un acquis annoncé reste non établi ; clarification ciblée conservée.')
+                           for i in sorted({p['section'] for p in acquis})}}):raise ValueError('Un acquis annoncé reste non établi ; clarification ciblée conservée.')
     empreinte_reserves=hashlib.sha256(json.dumps([sections,analyses or []],sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:20]
     cle_controle='controle_reserves:v5:'+empreinte_reserves
     controle=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_controle)
@@ -1137,13 +1157,11 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     if controle['problemes']:
         cibles=sorted({p['section'] for p in controle['problemes']})
         correction=_correction_factuelle([{**p,'raison':p['raison']+' — réserve : '+p['reserve']} for p in controle['problemes']])
-        await _a_corriger(uid,fil,tache,jeton,correction)
-        raise ValueError('Réserves contredites par le dossier ; correction ciblée nécessaire dans les rubriques '+', '.join(str(i+1) for i in cibles))
+        if await corriger_ou_livrer(correction):raise ValueError('Réserves contredites par le dossier ; correction ciblée nécessaire dans les rubriques '+', '.join(str(i+1) for i in cibles))
     contradictions=await _controler_faits(uid,fil,tache,plan,sections,analyses or [])
     if contradictions:
         correction=_correction_factuelle(contradictions)
-        await _a_corriger(uid,fil,tache,jeton,correction)
-        raise ValueError('Contradictions factuelles détectées ; correction ciblée conservée.')
+        if await corriger_ou_livrer(correction):raise ValueError('Contradictions factuelles détectées ; correction ciblée conservée.')
     controle_pages=await asyncio.to_thread(verifier_pages,provisoire,plan.get('pages_max'))
     if plan.get('pages_max') and not controle_pages.get('conforme'):
         if controle_pages.get('pages'):
@@ -1175,7 +1193,8 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     return {**r,'ok':True,'production_verifiee':True,'tache':tache,'sources_lues':len(sources),
             'fragments_lus':sum(len(dossiers.fragments(s['contenu'])) for s in sources),
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
-            'a_faire':'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
+            **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
+            'a_faire':('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
 
 async def completer_visuels(uid,fil,tache,sources,user,demande):
     derives=[];parents={}

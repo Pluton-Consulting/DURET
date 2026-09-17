@@ -286,5 +286,26 @@ verifier("le contexte commun est BORNÉ et ne transmet plus les analyses entièr
 suivi = (BACKEND.parent / "frontend" / "components" / "chat" / "SuiviRedactions.tsx").read_text(encoding="utf-8")
 verifier("l'écran propose « retirer » sur un travail arrêté", '"retirer"' in suivi and "Retirer ce travail du suivi" in suivi)
 
+print("10. La garde écrite en paragraphes séparés, et le contrôle final qui ne boucle plus")
+from bureautique.sections_modele import actualiser_garde
+g = Document()
+for ligne in ("MEMOIRE TECHNIQUE", "Projet :", "Réaménagement du gymnase", "a VILLE-ANCIENNE", "Maître d’ouvrage :", "ANCIENNE METROPOLE", "1 place Ancienne", "Date\u00a0: le 01/01/2020"):
+    g.add_paragraph(ligne)
+g.add_heading("MOYENS HUMAINS", 1); g.add_paragraph("Projet : ce paragraphe du CORPS ne doit pas bouger")
+tampon = io.BytesIO(); g.save(tampon)
+neuf, n = actualiser_garde(tampon.getvalue(), {"Projet : Réaménagement du gymnase a VILLE-ANCIENNE": "Projet : Construction de 29 logements",
+                                                "Maître d’ouvrage : ANCIENNE METROPOLE 1 place Ancienne": "Maître d’ouvrage : Bailleur Exemple, 2 rue Neuve",
+                                                "Date : le 01/01/2020": "Date : le 18/09/2026", "Sans libellé": "rien"})
+textes = [p.text for p in Document(io.BytesIO(neuf)).paragraphs]
+verifier("libellé et valeur dans des paragraphes SÉPARÉS : la garde est actualisée", n == 3 and "Construction de 29 logements" in textes and "Bailleur Exemple, 2 rue Neuve" in textes and any(x.endswith("le 18/09/2026") for x in textes), str(textes))
+verifier("plus aucune trace de l'ancien chantier dans la garde", not any(m in " ".join(textes[:9]) for m in ("gymnase", "VILLE-ANCIENNE", "ANCIENNE METROPOLE", "place Ancienne", "2020")), str(textes[:9]))
+verifier("le corps après le premier titre n'est pas touché", "Projet : ce paragraphe du CORPS ne doit pas bouger" in textes)
+verifier("sans libellé commun, rien n'est modifié", actualiser_garde(tampon.getvalue(), {"Sans libellé": "rien"})[1] == 0)
+composeur = (BACKEND / "skills" / "documents_dossier.py").read_text(encoding="utf-8")
+verifier("la garde est actualisée AVANT l'assemblage dans le modèle", composeur.index("actualiser_garde,original") < composeur.index("chemin=await asyncio.to_thread(preparer_modele,jeton,uid,original)"))
+verifier("le contrôle final connaît les rubriques reprises du modèle", "'rubriques_reprises_du_modele':" in composeur and "ne la compare pas au plan" in composeur)
+verifier("après trois tours de corrections, le document est LIVRÉ avec ce qui reste à reprendre", "if tours>=3:" in composeur and "'points_a_reprendre':restants" in composeur and composeur.count("corriger_ou_livrer(") >= 5)
+verifier("la table des matières du modèle se recalcule à l'ouverture", "w:updateFields" in (BACKEND / "bureautique" / "sections_modele.py").read_text(encoding="utf-8"))
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

@@ -328,5 +328,9 @@ verifier("une trame enregistrée (trame:…) n'est pas recherchée sur le serveu
 verifier("le modèle vierge du dossier passe AVANT une trame que le modèle de langage propose de lui-même",
          composeur.index("if len(maison)==1:") < composeur.index("if not choisie and trame_proposee:") and "_imposer_modele(uid,fil,demande,list(ids),data.get('trame'))" in composeur)
 
+illus = (BACKEND / "bureautique" / "illustrations.py").read_text(encoding="utf-8")
+verifier("les illustrations d'un Word ne sont jamais un motif d'arrêt (original introuvable, trame en base, image illisible)",
+         "Word original non accessible" not in illus and "le travail continue" in illus and "startswith('trame:')" in illus and "if erreurs:raise" not in illus)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

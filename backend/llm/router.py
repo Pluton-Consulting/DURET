@@ -898,6 +898,8 @@ async def appel_documentaire(tier: "LLMTier", messages: Any, **options) -> Any:
         for t in (principal, secours):
             if not t.done():
                 t.cancel()
+            # l'appel perdant peut finir en erreur APRÈS la réponse gardée : on la relève, sans bruit
+            t.add_done_callback(lambda f: f.cancelled() or f.exception())
 
 
 def get_llm(tier: LLMTier) -> ResilientLLM:

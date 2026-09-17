@@ -73,14 +73,27 @@ async def analyser(uid,fil,tache,sources,user,demande):
             return resultat
     for s in sources:
         if not s['nom'].lower().endswith('.docx') or not s['reference']:continue
-        pretes,refusees=await resoudre([s['reference']],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
-        if not pretes:raise ValueError('Word original non accessible pour lire ses illustrations : '+s['nom'])
-        images=await asyncio.to_thread(extraire,pretes[0]['octets'])
-        if len(images)>60:raise ValueError('Plus de 60 illustrations dans un Word : fractionnez ce document pour permettre une lecture vérifiable.')
+        # LES IMAGES D'UN WORD SONT UN PLUS, JAMAIS UN MOTIF D'ARRÊT (17/09). Mémoire réel : une
+        # trame enregistrée (« trame:… », en base) figurait parmi les pièces ; introuvable sur
+        # le serveur de fichiers, elle BLOQUAIT tout le travail après 67 analyses acquises.
+        # Un Word dont l'original ne s'ouvre pas, ou trop illustré, est passé — et journalisé.
+        try:
+            if str(s['reference']).startswith('trame:'):
+                from skills.documents_dossier import _octets_modele
+                octets=await _octets_modele(s,user)
+            else:
+                pretes,refusees=await resoudre([s['reference']],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
+                octets=pretes[0]['octets'] if pretes else None
+            if not octets:raise ValueError('original non accessible')
+            images=await asyncio.to_thread(extraire,octets)
+            if len(images)>60:raise ValueError('plus de 60 illustrations')
+        except Exception as e:
+            import logging
+            logging.getLogger('infra.documents').warning('Illustrations de « %s » non lues (%s) : le travail continue',s['nom'][:60],str(e)[:100])
+            continue
         lus=await asyncio.gather(*(une(s,img) for img in images),return_exceptions=True)
-        erreurs=[r for r in lus if isinstance(r,BaseException)]
-        if erreurs:raise ValueError(str(erreurs[0]))
-        analyses.extend(lus)
+        # une image non lue n'arrête pas le document : on garde celles qui l'ont été
+        analyses.extend(r for r in lus if not isinstance(r,BaseException))
     return analyses
 
 async def incorporer(jeton,uid,selection,sources,user):

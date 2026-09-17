@@ -86,6 +86,12 @@ class DossierInterdit(PermissionError):
             + ". Un administrateur peut ouvrir d'autres dossiers dans Paramètres → Utilisateurs.")
 
 
+def imap_recus(cle) -> bool:
+    """La lecture visait-elle la boîte de réception (et non un dossier nommé) ?"""
+    from mail import imap
+    return imap.cle_dossier(cle) == imap.CLE_RECUS
+
+
 def _dossier_imap_permis(dossier, autorises) -> str:
     """La clé de lecture d'un dossier IMAP — « recus », « envoyes » ou son nom —
     après contrôle du profil. Lève DossierInterdit."""
@@ -392,7 +398,8 @@ def _params_outlook(limite: int, depuis: Optional[datetime], recherche: Optional
     """
     select = SELECT_OUTLOOK
     if recherche and recherche.strip():
-        kql = [_kql_echapper(recherche)]
+        _objet = re.match(r'^\s*(?:objet|sujet|subject)\s*:\s*(.+)$', recherche, re.I | re.S)
+        kql = ['subject:' + _kql_echapper(_objet.group(1))] if _objet else [_kql_echapper(recherche)]
         if depuis:
             kql.append(f"received>={depuis.strftime('%Y-%m-%d')}")
         if avant:
@@ -417,7 +424,8 @@ def _requete_gmail(depuis: Optional[datetime], recherche: Optional[str] = None,
     avec le départ à minuit de `depuis_quand`."""
     parts = []
     if recherche and recherche.strip():
-        parts.append(" ".join(recherche.split()))
+        _objet = re.match(r'^\s*(?:objet|sujet|subject)\s*:\s*(.+)$', recherche, re.I | re.S)
+        parts.append('subject:(' + ' '.join(_objet.group(1).split()) + ')' if _objet else " ".join(recherche.split()))
     if depuis:
         parts.append(f"after:{depuis.strftime('%Y/%m/%d')}")
     if avant:
@@ -791,6 +799,7 @@ async def lire_boite(boite: str, dossier: str = "recus",
         # tel quel, et `autorises` (les dossiers ouverts à ce profil, None =
         # tout) décide avant le moindre appel réseau.
         cle = _dossier_imap_permis(dossier, autorises)
+    elargi = None
     limite = max(1, min(int(limite or 10), MAX_MESSAGES))
     debut = depuis_quand(depuis)
     borne = depuis_quand(avant)
@@ -810,6 +819,27 @@ async def lire_boite(boite: str, dossier: str = "recus",
     elif nom == "imap":
         messages, total = await _lire_imap(boite, cle, limite, debut,
                                            recherche=mots, avant=borne, apercu=apercu, curseur=curseur)
+        # UNE RECHERCHE NE S'ARRÊTE PAS À LA RÉCEPTION (17/09, Duret). « Le mail dont l'objet
+        # est Maxime - Mémoire Technique » : zéro résultat — un filtre Gmail le range dans
+        # le libellé « _Maxime » sans passer par la réception. Rien trouvé en réception :
+        # on cherche dans ce que ce profil a le droit de lire (tout, ou ses dossiers).
+        if mots and not messages and not curseur and imap_recus(cle):
+            import asyncio as _asyncio
+            from mail import imap as _imap
+            if autorises is None:
+                ailleurs = [await _asyncio.to_thread(_imap.dossier_de_tous_les_messages)]
+            else:
+                ailleurs = [a for a in autorises if str(a).lower() != "inbox"]
+            for autre in [x for x in ailleurs if x]:
+                try:
+                    trouves, compte_autre = await _lire_imap(boite, autre, limite, debut, recherche=mots,
+                                                             avant=borne, apercu=apercu)
+                except Exception as e:  # noqa: BLE001 — un dossier illisible n'arrête pas les autres
+                    logger.info("Recherche hors réception : « %s » illisible (%s)", autre, str(e)[:80])
+                    continue
+                if trouves:
+                    messages, total, elargi = trouves, compte_autre, autre
+                    break
     else:
         messages, total = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite, debut,
                                             recherche=mots, avant=borne, apercu=apercu)
@@ -871,7 +901,8 @@ async def lire_boite(boite: str, dossier: str = "recus",
             f"Chaque `apercu` est un EXTRAIT ({_longueur_apercu(len(messages), apercu)} caractères), "
             "pas le message. Pour le corps COMPLET et les pièces jointes d'un message : "
             "`lire_mail` avec sa `ref`."),
-        "compte": compte,
+        "compte": (compte + (f" Rien en boîte de réception : trouvé(s) dans « {elargi} »." if elargi else "")),
+        **({"trouve_hors_reception": elargi} if elargi else {}),
         "domaine_entreprise": _domaine_entreprise(),
         "expediteurs_internes": internes,
         "expediteurs_automatiques": automatiques,

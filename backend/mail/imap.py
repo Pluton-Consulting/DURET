@@ -241,6 +241,19 @@ def _selectionner(client, dossier: str) -> None:
     raise RuntimeError(f"dossier IMAP « {dossier} » introuvable")
 
 
+def dossier_de_tous_les_messages() -> Optional[str]:
+    """Le dossier qui porte TOUS les messages (attribut \\All : « [Gmail]/Tous les
+    messages »), ou None. Sert à une RECHERCHE qui ne trouve rien en réception :
+    un filtre Gmail range des mails dans un libellé en sautant la réception."""
+    try:
+        for attributs, nom in lister_dossiers():
+            if any(str(x).lower() == "\\all" for x in attributs):
+                return nom
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def lister_dossiers() -> list[tuple[set, str]]:
     """Tous les dossiers de la boîte, avec leurs attributs."""
     client = _connexion()
@@ -302,18 +315,34 @@ def _date_imap(d: Optional[datetime]) -> str:
     return d.strftime("%d-%b-%Y")
 
 
-def _criteres(depuis: Optional[datetime], recherche: Optional[str], avant: Optional[datetime]) -> str:
-    """Les critères IMAP SEARCH. La recherche porte sur objet ET corps (TEXT) ;
-    IMAP ne connaît que la journée pour les dates, comme Gmail."""
+_DANS_L_OBJET = re.compile(r"^\s*(?:objet|sujet|subject)\s*:\s*", re.I)
+
+
+def _criteres(depuis: Optional[datetime], recherche: Optional[str], avant: Optional[datetime]):
+    """Les critères IMAP SEARCH : (critères, texte cherché ou None).
+
+    `recherche` porte sur objet ET corps (TEXT) ; préfixée « objet: », elle ne
+    porte que sur l'OBJET (SUBJECT) — 17/09, Duret : « un mail avec maxime dans
+    l'objet » rendait 5 279 messages, tous ceux dont le CORPS dit « Salut
+    Maxime ». Le texte cherché voyage À PART : avec un accent (« mémoire ») il
+    part en littéral UTF-8, qu'une chaîne de commande ASCII ne peut pas porter
+    (« 'ascii' codec can't encode character '\\xe9' » — la boîte devenait
+    inconsultable). IMAP ne connaît que la journée pour les dates, comme Gmail."""
     parts = []
     if depuis:
         parts += ["SINCE", _date_imap(depuis)]
     if avant:
         parts += ["BEFORE", _date_imap(avant)]
-    if recherche:
-        mots = " ".join(str(recherche).split())[:200].replace('"', "")
-        parts += ["TEXT", f'"{mots}"']
-    return " ".join(parts) if parts else "ALL"
+    mots = None
+    if recherche and str(recherche).strip():
+        brut = str(recherche)
+        champ = "SUBJECT" if _DANS_L_OBJET.match(brut) else "TEXT"
+        mots = " ".join(_DANS_L_OBJET.sub("", brut).split())[:200].replace('"', "").strip()
+        if mots:
+            parts.append(champ)          # le texte suit, posé par `_uids`
+        else:
+            mots = None
+    return (" ".join(parts) if parts else "ALL"), mots
 
 
 def _texte_du_message(m) -> tuple[str, str]:
@@ -388,8 +417,17 @@ def _fiche(m, uid: str, boite: str, longueur_apercu: int, flags: str = "") -> di
     }
 
 
-def _uids(client, criteres: str) -> list[bytes]:
-    statut, donnees = client.uid("search", None, criteres)
+def _uids(client, criteres) -> list[bytes]:
+    criteres, mots = criteres if isinstance(criteres, tuple) else (criteres, None)
+    if mots is None:
+        statut, donnees = client.uid("search", None, criteres)
+    elif mots.isascii():
+        statut, donnees = client.uid("search", None, f'{criteres} "{mots}"')
+    else:
+        # Un texte accentué part en LITTÉRAL UTF-8 (RFC 3501) : imaplib l'envoie
+        # après la commande, qui doit donc FINIR par le champ cherché.
+        client.literal = mots.encode("utf-8")
+        statut, donnees = client.uid("search", "CHARSET", "UTF-8", criteres)
     if statut != "OK":
         raise RuntimeError(f"la recherche IMAP a échoué ({statut})")
     return (donnees[0] or b"").split()

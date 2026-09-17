@@ -926,6 +926,11 @@ async def lire_mails(data: dict, user) -> dict:
     # est le piège déjà payé avec `url` (ouvrir_page, 30/08).
     recherche = (data.get("recherche") or data.get("mots") or data.get("mots_cles")
                  or data.get("contient") or data.get("query"))
+    # « un mail dont l'OBJET est / contient … » : chercher dans l'objet SEUL (17/09). Sans cela
+    # « maxime » rendait 5 279 messages — tous ceux dont le corps dit « Salut Maxime ».
+    _dans_objet = data.get("objet") or data.get("sujet") or data.get("objet_contient")
+    if _dans_objet and not recherche:
+        recherche = "objet: " + str(_dans_objet)
     avant = data.get("avant") or data.get("avant_le") or data.get("jusqu_a")
     try:
         limite = int(data.get("limite") or (25 if (_periode or recherche or avant) else 10))

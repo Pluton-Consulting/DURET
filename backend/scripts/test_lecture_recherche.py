@@ -34,7 +34,8 @@ def verifier(nom, cond, detail=""):
 src = (BACKEND / "mail" / "lecture.py").read_text(encoding="utf-8")
 debut = src.index("def _kql_echapper(")
 fin = src.index("async def _lire_outlook(")
-espace = {"Optional": Optional, "datetime": datetime}
+import re as _re
+espace = {"Optional": Optional, "datetime": datetime, "re": _re}
 exec(src[debut:fin], espace)  # noqa: S102 — code du dépôt
 _params_outlook = espace["_params_outlook"]
 _requete_gmail = espace["_requete_gmail"]
@@ -87,8 +88,8 @@ verifier("alias acceptés (mots, contient, mots_cles, query)",
          all(f'data.get("{a}")' in skills for a in ("mots", "contient", "mots_cles", "query")))
 verifier("limite 25 d'office dès qu'on cherche ou qu'on pagine", "25 if (_periode or recherche or avant) else 10" in skills)
 proto = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
-verifier("le catalogue déclare recherche et avant en optionnels",
-         '["mailbox", "dossier", "limite", "depuis", "recherche", "avant"]' in proto)
+verifier("le catalogue déclare recherche, objet et avant en optionnels",
+         all('"%s"' % k in proto[proto.index('"lire_mails": ('):proto.index('"lire_mails": (') + 3500] for k in ("recherche", "objet", "avant")))
 verifier("le catalogue explique la page suivante (plus_ancien → avant)",
          "plus_ancien" in proto and "`avant`" in proto)
 verifier("lire_boite calcule plus_ancien depuis date_iso", 'plus_ancien = min((m.get("date_iso")' in src)

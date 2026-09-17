@@ -298,6 +298,11 @@ verifier("pendant un appel long, l'écran dit ce qui arrive (secours) et depuis 
 verifier("…et ce qui tourne en parallèle", "rédaction de la rubrique « Planning »" in texte.split(" — en parallèle : ")[-1], texte)
 verifier("une précision d'une tâche ne déborde pas sur l'activité d'une autre", "Planning »" not in texte.split(" — en parallèle")[0])
 verifier("une activité vieille de plus de 15 min ne s'affiche plus", act.phrase(brut, maintenant=__import__("time").time() + 1000) == "")
+async def _suite():
+    await act.dire(uid, fil2, "tache-suite", "lecture des images du modèle")
+    await act.dire(uid, fil2, "tache-suite", "contrôle final du document")
+asyncio.run(_suite())
+verifier("une étape FINIE ne reste pas affichée « en parallèle »", "en parallèle" not in act.phrase(dossiers.etape(uid, fil2, "tache-suite", "activite")))
 routeur = (BACKEND / "llm" / "router.py").read_text()
 verifier("le routeur précise l'activité sans jamais nommer un modèle", routeur.count("await _preciser_activite(") >= 4 and "label" not in "".join(l for l in routeur.splitlines() if "_preciser_activite(\"" in l))
 composeur_a = (BACKEND / "skills" / "documents_dossier.py").read_text()

@@ -23,10 +23,12 @@ _COURANTE: contextvars.ContextVar = contextvars.ContextVar("activite_documentair
 RECENTES = 4          # activités gardées (des appels tournent en parallèle)
 
 
-def _ecrire(uid, fil, tache, entree: dict) -> None:
+def _ecrire(uid, fil, tache, entree: dict, finie: str | None = None) -> None:
     from ressources import dossiers
     ancien = dossiers.etape(uid, fil, tache, "activite") or {}
-    liste = [x for x in (ancien.get("liste") or []) if isinstance(x, dict) and x.get("id") != entree["id"]]
+    # `finie` : l'activité que CE fil d'exécution vient de quitter — elle n'est plus
+    # « en parallèle » (l'écran citait encore la lecture des images une fois finie).
+    liste = [x for x in (ancien.get("liste") or []) if isinstance(x, dict) and x.get("id") not in (entree["id"], finie)]
     liste = (liste + [entree])[-RECENTES:]
     dossiers.etape(uid, fil, tache, "activite", {"texte": entree["texte"], "a": entree["a"], "liste": liste})
 
@@ -35,8 +37,9 @@ async def dire(uid, fil, tache, texte: str) -> None:
     """Pose l'activité de la tâche courante : ce qu'on fait, sur quoi."""
     try:
         entree = {"id": f"{time.time():.6f}", "texte": str(texte)[:240], "a": time.time(), "detail": "", "d": time.time()}
+        precedente = _COURANTE.get()
         _COURANTE.set((uid, fil, tache, entree))
-        await asyncio.to_thread(_ecrire, uid, fil, tache, dict(entree))
+        await asyncio.to_thread(_ecrire, uid, fil, tache, dict(entree), precedente[3]["id"] if precedente else None)
     except Exception:  # noqa: BLE001
         pass
 

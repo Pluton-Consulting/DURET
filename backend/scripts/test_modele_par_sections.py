@@ -312,5 +312,17 @@ verifier("par défaut le document est LIVRÉ dès sa mise en page : les contrôl
          and composeur.index("if controles_bloquants:") < composeur.index("avis=await _controle_interne(uid,fil,tache,'Contrôle final")
          and "'controles_automatiques':" in composeur)
 
+print("11. Les « points à confirmer » : utiles, bornés, jamais sur le fonctionnement du dossier")
+import os as _os
+for _k, _v in {"DATABASE_URL": "postgresql://x:x@localhost/x", "JWT_SECRET_KEY": "x" * 40, "RESEND_API_KEY": "x"}.items(): _os.environ.setdefault(_k, _v)
+from skills.documents_dossier import points_a_confirmer, MAX_POINTS_A_CONFIRMER
+g, e = points_a_confirmer(["Le taux de sous-traitance de l'entreprise reste à confirmer.", "Le taux de sous-traitance de l'entreprise reste à confirmer.",
+                           "Le contenu du modèle d’entreprise pour la rubrique CHANTIERS (reprise_modele 5) n’est pas fourni.",
+                           "Les preuves exactes (fragments du CCTP) ne sont pas fournies.", "Ces prescriptions ne sont pas sourcées dans les pièces courtes."] + ["Donnée métier %d à confirmer." % i for i in range(20)])
+verifier("sans doublon, sans remarque sur le dossier, douze au plus", g[0].startswith("Le taux de sous-traitance") and len(g) == MAX_POINTS_A_CONFIRMER and not any("fragments" in x or "reprise_modele" in x or "pièces courtes" in x for x in g), str(g[:3]))
+verifier("ce qui est écarté est rendu à part, pas perdu", len(e) == 3 + 20 - (MAX_POINTS_A_CONFIRMER - 1))
+verifier("une rubrique REPRISE du modèle ne se corrige jamais et n'apporte aucune réserve", "if type(section.get('reprise_modele')) is int:\n                        await asyncio.to_thread(dossiers.etape,uid,fil,tache,marque,True);return" in composeur and "if type(section.get('reprise_modele')) is not int:reserves.extend(" in composeur)
+verifier("le rédacteur reçoit les données de l'entreprise (les preuves du modèle) pour chaque rubrique", "or (modele_id and a['source']==modele_id)" in composeur)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

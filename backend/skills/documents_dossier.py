@@ -639,14 +639,20 @@ async def composer_immediat(data,user):
                              'preuves':[],'reserves':[],'reprise':True}
                     await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle,reprise)
                     return reprise
-                utiles=[a for a in analyses if a['source'] in section['sources']]
+                # LES DONNÉES DE L'ENTREPRISE VIVENT DANS SON MODÈLE (17/09). Le rédacteur ne recevait
+                # que les pièces choisies pour SA rubrique : il écrivait « effectifs non fournis, à
+                # compléter » alors que la fiche signalétique du modèle dit « 12 personnes ».
+                modele_id=contrat.get('modele_source')
+                utiles=[a for a in analyses if a['source'] in section['sources'] or (modele_id and a['source']==modele_id)]
                 refs={a['preuve'] for a in utiles}
                 async with semaphore:
                     await dire(uid,fil,tache,'rédaction de la rubrique « '+str(section.get('titre') or i)[:80]+' » à partir de '+str(len(utiles))+' extrait(s) analysé(s)')
                     revision=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'revision:'+str(i))
                     r=revision['redaction'] if revision else await _json('Rédige intégralement cette section du document demandé, en français, avec un contenu concret et adapté. '
                         'Les faits et chiffres doivent venir des preuves. Les démarches proposées doivent être présentées comme proposées si elles ne sont pas établies. '
-                        'Les données d’entreprise absentes restent [À CONFIRMER] ; ne reprends jamais le nom, les quantités ou les engagements d’un ancien chantier. '
+                        'Les données de l’entreprise (effectifs, encadrement, moyens, matériel, fournisseurs, références, SAV, formation) figurent dans les preuves issues de SON modèle : UTILISE-LES, ne les déclare pas manquantes. '
+                        'N’écris une réserve que pour une information INDISPENSABLE à cette rubrique et introuvable dans toutes les preuves reçues : deux réserves au plus, une phrase chacune, jamais sur le fonctionnement du dossier (pièces, fragments, preuves, modèle). '
+                        'Seule une donnée d’entreprise réellement introuvable reste [À CONFIRMER] ; ne reprends jamais le nom, les quantités ou les engagements d’un ancien chantier. '
                         'Une limite signalée dans UNE pièce ne prouve pas une absence dans tout le dossier. Consulte pieces_disponibles : ne déclare jamais absente une pièce qui y figure. Ne transforme pas une information non sélectionnée pour cette rubrique en information absente du dossier. Réserve uniquement la donnée précise non établie (date, effectif, choix), sans déclarer son document manquant. Une option ouverte par une pièce ne prouve pas que l’entreprise la retient : présente-la comme option à valider. '
                         'Ne répète pas le titre de section dans les blocs. Respecte le budget de mots indicatif sans sacrifier une rubrique obligatoire. '
                         'Schéma {"blocs":[{"bloc":"paragraphe","texte":"..."} ou {"bloc":"liste","items":["..."]} ou '
@@ -717,6 +723,11 @@ async def composer_immediat(data,user):
                     marque='correction_appliquee:'+empreinte+':'+str(i)
                     if await asyncio.to_thread(dossiers.etape,uid,fil,tache,marque):return
                     section=plan['sections'][i];r=sections[i]
+                    # UNE RUBRIQUE REPRISE DU MODÈLE NE SE CORRIGE PAS (17/09) : le modèle n'en tient
+                    # qu'une phrase-repère ; sommé de la « corriger », il y écrivait « contenu du modèle
+                    # non fourni », et la rubrique CHANTIERS a fini avec 52 « points à confirmer ».
+                    if type(section.get('reprise_modele')) is int:
+                        await asyncio.to_thread(dossiers.etape,uid,fil,tache,marque,True);return
                     cible=correction.get('par_section',{}).get(str(i)) or correction
                     await dire(uid,fil,tache,'correction de la rubrique « '+str(section.get('titre'))[:70]+' » : '+str((cible.get('problemes') or ['point relevé par le contrôle'])[0])[:110])
                     complement=set(cible.get('preuves_complementaires') or [])
@@ -1038,6 +1049,26 @@ def _titre_livrable(plan,contrat):
         return contrat['titre']
     return titre
 
+_RESERVE_SUR_LE_DOSSIER=re.compile(r"(pi[èe]ces? courtes?|fragments?|preuves? (s[ée]lectionn|exactes|textuelles)|reprise_modele|contenu (d[ée]taill[ée] |exact )?du mod[èe]le|non sourc[ée]|signalements? du contr[ôo]le|points à confirmer|incoh[ée]rence\s*\.?$|noms? de fichiers|dans cette section)",re.I)
+MAX_POINTS_A_CONFIRMER=12
+
+def points_a_confirmer(reserves):
+    """CE QUE LA PERSONNE DOIT VRAIMENT CONFIRMER, ET RIEN D'AUTRE (17/09). Le mémoire
+    réel finissait par 94 « points à confirmer » (3 600 mots, neuf pages) : remarques
+    du contrôle recopiées, « contenu du modèle non fourni », « fragments non
+    accessibles »… du bruit sur le FONCTIONNEMENT du dossier, qui faisait en plus
+    dépasser la limite de pages. On garde les réserves MÉTIER, sans doublon, douze
+    au plus ; le reste est rendu à part (compte rendu du chat), pas dans le document.
+    Rend (gardées, écartées)."""
+    vues=set();gardees=[];ecartees=[]
+    for x in reserves:
+        t=' '.join(str(x or '').split())
+        cle=t.casefold()[:80]
+        if not t or cle in vues:continue
+        vues.add(cle)
+        (ecartees if _RESERVE_SUR_LE_DOSSIER.search(t) or len(t)>320 or len(gardees)>=MAX_POINTS_A_CONFIRMER else gardees).append(t)
+    return gardees,ecartees
+
 async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None):
     from bureautique import atelier
     from bureautique.modele import normaliser_entete
@@ -1045,8 +1076,9 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     await asyncio.to_thread(dossiers.effacer_etapes,uid,fil,tache,['suivi_controle'])
     blocs=[];reserves=[]
     for section,r in zip(plan['sections'],sections):
-        blocs.append({'bloc':'titre','niveau':1,'texte':section['titre']});blocs.extend(r['blocs']);reserves.extend(r['reserves'])
-    reserves=list(dict.fromkeys(str(x) for x in reserves if x))
+        blocs.append({'bloc':'titre','niveau':1,'texte':section['titre']});blocs.extend(r['blocs'])
+        if type(section.get('reprise_modele')) is not int:reserves.extend((r.get('reserves') or [])[:3])
+    reserves,reserves_ecartees=points_a_confirmer(reserves)
     if reserves:
         blocs.extend([{'bloc':'titre','niveau':1,'texte':'Points à confirmer'}, {'bloc':'liste','items':reserves}])
     titre=_titre_livrable(plan,contrat)
@@ -1236,6 +1268,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             'fragments_lus':sum(len(dossiers.fragments(s['contenu'])) for s in sources),
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
             **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
+            'reserves_hors_document':reserves_ecartees[:30],
             'controles_automatiques':'faits' if controles_bloquants else 'non faits : document livré dès sa mise en page, à relire',
             'a_faire':('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
 

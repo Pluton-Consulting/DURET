@@ -1199,7 +1199,12 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             if await corriger_ou_livrer(correction):raise ValueError('Contradictions factuelles détectées ; correction ciblée conservée.')
     await dire(uid,fil,tache,'conversion du Word pour compter ses pages')
     controle_pages=await asyncio.to_thread(verifier_pages,provisoire,plan.get('pages_max'))
-    if plan.get('pages_max') and not controle_pages.get('conforme'):
+    if plan.get('pages_max') and not controle_pages.get('conforme') and not controles_bloquants:
+        # LA LIMITE DE PAGES NE BLOQUE PLUS NON PLUS (17/09) : le mémoire réel repartait
+        # raccourcir ses 22 rubriques, essai après essai, sans jamais sortir. Le
+        # dépassement est DIT ; raccourcir se demande ensuite, sur le document livré.
+        restants.append('Longueur : '+str(controle_pages.get('pages') or '?')+' page(s) pour un maximum de '+str(plan['pages_max'])+' demandé par le règlement — à raccourcir.')
+    elif plan.get('pages_max') and not controle_pages.get('conforme'):
         if controle_pages.get('pages'):
             await _a_corriger(uid,fil,tache,jeton,{'problemes':['Limiter la longueur en conservant toutes les rubriques.'],'facteur_longueur':max(.2,plan['pages_max']/controle_pages['pages']*.85)})
         raise ValueError('Limite de pages non vérifiée ou dépassée : '+controle_pages['note'])

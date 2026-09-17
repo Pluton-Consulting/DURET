@@ -87,6 +87,47 @@ def dedoublonner(lignes):
     return list(retenues.values()),conflits
 
 import logging
+
+MAX_RESERVES_RESUMEES=15
+_NIVEAU=re.compile(r"(?<![A-Za-z0-9])(RDC|REZ[- ]DE[- ]CHAUSS[ÉE]E|R\s?\+\s?\d|SOUS[- ]SOL|SS\d?|COMBLES?|TOITURE)(?![A-Za-z0-9])",re.I)
+
+def _cle_niveau(t):
+    t=re.sub(r"\s+","",str(t or "").upper()).replace("REZ-DE-CHAUSSÉE","RDC").replace("REZ-DE-CHAUSSEE","RDC").replace("REZDECHAUSSÉE","RDC").replace("REZDECHAUSSEE","RDC")
+    return t
+
+def regrouper_reserves(reserves,maximum=MAX_RESERVES_RESUMEES):
+    """(résumé, détail) : une remarque par IDÉE, la plus précise gardée, avec le nombre de fois où elle
+    est revenue ; tout le reste part dans une feuille de détail — rien n'est perdu, rien n'est inventé."""
+    from skills.documents_dossier import _mots_forts
+    groupes=[]
+    from collections import Counter
+    fois=Counter(str(x).strip() for x in reserves if str(x).strip())
+    for r in fois:
+        mots=_mots_forts(r)
+        for g in groupes:
+            commun=len(mots&g['mots'])
+            if mots and g['mots'] and commun/min(len(mots),len(g['mots']))>=.6:
+                g['textes'].append(r);g['mots']|=mots;g['n']+=fois[r];break
+        else:groupes.append({'mots':set(mots),'textes':[r],'n':fois[r]})
+    groupes.sort(key=lambda g:-g['n'])
+    resume=[]
+    for g in groupes[:maximum]:
+        texte=max(g['textes'],key=len)
+        resume.append(texte+(' (remarque revenue '+str(g['n'])+' fois pendant la lecture)' if g['n']>1 else ''))
+    if len(groupes)>maximum:resume.append(str(len(groupes)-maximum)+' autre(s) remarque(s) figurent dans la feuille « Réserves (détail) ».')
+    detail=[t for g in groupes for t in g['textes']] if (len(groupes)>maximum or any(len(g['textes'])>1 for g in groupes)) else []
+    return resume,detail
+
+def couverture_des_niveaux(lignes,noms_des_pieces):
+    """Ce que le classeur COUVRE, dit en tête : un métré du seul rez-de-chaussée présenté comme celui
+    du bâtiment est le défaut le plus coûteux (relevé : 52 lignes, toutes « RDC », plans R+1 et R+2 fournis)."""
+    couverts={_cle_niveau(l.get('niveau')) for l in lignes if str(l.get('niveau') or '').strip()}
+    couverts={m.group(1) and _cle_niveau(m.group(1)) for c in couverts for m in [_NIVEAU.search(c)] if m}|{c for c in couverts if c in ('RDC',)}
+    presents={_cle_niveau(m.group(1)) for nom in noms_des_pieces for m in _NIVEAU.finditer(str(nom))}
+    manquants=sorted(presents-couverts)
+    if not presents or not manquants:return ''
+    return ('COUVERTURE INCOMPLÈTE : des lignes existent pour '+(', '.join(sorted(couverts)) or 'aucun niveau identifié')
+            +' ; les pièces fournies concernent aussi '+', '.join(manquants)+', qui n’ont AUCUNE ligne. Ce classeur n’est pas le métré du bâtiment entier.')
 logger=logging.getLogger('infra.documents')
 PLAFOND_CONTEXTE = 12000
 # Un nombre suivi d'une unité de métré : ce qu'une citation de quantitatif doit porter.
@@ -372,7 +413,11 @@ async def _produire(data,user):
     lignes_surfaces,reserves_surfaces,metres,controle_dpgf=await _affecter_surfaces(uid,fil,tache,demande,surfaces,plans_surfaces,a_metrer,lignes_tableaux,analyses,preuves,noms)
     a_metrer=[a for a in a_metrer if (a['lot'],a['poste']) not in metres]
     lignes,conflits=dedoublonner(lignes_tableaux+lignes_surfaces+[l for r in bons for l in r['lignes']])
-    reserves=list(dict.fromkeys(reserves_surfaces+[x for r in bons for x in r['reserves']]+conflits+erreurs))
+    # LES RÉSERVES DU MODÈLE SE REGROUPENT (17/09). Le quantitatif réel de La Teste, rejoué à blanc :
+    # 102 réserves, la même idée (« aucune hauteur, pas de faïence calculable ») redite à chaque
+    # fragment. Celles que le CODE écrit (couverture, dossier lu, contrôle du DPGF) restent entières.
+    reserves_du_modele=[str(x) for r in bons for x in r['reserves']]
+    reserves=list(dict.fromkeys(reserves_surfaces+conflits+erreurs))
     if a_metrer:
         reserves.append(str(len(a_metrer))+' poste(s) du DPGF n’ont PAS de quantité dans le tableau fourni et restent à métrer : '
                         +' ; '.join(a['poste']+' ('+a['unite']+')' for a in a_metrer[:25])+(' …' if len(a_metrer)>25 else ''))
@@ -403,7 +448,10 @@ async def _produire(data,user):
             {'demande':demande,'lignes':lignes,'affectations':contexte_global})
         rejeter=avis.get('rejeter');notes=avis.get('reserves')
         if not isinstance(rejeter,list) or any(type(i) is not int or not 0<=i<len(lignes) for i in rejeter) or not isinstance(notes,list):raise ValueError('Contrôle quantitatif invalide.')
-        lignes=lignes_du_code+[l for i,l in enumerate(lignes) if i not in rejeter];reserves.extend(str(n) for n in notes)
+        lignes=lignes_du_code+[l for i,l in enumerate(lignes) if i not in rejeter];reserves_du_modele.extend(str(n) for n in notes)
+    resume,detail_reserves=regrouper_reserves(reserves_du_modele)
+    couverture=couverture_des_niveaux(lignes,[s['nom'] for s in sources])
+    reserves=([couverture] if couverture else [])+reserves+resume
     if not lignes:return {'ok':True,'outcome':'partial','production_verifiee':False,'definitif':not erreurs,'reserves':reserves or ['Aucune quantité avec affectation et unité suffisamment prouvées.'],'a_faire':'Identifie les pages et cotes manquantes ; analyser_plan_source permet de lire le dessin. Ne livre pas un inventaire de fichiers comme métré.'}
     from bureautique import atelier
     from skills.bureau import terminer_document
@@ -420,7 +468,8 @@ async def _produire(data,user):
            {'bloc':'feuille','nom':'Synthèse','colonnes_numeriques':[4],'entetes':['Lot','Poste','Niveau','Unité','Quantité'],'lignes':[[*k,float(v)] for k,v in sorted(totaux.items())]},
            *feuille_surfaces,
            *([{'bloc':'feuille','nom':'Contrôle du DPGF','colonnes_numeriques':[2,3,4],'entetes':['Lot','Poste','Quantité du DPGF (m²)','Surface relevée (m²)','Écart (m²)','Pièces retenues','Clause du CCTP'],'lignes':controle_dpgf}] if controle_dpgf else []),
-           {'bloc':'feuille','nom':'Réserves','entetes':['Point à vérifier'],'lignes':[[r] for r in reserves] or [['Aucune réserve détectée ; contrôle métier humain requis.']]}]
+           {'bloc':'feuille','nom':'Réserves','entetes':['Point à vérifier'],'lignes':[[r] for r in reserves] or [['Aucune réserve détectée ; contrôle métier humain requis.']]},
+           *([{'bloc':'feuille','nom':'Réserves (détail)','entetes':['Remarque relevée pendant la lecture'],'lignes':[[r] for r in detail_reserves[:2000]]}] if detail_reserves else [])]
     preuves_lignes=[]
     for i,l in enumerate(lignes,1):
         for o in l['operandes']:

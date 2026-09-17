@@ -138,9 +138,53 @@ def progression(uid,fil):
                            'annonce':bool(r['annonce'])})
     return sortie
 
+# UNE FAUTE DE PROGRAMME N'EST PAS UN ÉCHEC DU TRAVAIL (17/09). Trois essais identiques sur un
+# AttributeError et le travail passait « bloqué » pour toujours — alors que la livraison suivante
+# corrigeait la faute : rejoué à blanc, le quantitatif de La Teste allait au bout. Un travail bloqué
+# par une faute de programme est donc REMIS EN FILE une fois par nouvelle version, deux fois au plus.
+FAUTES_DE_PROGRAMME=(AttributeError,TypeError,NameError,KeyError,IndexError,ImportError,UnboundLocalError)
+_NOMS_DE_FAUTES={x.__name__ for x in FAUTES_DE_PROGRAMME}|{'ModuleNotFoundError'}
+MAX_REJEUX_APRES_LIVRAISON=2
+
+def commit_en_service():
+    try:
+        import pathlib
+        for ligne in (pathlib.Path(__file__).resolve().parents[1]/'.version').read_text(encoding='utf-8').splitlines():
+            if ligne.startswith('commit='):return ligne.split('=',1)[1].strip()
+    except Exception:pass
+    return ''
+
+def _ou(e):
+    """Fichier et ligne de la faute — jamais une donnée."""
+    import traceback
+    try:
+        t=traceback.extract_tb(e.__traceback__)[-1]
+        return t.filename.rsplit('/',2)[-2]+'/'+t.filename.rsplit('/',1)[-1]+':'+str(t.lineno)+' '+t.name
+    except Exception:return ''
+
+def rejouer_apres_livraison(c,version=None):
+    """Remet en file les travaux bloqués par une faute de programme d'une AUTRE version. Rend leurs identifiants."""
+    import re as _re
+    version=commit_en_service() if version is None else version
+    if not version:return []
+    remis=[]
+    for r in c.execute("SELECT id,resultat FROM file_documentaire WHERE statut='bloque'").fetchall():
+        try:res=json.loads(r['resultat'] or '{}')
+        except ValueError:continue
+        faute=res.get('faute_programme') or next(iter(_re.findall(r'a échoué \((\w+)\)',str(res.get('note') or ''))),'')
+        if faute not in _NOMS_DE_FAUTES or res.get('version')==version or version in (res.get('rejoue_pour') or []):continue
+        if len(res.get('rejoue_pour') or [])>=MAX_REJEUX_APRES_LIVRAISON:continue
+        res['rejoue_pour']=(res.get('rejoue_pour') or [])+[version]
+        c.execute("UPDATE file_documentaire SET statut='attente',essais=0,annonce=0,prochain=?,resultat=? WHERE id=? AND statut='bloque'",(time.time(),json.dumps(res,ensure_ascii=False),r['id']))
+        remis.append(r['id'])
+    if remis:logger.info('Travaux bloqués par une faute de programme remis en file après livraison %s : %s',version[:7],', '.join(x[:8] for x in remis))
+    return remis
+
 def _candidats():
     with dossiers.base() as c:
         _table(c)
+        try:rejouer_apres_livraison(c)
+        except Exception:logger.warning('Remise en file après livraison impossible',exc_info=True)
         return [dict(r) for r in c.execute("SELECT * FROM file_documentaire WHERE (statut IN ('attente','en_cours') AND prochain<=?) OR (statut IN ('termine','bloque') AND annonce=0 AND prochain<=?) ORDER BY rowid LIMIT 20",(time.time(),time.time()))]
 
 def _maj(cle,**valeurs):
@@ -210,8 +254,13 @@ async def traiter(job):
                     c.execute("UPDATE file_documentaire SET statut='attente',prochain=? WHERE id=? AND statut!='suspendu'",(time.time()+10,job['id']))
                 raise
             except Exception as e:
-                logger.warning('Rédaction %s interrompue (%s)',job['id'],type(e).__name__)
+                # La TRACE part au journal (17/09) : seul le nom de l'exception y figurait, et un
+                # redéploiement emporte les journaux — le quantitatif réel est resté « bloqué » sur
+                # un AttributeError dont plus rien ne disait l'origine.
+                logger.warning('Rédaction %s interrompue (%s)',job['id'],type(e).__name__,exc_info=True)
                 resultat={'production_verifiee':False,'note':'Une étape a échoué ('+type(e).__name__+'). Les étapes acquises sont conservées.'}
+                if isinstance(e,FAUTES_DE_PROGRAMME):
+                    resultat.update({'faute_programme':type(e).__name__,'version':commit_en_service(),'ou':_ou(e)})
                 if getattr(e,'tache_documentaire',None):resultat['tache']=e.tache_documentaire
             finally:
                 usage=bilan();_TOUR.reset(compteur)
@@ -235,6 +284,7 @@ async def traiter(job):
             if courant=='suspendu':return
             precedent=json.loads(job['resultat'] or '{}')
             resultat['etapes_conservees']=progression
+            if precedent.get('rejoue_pour'):resultat['rejoue_pour']=precedent['rejoue_pour']
             stagne=essais>=3 and precedent.get('note')==resultat.get('note') and precedent.get('etapes_conservees')==progression
             # UN RÉSULTAT DÉFINITIF NE SE REJOUE PAS (17/09) : un quantitatif qui a lu
             # toutes ses pièces et n'y trouve aucune quantité rendra la même chose

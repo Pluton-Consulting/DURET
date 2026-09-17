@@ -217,6 +217,10 @@ verifier("OLLAMA_CLOUD_REFLEXION=libre rend la main aux modèles", r("ollama_clo
 verifier("deepseek-v4.1-flash VOIT : il n'est plus écarté sur son nom",
          not esp["texte_seul"]("deepseek-v4.1-flash") and esp["texte_seul"]("deepseek-v4-flash:0731") and esp["texte_seul"]("deepseek-v4-pro:0813"))
 
+reglages_src = (BACKEND / "llm" / "reglages.py").read_text(encoding="utf-8")
+verifier("le réglage « Vision » accepte lui aussi deepseek-v4.1-flash (même liste que la cascade)",
+         '"deepseek-v4-flash", "deepseek-v4-pro"' in reglages_src and '("deepseek-v4", "deepseek-chat"' not in reglages_src)
+
 print("8. L'écran et l'exploitation")
 chat = (BACKEND.parent / "frontend" / "components" / "chat" / "ChatWindow.tsx").read_text(encoding="utf-8")
 verifier("l'avancement des rédactions vit SOUS la réflexion, plus en haut du fil",

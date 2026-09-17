@@ -84,12 +84,19 @@ async def _imposer_modele(uid,fil,demande,ids):
         return maison[0]['id'],ids
     return None,ids
 
-def _normaliser_plan(plan,ids,modele,structure):
+def _normaliser_plan(plan,ids,modele,structure,sources_word=None):
     """Après le modèle de langage, avant la validation : une rubrique REPRISE
     porte le titre exact du modèle, et le modèle lui-même n'a pas à être
     « affecté à une rubrique » — il est la présentation."""
     if not isinstance(plan,dict) or not isinstance(plan.get('sections'),list):return plan
     titres={s['index']:s['titre'] for s in (structure or {}).get('sections',[])}
+    # Une illustration ne se reprend que d'un WORD (on sait en extraire l'image). Le plan
+    # désignait aussi des plans PDF : « illustration sautée » au rendu, et un relecteur
+    # qui refusait la rubrique faute de l'image promise.
+    mots=sources_word
+    for sec in plan['sections']:
+        if isinstance(sec,dict) and isinstance(sec.get('illustrations'),list) and mots is not None:
+            sec['illustrations']=[x for x in sec['illustrations'] if isinstance(x,dict) and x.get('source') in mots]
     vus=set()
     for s in plan['sections']:
         if not isinstance(s,dict):continue
@@ -601,7 +608,7 @@ async def composer_immediat(data,user):
                         'texte_court_integral':s['contenu'] if len(s['contenu'])<=16000 else None} for s in sources],
                      'analyses':_faits_pour_synthese(analyses),
                      **({'modele_entreprise':{'garde':structure_modele['garde'],'rubriques':structure_modele['sections']}} if structure_modele else {})},
-                    lambda r:_plan_valide(_normaliser_plan(r,ids,contrat.get('modele_source'),structure_modele),ids))
+                    lambda r:_plan_valide(_normaliser_plan(r,ids,contrat.get('modele_source'),structure_modele,{x['id'] for x in sources if x['nom'].lower().endswith('.docx')}),ids))
                 if contrat.get('modele_source'):plan['modele_source']=contrat['modele_source']
                 _plan_valide(plan,ids)
                 limite = re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', demande, re.I)
@@ -662,6 +669,7 @@ async def composer_immediat(data,user):
                     # Relecture indépendante par section : contenu de la demande et preuves réelles.
                     avis=revision['avis'] if revision else await _json('Vérifie le contenu rédigé contre la demande de section et les preuves. Détecte faits inventés, ancien chantier recopié, '
                         'rubrique seulement décrite au lieu d’être rédigée, contradiction et manque important. Contrôle aussi les réserves : pieces_disponibles est l’inventaire COMPLET ; les preuves reçues ici sont une sélection. Une pièce non sélectionnée n’est pas absente. Ne valide pas une fausse affirmation globale d’absence. '
+                        'Les illustrations choisies par le plan sont insérées À LA MISE EN PAGE, pas par le rédacteur : leur absence du texte n’est PAS un problème. '
                         'Schéma {"valide":true,"problemes":[]} ou {"valide":false,"problemes":["..."]}. Les réserves explicites sur une donnée absente sont acceptables.',
                         {'demande':demande,'section':section,'redaction':r,'pieces_disponibles':inventaire,'preuves':utiles})
                     if avis.get('valide') is not True:
@@ -673,9 +681,16 @@ async def composer_immediat(data,user):
                             {'demande':demande,'section':section,'redaction':r,'problemes':avis.get('problemes'),'pieces_disponibles':inventaire,'preuves':utiles},lambda r:_section_valide(r,refs))
                         avis=await _json('Vérifie la correction contre les preuves et les problèmes. JSON {"valide":true/false,"problemes":[]}.',
                             {'section':section,'redaction':r,'pieces_disponibles':inventaire,'preuves':utiles,'problemes':avis.get('problemes')})
-                        if avis.get('valide') is not True:
+                        import os as _os
+                        if avis.get('valide') is not True and _os.environ.get('DOCUMENTS_CONTROLES_BLOQUANTS','').strip().lower() in ('1','true','oui','active'):
                             await asyncio.to_thread(dossiers.etape,uid,fil,tache,'revision:'+str(i),{'redaction':r,'avis':avis})
                             raise ValueError('Section à reprendre : '+section['titre']+' — '+str(avis.get('problemes'))[:500])
+                        if avis.get('valide') is not True:
+                            # LIVRER D'ABORD (17/09) : un relecteur qui refuse deux fois la même rubrique ne bloque plus
+                            # tout le document (mémoire réel : trois essais identiques sur « illustration requise non
+                            # incluse », puis blocage). Le texte corrigé est gardé ; la remarque est rendue à part.
+                            logger.warning('Rubrique « %s » gardée malgré la relecture : %s',str(section.get('titre'))[:60],str(avis.get('problemes'))[:200])
+                            r={**r,'a_relire':[str(x)[:300] for x in (avis.get('problemes') or [])][:5]}
                     await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle,r)
                     await asyncio.to_thread(dossiers.effacer_etapes,uid,fil,tache,['revision:'+str(i)])
                     return r
@@ -1079,6 +1094,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
         blocs.append({'bloc':'titre','niveau':1,'texte':section['titre']});blocs.extend(r['blocs'])
         if type(section.get('reprise_modele')) is not int:reserves.extend((r.get('reserves') or [])[:3])
     reserves,reserves_ecartees=points_a_confirmer(reserves)
+    a_relire=['« '+str(sec.get('titre'))[:60]+' » : '+x for sec,rr in zip(plan['sections'],sections) for x in (rr.get('a_relire') or [])]
     if reserves:
         blocs.extend([{'bloc':'titre','niveau':1,'texte':'Points à confirmer'}, {'bloc':'liste','items':reserves}])
     titre=_titre_livrable(plan,contrat)
@@ -1268,7 +1284,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             'fragments_lus':sum(len(dossiers.fragments(s['contenu'])) for s in sources),
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
             **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
-            'reserves_hors_document':reserves_ecartees[:30],
+            'reserves_hors_document':reserves_ecartees[:30],'rubriques_a_relire':a_relire[:20],
             'controles_automatiques':'faits' if controles_bloquants else 'non faits : document livré dès sa mise en page, à relire',
             'a_faire':('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
 

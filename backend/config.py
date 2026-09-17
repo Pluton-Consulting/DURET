@@ -11,7 +11,11 @@ class Settings(BaseSettings):
     # SOUPLE (8 min + rédaction + relecteur), il tombait pendant la rédaction :
     # tour perdu, rien de persisté. 3600 s = le délai de nginx sur le chat ; le
     # plafond souple (`TOUR_DUREE_MAX_S`) reste celui qui rend la main proprement.
-    demande_delai_s: int = 3600  # budget total partagé par tous les étages d’un tour
+    demande_delai_s: int = 3600
+    # Les contrôles automatiques d'un document long (contrôle final, engagements, réserves,
+    # chiffres) bloquent-ils sa livraison ? Non par défaut (17/09, décision de Noa : livrer
+    # d'abord, corriger à partir du rendu).
+    documents_controles_bloquants: bool = False  # budget total partagé par tous les étages d’un tour
     allowed_hosts: str = "100.64.0.1"
     # Sécurité transverse
     max_body_mb: int = 10                          # limite de taille du corps HTTP (anti-DoS mémoire)

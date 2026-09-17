@@ -8,6 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import patch,AsyncMock
 BACKEND=pathlib.Path(sys.argv[1] if len(sys.argv)>1 else 'backend').resolve();sys.path.insert(0,str(BACKEND));sys.argv=[sys.argv[0]]
 TEMP=tempfile.TemporaryDirectory(prefix='banc-dossiers-');os.environ['DOCUMENTS_DIR']=TEMP.name+'/documents'
+# Ce banc éprouve le régime des CONTRÔLES BLOQUANTS (corrections ciblées, reprises) : il
+# l'allume. Le défaut de production (17/09) livre d'abord — voir test_modele_par_sections.
+os.environ['DOCUMENTS_CONTROLES_BLOQUANTS']='true'
 from ressources import dossiers,registre
 from bureautique import atelier
 from bureautique.lecture_integrale import lire
@@ -609,6 +612,8 @@ class Recette(unittest.TestCase):
     with self.assertRaises(ValueError):documents_dossier._section_valide({'redaction':{**contenu,'preuves':['fausse:1']}},{'source:1'})
  def test_reparation_json_recoit_la_reponse_et_erreur_masquees(self):
     router=SimpleNamespace(LLMTier=SimpleNamespace(STANDARD='standard',COMPLEX='complex'),get_llm=None)
+    # Le relais documentaire (17/09) délègue ici au modèle doublé du banc.
+    router.appel_documentaire=lambda tier,messages,**k:router.get_llm(tier).ainvoke(messages,**k)
     from security.anonymizer import anonymizer
     appels=[]
     invalide=json.dumps({'faits':[{'fait':'Exigence','citation':'[ORG_1] 99 dB'}],'limites':[]})

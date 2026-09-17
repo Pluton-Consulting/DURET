@@ -714,7 +714,10 @@ class ResilientLLM:
     async def ainvoke(self, messages: Any, **kwargs) -> Any:
         extraction_documentaire = kwargs.pop("_extraction_documentaire", False)
         secours_timeout_documentaire = kwargs.pop("_secours_timeout_documentaire", False)
+        a_partir_de = int(kwargs.pop("_a_partir_de", 0) or 0)
         chain = _filtrer_quarantaine(_tier_chain(self.tier))
+        if a_partir_de and len(chain) > a_partir_de:
+            chain = chain[a_partir_de:]   # le relais documentaire part du SECOURS
         if not chain:
             raise RuntimeError(
                 "Aucun fournisseur LLM configuré : renseignez au moins GROQ_API_KEY "
@@ -853,6 +856,48 @@ class ResilientLLM:
         result = llm.invoke(messages, **kwargs)
         self.last_model_used = f"{provider}:{model or settings.ollama_model_light}"
         return result
+
+
+RELAIS_DOCUMENTAIRE_S = 60
+
+
+async def appel_documentaire(tier: "LLMTier", messages: Any, **options) -> Any:
+    """LE SECOURS PART EN RELAIS, IL N'ATTEND PLUS L'ÉCHEC (17/09).
+
+    Mémoire réel de Noa : sur les gros appels d'un travail de fond, le modèle
+    principal épuisait ses 120 s PUIS le secours répondait en 30 s — deux
+    minutes perdues à chaque fois, et l'écran disait « problème de modèle ».
+    Mesuré le même jour hors charge : les mêmes demandes reviennent en 5 à 45 s
+    sur tous les modèles ; le dépassement est donc intermittent, pas une règle.
+
+    Après RELAIS_DOCUMENTAIRE_S sans réponse, le secours est lancé EN PARALLÈLE ;
+    la première réponse valable est gardée, l'autre appel est annulé. Quand le
+    principal répond vite, rien ne change ; quand il traîne, on ne perd plus
+    que le temps du secours. Sans secours disponible : l'appel ordinaire."""
+    chaine = _filtrer_quarantaine(_tier_chain(tier))
+    principal = asyncio.ensure_future(ResilientLLM(tier).ainvoke(messages, **options))
+    if len(chaine) < 2:
+        return await principal
+    fini, _ = await asyncio.wait({principal}, timeout=RELAIS_DOCUMENTAIRE_S)
+    if fini:
+        return principal.result()
+    await _preciser_activite("la réponse tarde : un second modèle est lancé en parallèle, la première réponse valable sera gardée")
+    logger.warning("Relais documentaire : le principal tarde (%d s), secours lancé en parallèle", RELAIS_DOCUMENTAIRE_S)
+    secours = asyncio.ensure_future(ResilientLLM(tier).ainvoke(messages, **{**options, "_a_partir_de": 1}))
+    en_vol = {principal, secours}
+    derniere = None
+    try:
+        while en_vol:
+            finis, en_vol = await asyncio.wait(en_vol, return_when=asyncio.FIRST_COMPLETED)
+            for t in finis:
+                if t.exception() is None:
+                    return t.result()
+                derniere = t.exception()
+        raise derniere or RuntimeError("aucune réponse du modèle")
+    finally:
+        for t in (principal, secours):
+            if not t.done():
+                t.cancel()
 
 
 def get_llm(tier: LLMTier) -> ResilientLLM:

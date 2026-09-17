@@ -307,5 +307,10 @@ verifier("le contrôle final connaît les rubriques reprises du modèle", "'rubr
 verifier("après trois tours de corrections, le document est LIVRÉ avec ce qui reste à reprendre", "if tours>=3:" in composeur and "'points_a_reprendre':restants" in composeur and composeur.count("corriger_ou_livrer(") >= 5)
 verifier("la table des matières du modèle se recalcule à l'ouverture", "w:updateFields" in (BACKEND / "bureautique" / "sections_modele.py").read_text(encoding="utf-8"))
 
+verifier("par défaut le document est LIVRÉ dès sa mise en page : les contrôles ne bloquent que si on les allume",
+         "if controles_bloquants:" in composeur and "DOCUMENTS_CONTROLES_BLOQUANTS" in composeur
+         and composeur.index("if controles_bloquants:") < composeur.index("avis=await _controle_interne(uid,fil,tache,'Contrôle final")
+         and "'controles_automatiques':" in composeur)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

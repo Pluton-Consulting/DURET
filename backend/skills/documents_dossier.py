@@ -124,7 +124,8 @@ async def _json(consigne,donnees,verifier=None,*,extraction=False):
             messages.extend([AIMessage(content=precedent),HumanMessage(content=correction)])
         palier=LLMTier.STANDARD if extraction else LLMTier.COMPLEX
         await preciser(('demande envoyée au modèle' if not tentative else 'demande renvoyée au modèle avec les points à corriger')+' — environ '+str(pages)+' page(s) de pièces à lire, réponse attendue en 20 s à 3 min')
-        message=await get_llm(palier).ainvoke(messages,_secours_timeout_documentaire=True,**({'_extraction_documentaire':True} if extraction else {}))
+        from llm.router import appel_documentaire
+        message=await appel_documentaire(palier,messages,_secours_timeout_documentaire=True,**({'_extraction_documentaire':True} if extraction else {}))
         texte=_texte(message).strip()
         # Rétablir avant de vérifier les citations contre la source originale.
         try:
@@ -1118,72 +1119,84 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     from docx.oxml.ns import qn
     texte_final=' '.join(n.text or '' for n in document.element.body.iter(qn('w:t')))
     entetes=' '.join(n.text or '' for section in document.sections for partie in (section.header,section.footer,section.first_page_header,section.first_page_footer) for n in partie._element.iter(qn('w:t')))
-    await dire(uid,fil,tache,'contrôle final : relecture du document entier ('+str(len(texte_final)//3000+1)+' pages de texte) contre la demande, le plan et les pièces')
-    avis=await _controle_interne(uid,fil,tache,'Contrôle final du document : respecte-t-il la demande, le plan et les réserves ? '
-        'Vérifie les références contradictoires de projet, les noms et adresses réellement périmés, les rubriques manquantes et les incohérences internes substantielles. '
-        'Une rubrique marquée « reprise telle quelle du modèle de l’entreprise » est CONFORME : son contenu est celui du modèle, il n’est ni à rédiger ni à contrôler ici. '
-        'Les rubriques listées dans rubriques_reprises_du_modele sont le contenu PROPRE de l’entreprise, gardé tel quel à sa demande : un champ vide, « à compléter », un organigramme en image, une mention ancienne ou une formulation différente des rubriques rédigées n’y sont PAS des problèmes et ne se signalent pas. '
-        'La table des matières du modèle se met à jour à l’ouverture dans Word : ne la compare pas au plan. L’en-tête et le pied sont ceux de l’entreprise : une adresse qui diffère d’une autre rubrique de l’entreprise n’est pas bloquante (propose seulement son remplacement exact dans remplacements_modele si la preuve est dans le document). '
-        'La rubrique Points à confirmer est un récapitulatif AUTOMATIQUE autorisé en plus du plan : sa présence et la répétition des réserves ne sont PAS des erreurs. Un en-tête ou pied neutre du modèle, tel que numéro de page et mention Document confidentiel, est conforme et ne doit pas être enrichi arbitrairement. Ne demande pas de remplacer le numéro calculé par un champ Word. '
-        'Les notes sur les contrôles ou les corrections effectuées ne sont pas du contenu métier et doivent être supprimées, sans les remplacer par une confirmation de réparation. '
-        'JSON {"valide":true/false,"problemes":[],"remplacements_modele":{}}. Si un en-tête est obsolète, '
-        'donne son texte exact et le texte actuel prouvé dans remplacements_modele. Ne juge pas une réserve explicite comme un fait inventé. '
-        'Les faits seront contrôlés séparément contre TOUTES les preuves. Ce dernier contrôle porte sur la structure, les consignes, les incohérences INTERNES et les sources courtes fournies ici. N’affirme pas qu’un fait est inventé ou absent du dossier parce que sa preuve ne figure pas dans ce dernier contexte. '
-        'Une limite dans un fragment n’est pas une absence dans tout le dossier. Les démarches explicitement proposées ne sont pas des faits acquis. '
-        'Les réserves seront aussi contrôlées séparément contre toutes les sources ; vérifie leur cohérence interne et les pièces annoncées absentes alors qu’elles figurent dans pieces_disponibles. '
-        'Distingue obligation du marché, fait propre à l’entreprise, proposition de méthode et option encore à choisir. Une variante ou un partenaire possible cité dans une pièce ne prouve pas le choix de l’entreprise ; son adoption doit être marquée à confirmer. '
-        'Ne confonds pas le périmètre d’un diagramme et la durée contractuelle totale ; des durées différentes peuvent désigner des événements distincts. Une durée calculée depuis des graduations doit être explicitement justifiée, pas assimilée à la durée contractuelle. '
-        'Contrôle les relations entre chiffres et objets, dans les tableaux aussi : une date de réception, une levée de réserves et une fin de garantie ne sont pas interchangeables ; ne déduis aucun jalon non présent des seules graduations. Une donnée réelle de l’entreprise non fournie ne peut pas être présentée comme acquise ou déjà vérifiée. '
-        'Rapporte tous les défauts substantiels en une passe, avec les rubriques concernées. Une exigence commune peut légitimement revenir dans plusieurs rubriques ; ne bloque pas pour ce seul motif de style.',
-        # Les remplacements sont des suggestions internes du relecteur, pas
-        # des exigences de l’utilisateur. Les lui redonner comme plan ferait
-        # confirmer en boucle sa propre suggestion (notamment sur un champ PAGE).
-        {'demande':contrat['demande'],'plan':{k:v for k,v in plan.items() if k!='remplacements_modele'},'texte':texte_final,'entetes':entetes,'reserves':reserves,
-         'rubriques_reprises_du_modele':[x['titre'] for x in plan['sections'] if type(x.get('reprise_modele')) is int],
-         'faits_controles':sum(len(a.get('faits',[])) for a in analyses or []),'pieces_disponibles':[{'source':s['id'],'nom':s['nom']} for s in sources],
-         'sources_courtes':[{'id':s['id'],'nom':s['nom'],'texte':s['contenu']} for s in sources if len(s['contenu'])<=16000]})
-    # UN CONTRÔLE QUI NE CONVERGE PAS NE BLOQUE PLUS LA LIVRAISON (17/09). Mémoire réel :
-    # le contrôle final re-signalait à chaque tour des points que la correction ne
-    # peut pas traiter (garde du modèle, rubriques de l'entreprise) — huit essais,
-    # puis RIEN de livré. Après trois tours, le document est remis avec la liste
-    # de ce qui reste à reprendre à la main : un mémoire à relire vaut mieux que pas de mémoire.
-    tours=int((await asyncio.to_thread(dossiers.etape,uid,fil,tache,'tours_correction') or {}).get('n',0))
+    # LIVRER D'ABORD, VÉRIFIER ENSUITE SI ON LE DEMANDE (17/09, décision de Noa). Le
+    # mémoire réel a tourné des heures : contrôle final, vérification des
+    # engagements, des réserves, des chiffres — chacun pouvant renvoyer en
+    # correction puis tout rejouer, avec des appels de 200 000 à 600 000 caractères
+    # qui dépassent leur délai. « Il ne rend jamais de résultat, je veux qu'il sorte
+    # un rendu pour voir ce qu'il est capable de donner et corriger à partir de ça. »
+    # Par défaut le document rédigé et mis en page est donc LIVRÉ, avec ses « points
+    # à confirmer » ; les contrôles bloquants se rallument par
+    # DOCUMENTS_CONTROLES_BLOQUANTS=true (ou le réglage du même nom).
+    import os as _os
+    controles_bloquants=_os.environ.get('DOCUMENTS_CONTROLES_BLOQUANTS','').strip().lower() in ('1','true','oui','active')
     restants=[]
-    async def corriger_ou_livrer(correction):
-        if tours>=3:
-            restants.extend(str(x)[:400] for x in (correction.get('problemes') or []));return False
-        await asyncio.to_thread(dossiers.etape,uid,fil,tache,'tours_correction',{'n':tours+1})
-        await _a_corriger(uid,fil,tache,jeton,correction);return True
-    if avis.get('valide') is not True:
-        remplacements=avis.get('remplacements_modele') or {}
-        if isinstance(remplacements,dict) and all(isinstance(k,str) and k and k in entetes and isinstance(v,str) for k,v in remplacements.items()):
-            plan['remplacements_modele']={**(plan.get('remplacements_modele') or {}),**remplacements}
-            await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan',plan)
-        if await corriger_ou_livrer({'problemes':avis.get('problemes')}):raise ValueError('Contrôle final à reprendre : '+str(avis.get('problemes'))[:500])
-    await dire(uid,fil,tache,'vérification des engagements : ce que le document présente comme acquis l’est-il vraiment dans les pièces ?')
-    acquis=await _controler_acquis(uid,fil,tache,plan,sections,analyses,contrat['demande'])
-    if acquis:
-        if await corriger_ou_livrer({
-            'problemes':[p['raison']+' — affirmation : '+p['affirmation']+' — réserve : '+(p['reserve'] or 'Acquis non établi par les pièces fournies.') for p in acquis],
-            'cibles':sorted({p['section'] for p in acquis}),
-            'par_section':{str(i):{'problemes':[p['raison']+' — affirmation : '+p['affirmation']+' — réserve : '+(p['reserve'] or 'Acquis non établi par les pièces fournies.') for p in acquis if p['section']==i]}
-                           for i in sorted({p['section'] for p in acquis})}}):raise ValueError('Un acquis annoncé reste non établi ; clarification ciblée conservée.')
-    empreinte_reserves=hashlib.sha256(json.dumps([sections,analyses or []],sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:20]
-    cle_controle='controle_reserves:v5:'+empreinte_reserves
-    controle=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_controle)
-    if controle is None:
-        await dire(uid,fil,tache,'vérification des « points à confirmer » : une information dite manquante l’est-elle vraiment dans tout le dossier ?')
-        controle=await _controler_reserves(plan,sources,sections,analyses or [],(uid,fil,tache))
-        await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_controle,controle)
-    if controle['problemes']:
-        cibles=sorted({p['section'] for p in controle['problemes']})
-        correction=_correction_factuelle([{**p,'raison':p['raison']+' — réserve : '+p['reserve']} for p in controle['problemes']])
-        if await corriger_ou_livrer(correction):raise ValueError('Réserves contredites par le dossier ; correction ciblée nécessaire dans les rubriques '+', '.join(str(i+1) for i in cibles))
-    await dire(uid,fil,tache,'vérification des chiffres, dates et noms du document contre les '+str(sum(len(a.get('faits',[])) for a in analyses or []))+' faits relevés dans les pièces')
-    contradictions=await _controler_faits(uid,fil,tache,plan,sections,analyses or [])
-    if contradictions:
-        correction=_correction_factuelle(contradictions)
-        if await corriger_ou_livrer(correction):raise ValueError('Contradictions factuelles détectées ; correction ciblée conservée.')
+    if controles_bloquants:
+        await dire(uid,fil,tache,'contrôle final : relecture du document entier ('+str(len(texte_final)//3000+1)+' pages de texte) contre la demande, le plan et les pièces')
+        avis=await _controle_interne(uid,fil,tache,'Contrôle final du document : respecte-t-il la demande, le plan et les réserves ? '
+            'Vérifie les références contradictoires de projet, les noms et adresses réellement périmés, les rubriques manquantes et les incohérences internes substantielles. '
+            'Une rubrique marquée « reprise telle quelle du modèle de l’entreprise » est CONFORME : son contenu est celui du modèle, il n’est ni à rédiger ni à contrôler ici. '
+            'Les rubriques listées dans rubriques_reprises_du_modele sont le contenu PROPRE de l’entreprise, gardé tel quel à sa demande : un champ vide, « à compléter », un organigramme en image, une mention ancienne ou une formulation différente des rubriques rédigées n’y sont PAS des problèmes et ne se signalent pas. '
+            'La table des matières du modèle se met à jour à l’ouverture dans Word : ne la compare pas au plan. L’en-tête et le pied sont ceux de l’entreprise : une adresse qui diffère d’une autre rubrique de l’entreprise n’est pas bloquante (propose seulement son remplacement exact dans remplacements_modele si la preuve est dans le document). '
+            'La rubrique Points à confirmer est un récapitulatif AUTOMATIQUE autorisé en plus du plan : sa présence et la répétition des réserves ne sont PAS des erreurs. Un en-tête ou pied neutre du modèle, tel que numéro de page et mention Document confidentiel, est conforme et ne doit pas être enrichi arbitrairement. Ne demande pas de remplacer le numéro calculé par un champ Word. '
+            'Les notes sur les contrôles ou les corrections effectuées ne sont pas du contenu métier et doivent être supprimées, sans les remplacer par une confirmation de réparation. '
+            'JSON {"valide":true/false,"problemes":[],"remplacements_modele":{}}. Si un en-tête est obsolète, '
+            'donne son texte exact et le texte actuel prouvé dans remplacements_modele. Ne juge pas une réserve explicite comme un fait inventé. '
+            'Les faits seront contrôlés séparément contre TOUTES les preuves. Ce dernier contrôle porte sur la structure, les consignes, les incohérences INTERNES et les sources courtes fournies ici. N’affirme pas qu’un fait est inventé ou absent du dossier parce que sa preuve ne figure pas dans ce dernier contexte. '
+            'Une limite dans un fragment n’est pas une absence dans tout le dossier. Les démarches explicitement proposées ne sont pas des faits acquis. '
+            'Les réserves seront aussi contrôlées séparément contre toutes les sources ; vérifie leur cohérence interne et les pièces annoncées absentes alors qu’elles figurent dans pieces_disponibles. '
+            'Distingue obligation du marché, fait propre à l’entreprise, proposition de méthode et option encore à choisir. Une variante ou un partenaire possible cité dans une pièce ne prouve pas le choix de l’entreprise ; son adoption doit être marquée à confirmer. '
+            'Ne confonds pas le périmètre d’un diagramme et la durée contractuelle totale ; des durées différentes peuvent désigner des événements distincts. Une durée calculée depuis des graduations doit être explicitement justifiée, pas assimilée à la durée contractuelle. '
+            'Contrôle les relations entre chiffres et objets, dans les tableaux aussi : une date de réception, une levée de réserves et une fin de garantie ne sont pas interchangeables ; ne déduis aucun jalon non présent des seules graduations. Une donnée réelle de l’entreprise non fournie ne peut pas être présentée comme acquise ou déjà vérifiée. '
+            'Rapporte tous les défauts substantiels en une passe, avec les rubriques concernées. Une exigence commune peut légitimement revenir dans plusieurs rubriques ; ne bloque pas pour ce seul motif de style.',
+            # Les remplacements sont des suggestions internes du relecteur, pas
+            # des exigences de l’utilisateur. Les lui redonner comme plan ferait
+            # confirmer en boucle sa propre suggestion (notamment sur un champ PAGE).
+            {'demande':contrat['demande'],'plan':{k:v for k,v in plan.items() if k!='remplacements_modele'},'texte':texte_final,'entetes':entetes,'reserves':reserves,
+             'rubriques_reprises_du_modele':[x['titre'] for x in plan['sections'] if type(x.get('reprise_modele')) is int],
+             'faits_controles':sum(len(a.get('faits',[])) for a in analyses or []),'pieces_disponibles':[{'source':s['id'],'nom':s['nom']} for s in sources],
+             'sources_courtes':[{'id':s['id'],'nom':s['nom'],'texte':s['contenu']} for s in sources if len(s['contenu'])<=16000]})
+        # UN CONTRÔLE QUI NE CONVERGE PAS NE BLOQUE PLUS LA LIVRAISON (17/09). Mémoire réel :
+        # le contrôle final re-signalait à chaque tour des points que la correction ne
+        # peut pas traiter (garde du modèle, rubriques de l'entreprise) — huit essais,
+        # puis RIEN de livré. Après trois tours, le document est remis avec la liste
+        # de ce qui reste à reprendre à la main : un mémoire à relire vaut mieux que pas de mémoire.
+        tours=int((await asyncio.to_thread(dossiers.etape,uid,fil,tache,'tours_correction') or {}).get('n',0))
+        async def corriger_ou_livrer(correction):
+            if tours>=3:
+                restants.extend(str(x)[:400] for x in (correction.get('problemes') or []));return False
+            await asyncio.to_thread(dossiers.etape,uid,fil,tache,'tours_correction',{'n':tours+1})
+            await _a_corriger(uid,fil,tache,jeton,correction);return True
+        if avis.get('valide') is not True:
+            remplacements=avis.get('remplacements_modele') or {}
+            if isinstance(remplacements,dict) and all(isinstance(k,str) and k and k in entetes and isinstance(v,str) for k,v in remplacements.items()):
+                plan['remplacements_modele']={**(plan.get('remplacements_modele') or {}),**remplacements}
+                await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan',plan)
+            if await corriger_ou_livrer({'problemes':avis.get('problemes')}):raise ValueError('Contrôle final à reprendre : '+str(avis.get('problemes'))[:500])
+        await dire(uid,fil,tache,'vérification des engagements : ce que le document présente comme acquis l’est-il vraiment dans les pièces ?')
+        acquis=await _controler_acquis(uid,fil,tache,plan,sections,analyses,contrat['demande'])
+        if acquis:
+            if await corriger_ou_livrer({
+                'problemes':[p['raison']+' — affirmation : '+p['affirmation']+' — réserve : '+(p['reserve'] or 'Acquis non établi par les pièces fournies.') for p in acquis],
+                'cibles':sorted({p['section'] for p in acquis}),
+                'par_section':{str(i):{'problemes':[p['raison']+' — affirmation : '+p['affirmation']+' — réserve : '+(p['reserve'] or 'Acquis non établi par les pièces fournies.') for p in acquis if p['section']==i]}
+                               for i in sorted({p['section'] for p in acquis})}}):raise ValueError('Un acquis annoncé reste non établi ; clarification ciblée conservée.')
+        empreinte_reserves=hashlib.sha256(json.dumps([sections,analyses or []],sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:20]
+        cle_controle='controle_reserves:v5:'+empreinte_reserves
+        controle=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_controle)
+        if controle is None:
+            await dire(uid,fil,tache,'vérification des « points à confirmer » : une information dite manquante l’est-elle vraiment dans tout le dossier ?')
+            controle=await _controler_reserves(plan,sources,sections,analyses or [],(uid,fil,tache))
+            await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_controle,controle)
+        if controle['problemes']:
+            cibles=sorted({p['section'] for p in controle['problemes']})
+            correction=_correction_factuelle([{**p,'raison':p['raison']+' — réserve : '+p['reserve']} for p in controle['problemes']])
+            if await corriger_ou_livrer(correction):raise ValueError('Réserves contredites par le dossier ; correction ciblée nécessaire dans les rubriques '+', '.join(str(i+1) for i in cibles))
+        await dire(uid,fil,tache,'vérification des chiffres, dates et noms du document contre les '+str(sum(len(a.get('faits',[])) for a in analyses or []))+' faits relevés dans les pièces')
+        contradictions=await _controler_faits(uid,fil,tache,plan,sections,analyses or [])
+        if contradictions:
+            correction=_correction_factuelle(contradictions)
+            if await corriger_ou_livrer(correction):raise ValueError('Contradictions factuelles détectées ; correction ciblée conservée.')
     await dire(uid,fil,tache,'conversion du Word pour compter ses pages')
     controle_pages=await asyncio.to_thread(verifier_pages,provisoire,plan.get('pages_max'))
     if plan.get('pages_max') and not controle_pages.get('conforme'):
@@ -1218,7 +1231,8 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             'fragments_lus':sum(len(dossiers.fragments(s['contenu'])) for s in sources),
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
             **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
-            'a_faire':('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
+            'controles_automatiques':'faits' if controles_bloquants else 'non faits : document livré dès sa mise en page, à relire',
+            'a_faire':('' if controles_bloquants else 'Ce document est livré SANS relecture automatique : dis-le en une phrase, présente ce qu’il contient et invite à le relire et à demander des corrections. ')+('Le contrôle automatique n’a PAS tout validé après trois tours de corrections : présente le document comme À RELIRE et liste fidèlement points_a_reprendre, sans les minimiser. ' if restants else '')+'Présente ce document NOUVELLEMENT rédigé, sa portée et les réserves. Les modèles consultés sont seulement des sources. Ne prétends pas à une validation contractuelle humaine.'}
 
 async def completer_visuels(uid,fil,tache,sources,user,demande):
     derives=[];parents={}

@@ -283,8 +283,35 @@ async def _base_url(client) -> str:
     return url
 
 
+# UNE SESSION MORTE SE ROUVRE, ELLE NE CONDAMNE PAS LA DEMI-HEURE SUIVANTE (17/09).
+# Mémoire technique de Noa : « Source distante devenue inaccessible : MEMOIRE Complet
+# Vierge.docx » à chaque essai — DSM répondait « session invalide (SID introuvable) »
+# et le serveur gardait ce SID partagé jusqu'à son expiration : TOUS les
+# téléchargements étaient refusés, alors que le fichier était bien là.
+_CODES_SESSION = {105, 106, 107, 119}
+
+
+async def _nouvelle_session(client, base: str, ancien_sid: Optional[str]) -> Optional[str]:
+    """Rouvre une session et la donne à la session PARTAGÉE (nas/acces) si c'est
+    bien celle-là qui vient de mourir. Rend le nouveau SID, ou None."""
+    try:
+        neuf = await _login(client, base)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Réouverture de la session du NAS impossible : %s", str(e)[:120])
+        return None
+    try:
+        from nas import acces
+        partagee = getattr(acces, "_COURANTE", None)
+        if partagee is not None and getattr(partagee, "sid", None) == ancien_sid:
+            partagee.sid = neuf
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info("Session du NAS rouverte après un refus de session")
+    return neuf
+
+
 async def _appel(client, base: str, api: str, method: str, version: int,
-                 sid: Optional[str] = None, **params) -> dict:
+                 sid: Optional[str] = None, _reessai: bool = False, **params) -> dict:
     """Appel DSM. Lève SynologyError sur `success: false`."""
     p = {"api": api, "method": method, "version": version, **params}
     if sid:
@@ -294,6 +321,10 @@ async def _appel(client, base: str, api: str, method: str, version: int,
     data = r.json()
     if not data.get("success"):
         code = (data.get("error") or {}).get("code", 0)
+        if code in _CODES_SESSION and sid and not _reessai and api != "SYNO.API.Auth":
+            neuf = await _nouvelle_session(client, base, sid)
+            if neuf:
+                return await _appel(client, base, api, method, version, sid=neuf, _reessai=True, **params)
         raise SynologyError(_message(code, f"{api}.{method}"))
     return data.get("data") or {}
 
@@ -338,7 +369,7 @@ async def _logout(client, base: str, sid: str) -> None:
         pass          # une session non fermée expire d'elle-même
 
 
-async def _telecharger_ou_raison(client, base: str, sid: str, chemin: str) -> tuple:
+async def _telecharger_ou_raison(client, base: str, sid: str, chemin: str, _reessai: bool = False) -> tuple:
     """(octets, raison). Les octets, ou None ET la raison lisible du refus.
 
     08/09, 11:40 : « affiche ça <nom exact d'un fichier listé> » → « Fichier
@@ -363,6 +394,10 @@ async def _telecharger_ou_raison(client, base: str, sid: str, chemin: str) -> tu
                 code = int(((r.json() or {}).get("error") or {}).get("code") or 0)
             except Exception:  # noqa: BLE001 — JSON illisible : le code reste inconnu
                 pass
+            if code in _CODES_SESSION and not _reessai:
+                neuf = await _nouvelle_session(client, base, sid)
+                if neuf:
+                    return await _telecharger_ou_raison(client, base, neuf, chemin, _reessai=True)
             raison = _message(code, "SYNO.FileStation.Download.download") if code else "refus sans code"
             logger.warning("Téléchargement refusé : %s (%s)", chemin, raison)
             return None, raison

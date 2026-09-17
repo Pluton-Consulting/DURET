@@ -320,6 +320,9 @@ g, e = points_a_confirmer(["Le taux de sous-traitance de l'entreprise reste à c
                            "Le contenu du modèle d’entreprise pour la rubrique CHANTIERS (reprise_modele 5) n’est pas fourni.",
                            "Les preuves exactes (fragments du CCTP) ne sont pas fournies.", "Ces prescriptions ne sont pas sourcées dans les pièces courtes."] + ["Donnée métier %d à confirmer." % i for i in range(20)])
 verifier("sans doublon, sans remarque sur le dossier, douze au plus", g[0].startswith("Le taux de sous-traitance") and len(g) == MAX_POINTS_A_CONFIRMER and not any("fragments" in x or "reprise_modele" in x or "pièces courtes" in x for x in g), str(g[:3]))
+g2, e2 = points_a_confirmer(["Les effectifs indiqués proviennent du mémoire type de l’entreprise et ne sont pas spécifiques au projet ; ils doivent être validés pour ce chantier.",
+                             "Les quantités de déchets provenaient du mémoire vierge générique.", "La date de démarrage des travaux reste à confirmer."])
+verifier("une réserve sur L'ORIGINE d'une donnée (« issu du mémoire type ») n'est pas un point à confirmer", g2 == ["La date de démarrage des travaux reste à confirmer."] and len(e2) == 2, str(g2))
 verifier("ce qui est écarté est rendu à part, pas perdu", len(e) == 3 + 20 - (MAX_POINTS_A_CONFIRMER - 1))
 verifier("une rubrique REPRISE du modèle ne se corrige jamais et n'apporte aucune réserve", "if type(section.get('reprise_modele')) is int:\n                        await asyncio.to_thread(dossiers.etape,uid,fil,tache,marque,True);return" in composeur and "if type(section.get('reprise_modele')) is not int:reserves.extend(" in composeur)
 verifier("le rédacteur reçoit les données de l'entreprise (les preuves du modèle) pour chaque rubrique", "or (modele_id and a['source']==modele_id)" in composeur)

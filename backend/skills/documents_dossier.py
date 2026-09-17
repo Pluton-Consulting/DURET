@@ -729,7 +729,7 @@ async def composer_immediat(data,user):
                     'c’est LÀ que va le contenu de projet (effectifs affectés, planning et phases, méthodes de pose par lot, points singuliers, qualité, engagements environnementaux du chantier), avec un objectif détaillé et les sources utiles ; '
                     'ou une entrée de "rubriques_modele_retirees": {"index":"raison"}. '
                     'N’AJOUTE une rubrique (sans index, avec "apres_modele": index pour la placer) QUE si la demande ou le règlement de consultation l’exige et qu’aucune rubrique du modèle ne la couvre '
-                    '(ex. la réponse aux critères de jugement) ; jamais une rubrique dont le sujet est déjà celui d’une rubrique reprise. Une rubrique ajoutée de réponse aux critères se RÉDIGE vraiment : ce que l’entreprise apporte sur chaque critère, avec renvoi aux rubriques. '
+                    '(ex. la réponse aux critères de jugement) ; une présentation du projet se place AVANT les rubriques de chantier (apres_modele = l’index de la rubrique qui les précède), la réponse aux critères en fin de document ; jamais une rubrique dont le sujet est déjà celui d’une rubrique reprise. Une rubrique ajoutée de réponse aux critères se RÉDIGE vraiment : ce que l’entreprise apporte sur chaque critère, avec renvoi aux rubriques. '
                     'Chaque rubrique du modèle porte son poids en "pages". Si une limite de pages est imposée, les rubriques RÉDIGÉES portent la note technique : réserve-leur AU MOINS un tiers de la limite '
                     '(limite − pages de garde − pages des rubriques reprises) ; pour y arriver, retire d’abord les rubriques d’entreprise qui servent le moins les critères de jugement (pages de logos, annexes générales) et dis-le dans rubriques_modele_retirees. '
                     'La date de la garde est la date du jour (date_du_jour), jamais "[À CONFIRMER]". '
@@ -813,7 +813,7 @@ async def composer_immediat(data,user):
                         'Les faits et chiffres doivent venir des preuves. Les démarches proposées doivent être présentées comme proposées si elles ne sont pas établies. '
                         +('Cette rubrique REMPLACE celle du modèle : texte_type_de_l_entreprise est la façon de faire HABITUELLE de l’entreprise (composition type des équipes par lot, méthodes de pose, contrôles, organisation). '
                           'PARS DE CE TEXTE et adapte-le à ce projet : garde ses méthodes et son équipe type comme ce que l’entreprise PRÉVOIT ici (ajustable selon le planning), retire ce qui ne concerne pas les ouvrages de ce dossier, '
-                          'ajoute ce que les pièces exigent (lots, locaux, produits, phases, délais, contraintes). Seuls le nom, les lieux, les quantités, les dates et les engagements chiffrés de l’ANCIEN chantier ne se reprennent pas. '
+                          'ajoute ce que les pièces exigent (lots, locaux, produits, phases, délais, contraintes). N’écris AUCUNE réserve sur l’origine de ces données (« issu du mémoire type », « à valider pour ce chantier ») : c’est l’entreprise qui parle. Seuls le nom, les lieux, les quantités, les dates et les engagements chiffrés de l’ANCIEN chantier ne se reprennent pas. '
                           'Garde ses sous-titres utiles avec des blocs {"bloc":"titre","niveau":3,"texte":"..."}. ' if texte_type else '')+
                         'Les données de l’entreprise (effectifs, encadrement, moyens, matériel, fournisseurs, références, SAV, formation) figurent dans les preuves issues de SON modèle : UTILISE-LES, ne les déclare pas manquantes. '
                         'N’écris une réserve que pour une information INDISPENSABLE à cette rubrique et introuvable dans toutes les preuves reçues : deux réserves au plus, une phrase chacune, jamais sur le fonctionnement du dossier (pièces, fragments, preuves, modèle). '
@@ -1223,7 +1223,7 @@ def _titre_livrable(plan,contrat):
         return contrat['titre']
     return titre
 
-_RESERVE_SUR_LE_DOSSIER=re.compile(r"(pi[èe]ces? courtes?|fragments?|preuves? (s[ée]lectionn|exactes|textuelles)|reprise_modele|contenu (d[ée]taill[ée] |exact )?du mod[èe]le|non sourc[ée]|signalements? du contr[ôo]le|points à confirmer|incoh[ée]rence\s*\.?$|noms? de fichiers|dans cette section)",re.I)
+_RESERVE_SUR_LE_DOSSIER=re.compile(r"(pi[èe]ces? courtes?|fragments?|preuves? (s[ée]lectionn|exactes|textuelles)|reprise_modele|contenu (d[ée]taill[ée] |exact )?du mod[èe]le|non sourc[ée]|signalements? du contr[ôo]le|points à confirmer|incoh[ée]rence\s*\.?$|noms? de fichiers|dans cette section|m[ée]moire (type|vierge|g[ée]n[ée]rique)|(du|le|au) mod[èe]le (de l[’']entreprise|d[’']entreprise|vierge|type)|texte[ _]type|de la trame)",re.I)
 MAX_POINTS_A_CONFIRMER=12
 
 def points_a_confirmer(reserves):

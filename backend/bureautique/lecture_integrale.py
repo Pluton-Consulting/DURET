@@ -1,5 +1,5 @@
 """Lecture analytique : pages et cellules identifiables, distincte de l’aperçu UI."""
-import io,json
+import io,json,re
 
 def lire(nom,octets,texte_secours=''):
     ext=nom.rsplit('.',1)[-1].lower()
@@ -33,7 +33,14 @@ def lire(nom,octets,texte_secours=''):
                     # Un petit PDF de planning ou schéma garde souvent ses légendes en texte,
                     # mais les relations (barres, flèches, couleurs) sont graphiques.
                     # Un logo isolé ne justifie pas une lecture visuelle de chaque page.
-                    if len(pdf)<=5 and len(contenu.strip())<2000:
+                    # 17/09 : un plan d'architecte porte 3 000 à 5 000 caractères… de COTES
+                    # en vrac (« 2,40 / 5,00 / 0,07 »), sans lien avec les pièces : du
+                    # texte, mais illisible sans le dessin. Une page courte dont la
+                    # majorité des lignes sont des nombres est un dessin, elle aussi.
+                    lignes_page=[l.strip() for l in contenu.splitlines() if l.strip()]
+                    chiffres=sum(1 for l in lignes_page if re.fullmatch(r'[\d\s,.+\-x=×%°/]*(?:NGF|m2|m²|ml|cm|mm)?',l))
+                    plan_cote=len(pdf)<=5 and len(lignes_page)>=40 and chiffres>len(lignes_page)*0.5
+                    if len(pdf)<=5 and (len(contenu.strip())<2000 or plan_cote):
                         dessins=page.get_drawings()
                         surface=page.rect.width*page.rect.height
                         images=page.get_image_info()

@@ -20,7 +20,10 @@ def soumettre(uid,fil,genre,data):
     uid,fil=dossiers.identite(uid,fil)
     data=dossiers.normaliser_selection(uid,fil,data);data['_fil']=fil
     # Figer les sources au dépôt : une pièce ajoutée plus tard ne change pas une commande en cours.
-    if not data.get('sources') and not data.get('tache'):data['sources']=[s['id'] for s in dossiers.manifeste(uid,fil)]
+    # …sauf quand le travail va CHARGER un dossier du serveur : ses pièces n'existent pas encore.
+    from skills.documents_dossier import dossier_cite
+    attend_un_dossier=bool(data.get('dossier') or dossier_cite(data.get('_demande_utilisateur') or data.get('demande')))
+    if not data.get('sources') and not data.get('tache') and not attend_un_dossier:data['sources']=[s['id'] for s in dossiers.manifeste(uid,fil)]
     cle=hashlib.sha256(json.dumps([uid,fil,genre,data],sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:24]
     with dossiers.base() as c:
         _table(c);c.execute('BEGIN IMMEDIATE')
@@ -46,6 +49,12 @@ def soumettre(uid,fil,genre,data):
         c.execute('INSERT OR IGNORE INTO file_documentaire(id,utilisateur,fil,genre,donnees,statut) VALUES(?,?,?,?,?,?)',(cle,uid,fil,genre,json.dumps(data,ensure_ascii=False),'attente'))
         devant=c.execute("SELECT count(*) FROM file_documentaire WHERE statut IN ('attente','en_cours') AND id!=?",(cle,)).fetchone()[0]
         r=dict(c.execute('SELECT * FROM file_documentaire WHERE id=? AND utilisateur=? AND fil=?',(cle,uid,fil)).fetchone())
+        # UN TRAVAIL RETIRÉ QU'ON REDEMANDE REPART (17/09) : « retirer » le cache, il
+        # ne l'interdit pas. Sans cela la même demande retombait sur la ligne
+        # retirée et l'on annonçait « en cours » un travail qui ne tournerait jamais.
+        if r['statut']=='retire':
+            c.execute("UPDATE file_documentaire SET statut='attente',essais=0,prochain=0,annonce=0,resultat=NULL WHERE id=?",(cle,))
+            r={**r,'statut':'attente'}
     if r['statut']=='termine':
         resultat=json.loads(r['resultat'])
         from bureautique.atelier import chemin_fichier
@@ -79,9 +88,11 @@ def progression(uid,fil):
     with dossiers.base() as c:
         _table(c)
         actifs=c.execute("SELECT rowid,genre,statut FROM file_documentaire WHERE statut IN ('attente','en_cours') ORDER BY rowid").fetchall()
+        x=c.execute("SELECT valeur FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache='dossier' AND cle='chargement'",(uid,fil)).fetchone()
+        chargement=json.loads(x[0]) if x else None
         for r in c.execute("SELECT rowid,id,genre,statut,donnees,annonce,essais,prochain FROM file_documentaire WHERE utilisateur=? AND fil=? AND statut!='retire' ORDER BY rowid DESC LIMIT 30",(uid,fil)).fetchall():
             data=json.loads(r['donnees']);tache=data.get('tache')
-            etapes={x[0]:json.loads(x[1]) if x[0] in ('plan','suivi_controle') else True for x in c.execute("SELECT cle,CASE WHEN cle IN ('plan','suivi_controle') THEN valeur ELSE 'null' END FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache=?",(uid,fil,tache or ''))}
+            etapes={x[0]:json.loads(x[1]) if x[0] in ('plan','suivi_controle','suivi_quantitatif') else True for x in c.execute("SELECT cle,CASE WHEN cle IN ('plan','suivi_controle','suivi_quantitatif') THEN valeur ELSE 'null' END FROM etapes_documentaires WHERE utilisateur=? AND fil=? AND tache=?",(uid,fil,tache or ''))}
             total=len(etapes.get('plan',{}).get('sections',[]))
             sections=sum(k.startswith('section:') for k in etapes)
             lectures=sum(k.startswith('analyse:') for k in etapes)
@@ -91,11 +102,20 @@ def progression(uid,fil):
             if statut=='termine':phase='Document prêt' if r['annonce'] else 'Ajout du document à la conversation'
             elif statut=='suspendu':phase='Rédaction suspendue — étapes conservées'
             elif statut=='bloque':phase='Rédaction à reprendre — étapes conservées'
+            elif 'suivi_quantitatif' in etapes:
+                # LE RELEVÉ A SON PROPRE LIBELLÉ (17/09) : l'écran restait figé sur
+                # « Lecture des pièces » pendant tout le relevé, et Noa l'a cru bloqué.
+                suivi=etapes['suivi_quantitatif'];faits=sum(':q' in k for k in etapes)
+                phase=(f"Relevé des quantités : {faits}/{suivi.get('passages',0)} passages"
+                       +(f" · {suivi.get('lignes_tableaux',0)} ligne(s) déjà lues dans {suivi.get('tableaux',0)} tableau(x)" if suivi.get('tableaux') else '')
+                       if faits<suivi.get('passages',0) else 'Contrôle des lignes et mise en forme du classeur')
             elif 'correction' in etapes:phase='Correction après vérification finale'
             elif controles and controles_faits<len(controles):phase=f'Vérification des informations : {controles_faits}/{len(controles)} étapes'
             elif total and sections>=total:phase='Vérification finale et mise en page'
             elif total:phase=f'Rédaction et contrôle : {sections}/{total} rubriques'
             elif lectures:phase=f'Lecture des pièces : {lectures} parties analysées'
+            elif statut=='en_cours' and (chargement or {}).get('en_cours'):
+                phase=f"Ouverture du dossier « {chargement.get('dossier','')} » : {chargement.get('charges',0)}/{chargement.get('a_charger',0)} pièces utiles chargées ({chargement.get('vus',0)} fichiers vus)"
             elif statut=='en_cours':phase='Lecture et préparation des pièces'
             else:
                 # « Démarrage en attente » ne disait ni combien de temps ni derrière quoi.
@@ -199,7 +219,10 @@ async def traiter(job):
             precedent=json.loads(job['resultat'] or '{}')
             resultat['etapes_conservees']=progression
             stagne=essais>=3 and precedent.get('note')==resultat.get('note') and precedent.get('etapes_conservees')==progression
-            statut='termine' if resultat.get('production_verifiee') else 'bloque' if essais>=8 or stagne else 'attente'
+            # UN RÉSULTAT DÉFINITIF NE SE REJOUE PAS (17/09) : un quantitatif qui a lu
+            # toutes ses pièces et n'y trouve aucune quantité rendra la même chose
+            # au 8ᵉ essai — il s'arrête au premier, et le dit dans la conversation.
+            statut='termine' if resultat.get('production_verifiee') else 'bloque' if essais>=8 or stagne or resultat.get('definitif') else 'attente'
             _maj(job['id'],statut=statut,donnees=json.dumps(donnees,ensure_ascii=False),resultat=json.dumps(resultat,ensure_ascii=False),prochain=time.time()+min(300,15*essais) if statut=='attente' else 0)
             job={**job,'statut':statut,'resultat':json.dumps(resultat,ensure_ascii=False)}
         if job['statut'] in ('termine','bloque'):

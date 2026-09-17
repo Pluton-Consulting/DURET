@@ -189,6 +189,185 @@ async def ajouter(data,user):
             'note':'Lecture intégrale conservée : utilise lire_source_dossier ou composer_document_dossier ; le source n’est pas un livrable créé.'}
 
 
+EXTENSIONS_LISIBLES=('.pdf','.docx','.xlsx','.xlsm','.xls','.csv','.txt')
+_DOSSIER_CITE=re.compile(r'[«"“]\s*([^«»"“”]{8,160}?)\s*[»"”]')
+
+def dossier_cite(demande):
+    """Le nom de dossier que la demande met entre guillemets, ou None. Seule la
+    demande COURANTE compte : l'historique ne rouvre pas un dossier d'hier."""
+    courante=str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0]
+    m=_DOSSIER_CITE.search(courante)
+    return m.group(1).strip() if m else None
+
+_LOT_NOMME=re.compile(r'\blots?\s*(?:n°|n)?\s*0*(\d{1,2})(?![\d/.])((?:\s*(?:,|;|et|&|\+|/|-)\s*0*\d{1,2}(?![\d/.-]))*)',re.I)
+_LOT_DU_NOM=re.compile(r'\blot\s*n?°?\s*0*(\d{1,2})\b\s*[-–—_:]?\s*([^.]*)',re.I)
+_PIECE_CHIFFREE=re.compile(r'(dpgf|dqe|bpu|d[ée]tail\s+quantitatif|bordereau|\bsurfaces?\b|m[ée]tr[ée]s?\b|quantit)',re.I)
+_PIECE_ECRITE=re.compile(r'(cctp|dispositions?\s+communes|g[ée]n[ée]ralit|notice|nomenclature|questions?\s+r[ée]ponses)',re.I)
+_PIECE_ADMIN=re.compile(r'(r[èe]glement|\brc(v\d+)?\b|\d+rc|ccap|cadre|acte|\bae(v\d+)?\b|\d+ae|planning|charte|engagement|m[ée]moire)',re.I)
+_PLAN_NIVEAU=re.compile(r'(\brdc\b|r\s?\+\s?\d|rez|[ée]tage|niveau|sous[- ]sol|typologie|nature\s+des|rep[ée]rage)',re.I)
+_PLAN_DETAIL=re.compile(r'(coupe|d[ée]tail|mat[ée]riaux|carnet)',re.I)
+_PLAN_AUTRE=re.compile(r'(plan|fa[cç]ade|toiture|masse|situation|volume|perspective|insertion)',re.I)
+_PIECE_LOINTAINE=re.compile(r'(annexe|diagnosti|g[ée]otechn|thermique|\bacv\b|\bpgc\b|coordination|permis|\bvmc\b|\becs\b|amiante|plomb|silice|\bbet\b|structure|acoustique|environnement|cerqual|\brsee\b|\brict\b|plate-?forme|how to|comment r[ée]pondre|page de garde)',re.I)
+_AUTRE_CORPS=re.compile(r"(toiture|charpente|couverture|menuiser|plafond|vitr|garage|marquise|fa[cç]ade|d[ée]moli|\bvrd\b|paysag|[ée]lectri|plomberie|serrurerie|m[ée]tallerie|enduit|bardage|gros.?oeuvre|isolation|peinture|pl[aâ]trerie|altim[ée]tri|situation|volumes?)",re.I)
+_GABARIT=re.compile(r'(vierge|\btrame\b|mod[èe]le|\bxxx\b|cartouche|gabarit)',re.I)
+_TOUT_LE_DOSSIER=re.compile(r"\b(tout le dossier|tous les (fichiers|documents)|toutes les pi[èe]ces|le dossier (complet|entier)|sans rien [ée]carter)\b",re.I)
+PLAFOND_FICHIERS_DOSSIER=60
+PLAFOND_OCTETS_DOSSIER=300*1024*1024
+
+def _cle_nom(nom):
+    import unicodedata
+    t=unicodedata.normalize('NFD',str(nom or '').casefold())
+    return ' '.join(''.join(c for c in t if unicodedata.category(c)!='Mn').split())
+
+def lots_vises(*textes):
+    """Les numéros de lots que la demande ou les pièces nomment. Seuls les
+    nombres COLLÉS au mot « lot » comptent : « lot 11 du dossier 29 lgts
+    18-09-2026 » vise le lot 11, ni le 29, ni le 18, ni le 9."""
+    lots=set()
+    for t in textes:
+        for m in _LOT_NOMME.finditer(str(t or '')):
+            lots|={int(n) for n in re.findall(r'\d{1,2}',m.group(1)+' '+(m.group(2) or '')) if 0<int(n)<60}
+    return lots
+
+def lots_du_metier(fichiers):
+    """Sans lot nommé : les lots dont l'intitulé parle du métier de la maison."""
+    try:from classement.source import METIERS_DE_LA_MAISON as metiers
+    except ImportError:return set()
+    lots=set()
+    for f in fichiers:
+        m=_LOT_DU_NOM.search(str(f['nom']))
+        if m and int(m.group(1)) and any(x in _cle_nom(m.group(2)) for x in metiers):lots.add(int(m.group(1)))
+    return lots
+
+def choisir_fichiers(fichiers,lots,deja,usage='document',tout=False):
+    """LE DOSSIER D'UN APPEL D'OFFRES N'EST PAS LE TRAVAIL D'UN LOT (17/09). Le DCE
+    Domofrance, lu sur le serveur : 250 fichiers, 17 lots, chaque CCTP et DPGF en
+    DOUBLE (racine et sous-dossier, pas toujours la même version), 1,1 Go
+    d'archives, 90 images et DWG, des études géotechniques. Tout charger noierait
+    le relevé des lots 11 et 12 — et deux pièces du même nom rendaient la source
+    « ambiguë ». On garde UNE version de chaque fichier (la plus récente), les
+    pièces des lots VISÉS, les pièces communes et les plans utiles à l'USAGE
+    (un métré ne lit ni le règlement ni le planning ; un mémoire, si), et l'on
+    DIT ce qui est écarté et pourquoi. « Tout le dossier » lève le tri : seuls le
+    format et le plafond jouent. Sans lot connu, aucun lot n'est écarté."""
+    ecartes={}
+    def ecarte(raison):ecartes[raison]=ecartes.get(raison,0)+1
+    uniques={}
+    for f in fichiers:
+        nom=str(f['nom'])
+        if not nom.lower().endswith(EXTENSIONS_LISIBLES):ecarte('format non lu (archive, image, DWG, .doc)');continue
+        if f.get('octets',0)>60*1024*1024:ecarte('trop lourd');continue
+        if not f.get('octets'):ecarte('fichier vide');continue
+        cle=_cle_nom(nom);ancien=uniques.get(cle)
+        if ancien is None:uniques[cle]=f;continue
+        ecarte('doublon du même nom (version la plus récente gardée)')
+        if (f.get('modifie') or 0,len(str(f.get('dossier') or '')))>(ancien.get('modifie') or 0,len(str(ancien.get('dossier') or ''))):uniques[cle]=f
+    titres=' '.join(m.group(2) for f in uniques.values() for m in [_LOT_DU_NOM.search(str(f['nom']))] if m and int(m.group(1)) in lots)
+    mots_des_lots={m for m in re.findall(r'[a-zà-ÿ]{4,}',_cle_nom(titres))}-{'pour','avec','dans','lots'}
+    candidats=[]
+    for cle,f in uniques.items():
+        nom=str(f['nom']);chemin=str(f.get('dossier') or '')+'/'+nom
+        if cle in deja:ecarte('déjà dans le travail');continue
+        m=_LOT_DU_NOM.search(nom);numero=int(m.group(1)) if m else None
+        if tout:candidats.append((0,chemin.casefold(),f));continue
+        if lots and numero and numero not in lots:ecarte('autre lot');continue
+        du_lot=bool(numero and numero in lots)
+        parle_du_lot=bool(mots_des_lots&set(re.findall(r'[a-zà-ÿ]{4,}',_cle_nom(nom))))
+        gabarit=bool(_GABARIT.search(nom))
+        if usage=='quantitatif':
+            if gabarit:ecarte('gabarit vierge de l’entreprise (pas une source de quantités)');continue
+            if not du_lot and (numero==0 or re.search(r'(dispositions?\s+communes|g[ée]n[ée]ralit|nomenclature|bordereau\s+des\s+pi[èe]ces)',nom,re.I)):ecarte('clauses communes ou liste de pièces (sans quantité)');continue
+            note=(9 if du_lot else 0)+(5 if parle_du_lot else 0)+(5 if _PIECE_CHIFFREE.search(nom) else 0)+(4 if _PLAN_NIVEAU.search(nom) else 0) \
+                 +(3 if numero==0 or _PIECE_ECRITE.search(nom) else 0)+(2 if _PLAN_DETAIL.search(nom) else 0)+(1 if _PLAN_AUTRE.search(chemin) else 0)
+            if not du_lot and not parle_du_lot and _PIECE_LOINTAINE.search(chemin):ecarte('étude ou annexe sans quantité du lot');continue
+            if lots and not du_lot and not parle_du_lot and _AUTRE_CORPS.search(nom):ecarte('plan ou pièce d’un autre corps d’état');continue
+            if not du_lot and _PIECE_ADMIN.search(nom) and not _PIECE_CHIFFREE.search(nom):ecarte('pièce administrative (inutile à un métré)');continue
+            if note<2:ecarte('plan ou pièce sans rapport direct avec les lots visés');continue
+        else:
+            note=(9 if du_lot else 0)+(4 if parle_du_lot else 0)+(6 if _PIECE_ADMIN.search(nom) else 0)+(5 if gabarit else 0)+(3 if numero==0 or _PIECE_ECRITE.search(nom) else 0) \
+                 +(3 if _PIECE_CHIFFREE.search(nom) else 0)+(2 if _PLAN_NIVEAU.search(nom) else 0)+(1 if _PLAN_AUTRE.search(chemin) or _PLAN_DETAIL.search(nom) else 0)-(4 if _PIECE_LOINTAINE.search(chemin) else 0)
+            if note<1:ecarte('annexe ou étude éloignée de la demande');continue
+            # Un mémoire se rédige depuis les pièces écrites : les plans n'y entrent que
+            # s'ils parlent du lot (« nature des sols ») ou portent des surfaces.
+            est_plan=bool(_PLAN_AUTRE.search(chemin) or _PLAN_NIVEAU.search(nom) or _PLAN_DETAIL.search(nom)) and nom.lower().endswith('.pdf')
+            if est_plan and not (du_lot or parle_du_lot or _PIECE_ADMIN.search(nom) or _PIECE_ECRITE.search(nom) or _PIECE_CHIFFREE.search(nom)):ecarte('plan graphique (inutile à une rédaction ; demande « tout le dossier » pour les inclure)');continue
+            if gabarit and not nom.lower().endswith('.docx'):ecarte('gabarit de tableur de l’entreprise');continue
+        candidats.append((-note,chemin.casefold(),f))
+    retenus=[];poids=0
+    for _,_,f in sorted(candidats,key=lambda x:x[:2]):
+        if len(retenus)>=PLAFOND_FICHIERS_DOSSIER or poids+f.get('octets',0)>PLAFOND_OCTETS_DOSSIER:ecarte('au-delà du plafond de '+str(PLAFOND_FICHIERS_DOSSIER)+' pièces');continue
+        retenus.append(f);poids+=f.get('octets',0)
+    return retenus,ecartes
+
+async def charger_dossier(uid,fil,dossier,user,lots=(),usage='document',tout=False):
+    """LE DOSSIER DU SERVEUR ENTRE DANS LE TRAVAIL (17/09). Relevé de Noa : « fais
+    les métrés à partir du dossier souche … » — le quantitatif n'a lu que les
+    pièces jointes au chat ; aucun geste n'a ouvert le dossier nommé. Les fichiers
+    utiles du dossier (sous-dossiers compris) deviennent des pièces, avec les
+    droits de la personne ; ce qui est écarté ou illisible est DIT, jamais tu."""
+    from classement.source import arbre_du_dossier
+    from security.lecteur import au_nom_de
+    with au_nom_de(user):
+        chemin,fichiers,coupe=await arbre_du_dossier(dossier,user)
+    deja={_cle_nom(s['nom']) for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)}
+    lots=set(lots or ());deduits=False
+    if not lots and not tout:lots=lots_du_metier(fichiers);deduits=bool(lots)
+    choisis,ecartes=choisir_fichiers(fichiers,lots,deja,usage,tout)
+    ajoutes=[];ignores=[]
+    semaphore=asyncio.Semaphore(3)
+    # L'écran suit l'ouverture du dossier : sans cela il restait muet le temps de
+    # télécharger et de lire trente pièces (la tâche n'a pas encore d'étapes).
+    suivi={'dossier':chemin.rstrip('/').rsplit('/',1)[-1][:80],'vus':len(fichiers),'a_charger':len(choisis),'charges':0,'en_cours':True}
+    await asyncio.to_thread(dossiers.etape,uid,fil,'dossier','chargement',suivi)
+    async def un(f):
+        async with semaphore:
+            try:
+                r=await ajouter({'reference':f['ref'],'_fil':fil},user)
+                ajoutes.append({'source':r['source'],'nom':r['nom']})
+            except Exception as e:
+                ignores.append(str(f['nom'])+' ('+str(e)[:90]+')')
+            suivi['charges']+=1
+            await asyncio.to_thread(dossiers.etape,uid,fil,'dossier','chargement',suivi)
+    try:await asyncio.gather(*(un(f) for f in choisis))
+    finally:
+        suivi['en_cours']=False
+        await asyncio.to_thread(dossiers.etape,uid,fil,'dossier','chargement',suivi)
+    logger.info('Dossier « %s » (%s) : %d fichier(s) vus, %d chargé(s), %d illisible(s), écartés %s%s',chemin[-80:],usage,len(fichiers),len(ajoutes),len(ignores),ecartes,' — liste coupée' if coupe else '')
+    return {'dossier':chemin,'vus':len(fichiers),'ajoutes':ajoutes,'ignores':ignores,'ecartes':ecartes,'lots':sorted(lots),'lots_deduits':deduits,'coupe':coupe,'tout':bool(tout)}
+
+async def dossier_du_travail(uid,fil,data,user,demande,usage='document'):
+    """Charge le dossier nommé par le geste (`dossier`) ou cité entre guillemets
+    dans la demande. Rend le compte rendu, ou None. Un nom qui ne se résout pas
+    n'arrête rien : on travaille avec les pièces déjà là, et on le dit."""
+    nom=str(data.get('dossier') or '').strip() or dossier_cite(demande)
+    if not nom or data.get('tache'):return None
+    pieces=await asyncio.to_thread(dossiers.manifeste,uid,fil)
+    lots=lots_vises(demande,*[p['nom'] for p in pieces])
+    # UN NOUVEL ESSAI NE RECHARGE RIEN, ET NE PERD PAS LE COMPTE RENDU : au 2ᵉ essai
+    # tout est « déjà dans le travail » — sans mémoire, la réserve du classeur
+    # aurait dit « 0 pièce chargée » d'un dossier qui en a donné trente.
+    cle='rapport:'+hashlib.sha256((_cle_nom(nom)+'|'+usage).encode()).hexdigest()[:16]
+    try:
+        ancien=await asyncio.to_thread(dossiers.etape,uid,fil,'dossier',cle)
+        r=await _charger_et_retenir(uid,fil,nom,user,lots,usage,demande,ancien,cle)
+        return r
+    except Exception as e:
+        logger.warning('Dossier « %s » non chargé (%s) : %s',nom[:60],type(e).__name__,str(e)[:160])
+        return {'dossier':nom,'ajoutes':[],'ignores':[],'introuvable':str(e)[:200]}
+
+async def _charger_et_retenir(uid,fil,nom,user,lots,usage,demande,ancien,cle):
+    try:r=await charger_dossier(uid,fil,nom,user,lots,usage,bool(_TOUT_LE_DOSSIER.search(str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0])))
+    except Exception:
+        if ancien:return ancien
+        raise
+    if ancien:
+        connus={a['source'] for a in ancien.get('ajoutes',[])}
+        r['ajoutes']=ancien.get('ajoutes',[])+[a for a in r['ajoutes'] if a['source'] not in connus]
+        r['ecartes']={k:v for k,v in (ancien.get('ecartes') or r['ecartes']).items()}
+        r['ignores']=sorted(set(ancien.get('ignores',[]))|set(r['ignores']))
+    await asyncio.to_thread(dossiers.etape,uid,fil,'dossier',cle,r)
+    return r
+
 def _analyse_valide(r,texte):
     if not isinstance(r.get('faits'),list) or not isinstance(r.get('limites'),list):raise ValueError('faits[] et limites[] obligatoires.')
     if len(r['faits'])>120:raise ValueError('120 faits maximum par fragment ; regroupe les répétitions sans supprimer une exigence utile.')
@@ -343,8 +522,10 @@ async def composer_immediat(data,user):
         if not contrat:raise ValueError('Tâche inconnue dans cette conversation.')
         demande=contrat['demande'];ids=contrat['sources']
     else:
-        ids=data.get('sources') or [s['id'] for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)]
-        if not ids:raise ValueError('Aucune pièce dans ce dossier. Ajoute les documents trouvés avec ajouter_source_dossier.')
+        charge=await dossier_du_travail(uid,fil,data,user,demande,'document')
+        ids=data.get('sources') or []
+        if (charge and not charge.get('introuvable')) or not ids:ids=[s['id'] for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)]
+        if not ids:raise ValueError('Aucune pièce dans ce dossier'+(' : « '+charge['dossier']+' » n’a pas pu être ouvert ('+charge.get('introuvable','aucun fichier lisible')+')' if charge else '')+'. Ajoute les documents trouvés avec ajouter_source_dossier.')
         if not data.get('modele_source') and data.get('format','docx')=='docx':
             impose,ids=await _imposer_modele(uid,fil,demande+(' '+str(data['trame']) if data.get('trame') else ''),list(ids))
             if impose:data['modele_source']=impose
@@ -983,6 +1164,21 @@ async def completer_visuels(uid,fil,tache,sources,user,demande):
         # Les sources historiques courtes ont été extraites avant la détection des
         # plannings vectoriels. Relire l’original sans changer leur identité ni leurs
         # preuves textuelles permet la même reprise après une mise à jour.
+        try:
+          sources_lues=await _visuel_d_une_source(uid,fil,tache,source,user,demande,derives,parents)
+        except Exception as e:
+          # UNE PAGE GRAPHIQUE NON LUE N'ARRÊTE PLUS TOUT LE TRAVAIL (17/09) : la pièce
+          # reste lue par son texte, et la lecture visuelle manquante est journalisée.
+          logger.warning('Lecture visuelle de « %s » non faite (%s) : %s',source['nom'][:60],type(e).__name__,str(e)[:140])
+    if derives:
+        lus=await asyncio.to_thread(dossiers.sources,uid,fil,list(dict.fromkeys(derives)))
+        existants={s['id'] for s in sources};sources=sources+[s for s in lus if s['id'] not in existants]
+        sources=[{**s,'_source_originale':parents[s['id']]} if s['id'] in parents else s for s in sources]
+    return sources
+
+async def _visuel_d_une_source(uid,fil,tache,source,user,demande,derives,parents):
+    contenu=source['contenu']
+    if True:
         if '[LECTURE VISUELLE REQUISE' not in contenu and source['nom'].lower().endswith('.pdf') and len(contenu)<8000 and source['reference']:
             cle_detection='detection_graphique:'+source['id']
             detection=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_detection)
@@ -995,7 +1191,7 @@ async def completer_visuels(uid,fil,tache,sources,user,demande):
                 detection={'texte':texte if '[LECTURE VISUELLE REQUISE' in texte else ''}
                 await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle_detection,detection)
             contenu=detection['texte'] or contenu
-        if '[LECTURE VISUELLE REQUISE' not in contenu:continue
+        if '[LECTURE VISUELLE REQUISE' not in contenu:return
         if not source['reference']:raise ValueError('La pièce graphique originale doit être ajoutée : '+source['nom'])
         cle='pages_visuelles:v2:'+source['id']
         acquis=await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle) or {}
@@ -1015,11 +1211,6 @@ async def completer_visuels(uid,fil,tache,sources,user,demande):
             derives.extend(x['source'] for x in r.get('lectures',[]))
             parents.update({x['source']:source['id'] for x in r.get('lectures',[])})
             if '=== Page ' not in contenu and r.get('page_suivante'):pages.append(r['page_suivante'])
-    if derives:
-        lus=await asyncio.to_thread(dossiers.sources,uid,fil,list(dict.fromkeys(derives)))
-        existants={s['id'] for s in sources};sources=sources+[s for s in lus if s['id'] not in existants]
-        sources=[{**s,'_source_originale':parents[s['id']]} if s['id'] in parents else s for s in sources]
-    return sources
 
 def _inclure_sources_derivees(plan,sources):
     """Fermer la sélection sous la relation pièce → lectures, même en reprise."""
@@ -1056,7 +1247,10 @@ async def composer(data,user):
     uid,fil=_identite(data,user)
     data=await asyncio.to_thread(dossiers.normaliser_selection,uid,fil,data)
     sources=await asyncio.to_thread(dossiers.sources,uid,fil,data.get('sources'))
-    if not sources:raise ValueError('Aucune pièce dans ce dossier. Ajoute les documents avant de lancer la rédaction.')
+    # Un dossier du serveur nommé (ou cité entre guillemets) sera chargé par le
+    # travail de fond : l'absence de pièce jointe n'est alors pas un refus.
+    if not sources and not (data.get('dossier') or dossier_cite(data.get('_demande_utilisateur') or data.get('demande'))):
+        raise ValueError('Aucune pièce dans ce dossier. Ajoute les documents avant de lancer la rédaction.')
     # Une pièce courte peut imposer onze rubriques et de nombreuses relectures.
     # La taille du texte ne prédit pas la durée : toute composition de dossier
     # passe par la file persistante, pour libérer le chat immédiatement.
@@ -1081,4 +1275,4 @@ SKILLS={
  'lire_source_dossier':Declaration(lire,'Lire intégralement un fragment numéroté d’une pièce : texte, pages/cellules, référence de preuve et suite réelle. Aucun aperçu de couverture imposé.',requis=['source'],optionnels=['fragment','position'],effet='lecture',libelle='je lis la suite du document'),
  'chercher_source_dossier':Declaration(lire,'Trouver le fragment le plus pertinent dans une pièce intégrale, puis lire la suite avec lire_source_dossier.',requis=['source','recherche'],effet='lecture',libelle='je recherche dans le document complet'),
  'ajouter_source_dossier':Declaration(ajouter,'Ouvrir un fichier autorisé du NAS/Drive, du chat ou d’un mail par sa référence et conserver TOUT son texte, toutes ses feuilles/cellules pour cette conversation. À utiliser pour dépasser un aperçu tronqué.',requis=['reference'],effet='lecture',libelle='je prépare la lecture complète du fichier'),
- 'composer_document_dossier':Declaration(composer,'Rédiger un NOUVEAU document long depuis un dossier de pièces : lecture de tous les fragments, plan conforme à la demande, rédaction et contrôle par section, DOCX et présentation du modèle. `trame` : le NOM d’une trame Word enregistrée (« mémoire technique type ») à REMPLIR — sa page de garde, ses en-têtes et ses rubriques d’entreprise sont gardés, les rubriques de projet sont rédigées dans ses styles ; sans lui, le Word de l’entreprise présent dans les pièces sert de modèle, jamais une pièce de la consultation. Fonctionne pour rapports, réponses à consultation, dossiers, études, mémoires et autres documents. Les étapes sont persistantes et reprenables par tache. Ne remplace pas une simple modification ponctuelle du texte original.',requis=['demande'],optionnels=['titre','sources','modele_source','trame','tache','images','format'],effet='ecriture_interne',libelle='je rédige et contrôle le document à partir de toutes les pièces')}
+ 'composer_document_dossier':Declaration(composer,'Rédiger un NOUVEAU document long depuis un dossier de pièces : lecture de tous les fragments, plan conforme à la demande, rédaction et contrôle par section, DOCX et présentation du modèle. `dossier` : le NOM ou le chemin d’un dossier du serveur (« à partir du dossier X ») — tous ses fichiers lisibles, sous-dossiers compris, deviennent les pièces du travail, inutile de les ajouter un par un. `trame` : le NOM d’une trame Word enregistrée (« mémoire technique type ») à REMPLIR — sa page de garde, ses en-têtes et ses rubriques d’entreprise sont gardés, les rubriques de projet sont rédigées dans ses styles ; sans lui, le Word de l’entreprise présent dans les pièces sert de modèle, jamais une pièce de la consultation. Fonctionne pour rapports, réponses à consultation, dossiers, études, mémoires et autres documents. Les étapes sont persistantes et reprenables par tache. Ne remplace pas une simple modification ponctuelle du texte original.',requis=['demande'],optionnels=['titre','sources','dossier','modele_source','trame','tache','images','format'],effet='ecriture_interne',libelle='je rédige et contrôle le document à partir de toutes les pièces')}

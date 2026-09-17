@@ -176,6 +176,23 @@ double_res = {"tool_results": [etat_t["tool_results"][0], dict(etat_t["tool_resu
 verifier("le même résultat garanti DEUX fois dans le tour n'affiche qu'un bloc",
          garantir("Voici.", double_res).count("```ui") == 1)
 
+# LE TABLEAU DES MAILS EN CINQ EXEMPLAIRES (17/09, fil ca57dd3e) : le même geste refait dans le
+# tour rend le même tableau, aux résumés près (le modèle les réécrit à chaque passe).
+def _mails(resume):
+    return {"ok": True, "resultat_masque": json.dumps({"bloc_garanti": True, "bloc_ui": {
+        "type": "table", "titre": "Mails reçus depuis le 10/09/2026 (98)",
+        "columns": ["Date", "Objet", "Résumé"],
+        "rows": [["15/09", "Devis terrasse", resume], ["16/09", "Facture", "Règlement reçu."]]}},
+        ensure_ascii=False)}
+s5 = garantir("Voici vos mails.", {"tool_results": [_mails("Demande un devis."), _mails("Le client demande un devis."),
+                                                    _mails("Demande de devis pour une terrasse.")]})
+verifier("le même geste refait TROIS fois n'affiche qu'UN tableau — le dernier",
+         s5.count("```ui") == 1 and "Demande de devis pour une terrasse." in s5 and "Le client demande" not in s5, s5[:200])
+deux = {"tool_results": [etat_t["tool_results"][0], {"ok": True, "resultat_masque": json.dumps(
+    {"bloc_garanti": True, "bloc_ui": {**table, "titre": "Recherche — martin"}}, ensure_ascii=False)}]}
+verifier("deux recherches DIFFÉRENTES gardent chacune leur tableau",
+         garantir("Voici.", deux).count("```ui") == 2)
+
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("le garde-fou est branché entre les livrables et le dédoublonnage",
          re.search(r"_livrables_a_l_ecran\(text, state\).*?_blocs_garantis\(text, state\).*?"

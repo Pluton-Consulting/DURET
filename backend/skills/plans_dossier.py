@@ -33,8 +33,11 @@ async def analyser(data,user):
                     resultat.append((i+1,base64.b64encode(pix.tobytes('png')).decode(),reperes))
                 return resultat,len(doc)
         if debut!=1:raise ValueError('Une image ne comporte qu’une page.')
-        from PIL import Image
-        with Image.open(io.BytesIO(octets)) as img:
+        from PIL import Image,ImageOps
+        with Image.open(io.BytesIO(octets)) as brute:
+            # L'orientation EXIF s'applique avant la lecture : une photo de téléphone
+            # prise en portrait serait lue couchée (17/09).
+            img=ImageOps.exif_transpose(brute)
             img.thumbnail((2400,2400));b=io.BytesIO();img.convert('RGB').save(b,format='PNG')
         return [(1,base64.b64encode(b.getvalue()).decode(),None)],1
     pages,total=await asyncio.to_thread(images);candidats=get_vision_candidates()
@@ -45,6 +48,14 @@ async def analyser(data,user):
             def verifier(texte):
                 match=re.search(r'\{.*\}',texte,re.S)
                 lu=json.loads(match.group() if match else texte)
+                # 17/09 : le modèle principal lit juste mais répond une fois sur deux
+                # « à plat » ({"total_ht":"133,40 €",…}) en suivant la demande plutôt que
+                # le format. La lecture était JETÉE et le secours relisait tout (jusqu'à
+                # 74 s par facture). Des valeurs courtes lues sur la page SONT un relevé ;
+                # une prose longue (un livrable rédigé à la place du relevé) reste refusée.
+                if isinstance(lu,dict) and 'observations' not in lu:
+                    feuilles=_feuilles_lues(lu)
+                    if feuilles and all(len(v)<=300 for _,v in feuilles):return
                 if not isinstance(lu,dict) or not isinstance(lu.get('observations'),list) or not isinstance(lu.get('incertitudes'),list):raise ValueError('Relevé visuel structuré incomplet.')
                 if not lu['observations'] and not lu['incertitudes']:raise ValueError('Relevé visuel vide.')
                 for o in lu['observations']:
@@ -69,5 +80,14 @@ async def analyser(data,user):
     return {'ok':bool(bons),'lectures':bons,'erreurs':erreurs,'pages_total':total,
             'complet':debut==1 and len(bons)==total,'page_suivante':debut+len(pages) if debut+len(pages)<=total else None,
             'note':'Les pages analysées sont conservées dans le dossier. Continue les pages restantes. Ce relevé visuel n’est pas une validation géométrique humaine.'}
+
+def _feuilles_lues(valeur,chemin=''):
+    """Les couples (libellé, valeur) non vides d'un JSON lu, à toute profondeur."""
+    if isinstance(valeur,dict):
+        return [f for k,v in valeur.items() for f in _feuilles_lues(v,(chemin+' › '+str(k)) if chemin else str(k))]
+    if isinstance(valeur,list):
+        return [f for i,v in enumerate(valeur) for f in _feuilles_lues(v,chemin+' '+str(i+1))]
+    texte='' if valeur is None else str(valeur).strip()
+    return [(chemin,texte)] if texte else []
 
 SKILLS={'analyser_plan_source':Declaration(analyser,'Lire visuellement un PDF de plan ou une image retrouvée au NAS/Drive, dans le chat ou un mail. Pages numérotées, analyses conservées dans le dossier et pagination explicite ; utilisable pour plans, scans, tableaux en image et règlement de consultation.',requis=['reference','demande'],optionnels=['page','nombre_pages'],effet='lecture',expert='agent2',libelle='je lis les pages du plan et leurs cotes')}

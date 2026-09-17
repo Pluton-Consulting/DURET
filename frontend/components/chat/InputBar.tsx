@@ -196,6 +196,18 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
   // ne bouge pas ; si le serveur corrige un mot en arrière, on remplace.
   const cibleDictee = useRef("")
   const plumeRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // UN MESSAGE PARTI NE REVIENT PAS DANS LE CHAMP (17/09). Relevé de Noa : « quand j'envoie,
+  // le message se réécrit dans la saisie alors qu'il est déjà envoyé ». Deux écritures
+  // survivaient à l'envoi : la PLUME, qui courait encore vers sa cible (un champ vidé est un
+  // préfixe de n'importe quelle cible : elle réécrivait tout), et la DERNIÈRE transcription,
+  // partie en arrière-plan à l'arrêt du micro, qui revenait écrire une seconde plus tard.
+  // Chaque dictée porte un numéro ; l'envoi le périme, et ce qui arrive ensuite est ignoré.
+  const numeroDictee = useRef(0)
+  const oublierLaDictee = () => {
+    numeroDictee.current += 1
+    cibleDictee.current = ""
+    if (plumeRef.current) { clearInterval(plumeRef.current); plumeRef.current = null }
+  }
   const ecrireProgressivement = (cible: string) => {
     cibleDictee.current = cible
     if (plumeRef.current) return           // la plume court déjà vers la cible
@@ -276,12 +288,18 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
       return
     }
     avantDictee.current = texte ? texte.replace(/\s+$/, "") + " " : ""
+    const cetteDictee = ++numeroDictee.current
     const dictee = creerDictee({
       apiUrl: API_URL,
       token,
       // Le texte rendu couvre TOUTE la dictée depuis le début : il remplace
       // ce qui avait été transcrit, jamais ce qui était tapé avant.
-      surTexte: (dit) => ecrireProgressivement(avantDictee.current + dit),
+      surTexte: (dit) => {
+        // Une transcription qui arrive après l'envoi (ou après une dictée plus récente)
+        // appartient à un message déjà parti : elle ne touche plus au champ.
+        if (numeroDictee.current !== cetteDictee) return
+        ecrireProgressivement(avantDictee.current + dit)
+      },
       // La fin de l'ÉCOUTE relâche le bouton tout de suite ; la dernière
       // transcription, elle, se signale à part (« je transcris… ») jusqu'à
       // son arrivée — relevé de Noa : le bouton semblait ne pas répondre.
@@ -300,7 +318,10 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
 
   const surEnvoi = (message: PromptInputMessage) => {
     if (disabled) return
-    const contenu = texte.trim()
+    // Si la plume n'a pas fini d'écrire ce que la dictée a DÉJÀ rendu, c'est le texte complet
+    // qui part — pas la moitié affichée à l'instant du clic.
+    const vise = cibleDictee.current
+    const contenu = (vise && vise.startsWith(texte) ? vise : texte).trim()
     const fichiersJoints = message.files ?? []
 
     const pieces: PieceJointe[] = []
@@ -337,6 +358,8 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
     // La dictée s'arrête à l'envoi : sans cela, la phrase suivante s'écrirait
     // dans un champ qu'on vient de vider, à la suite d'un message déjà parti.
     dicteeRef.current?.arreter()
+    // …et ce qu'elle a encore en route ne reviendra pas écrire dans le champ vidé.
+    oublierLaDictee()
     // Des fichiers envoyés sans question : on formule l'intention par défaut.
     // Au pluriel, on NOMME les fichiers — c'est ce que la personne relira dans
     // son fil, et ce qui permet de dire ensuite « la troisième ».

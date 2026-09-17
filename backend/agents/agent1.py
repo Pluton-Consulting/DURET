@@ -115,6 +115,24 @@ Typographie : n'utilise JAMAIS de tiret cadratin ni de tiret demi-cadratin ; emp
 # quantité — enchaîner cinquante pages de mails ou de documents est un travail
 # qui avance, pas une boucle).
 MAX_ACTIONS_PAR_TOUR = 120
+# Combien de fois un même appel peut être RESSERVI dans un tour qui avance
+# (cf. `_a_avance_depuis`). Au-delà, même un tour qui avance s'arrête et le dit.
+MAX_RETOURS_MEME_ACTION = 6
+
+
+def _a_avance_depuis(resultats: list, empreinte: str) -> bool:
+    """Vrai si un geste NEUF a réussi depuis la dernière occurrence de `empreinte`.
+
+    Neuf = une empreinte jamais vue avant cette occurrence : rejouer en alternance
+    deux appels déjà faits (A, B, A, B…) n'est pas avancer.
+    """
+    dernier = max((i for i, r in enumerate(resultats)
+                   if r.get("payload_hash") == empreinte), default=-1)
+    if dernier < 0:
+        return False
+    connues = {r.get("payload_hash") for r in resultats[:dernier + 1]}
+    return any(r.get("ok") and r.get("payload_hash") not in connues
+               for r in resultats[dernier + 1:])
 # LE TEMPS IMPARTI D'UN TOUR (04/09). Relevé de Noa : « il a tourné en boucle
 # sans jamais s'arrêter sur "j'analyse votre demande" » — 13 minutes, 27 appels
 # de modèle, pour rendre un Excel que personne n'avait demandé. Le plafond de
@@ -661,6 +679,17 @@ async def routeur_node(state: AgentState) -> dict:
         familles = (None if not isinstance(brutes, list)
                     else [] if not brutes else familles_valides(brutes))
         correction = decision.get("correction") is True or str(decision.get("correction")).lower() == "true"
+        # UN TOUR QUI AGIT RAISONNE (17/09). Trois tours de suite classés « simple » et
+        # donc confiés au modèle rapide SANS réflexion : « tourne l'image » a retouché
+        # une autre photo, « liste tous les mails » a rappelé sept fois le même geste,
+        # « mets-moi ça dans un Excel » a refait l'Excel d'AVANT. Mesuré le même jour
+        # sur un appel réel de la boucle d'actions : sans réflexion, deepseek saute des
+        # étapes (bonne action 1 fois sur 6) ; le modèle puissant choisit juste en 4 à
+        # 7 s. Dès que le routeur prévoit des OUTILS, ou que la personne CORRIGE
+        # l'assistant, le tour part au palier qui raisonne. Une conversation sans
+        # outil reste au modèle rapide.
+        if familles or correction:
+            effort = "complex"
     except Exception as e:  # noqa: BLE001
         # En cas d'échec, on CHERCHE : répondre « je n'ai rien » alors que la
         # mémoire contient la réponse est bien pire qu'une recherche inutile.
@@ -1666,9 +1695,23 @@ async def tools_node(state: AgentState, config=None) -> dict:
         # DEUXIÈME REDEMANDE IDENTIQUE : le tour n'avance plus. Insister ne peut
         # rien produire de neuf — la réponse serait la même — et chaque passe
         # coûte un appel de modèle. On arrête et on dit pourquoi.
-        if len(deja) >= 2:
+        #
+        # SAUF SI LE TOUR A AVANCÉ ENTRE-TEMPS (17/09). « Ouvre les factures BTF
+        # une par une » : le modèle cherche, ouvre et lit deux factures, revient
+        # à la MÊME recherche pour savoir ce qu'il reste, en lit deux autres, y
+        # revient encore — et le tour était coupé là, en plein travail, la
+        # rédaction rendue au rédacteur de secours (montants recopiés des noms
+        # de fichiers au lieu des HT lus). Revenir consulter une liste entre
+        # deux gestes NEUFS et réussis n'est pas tourner en rond : on ressert
+        # le résultat, sans rien rejouer ni payer. L'enlisement reste coupé :
+        # rien de neuf depuis la dernière consultation, ou trop de retours.
+        if len(deja) >= 2 and not _a_avance_depuis(resultats, empreinte):
             return _sortir(f"l'action « {action['skill']} » a été redemandée à "
                            "l'identique sans que la demande avance.")
+        if len(deja) >= MAX_RETOURS_MEME_ACTION:
+            return _sortir(f"l'action « {action['skill']} » a été consultée "
+                           f"{len(deja)} fois ce tour : il faut répondre avec ce qui "
+                           "a été obtenu et dire ce qui reste à faire.")
         # Le modèle redemande la même action : on ressert son RÉSULTAT plutôt que
         # de la rejouer. Il contenait auparavant « (déjà exécuté ce tour) » et
         # rien d'autre — or c'est justement là que se trouvait l'identifiant du
@@ -2315,6 +2358,28 @@ def _reference_bloc(bloc) -> str:
     return ""
 
 
+# LES PIÈCES D'UN MAIL OUVERT EN CHEMIN NE SONT PAS UN LIVRABLE (17/09).
+#
+# « Enregistre l'image » (de ma signature) : pour la retrouver, le tour a rouvert un
+# mail avec ses pièces — et la réponse s'est vue ajouter d'office `Photo projet.jpg`
+# et deux devis PDF d'un client, sans aucun rapport. Relevé de Noa : « il affiche des
+# images et PDF au hasard ». Ce qu'un geste de LECTURE de mail dépose en chemin reste
+# connu (le modèle peut le montrer, sa carte est réelle), mais ne s'affiche d'office
+# que si la demande parle de mails ou de pièces jointes (règle du 09/09 : seul ce qui
+# est produit POUR la demande est un livrable).
+_SKILLS_PIECES_DE_MAIL = {"lire_mail", "lire_mails", "lire_piece_jointe", "check_mails",
+                          "courrier_entrant", "resume_fil_email"}
+_DEMANDE_DE_MAIL_RE = _re_livrables.compile(
+    r"\b(mails?|e-?mails?|courriels?|courrier|messages?|bo[iî]te|pi[eè]ces?[ -]jointes?|"
+    r"pj|joint[es]*|re[cç]us?|envoy[ée]s?)\b", _re_livrables.I)
+
+
+def _pieces_de_mail_hors_sujet(resultat: dict, demande: str) -> bool:
+    """Vrai si ce résultat vient d'une lecture de mail que la demande ne visait pas."""
+    return (str(resultat.get("skill") or "") in _SKILLS_PIECES_DE_MAIL
+            and not _DEMANDE_DE_MAIL_RE.search(demande or ""))
+
+
 def _blocs_livrables(resultats) -> list[dict]:
     """Les blocs d'écran des livrables produits par les skills de CE tour."""
     import json as _j
@@ -2561,6 +2626,12 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     """Le texte final, débarrassé des faux fichiers et des doublons, complété des vrais."""
     import json as _j
     produits = _blocs_livrables(state.get("tool_results") or [])
+    # Connu n'est pas affiché d'office : les pièces d'un mail ouvert en chemin
+    # restent montrables par le modèle, mais ne s'ajoutent pas seules.
+    _demande = str(state.get("query") or "")
+    _d_office = {_reference_bloc(b) for b in _blocs_livrables(
+        [r for r in (state.get("tool_results") or [])
+         if isinstance(r, dict) and not _pieces_de_mail_hors_sujet(r, _demande)])}
     # Le même livrable produit deux fois dans le tour : seule la DERNIÈRE
     # version compte (cf. _meme_livrable) — les références plus anciennes
     # sortent aussi de `references`, donc du texte, via _trier.
@@ -2635,7 +2706,7 @@ def _livrables_a_l_ecran(texte: str, state: AgentState) -> str:
     # restitué le DERNIER fichier du fil : l'Excel des fournisseurs, sans
     # aucun rapport. Corroborer une invention avec le mauvais fichier est
     # pire que ne rien montrer.
-    a_montrer = list(produits)
+    a_montrer = [b for b in produits if _reference_bloc(b) in _d_office]
     if inventes and not a_montrer and (du_fil or atelier):
         # UNE carte par invention (09/09 : trois vignettes, trois documents —
         # ne restituer que la dernière en aurait perdu deux), la version la
@@ -2755,6 +2826,19 @@ def _blocs_garantis(texte: str, state: AgentState) -> str:
         du_genre = [g for g in garantis if g.get("type") == genre]
         if len(du_genre) > 1:
             garantis = [g for g in garantis if g.get("type") != genre] + [du_genre[-1]]
+    # LE MÊME GESTE REFAIT REMPLACE SON BLOC, IL NE L'EMPILE PAS (17/09, fil ca57dd3e). « Mets-moi
+    # ça dans un Excel » : `lire_mails` a tourné cinq fois dans le tour, et le tableau des 98 mails
+    # s'est affiché CINQ fois (105 000 caractères de message). Les résumés, rédigés par le modèle
+    # à chaque passe, différaient d'un mot : aucune signature exacte ne les rapprochait. Deux
+    # blocs garantis de même type ET de même titre sont le même objet : on garde le DERNIER.
+    derniers: dict = {}
+    for rang, g in enumerate(garantis):
+        titre_g = " ".join(str(g.get("titre") or g.get("title") or "").split()).lower()
+        if titre_g:
+            derniers[(g.get("type"), titre_g)] = rang
+    garantis = [g for rang, g in enumerate(garantis)
+                if not " ".join(str(g.get("titre") or g.get("title") or "").split())
+                or derniers[(g.get("type"), " ".join(str(g.get("titre") or g.get("title") or "").split()).lower())] == rang]
     types_uniques_garantis = {g.get("type") for g in garantis if g.get("type") in uniques}
     if not garantis:
         return texte

@@ -62,7 +62,7 @@ rendu (écrit une fois, éprouvé) s'en charge pour les trois formats.
 | `liste` | `items[]`, `ordonnee` (booléen) |
 | `tableau` | `entetes[]`, `lignes[[]]`, `legende` |
 | `saut_page` | aucun champ |
-| `feuille` | `nom`, `entetes[]`, `lignes[[]]` |
+| `feuille` | `nom`, `entetes[]`, `lignes[[]]`, `total` (true : ligne de TOTAL par formule sur les colonnes chiffrées), `surlignees` (rangs de lignes à mettre en avant) |
 | `image` | `image` (la référence), `legende`, `largeur_cm` (2 à 17), `centre` |
 | `colonnes` | `texte`, `image` (la référence), `image_a_gauche`, `titre` |
 | `encadre` | `texte`, `titre`, `ton` (charte, info, attention) |
@@ -99,6 +99,7 @@ casser le rendu. Pas de jaune : illisible sur blanc à toute taille.
 - **pdf** : en-tête et pied de page sur chaque page, numérotation.
 - **docx** : idem, plus les tableaux natifs Word.
 - **xlsx** : chaque bloc `feuille` devient un onglet ; ailleurs, un `feuille`
+- **xlsx, les nombres** : écris les quantités et montants comme ils se lisent (« 412,50 », « 38,00 € », « 35 % ») ; une colonne entièrement chiffrée devient NUMÉRIQUE toute seule (sommable, triable), un téléphone ou un code postal reste du texte. Une formule simple (`=B2*C2`, `=SOMME(B2:B9)`) est gardée. Plusieurs onglets = plusieurs blocs `feuille`.
   est rendu comme un tableau précédé de son nom.
 
 ## Les gros documents

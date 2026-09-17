@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 logger = logging.getLogger("duret.bureautique.rendu")
 
@@ -1010,12 +1011,105 @@ def _tableau_pdf(e: dict, styles, format_page):
 
 
 # ── Excel ─────────────────────────────────────────────────────────────
+# ── DES CELLULES QUI SE CALCULENT (17/09) ───────────────────────────────────────────────
+# Rejoué sur le code livré : dans un classeur écrit par l'assistant, TOUTES les cellules étaient
+# du texte — « 412,50 », « 38,00 € », et même 412.5 donné en nombre (la normalisation met tout en
+# texte). Un classeur qu'on ne peut ni sommer ni trier n'est pas un classeur. La règle est
+# prudente : une colonne ne devient numérique que si TOUTES ses cellules remplies sont des nombres
+# sans ambiguïté, de même unité, et que son en-tête ne désigne pas un identifiant.
+_ENTETE_IDENTIFIANT = re.compile(
+    r"(siret|siren|\bt[ée]l|t[ée]l[ée]phone|portable|mobile|\bfax|\bcode\b|postal|\bcp\b|r[ée]f|\bn[°ºo]\b|num[ée]ro|"
+    r"\bid\b|identifiant|iban|\bbic\b|compte|immatriculation|\bann[ée]e\b|\bdate\b|\blot\b|article|chapitre)", re.I)
+_NOMBRE = re.compile(r"^\s*([+-]?)\s*(\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:([.,])(\d+))?\s*"
+                     r"(€|%|m²|m2|m³|m3|ml|m|u|h|j|kg|t|l)?\s*$", re.I)
+_FORMULE_SURE = re.compile(r"^=(?:\$?[A-Z]{1,3}\$?\d{1,7}|\d+(?:[.,]\d+)?|SUM|SOMME|ROUND|ARRONDI|AVERAGE|MOYENNE|MIN|MAX|"
+                           r"PRODUCT|PRODUIT|[-+*/():;, ])+$", re.I)
+_FONCTIONS_FR = {"SOMME": "SUM", "ARRONDI": "ROUND", "MOYENNE": "AVERAGE", "PRODUIT": "PRODUCT"}
+
+
+def _nombre_de(texte):
+    """(valeur, unité, décimales) si `texte` est un nombre SANS AMBIGUÏTÉ, sinon None."""
+    if isinstance(texte, bool):
+        return None
+    if isinstance(texte, (int, float)):
+        return (float(texte), "", 0 if float(texte).is_integer() else 2)
+    m = _NOMBRE.match(str(texte or ""))
+    if not m:
+        return None
+    signe, entier, _sep, decimales, unite = m.groups()
+    chiffres = re.sub(r"\D", "", entier)
+    # « 01000 », « 0612345678 » : un zéro en tête n'est pas une quantité. Seize chiffres non plus.
+    if (len(chiffres) > 1 and chiffres.startswith("0") and not decimales) or len(chiffres) > 15:
+        return None
+    valeur = float(chiffres + ("." + decimales if decimales else ""))
+    return (-valeur if signe == "-" else valeur, (unite or "").lower().replace("m2", "m²").replace("m3", "m³"),
+            len(decimales or ""))
+
+
+def formule_sure(texte):
+    """La formule telle qu'Excel la lit, ou None. Seules l'arithmétique et quelques fonctions de
+    total passent : une cellule venue d'un mail ou d'un DPGF qui commence par « = » (liens, appels
+    externes) reste du TEXTE — un classeur ne doit rien exécuter qu'on n'a pas écrit."""
+    t = str(texte or "").strip()
+    if not t.startswith("=") or not _FORMULE_SURE.match(t):
+        return None
+    t = t.upper().replace(";", ",")
+    for fr, en in _FONCTIONS_FR.items():
+        t = t.replace(fr + "(", en + "(")
+    return t
+
+
+def typer_colonnes(entetes, lignes, deja=()):
+    """{rang de colonne: format d'affichage} pour les colonnes À RENDRE NUMÉRIQUES, et les lignes
+    converties. `deja` : les colonnes que l'appelant a déclarées numériques lui-même."""
+    formats, largeur = {}, max([len(l) for l in lignes] + [len(entetes or [])] + [0])
+    for col in range(largeur):
+        titre = str((entetes or [])[col] if col < len(entetes or []) else "")
+        if col not in deja and _ENTETE_IDENTIFIANT.search(titre):
+            continue
+        lus, vides = [], 0
+        for l in lignes:
+            v = l[col] if col < len(l) else ""
+            if v is None or str(v).strip() == "":
+                vides += 1
+                continue
+            if formule_sure(v):
+                continue
+            n = _nombre_de(v)
+            if n is None:
+                lus = None
+                break
+            lus.append(n)
+        if not lus:
+            continue
+        unites = {u for _, u, _ in lus if u}
+        if len(unites) > 1:
+            continue
+        # Des entiers longs, tous sans séparateur ni unité : des identifiants (codes, numéros), pas des quantités.
+        if not unites and all(d == 0 and abs(v) >= 10000 for v, _, d in lus) and not re.search(
+                r"(qt|quantit|montant|total|prix|surface|ht|ttc|€|nombre|nb)", titre, re.I) and col not in deja:
+            continue
+        unite = next(iter(unites), "")
+        decimales = 2 if (any(d for _, _, d in lus) or unite == "€") else 0
+        motif = "#,##0" + (".00" if decimales else "")
+        formats[col] = "0.00%" if unite == "%" else (motif + (f' "{unite}"' if unite else ""))
+    sorties = []
+    for l in lignes:
+        neuve = list(l)
+        for col, fmt in formats.items():
+            if col < len(neuve) and str(neuve[col] or "").strip() != "" and not formule_sure(neuve[col]):
+                valeur = _nombre_de(neuve[col])[0]
+                neuve[col] = valeur / 100 if fmt == "0.00%" else (int(valeur) if float(valeur).is_integer() and "." not in fmt else valeur)
+        sorties.append(neuve)
+    return formats, sorties
+
+
 def _xlsx(entete: dict, elements, sortie: str) -> str:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
-    from bureautique.modele import MAX_FEUILLES, COULEURS, TAILLES
+    from bureautique.modele import MAX_FEUILLES, COULEURS, TAILLES, SURLIGNAGES
 
     classeur = Workbook()
     classeur.remove(classeur.active)
@@ -1071,12 +1165,20 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
             poser_image(logo_haut, hauteur_cm=1.5)
         return feuille
 
-    def ecrire(valeurs, gras=False):
+    def ecrire(valeurs, gras=False, teinte=None, formats=None):
         nonlocal ligne_courante
         for i, v in enumerate(valeurs, 1):
-            c = feuille.cell(row=ligne_courante, column=i, value=v)
+            formule = formule_sure(v) if isinstance(v, str) and v.lstrip().startswith("=") else None
+            c = feuille.cell(row=ligne_courante, column=i, value=formule or v)
+            if isinstance(v, str) and v.lstrip()[:1] in "=+@" and not formule and not isinstance(c.value, (int, float)):
+                c.data_type = "s"          # du TEXTE, jamais une formule qu'on n'a pas écrite
+            if formats and (i - 1) in formats and (formule or isinstance(v, (int, float))):
+                c.number_format = formats[i - 1]
             if gras:
                 c.font, c.fill = gras_blanc, fond
+            elif teinte:
+                c.fill = PatternFill("solid", fgColor=teinte)
+                c.font = Font(bold=True)
             c.alignment = Alignment(vertical="top", wrap_text=True)
         ligne_courante += 1
 
@@ -1110,15 +1212,33 @@ def _xlsx(entete: dict, elements, sortie: str) -> str:
             if e["entetes"]:
                 ecrire(e["entetes"], gras=True)
                 feuille.freeze_panes = "A2"     # les entêtes restent visibles
-            for ligne in e["lignes"]:
-                ecrire(ligne)
+            en_avant = set(e.get("surlignees") or [])
+            teinte = SURLIGNAGES.get(e.get("surlignage") or "orange")
+            formats, lignes_typees = typer_colonnes(e["entetes"], e["lignes"], set(e.get("colonnes_numeriques") or []))
+            premiere = ligne_courante
+            for rang, ligne in enumerate(lignes_typees):
+                ecrire(ligne, teinte=teinte if rang in en_avant else None, formats=formats)
+            # `total: true` : une ligne de TOTAL par formule, sur les colonnes numériques — le classeur
+            # se recalcule quand on corrige une quantité, au lieu de porter un total recopié.
+            if e.get("total") and formats and lignes_typees:
+                from openpyxl.utils import get_column_letter
+                derniere = ligne_courante - 1
+                total = [""] * (max(formats) + 1)
+                total[0] = "Total"
+                for col, fmt in formats.items():
+                    if fmt != "0.00%" and col > 0:
+                        total[col] = f"=SUM({get_column_letter(col + 1)}{premiere}:{get_column_letter(col + 1)}{derniere})"
+                ecrire(total, formats=formats)
+                for col in range(1, len(total) + 1):
+                    feuille.cell(row=ligne_courante - 1, column=col).font = Font(bold=True)
         elif bloc == "tableau":
             if e.get("legende"):
                 ecrire([e["legende"]])
             if e["entetes"]:
                 ecrire(e["entetes"], gras=True)
-            for ligne in e["lignes"]:
-                ecrire(ligne)
+            formats, lignes_typees = typer_colonnes(e["entetes"], e["lignes"])
+            for ligne in lignes_typees:
+                ecrire(ligne, formats=formats)
             ligne_courante += 1
         elif bloc == "titre":
             ecrire([e["texte"]])

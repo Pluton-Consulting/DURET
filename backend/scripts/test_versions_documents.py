@@ -68,7 +68,9 @@ atelier = charger("bureautique.atelier", "bureautique/atelier.py")
 # Le vocabulaire des blocs et le rendu : seuls comptent ici le versement et la
 # fiche, pas la mise en page (elle a son banc, `test_charte_document`).
 sys.modules["bureautique.modele"] = types.SimpleNamespace(
-    normaliser_element=lambda e: e if isinstance(e, dict) else None, MAX_ELEMENTS=500)
+    normaliser_element=lambda e: e if isinstance(e, dict) else None, MAX_ELEMENTS=500,
+    # 17/09 : l'atelier déplie les feuilles imbriquées avant de normaliser ; ici, rien à déplier.
+    deplier_feuilles=lambda elements: list(elements or []))
 
 
 def _rendre(entete, elements_, sortie):

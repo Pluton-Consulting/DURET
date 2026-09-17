@@ -59,6 +59,10 @@ def _couleur_de_marque(cle: str, repli: str) -> str:
 # `charte` = la couleur d'accent de la maison (titres, mises en avant) ;
 # `charte_fond` = le ton foncé de l'en-tête. Deux suffisent : au-delà, le
 # modèle choisirait au hasard.
+# LE SURLIGNAGE D'UNE LIGNE DE CLASSEUR (17/09) : « mets les trois priorités en premier et
+# surligne-les en orange ». Des fonds CLAIRS (le texte reste lisible), vocabulaire fermé.
+SURLIGNAGES = {"orange": "FCE4C4", "jaune": "FFF3B0", "vert": "DDEFD9", "rouge": "F8D4D4",
+               "bleu": "D9E5F5", "gris": "E8E8E8"}
 COULEURS["charte"] = _couleur_de_marque("couleur", COULEURS["noir"])
 COULEURS["charte_fond"] = _couleur_de_marque("fond", COULEURS["noir"])
 
@@ -182,6 +186,92 @@ def _champ_texte(brut: dict, limite: int = MAX_TEXTE, lignes: bool = False) -> s
     return ""
 
 
+_CLES_CONTENU_IMBRIQUE = ("contenu", "blocs", "elements", "content", "children")
+
+
+def _est_feuille(brut: dict) -> bool:
+    return _TYPES.get(_texte(brut.get("bloc") or brut.get("type") or brut.get("kind"), 40).lower()) == "feuille"
+
+
+def _a_des_lignes(brut: dict) -> bool:
+    return bool(brut.get("lignes") or brut.get("rows") or brut.get("entetes") or brut.get("headers"))
+
+
+def deplier_feuilles(elements) -> list:
+    """Une « feuille » qui PORTE ses blocs devient une feuille suivie de ses blocs.
+
+    17/09, trace du fil d13ff0ac : « un Excel à deux feuilles ». Le modèle a écrit,
+    quatre fois de suite et sous quatre variantes,
+    {"type":"feuille","nom":"Achats BTF 2026","contenu":[{titre},{tableau},{chiffres}]}
+    — la forme la plus naturelle qui soit. Or une feuille est PLATE ici (nom,
+    entetes, lignes) : sans entêtes ni lignes à son niveau, elle était écartée, avec
+    tout ce qu'elle contenait, et le tour répondait « aucun bloc n'a été retenu ».
+    Dix minutes perdues, le mode d'emploi relu, l'Excel jamais sorti.
+
+    Rien n'est inventé : le PREMIER tableau imbriqué donne à la feuille ses entêtes
+    et ses lignes ; les autres blocs suivent dans le même onglet, dans leur ordre
+    (le rendu écrit dans l'onglet courant). Un titre placé AVANT ce tableau est
+    omis : l'onglet porte déjà son nom, et un titre sous le tableau n'aurait pas de
+    sens. Une feuille déjà plate, ou tout autre bloc, passe tel quel.
+    """
+    sortie = []
+    elements = list(elements or [])
+    # LA FEUILLE-SÉPARATEUR (17/09, 15:45) : {"bloc":"feuille","titre":"Mails reçus"} puis,
+    # à côté, {"bloc":"tableau",…}. Sans entêtes ni lignes la feuille était écartée, et
+    # les deux tableaux tombaient dans le même onglet (« ignores=2 »). Une feuille NUE
+    # suivie d'un tableau prend ce tableau : c'est ce que la personne a demandé.
+    fusionnes, saute = [], False
+    for i, brut in enumerate(elements):
+        if saute:
+            saute = False
+            continue
+        if (isinstance(brut, dict) and _est_feuille(brut) and not _a_des_lignes(brut)
+                and not any(isinstance(brut.get(c), list) and brut.get(c) for c in _CLES_CONTENU_IMBRIQUE)
+                and i + 1 < len(elements) and isinstance(elements[i + 1], dict)
+                and _TYPES.get(_texte(elements[i + 1].get("bloc") or elements[i + 1].get("type")
+                                      or elements[i + 1].get("kind"), 40).lower()) == "tableau"):
+            suivant = elements[i + 1]
+            fusionnes.append({**{k: v for k, v in suivant.items() if k not in ("bloc", "type", "kind", "legende")},
+                              "type": "feuille",
+                              "nom": brut.get("nom") or brut.get("name") or brut.get("titre") or brut.get("title")
+                                     or suivant.get("titre") or suivant.get("legende")})
+            saute = True
+        else:
+            fusionnes.append(brut)
+    for brut in fusionnes:
+        imbriques = None
+        if isinstance(brut, dict) and _TYPES.get(
+                _texte(brut.get("bloc") or brut.get("type") or brut.get("kind"), 40).lower()) == "feuille":
+            if not (brut.get("lignes") or brut.get("rows") or brut.get("entetes") or brut.get("headers")):
+                imbriques = next((brut[c] for c in _CLES_CONTENU_IMBRIQUE
+                                  if isinstance(brut.get(c), list) and brut.get(c)), None)
+        if imbriques is None:
+            sortie.append(brut)
+            continue
+
+        def _est_tableau(x):
+            return isinstance(x, dict) and (
+                _TYPES.get(_texte(x.get("bloc") or x.get("type") or x.get("kind"), 40).lower())
+                in ("tableau", "feuille") or x.get("lignes") or x.get("rows"))
+        rang = next((i for i, x in enumerate(imbriques) if _est_tableau(x)), None)
+        nom = brut.get("nom") or brut.get("name") or brut.get("titre") or brut.get("title")
+        if rang is None:
+            sortie.extend(imbriques)      # pas de tableau : ses blocs, sans onglet vide
+            continue
+        tableau = imbriques[rang]
+        sortie.append({**{k: v for k, v in tableau.items() if k not in ("bloc", "type", "kind", "legende")},
+                       "type": "feuille", "nom": nom or tableau.get("nom") or tableau.get("legende")})
+        for i, x in enumerate(imbriques):
+            if i == rang:
+                continue
+            est_titre = isinstance(x, dict) and _TYPES.get(
+                _texte(x.get("bloc") or x.get("type") or x.get("kind"), 40).lower()) == "titre"
+            if i < rang and est_titre:
+                continue
+            sortie.append(x)
+    return sortie
+
+
 def normaliser_element(brut) -> dict | None:
     """Ramène un élément à sa forme sûre, ou None s'il est inexploitable.
 
@@ -254,7 +344,12 @@ def normaliser_element(brut) -> dict | None:
 
     if bloc == "chiffres":
         items = []
-        for i in (brut.get("items") or brut.get("chiffres") or [])[:4]:
+        # 17/09 : {"type":"chiffres","valeur":"4 661,10 €","libelle":"Total HT"} — un
+        # seul chiffre, écrit à plat. Écarté jusqu'ici : le total disparaissait du classeur.
+        aplat = ([{"valeur": brut.get("valeur") or brut.get("value"),
+                   "libelle": brut.get("libelle") or brut.get("label")}]
+                 if (brut.get("valeur") or brut.get("value")) else [])
+        for i in (brut.get("items") or brut.get("chiffres") or aplat)[:4]:
             if isinstance(i, dict):
                 v, l = _texte(i.get("valeur") or i.get("value"), 30), _texte(i.get("libelle") or i.get("label"), 80)
             elif isinstance(i, (list, tuple)) and len(i) >= 2:
@@ -340,6 +435,16 @@ def normaliser_element(brut) -> dict | None:
             sortie["legende"] = _texte(brut.get("legende"), 300)
         else:
             sortie["nom"] = _texte(brut.get("nom"), 31) or "Feuille"
+            # Des lignes mises en avant : leurs RANGS (0 = première ligne de données).
+            rangs = brut.get("surlignees") or brut.get("lignes_surlignees") or []
+            if isinstance(rangs, list):
+                rangs = sorted({i for i in rangs if type(i) is int and 0 <= i < len(lignes)})
+                if rangs:
+                    teinte = _texte(brut.get("surlignage") or brut.get("couleur_surlignage"), 12).lower()
+                    sortie["surlignees"] = rangs
+                    sortie["surlignage"] = teinte if teinte in SURLIGNAGES else "orange"
+            if brut.get("total") is True or str(brut.get("total") or "").strip().lower() in ("true", "oui", "vrai", "1"):
+                sortie["total"] = True
             colonnes=brut.get("colonnes_numeriques") or []
             if colonnes:
                 import math

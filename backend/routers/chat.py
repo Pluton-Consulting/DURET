@@ -912,6 +912,13 @@ async def _executer_tour_ws(websocket: WebSocket, user: User, thread_id: str,
                                         data.get("query", ""), final_response,
                                         _pieces_persistables(pieces, pieces_tour))
                 persistance_faite = True
+            # L'étape est RETENUE avant d'être dite : si la socket est partie,
+            # c'est le sondage de la demande qui la rendra à l'écran.
+            if event.get("node") is not None or event.get("type") == "node":
+                _requetes.noter_etape(data.get("request_id"), event.get("node"),
+                                      event.get("libelle"), event.get("skill"))
+            elif event.get("type") == "final":
+                _requetes.oublier_etape(data.get("request_id"))
             # `_dire` et non `send_json` : une socket partie (navigation,
             # rafraîchissement) ne doit plus faire dérailler le tour — il va
             # au bout, et sa réponse attend dans l'historique.

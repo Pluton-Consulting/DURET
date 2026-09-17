@@ -84,6 +84,10 @@ _PRODUCTION = (rf"je {_PRON}(?:cree|redige|genere|produis|finalise|termine"
                # le module documente ; on la rebouche sans se raconter qu'elle
                # ne se rouvrira pas ailleurs.
                r"|continue|reprends|verse|insere"
+               # 17/09, 18:29 : « La recherche n'a rien donné. J'essaie une autre orthographe
+               # avant de conclure. » — le tour s'est arrêté LÀ, et c'est la personne qui a dû
+               # retaper le nom. « j'essaie », « je tente », « je teste » : des promesses d'agir.
+               r"|essaie|essaye|reessaie|reessaye|tente|teste"
                # Relevés le 22/08, chacun sur un tour qui s'est arrêté là :
                # « Je recherche les informations sur X. », « Je relance la
                # consultation », « Je retente », « Je vais lire les mails »,
@@ -100,7 +104,10 @@ _PRODUCTION = (rf"je {_PRON}(?:cree|redige|genere|produis|finalise|termine"
                r"|prends|pioche|explore|descends|parcours|choisis|selectionne)\b"
                # Élision, avec ou sans pronom intercalé : « j'y ajoute ».
                r"|j['’](?:y |l['’])?(?:ajoute|envoie|ouvre|enregistre|extrais"
-               r"|inscris|insere)")
+               # 17/09 (Symbiose, « récupère le mail de … et fais-moi un pré-devis ») :
+               # « J'essaie une autre orthographe avant de conclure. » a clos le tour.
+               # Le verbe était connu derrière « je », pas derrière l'élision.
+               r"|inscris|insere|essaie|essaye|explore|interroge|examine|analyse)")
 
 # VERBES DE LECTURE au présent : « je compte 18 dossiers », « d'après ce que je
 # lis dans le CCTP ». Ce sont les tournures NORMALES d'un résultat d'observation

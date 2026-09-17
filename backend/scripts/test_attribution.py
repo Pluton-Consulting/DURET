@@ -91,8 +91,10 @@ if visuels.exists():
     print("\n3. Les visuels (module propre au projet)")
     contenu = visuels.read_text(encoding="utf-8")
     nb = contenu.count('expert="agent2"')
-    verifier("les 4 skills visuels déclarent expert=agent2", nb == 4,
-             f"{nb} déclaration(s)")
+    # 17/09 : `pivoter_image` a rejoint les gestes visuels — TOUS déclarent leur expert.
+    declares = contenu.count("fonction=")
+    verifier("tous les skills visuels déclarent expert=agent2", nb == declares and nb >= 5,
+             f"{nb} expert(s) pour {declares} déclaration(s)")
 else:
     print("\n3. Pas de module de conception propre au projet : rien à déclarer, mécanique en place")
 

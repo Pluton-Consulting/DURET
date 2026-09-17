@@ -230,6 +230,9 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const [tachesFile, setTachesFile] = useState<TacheFond[]>([])
   const [accords, setAccords] = useState<AccordEnAttente[]>([])
   const [accordEnCours, setAccordEnCours] = useState<string | null>(null)
+  // Une reprise suivie APRÈS la perte du POST « Approuver » (veille du téléphone,
+  // délai du mandataire) : le travail continue côté serveur, l'écran le sonde.
+  const [repriseSuivie, setRepriseSuivie] = useState(false)
   // Double de `accordEnCours`, lisible dans le meme tour que le clic : l'etat
   // React ne se met a jour qu'au rendu suivant, trop tard pour bloquer un
   // second clic.
@@ -591,17 +594,26 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   const attendreFinDeReprise = (id: string, cle: string) => {
     if (tachesSuiviesRef.current.has(cle)) majBulle(cle, TEXTE_RESULTAT_EN_COURS)
     setActivite("j'exécute ce que vous venez d'approuver")
+    setRepriseSuivie(true)
     let vides = 0
     const debut = Date.now()
     const sonde = setInterval(async () => {
-      if (!monteRef.current || Date.now() - debut > 60 * 60 * 1000) { clearInterval(sonde); return }
+      if (!monteRef.current || Date.now() - debut > 60 * 60 * 1000) { clearInterval(sonde); setRepriseSuivie(false); return }
       try {
         const p = await apiRequest<{ node?: string | null; libelle?: string }>(
           `/api/validations/${id}/reprise`, { token })
-        if (p?.node) { vides = 0; if (p.libelle) setActivite(p.libelle); return }
+        if (p?.node) {
+          vides = 0
+          const n = p.node
+          setThinkingNode(n)
+          setThinkingSteps((prev) => (prev[prev.length - 1] === n ? prev : [...prev, n]))
+          if (p.libelle) setActivite(p.libelle)
+          return
+        }
       } catch { return }
       if (++vides < 2) return
       clearInterval(sonde)
+      setRepriseSuivie(false)
       setActivite("")
       setThinkingNode(null)
       const tid = threadIdRef.current
@@ -1608,7 +1620,11 @@ ${texteAffiche}`)
         <ReflexionEnCours
           activite={activite || stepLabel(thinkingNode)}
           trace={traceReflexion}
-          enCours={loading}
+          // UN PLAN APPROUVÉ EST UN TRAVAIL EN COURS (17/09, porté de Symbiose). Le bandeau ne
+          // s'affichait que sous `loading`, que l'approbation d'un accord ne pose jamais :
+          // au téléphone, où la colonne « En ce moment » est masquée, un plan long ne
+          // montrait que « Résultat en cours… ».
+          enCours={loading || accordEnCours !== null || repriseSuivie}
         />
 
         {/* CE QUI SE PASSE SE LIT EN BAS, PAS EN HAUT (17/09, relevé de Noa :

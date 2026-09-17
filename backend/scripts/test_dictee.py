@@ -133,5 +133,21 @@ verifier("un raccourci prérempli met le curseur À LA FIN, champ déroulé",
          "setSelectionRange(r.prompt.length, r.prompt.length)" in barre
          and "champ.scrollTop = champ.scrollHeight" in barre)
 
+# ── UN MESSAGE PARTI NE REVIENT PAS DANS LE CHAMP (17/09) ────────────────────
+# Relevé de Noa : « quand j'envoie, le message se réécrit dans la saisie alors qu'il est déjà
+# envoyé ». La plume courait encore vers sa cible (un champ vide est un préfixe de tout), et
+# la dernière transcription revenait une seconde plus tard.
+envoi = barre[barre.index("const surEnvoi = "):]
+envoi = envoi[:envoi.index("return (")]
+verifier("à l'envoi, la dictée est PÉRIMÉE : la plume s'arrête et sa cible se vide",
+         "oublierLaDictee()" in envoi and envoi.index("dicteeRef.current?.arreter()") < envoi.index("oublierLaDictee()") < envoi.index('setTexte("")')
+         and "clearInterval(plumeRef.current); plumeRef.current = null" in barre and 'cibleDictee.current = ""' in barre)
+verifier("une transcription arrivée APRÈS l'envoi (ou d'une dictée plus ancienne) ne touche plus au champ",
+         "const cetteDictee = ++numeroDictee.current" in barre and "if (numeroDictee.current !== cetteDictee) return" in barre)
+verifier("arrêter le micro à la main ne périme RIEN : la dernière transcription s'écrit toujours",
+         "oublierLaDictee" not in barre[barre.index("const basculerDictee"):barre.index("const surEnvoi = ")])
+verifier("si la plume n'a pas fini, c'est le texte COMPLET de la dictée qui part",
+         "(vise && vise.startsWith(texte) ? vise : texte).trim()" in envoi)
+
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

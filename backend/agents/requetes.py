@@ -86,6 +86,40 @@ async def terminer(user_id, request_id: Optional[str], etat: str = "terminee",
         pass
 
 
+# L'ÉTAPE COURANTE D'UNE DEMANDE (17/09). Une socket perdue (téléphone en veille,
+# changement de réseau) fait passer l'écran au SONDAGE de la demande ; or le sondage
+# ne rendait que « toujours en cours ». L'écran restait figé sur la dernière étape
+# reçue — « je cherche ce nom sur le Drive », dix minutes durant — alors que le
+# serveur en était à produire l'Excel. La personne a cru le tour mort, a rechargé,
+# a renvoyé, et a reçu un refus qui ressemblait à une panne.
+# En mémoire du processus, comme `_REPRISES` côté validations : l'étape ne vaut que
+# pendant le tour, et un redémarrage tue le tour avec elle. Aucun contenu de
+# message n'y entre : un nom de nœud, le libellé « je … » déjà montré à l'écran.
+_ETAPES: dict[str, dict] = {}
+_ETAPES_MAX = 500
+
+
+def noter_etape(request_id, node=None, libelle=None, skill=None) -> None:
+    """Retient l'étape que la socket vient d'annoncer. Ne lève jamais."""
+    try:
+        if not request_id:
+            return
+        cle = str(request_id)[:120]
+        avant = _ETAPES.get(cle) or {}
+        if len(_ETAPES) >= _ETAPES_MAX and cle not in _ETAPES:
+            _ETAPES.pop(next(iter(_ETAPES)), None)
+        # Un nœud sans libellé laisse le libellé PRÉCÉDENT, comme à l'écran.
+        _ETAPES[cle] = {"node": str(node or avant.get("node") or ""),
+                        "libelle": str(libelle or avant.get("libelle") or "")[:200],
+                        "skill": str(skill or "")[:80]}
+    except Exception:  # noqa: BLE001 — un affichage ne casse jamais un tour
+        pass
+
+
+def oublier_etape(request_id) -> None:
+    _ETAPES.pop(str(request_id or "")[:120], None)
+
+
 def reponse_de_reprise(demande: dict) -> dict:
     """Une reprise reçoit le résultat acquis, jamais une bulle vide."""
     if demande.get("etat") in ("terminee", "echouee"):
@@ -98,7 +132,8 @@ def reponse_de_reprise(demande: dict) -> dict:
             resultat = {"response": "Ce traitement est terminé. Son résultat est à retrouver dans l'historique du fil."}
         return {**resultat, "thread_id": demande.get("thread_id"), "reprise": False}
     return {"response": None, "thread_id": demande.get("thread_id"), "reprise": True,
-            "etat": demande.get("etat"), "message": "Le même traitement est toujours en cours."}
+            "etat": demande.get("etat"), "message": "Le même traitement est toujours en cours.",
+            "etape": _ETAPES.get(str(demande.get("request_id") or "")[:120])}
 
 
 async def oublier_anciennes(jours: int = 7) -> int:
@@ -127,7 +162,9 @@ async def consulter(user_id, request_id: str) -> dict | None:
                 "Le traitement a été interrompu. Vérifiez l’historique et les actions déjà effectuées avant de relancer."}, ensure_ascii=False))
         ligne = await conn.fetchrow("""SELECT etat, thread_id, resultat FROM requetes_chat
             WHERE user_id=$1::uuid AND request_id=$2""", str(user_id), request_id)
-    return dict(ligne) if ligne else None
+    # L'identifiant accompagne la ligne : c'est par lui que `reponse_de_reprise`
+    # retrouve l'étape courante du tour.
+    return {**dict(ligne), "request_id": request_id} if ligne else None
 
 
 @asynccontextmanager

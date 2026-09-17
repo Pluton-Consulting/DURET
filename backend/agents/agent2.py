@@ -278,8 +278,14 @@ def pieces_du_tour(state: AgentState) -> list:
 
 def _nettoyer_image(donnees: bytes) -> bytes:
     """Ré-encode une image : plus d'EXIF/GPS, et une largeur bornée."""
-    from PIL import Image
-    img = Image.open(io.BytesIO(donnees)).convert("RGB")
+    from PIL import Image, ImageOps
+    # L'ORIENTATION S'APPLIQUE AVANT DE DISPARAÎTRE (17/09). Un téléphone range une
+    # photo prise en portrait COUCHÉE, avec une étiquette EXIF « à tourner ». On
+    # ré-encodait pour retirer l'EXIF… sans l'appliquer : l'étiquette partait,
+    # l'image restait couchée — à l'écran, pour la vision (« la photo est pivotée de
+    # 90° ») et pour le photomontage, rendu couché lui aussi. Relevé de Noa : « tourne
+    # l'image pour que je la voie à l'endroit ».
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(donnees))).convert("RGB")
     if img.width > _MAX_IMG_WIDTH:
         ratio = _MAX_IMG_WIDTH / img.width
         img = img.resize((_MAX_IMG_WIDTH, int(img.height * ratio)))

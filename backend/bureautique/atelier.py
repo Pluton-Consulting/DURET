@@ -499,7 +499,7 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str,
 
     Lève `DejaPresent` quand l'essentiel du versement est déjà dans le document.
     """
-    from bureautique.modele import normaliser_element, MAX_ELEMENTS
+    from bureautique.modele import normaliser_element, deplier_feuilles, MAX_ELEMENTS
 
     f = fiche(jeton, proprietaire)
     if f is None:
@@ -507,7 +507,7 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str,
     if f.get("fini"):
         raise ValueError("document déjà terminé")
 
-    retenus = [e for e in (normaliser_element(x) for x in (elements or [])) if e]
+    retenus = [e for e in (normaliser_element(x) for x in deplier_feuilles(elements)) if e]
     if refuser_repetition and int(f.get("elements") or 0) > 0:
         presents, distinctifs, exemples = deja_presents(jeton, retenus)
         if distinctifs and presents >= 2 and presents / distinctifs >= PART_DEJA_PRESENTE:

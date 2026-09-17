@@ -14,7 +14,10 @@ def extraire(octets):
             if ref not in doc.part.related_parts:continue
             partie=doc.part.related_parts[ref]
             try:brut,extension=normaliser_octets(partie.blob,partie.content_type)
-            except ValueError:
+            except Exception:
+                # UNE IMAGE INDÉCODABLE N'ARRÊTE PAS UN MÉMOIRE (17/09, modèle réel de Duret) :
+                # `normaliser_octets` lève `ImageRefusee`, qui n'est PAS une ValueError — le
+                # mémoire mourait ici à chaque essai, après avoir lu toutes ses pièces.
                 resultats.append({'numero':len(resultats)+1,'contexte':contexte,'indisponible':'Format d’illustration non décodable : '+partie.content_type});continue
             resultats.append({'numero':len(resultats)+1,'contexte':contexte,'octets':brut,'extension':extension})
     return resultats

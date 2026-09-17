@@ -374,6 +374,15 @@ try:
 except ValueError as e:
     refus = str(e)
 verifier("une rubrique ajoutée qui DOUBLE une rubrique reprise est refusée au premier essai", "double la rubrique reprise" in refus, refus[:160])
+lourd = _normaliser_plan({"pages_max": 12, "sections": [{"titre": "c", "remplace_modele": 4, "sources": []}] + [{"titre": "x", "reprise_modele": i, "sources": []} for i in (0, 1, 2, 3, 5, 6)]}, [], None, _struct)
+try:
+    _plan_suit_modele(lourd, _struct, {"n": 0}); refus = ""
+except ValueError as e:
+    refus = str(e)
+verifier("limite de pages : des reprises trop lourdes sont refusées au premier essai, poids de chaque rubrique à l'appui",
+         "Limite de 12 pages" in refus and "pèsent 10.0 pages" in refus and "Retire 2.0 page(s)" in refus and "rubriques_modele_retirees" in refus, refus[:260])
+essai2 = {"n": 1}; _plan_suit_modele(lourd, _struct, essai2)
+verifier("au second essai le même plan est LIVRÉ (le dépassement se dit au rendu)", essai2["n"] == 2)
 _repartir_les_mots(bon, _struct)
 mots = {x["titre"]: x.get("mots_cibles") for x in bon["sections"] if "reprise_modele" not in x}
 verifier("les pages qui restent après la garde et les reprises se partagent entre les rubriques RÉDIGÉES, au prorata",

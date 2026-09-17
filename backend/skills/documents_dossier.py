@@ -216,6 +216,20 @@ def _plan_suit_modele(plan,structure,essai):
             +'. Pour chacune : "reprise_modele" (gardée telle quelle), "remplace_modele" (rédigée à neuf pour ce projet, sous SON titre, à SA place) '
              'ou une entrée de rubriques_modele_retirees avec sa raison. Le contenu de projet va dans ces rubriques du modèle, pas dans des rubriques ajoutées.')
     reprises=[s for s in sections if type(s.get('reprise_modele')) is int]
+    # LA LIMITE DE PAGES SE TIENT AU PLAN, CHIFFRES EN MAIN (sonde du 17/09 : 14 pages de reprises
+    # + 4 de garde sur 20, et douze pages de rubriques rédigées par-dessus). La consigne « réserve
+    # un tiers » ne suffisait pas : le refus donne le poids de chaque rubrique reprise.
+    limite=plan.get('pages_max')
+    if type(limite) is int and limite>0 and reprises:
+        poids={f['index']:float(f.get('pages') or 1) for f in structure['sections']}
+        garde=float(structure.get('pages_garde',2))
+        prises=garde+sum(poids.get(s['reprise_modele'],1.) for s in reprises)
+        plafond=limite-max(3.,limite/3)
+        if prises>plafond:
+            detail=' ; '.join(str(s['reprise_modele'])+' « '+s['titre'][:45]+' » '+str(poids.get(s['reprise_modele'],1.))+' p' for s in sorted(reprises,key=lambda s:-poids.get(s['reprise_modele'],1.)))
+            raise ValueError('Limite de '+str(limite)+' pages : la garde ('+str(garde)+' p) et les rubriques reprises pèsent '+str(round(prises,1))+' pages ; il ne doit pas en rester plus de '+str(round(plafond,1))
+                +' pour laisser un tiers du document aux rubriques rédigées, qui portent la note technique. Retire '+str(round(prises-plafond,1))+' page(s) de rubriques reprises — les moins utiles aux critères de jugement d’abord — '
+                 'en les passant dans rubriques_modele_retirees avec leur raison. Poids : '+detail+'.')
     for a in ajoutees:
         mots=_mots_forts(_singulier(a['titre']))
         for r in reprises:

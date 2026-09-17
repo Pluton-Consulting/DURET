@@ -41,7 +41,7 @@ FAMILLES: dict[str, tuple[str, ...]] = {
                  "drive_lire_lot", "drive_apercu", "drive_photos", "drive_deposer",
                  "drive_deposer_document",
                  "nas_arborescence", "nas_lister", "nas_ouvrir", "nas_lire", "nas_lire_lot",
-                 "nas_chercher", "nas_apercu", "nas_photos", "nas_deposer", "nas_deposer_document"),
+                 "nas_chercher", "nas_apercu", "nas_photos", "nas_deposer", "nas_deposer_document", "nas_creer_dossier"),
     "donnees": ("interroger_donnees", "liste_clients", "liste_fournisseurs", "fiche_client",
                 "dossiers_en_attente", "prix_observes"),
     "facturation": ("suivre_facture", "factures_suivies", "relancer_factures", "enregistrer_relance",

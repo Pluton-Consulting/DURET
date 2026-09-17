@@ -50,6 +50,7 @@ export interface AccordEnAttente {
 const ACTIONS_EXTERNES: Record<string, string> = {
   nas_deposer: "Déposer un fichier sur le serveur de l'entreprise",
   nas_deposer_document: "Finaliser un document et le déposer sur le serveur",
+  nas_creer_dossier: "Créer un dossier sur le serveur de l'entreprise",
   generer_visuel: "Générer un visuel (cette génération est facturée)",
   rediger_email: "Envoyer un message",
   redaction_email: "Envoyer un message",

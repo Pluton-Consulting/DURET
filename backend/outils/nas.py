@@ -756,8 +756,25 @@ def _nom_avec_extension(nom: Optional[str], entete: dict) -> str:
     return f"{final}.{fmt}"               # absente : ajoutée
 
 
+async def dossier_de_depot(dossier: str, sous_dossier: Optional[str] = None) -> tuple[str, Optional[dict]]:
+    """Où déposer : le dossier résolu par son NOM, et — si on le demande — un sous-dossier
+    créé dedans quand il n'existe pas encore (« range-le dans Appels d'offres, dossier La
+    Teste »). Rend (chemin, compte rendu de la création ou None). Un seul niveau créé, jamais
+    une arborescence ; un refus du serveur est une ERREUR, pas un dépôt à côté."""
+    from nas.acces import creer_dossier
+
+    chemin = await resoudre_dossier(dossier)
+    if not (sous_dossier or "").strip():
+        return chemin, None
+    cree = await creer_dossier(chemin, sous_dossier)
+    if not cree.get("chemin"):
+        raise RuntimeError(f"Le sous-dossier « {sous_dossier} » n'a pas pu être créé dans {chemin} : "
+                           f"{cree.get('message') or 'raison inconnue'}. Rien n'a été déposé.")
+    return cree["chemin"], cree
+
+
 async def deposer_document(document_id: str, dossier: str, proprietaire: str,
-                           nom: Optional[str] = None) -> dict:
+                           nom: Optional[str] = None, sous_dossier: Optional[str] = None) -> dict:
     """Finalise un document en cours et le dépose sur le serveur, en un geste.
 
     Deux actions distinctes jusqu'ici — `terminer_document` puis `nas_deposer` —
@@ -798,8 +815,7 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
     # « Dépose-le dans Drive » doit suffire : le dossier se résout par NOM,
     # comme partout ailleurs — c'est au moment du dépôt que l'exigence du
     # chemin exact coûtait le plus cher, après tout le travail de rédaction.
-    async with connexion() as (client, base, sid):
-        dossier = await _resoudre(client, base, sid, dossier)
+    dossier, creation = await dossier_de_depot(dossier, sous_dossier)
 
     depot = await deposer(dossier, final, contenu)
     # UN DÉPÔT RATÉ DOIT ÊTRE UN ÉCHEC, pas un dictionnaire optimiste.
@@ -823,6 +839,7 @@ async def deposer_document(document_id: str, dossier: str, proprietaire: str,
     return {"document_id": document_id, "titre": entete["titre"],
             "format": entete["format"], "octets": fiche["octets"],
             "elements": fiche["elements"], **depot,
+            **({"sous_dossier_cree": bool(creation.get("cree")), "sous_dossier": creation.get("chemin")} if creation else {}),
             # Le début RÉEL du fichier déposé, pour l'aperçu dans le chat.
             "extrait": fiche.get("extrait") or "",
             "note": ("Document finalisé ET déposé sur le serveur. Montre-le "

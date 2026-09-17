@@ -106,7 +106,8 @@ async def nas_deposer_document(data: dict, user) -> dict:
         _echec("`document_id` et `dossier` sont requis.")
     try:
         return await deposer_document(doc, dossier, _proprietaire(user),
-                                      (data.get("nom") or "").strip() or None)
+                                      (data.get("nom") or "").strip() or None,
+                                      (data.get("sous_dossier") or "").strip() or None)
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
 
@@ -220,9 +221,10 @@ SKILLS = {
                      "en un geste — UNIQUEMENT si on demande de le RANGER sur le "
                      "serveur. Pour donner ou telecharger un document dans le "
                      "chat, `terminer_document` suffit : le fichier y est deja. "
-                     "`dossier` accepte le NOM (ex. « Drive »). Ecrit sur le "
-                     "serveur : demande une validation humaine"),
-        requis=["document_id", "dossier"], optionnels=["nom"],
+                     "`dossier` accepte le NOM (ex. « Drive ») ; `sous_dossier` : "
+                     "un dossier a CREER dedans s'il manque. Ecrit sur le serveur : "
+                     "validation humaine"),
+        requis=["document_id", "dossier"], optionnels=["nom", "sous_dossier"],
         # Le depot ecrit sur le serveur de l'entreprise : effet EXTERNE, donc
         # validation humaine — composer deux gestes ne compose pas les droits.
         effet="externe",

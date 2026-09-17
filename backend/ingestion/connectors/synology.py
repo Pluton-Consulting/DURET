@@ -92,6 +92,15 @@ _ERREURS_FICHIERS = {
     418: "nom ou chemin illégal",
     421: "ressource occupée",
     599: "cette tâche de fichier n'existe pas",
+    # Création de dossier et téléversement (17/09) : ces codes tombaient sur « erreur DSM 1805 ».
+    1100: "la création du dossier a échoué (droits du compte sur ce dossier, ou nom refusé)",
+    1101: "trop de fichiers ou de dossiers dans le dossier parent",
+    1800: "taille annoncée et taille reçue différentes (envoi interrompu)",
+    1801: "délai dépassé pendant le téléversement",
+    1802: "aucun nom de fichier dans l'envoi",
+    1803: "téléversement annulé par le serveur",
+    1804: "fichier trop volumineux pour ce système de fichiers",
+    1805: "un fichier de ce nom existe déjà dans ce dossier (rien n'est jamais écrasé)",
 }
 
 

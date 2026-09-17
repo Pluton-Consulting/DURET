@@ -190,12 +190,48 @@ async def nas_deposer(data: dict, user) -> dict:
         # « Dépose-le dans 02-Devis-affaires » : le dossier se résout par NOM,
         # comme pour `nas_deposer_document` — le chemin exact n'est pas ce que
         # le modèle a sous les yeux après un listage.
-        from outils.nas import resoudre_dossier
-        return await deposer(await resoudre_dossier(dossier), nom, contenu)
+        from outils.nas import dossier_de_depot
+        vise, creation = await dossier_de_depot(dossier, (data.get("sous_dossier") or "").strip() or None)
+        depot = await deposer(vise, nom, contenu)
     except NasRefuse as e:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001
         _echec(_detail("Le dépôt a échoué", e))
+    # UN DÉPÔT REFUSÉ EST UN ÉCHEC (17/09). `deposer()` ne lève pas : elle rend
+    # {"depose": False, "message"} — et ce skill rendait ce dictionnaire tel quel, donc une
+    # RÉUSSITE pour tout ce qui le lit (le défaut décrit dans `_echec`, corrigé depuis
+    # longtemps dans `nas_deposer_document`, jamais ici).
+    if not depot.get("depose"):
+        _echec(f"Le dépôt sur le serveur a ÉCHOUÉ : {depot.get('message') or 'raison inconnue'}. "
+               "Le fichier n'est PAS sur le serveur ; il reste téléchargeable dans la conversation.")
+    if creation:
+        depot = {**depot, "sous_dossier_cree": bool(creation.get("cree")), "sous_dossier": creation.get("chemin")}
+    return {**depot, "message_final": f"Fichier « {depot['nom']} » déposé dans {depot['dossier']}."}
+
+
+async def nas_creer_dossier(data: dict, user) -> dict:
+    """Crée UN dossier dans un dossier existant du serveur. ÉCRITURE — validation humaine."""
+    from nas.acces import creer_dossier, verifier_role, NasRefuse
+    try:
+        verifier_role(user)
+    except NasRefuse as e:
+        _echec(str(e))
+    parent = (data.get("dossier") or data.get("parent") or data.get("dans") or "").strip()
+    nom = (data.get("nom") or data.get("sous_dossier") or "").strip()
+    if not parent or not nom:
+        _echec("Il faut `dossier` (le dossier EXISTANT où créer, par son nom ou son chemin) et `nom` (le dossier à créer).")
+    try:
+        from outils.nas import resoudre_dossier
+        r = await creer_dossier(await resoudre_dossier(parent), nom)
+    except NasRefuse as e:
+        _echec(str(e))
+    except Exception as e:  # noqa: BLE001
+        _echec(_detail("La création du dossier a échoué", e))
+    if not r.get("chemin"):
+        _echec(f"Le dossier n'a PAS été créé : {r.get('message') or 'raison inconnue'}.")
+    return {**r, "message_final": (f"Le dossier « {r['nom']} » existait déjà : {r['chemin']}." if r.get("existait")
+                                   else f"Dossier créé : {r['chemin']}."),
+            "a_faire": "Pour y déposer un fichier, reprends ce `chemin` EXACT dans `dossier`."}
 
 
 # ── Déclarations : tout ce que le système doit savoir, ICI ───────────
@@ -296,10 +332,23 @@ SKILLS = {
                      "depose JAMAIS pour « donner », « montrer » ou « telecharger » "
                      "un fichier. Ecrit sur le serveur : validation humaine. "
                      "N'ecrase jamais. Aucune suppression ni renommage n'est "
-                     "possible : ne le promets pas"),
-        requis=["dossier", "document_id"], optionnels=["nom"],
+                     "possible : ne le promets pas. `sous_dossier` : un dossier a "
+                     "CREER dans `dossier` s'il n'existe pas, puis le fichier y est "
+                     "depose (un seul accord)"),
+        requis=["dossier", "document_id"], optionnels=["nom", "sous_dossier"],
         # Écrire sur le serveur de l'entreprise sort du périmètre de
         # l'application : effet EXTERNE, validation humaine obligatoire.
         effet="externe",
         libelle="je dépose le fichier sur le serveur"),
+    "nas_creer_dossier": Declaration(
+        fonction=nas_creer_dossier,
+        description=("CREE un dossier sur le serveur : `dossier` = le dossier EXISTANT "
+                     "ou le creer (nom ou chemin), `nom` = le dossier a creer. Un seul "
+                     "niveau a la fois. S'il existe deja, il est rendu tel quel, rien "
+                     "n'est ecrase. Ecrit sur le serveur : validation humaine. Pour "
+                     "creer ET deposer un fichier d'un coup, prefere `sous_dossier` "
+                     "de `nas_deposer_document`"),
+        requis=["dossier", "nom"], optionnels=[],
+        effet="externe",
+        libelle="je crée le dossier sur le serveur"),
 }

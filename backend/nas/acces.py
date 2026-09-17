@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import posixpath
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -1034,6 +1035,103 @@ async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
         return await _chercher_ouvert(client, base, sid, motif, dossier)
 
 
+_INTERDITS_NOM = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def nom_sur(nom: str, defaut: str = "fichier", longueur: int = 180) -> str:
+    """Un nom que le serveur ACCEPTE, sans rien perdre du sens (17/09).
+
+    Le titre d'un mémoire — « … Lots 11 Carrelage/Faïence et 12 Sols souples » —
+    devenait « Faïence et 12 Sols souples.docx » : `basename` coupait à la barre
+    oblique. Et « : ? * " < > | » valent « nom ou chemin illégal » (418) sur un
+    partage lu depuis Windows. Les caractères interdits deviennent un tiret ;
+    l'extension est gardée quand le nom est raccourci.
+    """
+    propre = _INTERDITS_NOM.sub(" - ", str(nom or ""))
+    propre = re.sub(r"\s+", " ", propre).strip(" .-")
+    if not propre or propre in (".", ".."):
+        propre = defaut
+    if len(propre) > longueur:
+        racine, point, ext = propre.rpartition(".")
+        propre = (racine[:longueur - len(ext) - 1].rstrip(" .-") + "." + ext) if point and 0 < len(ext) <= 5 else propre[:longueur].rstrip(" .-")
+    return propre
+
+
+async def _ecrire(envoyer) -> dict:
+    """Une ÉCRITURE sur le serveur, rejouée UNE fois si la session est morte.
+
+    Les lectures se réparent seules depuis le 17/09 (`_appel`) ; le dépôt, lui,
+    parlait au serveur en direct : une session invalidée par DSM (codes 105, 106,
+    107, 119) faisait échouer le dépôt qu'on venait de VALIDER. `envoyer(client,
+    base, sid)` rend la réponse JSON de DSM.
+    """
+    from ingestion.connectors import synology as c
+
+    async with connexion() as (client, base, sid):
+        data = await envoyer(client, base, sid)
+        code = (data.get("error") or {}).get("code", 0)
+        if not data.get("success") and code in c._CODES_SESSION:
+            neuf = await c._nouvelle_session(client, base, sid)
+            if neuf:
+                data = await envoyer(client, base, neuf)
+        return data
+
+
+async def creer_dossier(parent: str, nom: str) -> dict:
+    """Crée UN dossier dans un dossier existant du périmètre. ÉCRITURE — validation.
+
+    Rien n'est écrasé ni renommé : si un dossier de ce nom existe déjà (aux accents
+    et à la casse près), c'est LUI qui est rendu, et on le dit. Jamais de création
+    en cascade (`force_parent=false`) : un chemin mal deviné ne fabrique pas une
+    arborescence parallèle sur le serveur de l'entreprise.
+    """
+    import json as _json
+    import unicodedata
+    from ingestion.connectors import synology as c
+
+    vise = verifier(parent)
+    propre = nom_sur(nom, defaut="")
+    if not propre:
+        raise NasRefuse("Donne un nom au dossier à créer.")
+    if propre[0] in "#@" or propre.startswith("~$"):
+        raise NasRefuse("Un nom de dossier ne commence pas par « # », « @ » ou « ~$ » : ce sont des dossiers du système.")
+
+    def _nu(t):
+        plat = unicodedata.normalize("NFD", str(t or "")).casefold()
+        return " ".join("".join(ch for ch in plat if unicodedata.category(ch) != "Mn").split())
+
+    async with connexion() as (client, base, sid):
+        existants = (await _lister_ouvert(client, base, sid, vise, tout=True)).get("entrees") or []
+    for e in existants:
+        if _nu(e.get("nom")) == _nu(propre):
+            if not e.get("dossier"):
+                raise NasRefuse(f"Un FICHIER s'appelle déjà « {e.get('nom')} » dans ce dossier : choisis un autre nom.")
+            return {"cree": False, "existait": True, "chemin": e.get("chemin"), "nom": e.get("nom"), "parent": vise}
+
+    async def envoyer(client, base, sid):
+        r = await client.get(f"{base}/webapi/entry.cgi", timeout=60, params={
+            "api": "SYNO.FileStation.CreateFolder", "version": 2, "method": "create", "_sid": sid,
+            "folder_path": _json.dumps([vise]), "name": _json.dumps([propre]), "force_parent": "false"})
+        r.raise_for_status()
+        return r.json()
+
+    data = await _ecrire(envoyer)
+    if not data.get("success"):
+        code = (data.get("error") or {}).get("code", 0)
+        return {"cree": False, "message": c._message(code, "SYNO.FileStation.CreateFolder.create")}
+    dossiers = ((data.get("data") or {}).get("folders")) or []
+    chemin = (dossiers[0].get("path") if dossiers else None) or posixpath.join(vise, propre)
+    # Le catalogue en mémoire ne sera refait que dans l'heure : le dossier neuf y entre
+    # tout de suite, sinon « dépose-le dans <ce dossier> » ne le trouverait pas par son nom.
+    try:
+        if isinstance(_CATALOGUE.get("entrees"), list):
+            _CATALOGUE["entrees"].append({"nom": propre, "chemin": chemin, "dossier": True, "octets": None, "modifie": None})
+    except Exception:  # noqa: BLE001 — un confort de recherche, jamais un motif d'échec
+        pass
+    logger.info("Dossier créé sur le NAS : %s", chemin)
+    return {"cree": True, "chemin": chemin, "nom": propre, "parent": vise}
+
+
 async def deposer(chemin_dossier: str, nom: str, contenu: bytes) -> dict:
     """Dépose un fichier sur le NAS. ÉCRITURE — passe par la validation.
 
@@ -1044,12 +1142,11 @@ async def deposer(chemin_dossier: str, nom: str, contenu: bytes) -> dict:
     from ingestion.connectors import synology as c
 
     vise = verifier(chemin_dossier)
-    propre = posixpath.basename((nom or "fichier").replace("\\", "/")) or "fichier"
+    propre = nom_sur(nom)
 
-    # La session PARTAGÉE, comme tous les autres gestes : le dépôt payait sa
-    # propre résolution d'adresse et son propre login alors qu'une session
-    # venait presque toujours d'être ouverte par le geste précédent.
-    async with connexion() as (client, base, sid):
+    # La session PARTAGÉE, comme tous les autres gestes — et rejouée une fois si
+    # DSM l'a invalidée entre-temps (`_ecrire`).
+    async def envoyer(client, base, sid):
         r = await client.post(
             f"{base}/webapi/entry.cgi",
             params={"api": "SYNO.FileStation.Upload", "version": 2,
@@ -1057,12 +1154,17 @@ async def deposer(chemin_dossier: str, nom: str, contenu: bytes) -> dict:
             data={"path": vise, "create_parents": "false", "overwrite": "false"},
             files={"file": (propre, contenu)}, timeout=180)
         r.raise_for_status()
-        data = r.json()
+        return r.json()
+
+    data = await _ecrire(envoyer)
 
     if not data.get("success"):
         code = (data.get("error") or {}).get("code", 0)
-        return {"depose": False,
-                "message": c._message(code, "Upload")
-                + (" (un fichier de ce nom existe déjà : renomme-le)" if code == 1805 else "")}
+        # Le contexte NOMME la famille d'API : « Upload » seul faisait lire un code de
+        # FICHIER dans le dictionnaire de l'AUTHENTIFICATION (408 = « mot de passe expiré »
+        # au lieu de « ce dossier n'existe pas ») — le piège déjà payé sur les lectures.
+        return {"depose": False, "code": code,
+                "message": c._message(code, "SYNO.FileStation.Upload.upload")
+                + (" — renomme le fichier" if code in (414, 1805) else "")}
     logger.info("Fichier déposé sur le NAS dans %s (%d octets)", vise, len(contenu))
     return {"depose": True, "dossier": vise, "nom": propre, "octets": len(contenu)}

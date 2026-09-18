@@ -530,6 +530,10 @@ async def charger_dossier(uid,fil,dossier,user,lots=(),usage='document',tout=Fal
     logger.info('Dossier « %s » (%s) : %d fichier(s) vus, %d chargé(s), %d illisible(s), écartés %s%s',chemin[-80:],usage,len(fichiers),len(ajoutes),len(ignores),ecartes,' — liste coupée' if coupe else '')
     return {'dossier':chemin,'vus':len(fichiers),'ajoutes':ajoutes,'ignores':ignores,'ecartes':ecartes,'lots':sorted(lots),'lots_deduits':deduits,'coupe':coupe,'tout':bool(tout)}
 
+def _refus_definitif(message):
+    """Une ValueError que la file ne rejoue pas : la cause ne changera pas au 8ᵉ essai (18/09)."""
+    e=ValueError(message);e.definitif=True;return e
+
 async def dossier_du_travail(uid,fil,data,user,demande,usage='document'):
     """Charge le dossier nommé par le geste (`dossier`) ou cité entre guillemets
     dans la demande. Rend le compte rendu, ou None. Un nom qui ne se résout pas
@@ -552,7 +556,8 @@ async def dossier_du_travail(uid,fil,data,user,demande,usage='document'):
         return r
     except Exception as e:
         logger.warning('Dossier « %s » non chargé (%s) : %s',nom[:60],type(e).__name__,str(e)[:160])
-        return {'dossier':nom,'ajoutes':[],'ignores':[],'introuvable':str(e)[:200]}
+        # 400 caractères : un refus d'ambiguïté LISTE les dossiers candidats, il faut qu'ils tiennent.
+        return {'dossier':nom,'ajoutes':[],'ignores':[],'introuvable':' '.join(str(e).split())[:400]}
 
 async def _charger_et_retenir(uid,fil,nom,user,lots,usage,demande,ancien,cle,nommes=True):
     try:r=await charger_dossier(uid,fil,nom,user,lots,usage,bool(_TOUT_LE_DOSSIER.search(str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0])),nommes)
@@ -738,7 +743,7 @@ async def composer_immediat(data,user):
         charge=await dossier_du_travail(uid,fil,data,user,demande,'document')
         ids=data.get('sources') or []
         if (charge and not charge.get('introuvable')) or not ids:ids=[s['id'] for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)]
-        if not ids:raise ValueError('Aucune pièce dans ce dossier'+(' : « '+charge['dossier']+' » n’a pas pu être ouvert ('+charge.get('introuvable','aucun fichier lisible')+')' if charge else '')+'. Ajoute les documents trouvés avec ajouter_source_dossier.')
+        if not ids:raise _refus_definitif('Aucune pièce dans ce dossier'+(' : « '+charge['dossier']+' » n’a pas pu être ouvert ('+charge.get('introuvable','aucun fichier lisible')+')' if charge else '')+'. Ajoute les documents trouvés avec ajouter_source_dossier.')
         if not data.get('modele_source') and data.get('format','docx')=='docx':
             impose,ids=await _imposer_modele(uid,fil,demande,list(ids),data.get('trame'))
             if impose:data['modele_source']=impose

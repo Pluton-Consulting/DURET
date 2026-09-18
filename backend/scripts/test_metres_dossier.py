@@ -284,6 +284,37 @@ asyncio.run(_annule_pendant_l_essai())
 with dossiers.base() as c:
     statut_r = c.execute("SELECT statut FROM file_documentaire WHERE id=?", (j1["tache_documentaire"],)).fetchone()[0]
 verifier("un essai ANNULÉ (arrêt du backend) ne ressuscite pas un travail retiré", statut_r == "retire", statut_r)
+# LE REFUS MÉTIER DIT POURQUOI, ET NE SE REJOUE PAS (18/09) : Q27 réel, « le dossier de La Teste »
+# ambigu → trois essais puis « Une étape a échoué (ValueError) », sans la liste des candidats.
+async def _refus_metier():
+    import skills.quantitatifs as sq, tasks.identity as ti
+    from skills.documents_dossier import _refus_definitif
+    async def _executant(_uid): return user
+    async def _refuse(*a, **k):
+        raise _refus_definitif("Aucune pièce pour ce quantitatif : « La Teste » n’a pas pu être ouvert (Plusieurs dossiers correspondent : /A/La Teste, /B/la test de buch).")
+    ti.charger_executant, sq.produire_immediat = _executant, _refuse
+    j = df.soumettre(uid, fil2, "quantitatif", {"demande": "métrés lot 11", "_demande_utilisateur": "métrés lot 11 dossier La Teste"})
+    with dossiers.base() as c:
+        job = dict(c.execute("SELECT * FROM file_documentaire WHERE id=?", (j["tache_documentaire"],)).fetchone())
+    await df.traiter(job)
+    with dossiers.base() as c:
+        return dict(c.execute("SELECT statut,essais,resultat FROM file_documentaire WHERE id=?", (j["tache_documentaire"],)).fetchone())
+r_ref = asyncio.run(_refus_metier())
+note_ref = json_mod.loads(r_ref["resultat"]).get("note", "")
+verifier("un refus définitif bloque au PREMIER essai (pas huit relances)", r_ref["statut"] == "bloque" and r_ref["essais"] == 1, f"{r_ref['statut']} essais {r_ref['essais']}")
+verifier("…et la conversation reçoit la RAISON (les dossiers candidats)", "la test de buch" in note_ref and "ValueError" in note_ref, note_ref[:160])
+async def _faute_programme():
+    import skills.quantitatifs as sq
+    async def _plante(*a, **k): raise AttributeError("'NoneType' object has no attribute 'x' — secret@exemple.fr")
+    sq.produire_immediat = _plante
+    j = df.soumettre(uid, fil2, "quantitatif", {"demande": "métrés lot 12", "_demande_utilisateur": "métrés lot 12"})
+    with dossiers.base() as c:
+        job = dict(c.execute("SELECT * FROM file_documentaire WHERE id=?", (j["tache_documentaire"],)).fetchone())
+    await df.traiter(job)
+    with dossiers.base() as c:
+        return json_mod.loads(c.execute("SELECT resultat FROM file_documentaire WHERE id=?", (j["tache_documentaire"],)).fetchone()[0])
+r_fp = asyncio.run(_faute_programme())
+verifier("une faute de PROGRAMME ne recopie pas son message (il peut porter une donnée) : type + fichier:ligne", "secret@" not in r_fp["note"] and r_fp.get("faute_programme") == "AttributeError" and r_fp.get("ou"), r_fp["note"][:120])
 j1b = df.soumettre(uid, fil2, "quantitatif", {"demande": demande, "_demande_utilisateur": demande})
 with dossiers.base() as c:
     statut = c.execute("SELECT statut,essais FROM file_documentaire WHERE id=?", (j1b["tache_documentaire"],)).fetchone()

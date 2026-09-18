@@ -519,6 +519,11 @@ async def produire_immediat(data,user):
         ids=data.get('sources') or []
         # Un dossier NOMMÉ et ouvert commande TOUTES les pièces du travail.
         if (charge and not charge.get('introuvable')) or not ids:ids=[s['id'] for s in dossiers.manifeste(uid,fil)]
+        # SANS AUCUNE PIÈCE, LE REFUS EST DÉFINITIF ET DIT POURQUOI (18/09) : dossier ambigu ou
+        # introuvable → la conversation reçoit la raison (les dossiers candidats), pas huit essais.
+        if not ids:
+            from skills.documents_dossier import _refus_definitif
+            raise _refus_definitif('Aucune pièce pour ce quantitatif'+(' : « '+str(charge.get('dossier'))+' » n’a pas pu être ouvert ('+str(charge.get('introuvable') or 'aucun fichier lisible')+')' if charge else '')+'. Nomme le dossier exact du serveur, ou ajoute les pièces avec ajouter_source_dossier.')
         tache=hashlib.sha256(json.dumps(['quantitatif',demande,ids,data.get('titre')],ensure_ascii=False).encode()).hexdigest()[:24]
     from ressources.documents_file import associer_tache
     await asyncio.to_thread(associer_tache,uid,fil,tache)

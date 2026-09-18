@@ -261,9 +261,18 @@ async def traiter(job):
                 # redéploiement emporte les journaux — le quantitatif réel est resté « bloqué » sur
                 # un AttributeError dont plus rien ne disait l'origine.
                 logger.warning('Rédaction %s interrompue (%s)',job['id'],type(e).__name__,exc_info=True)
-                resultat={'production_verifiee':False,'note':'Une étape a échoué ('+type(e).__name__+'). Les étapes acquises sont conservées.'}
+                # LE REFUS MÉTIER DIT POURQUOI (18/09) : « Fais-moi les métrés … du dossier de La
+                # Teste » → dossier ambigu (plusieurs branches) → trois essais, puis « Une étape a
+                # échoué (ValueError) » dans la conversation, sans la liste des dossiers candidats
+                # que le refus portait. Une ValueError est écrite POUR la personne : on la montre ;
+                # une faute de programme reste un nom de type (et son fichier:ligne pour nous).
+                raison=('' if isinstance(e,FAUTES_DE_PROGRAMME) else ' : '+' '.join(str(e).split())[:400])
+                resultat={'production_verifiee':False,'note':'Une étape a échoué ('+type(e).__name__+')'+raison+'. Les étapes acquises sont conservées.'}
                 if isinstance(e,FAUTES_DE_PROGRAMME):
                     resultat.update({'faute_programme':type(e).__name__,'version':commit_en_service(),'ou':_ou(e)})
+                # Un refus DÉFINITIF (aucune pièce, dossier introuvable ou ambigu) ne se rejoue pas
+                # huit fois : il s'arrête au premier essai, comme un résultat métier définitif.
+                if getattr(e,'definitif',False):resultat['definitif']=True
                 if getattr(e,'tache_documentaire',None):resultat['tache']=e.tache_documentaire
             finally:
                 usage=bilan();_TOUR.reset(compteur)

@@ -73,6 +73,19 @@ async def main():
     verifier("principal en échec après le relais : la réponse du secours", await R.appel_documentaire("complex", []) == "secours")
     R._tier_chain = lambda t: [("p", "principal")]; Faux.lent, Faux.casse = 0.3, False; avant = len(notes)
     verifier("sans secours disponible : l'appel ordinaire, aucun relais", await R.appel_documentaire("complex", []) == "principal" and len(notes) == avant)
+    # 18/09 : un travail annulé à son plafond PENDANT la première attente laissait le principal tourner seul
+    # (appel payant perdu, « Task exception was never retrieved »). Il est annulé avec l'appel.
+    R._tier_chain = lambda t: [("p", "principal"), ("s", "secours")]; Faux.lent, Faux.casse = 5, False
+    avant_annules = Faux.annules
+    tache = asyncio.ensure_future(R.appel_documentaire("complex", []))
+    await asyncio.sleep(0.05)
+    tache.cancel()
+    try:
+        await tache
+    except asyncio.CancelledError:
+        pass
+    await asyncio.sleep(0.05)
+    verifier("un appel annulé pendant la première attente annule aussi le principal", Faux.annules == avant_annules + 1, Faux.annules - avant_annules)
 
 asyncio.run(main())
 composeur = (BACKEND / "skills" / "documents_dossier.py").read_text(encoding="utf-8")

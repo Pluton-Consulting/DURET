@@ -882,15 +882,20 @@ async def appel_documentaire(tier: "LLMTier", messages: Any, **options) -> Any:
     principal = asyncio.ensure_future(ResilientLLM(tier).ainvoke(messages, **options))
     if len(chaine) < 2:
         return await principal
-    fini, _ = await asyncio.wait({principal}, timeout=RELAIS_DOCUMENTAIRE_S)
-    if fini:
-        return principal.result()
-    await _preciser_activite("la réponse tarde : un second modèle est lancé en parallèle, la première réponse valable sera gardée")
-    logger.warning("Relais documentaire : le principal tarde (%d s), secours lancé en parallèle", RELAIS_DOCUMENTAIRE_S)
-    secours = asyncio.ensure_future(ResilientLLM(tier).ainvoke(messages, **{**options, "_a_partir_de": 1}))
-    en_vol = {principal, secours}
-    derniere = None
+    # TOUT L'APPEL EST GARDÉ, PAS SEULEMENT LA COURSE (18/09) : un travail de fond annulé à son
+    # plafond PENDANT la première attente laissait le principal tourner sans personne pour l'écouter —
+    # un appel payant perdu, et « Task exception was never retrieved » au journal. `asyncio.wait`
+    # n'annule pas ce qu'il attend : le `finally` le fait.
+    secours = None
     try:
+        fini, _ = await asyncio.wait({principal}, timeout=RELAIS_DOCUMENTAIRE_S)
+        if fini:
+            return principal.result()
+        await _preciser_activite("la réponse tarde : un second modèle est lancé en parallèle, la première réponse valable sera gardée")
+        logger.warning("Relais documentaire : le principal tarde (%d s), secours lancé en parallèle", RELAIS_DOCUMENTAIRE_S)
+        secours = asyncio.ensure_future(ResilientLLM(tier).ainvoke(messages, **{**options, "_a_partir_de": 1}))
+        en_vol = {principal, secours}
+        derniere = None
         while en_vol:
             finis, en_vol = await asyncio.wait(en_vol, return_when=asyncio.FIRST_COMPLETED)
             for t in finis:
@@ -900,6 +905,8 @@ async def appel_documentaire(tier: "LLMTier", messages: Any, **options) -> Any:
         raise derniere or RuntimeError("aucune réponse du modèle")
     finally:
         for t in (principal, secours):
+            if t is None:
+                continue
             if not t.done():
                 t.cancel()
             # l'appel perdant peut finir en erreur APRÈS la réponse gardée : on la relève, sans bruit

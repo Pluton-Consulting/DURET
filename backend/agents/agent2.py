@@ -516,6 +516,18 @@ async def preprocess_attachment_node(state: AgentState) -> dict:
     }
 
 
+_FICHIER_JOINT_RE = re.compile(r"^=== Fichier joint : (.*?) ===\s*$", re.M)
+
+
+def _noms_textes_joints(state) -> tuple:
+    """Les documents TEXTE joints au même message que les images (lot mixte)."""
+    texte = str(state.get("attachment_text") or "")
+    if not texte.strip():
+        return ()
+    noms = tuple(dict.fromkeys(m.group(1).strip() for m in _FICHIER_JOINT_RE.finditer(texte)))
+    return noms or ("un document texte",)
+
+
 async def vision_node(state: AgentState, config=None) -> dict:
     """Analyse visuelle multimodale — UN APPEL PAR FICHIER, en parallèle.
 
@@ -568,6 +580,17 @@ async def vision_node(state: AgentState, config=None) -> dict:
     # partis à la vision, mais la personne les a bien joints — elle doit savoir
     # ce qu'ils sont devenus.
     illisibles = [p for p in (state.get("attachments") or []) if not p.get("pages")]
+
+    # UN LOT MIXTE N'EST PAS UN LOT DE PHOTOS (18/09, banc Duret joué dans le navigateur).
+    # Dix fichiers — quatre PDF, deux Word, un Excel, trois photos — et « analyse ces pièces
+    # et dis-moi laquelle contredit les autres » : « analyse » menait au RELEVÉ, un appel par
+    # photo, trois inventaires de chiffrage de pages entières… et les sept documents texte
+    # n'étaient lus par personne, la vision gardant la main. Quand des documents texte
+    # accompagnent les images, la vision dit ce que les images apportent, en un appel, puis
+    # passe la main à l'assistant, qui a tout le reste sous les yeux.
+    autres = _noms_textes_joints(state)
+    if autres:
+        return await _repondre(pieces, illisibles, demande, candidats, config, autres=autres)
 
     # LA DEMANDE DÉCIDE DU RÉGIME (voir REPONSE_PROMPT). Une question précise
     # reçoit sa réponse, dans un seul appel qui voit toutes les images.
@@ -777,7 +800,8 @@ async def _appel_vision(candidats, entete: str, images: list, nom: str, config=N
     return {"nom": nom, "erreur": type(derniere).__name__ if derniere else "inconnu"}
 
 
-async def _repondre(pieces: list, illisibles: list, demande: str, candidats, config=None) -> dict:
+async def _repondre(pieces: list, illisibles: list, demande: str, candidats, config=None,
+                    autres: tuple = ()) -> dict:
     """Le régime RÉPONSE : un seul appel, toutes les images, la demande pour seule consigne.
 
     POURQUOI UN SEUL APPEL ICI, quand le relevé en fait un par fichier : une
@@ -799,6 +823,12 @@ async def _repondre(pieces: list, illisibles: list, demande: str, candidats, con
         entete += ("\n\nFichiers joints mais illisibles, que tu ne vois pas : "
                    + ", ".join(p.get("nom") or "document" for p in illisibles)
                    + ". Ne conclus rien à leur sujet.")
+    if autres:
+        entete += ("\n\nAvec ces images, la personne a joint d'AUTRES pièces que tu ne vois pas ici : "
+                   + ", ".join(f"« {n} »" for n in autres)
+                   + ". L'assistant les lira et répondra à la demande en entier. Toi, dis seulement ce "
+                   "que CHAQUE image apporte à cette demande (nomme-la), en quelques lignes, sans "
+                   "conclure sur les pièces que tu n'as pas vues et sans relevé de chiffrage.")
 
     images = [(p.get("mime") or "image/jpeg", page)
               for p in pieces for page in (p.get("pages") or [])]
@@ -825,6 +855,9 @@ async def _repondre(pieces: list, illisibles: list, demande: str, candidats, con
     complet = reponse if not releve else (
         f"{reponse}\n\n[Relevé technique fait pendant ce tour, non montré à l'écran]\n{releve}")
     suite = suite_du_tour(demande, _retouche_disponible())
+    if autres and suite in (SUITE_AUCUNE, SUITE_SANS_MOTEUR):
+        # Les autres pièces sont chez l'assistant : lui seul peut répondre en entier.
+        suite = SUITE_DOCUMENT
     if besoin:
         complet += (f"\n\n[À compléter par l'assistant : {besoin}. Va chercher cette pièce "
                     "(serveur, documents, mails) avec tes actions, puis réponds à la demande "

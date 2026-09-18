@@ -292,6 +292,26 @@ res6 = asyncio.run(agent2.vision_node({"query": "c'est quoi cette plante ?", "at
 verifier("sans besoin nommé, la vision garde la main (suite « aucune »)",
          res6.get("vision_suite") == "aucune" and "À compléter" not in res6["vision_analysis"])
 
+# UN LOT MIXTE (18/09, banc Duret dans le navigateur) : sept documents texte + trois photos et
+# « analyse ces pièces et dis-moi laquelle contredit les autres ». Avant : relevé de chiffrage
+# photo par photo, et les documents texte lus par personne.
+mixte = _ModeleDouble(["- Image 1 : escalier, joint repris.\n- Image 2 : plinthe manquante."])
+sys.modules["llm.router"].get_vision_candidates = lambda: [(mixte, "m:test")]
+res7 = asyncio.run(agent2.vision_node({
+    "query": "Analyse ces pièces et dis-moi laquelle contredit les autres", "attachments": DEUX,
+    "attachment_text": "=== Fichier joint : CCTP Lot 11.pdf ===\nx\n\n=== Fichier joint : DPGF lot 01.xlsx ===\ny"}))
+verifier("lot mixte + « analyse » : UN appel pour toutes les images (pas le relevé photo par photo)",
+         len(mixte.appels) == 1 and mixte.appels[0]["images"] == 2, mixte.appels)
+verifier("la vision sait que d'autres pièces existent, nommées, et ne conclut pas sur elles",
+         "« CCTP Lot 11.pdf »" in mixte.appels[0]["texte"] and "« DPGF lot 01.xlsx »" in mixte.appels[0]["texte"]
+         and "que tu ne vois pas" in mixte.appels[0]["texte"])
+verifier("lot mixte : la main passe à l'assistant, qui lit les documents texte",
+         res7.get("vision_mode") == "reponse" and res7.get("vision_suite") == "document", res7.get("vision_suite"))
+seul = _ModeleDouble(["relevé"])
+sys.modules["llm.router"].get_vision_candidates = lambda: [(seul, "m:test")]
+asyncio.run(agent2.vision_node({"query": "Analyse ces photos", "attachments": DEUX}))
+verifier("des photos SEULES + « analyse » gardent le relevé, une analyse par photo", len(seul.appels) == 2)
+
 # ══════════════════════════════════════════════════════════════════════════
 # 4. LE RÉGIME RELEVÉ — inchangé
 # ══════════════════════════════════════════════════════════════════════════

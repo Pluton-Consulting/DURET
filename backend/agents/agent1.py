@@ -1095,7 +1095,13 @@ async def llm_node(state: AgentState, config=None) -> dict:
                   "jamais d'après son titre. Ce sont les documents de la "
                   "conversation courante : n'en présente "
                   "un comme livrable de la demande en cours que s'il a été "
-                  "produit pour elle.\n")
+                  "produit pour elle. `contenu` n'en est que le DÉBUT : pour "
+                  "une question sur ce qu'un de ces documents CONTIENT (une "
+                  "ligne, un chiffre, un niveau, une rubrique, une feuille), "
+                  "RELIS-LE avant de répondre — `ajouter_source_dossier` avec "
+                  "son `document_id` en `reference`, puis `lire_source_dossier` "
+                  "—, jamais de mémoire ni d'après les pièces qui ont servi à le "
+                  "produire.\n")
         bloc_resultats += etat_docs + "\n"
 
     # Aucun préambule sur l'absence de documents : c'est le modèle qui décide

@@ -102,6 +102,18 @@ def _normaliser_plan(plan,ids,modele,structure,sources_word=None):
     porte le titre exact du modèle, et le modèle lui-même n'a pas à être
     « affecté à une rubrique » — il est la présentation."""
     if not isinstance(plan,dict) or not isinstance(plan.get('sections'),list):return plan
+    # « POINTS À CONFIRMER » EST LE RÉCAPITULATIF AUTOMATIQUE (18/09, banc Duret, Q20) : le plan en
+    # avait fait une rubrique rédigée, et le mémoire en 8 pages portait la rubrique deux fois.
+    # Ses sources ne se perdent pas : le récapitulatif reprend les réserves de toutes les rubriques.
+    import unicodedata
+    recap=[s for s in plan['sections'] if isinstance(s,dict) and type(s.get('reprise_modele')) is not int
+           and re.sub(r'[^a-z]','',unicodedata.normalize('NFD',str(s.get('titre') or '').casefold()).encode('ascii','ignore').decode())=='pointsaconfirmer']
+    if recap and len(recap)<len(plan['sections']):
+        plan['sections']=[s for s in plan['sections'] if s not in recap]
+        restes=[x for s in recap for x in (s.get('sources') or [])]
+        if restes:
+            place={x for s in plan['sections'] if isinstance(s,dict) for x in (s.get('sources') or [])}
+            plan.setdefault('sources_ecartees',{}).update({x:'Réserves reprises par le récapitulatif automatique.' for x in restes if x not in place})
     titres={s['index']:s['titre'] for s in (structure or {}).get('sections',[])}
     # Une illustration ne se reprend que d'un WORD (on sait en extraire l'image). Le plan
     # désignait aussi des plans PDF : « illustration sautée » au rendu, et un relecteur
@@ -991,7 +1003,7 @@ async def composer_immediat(data,user):
                 if contrat.get('modele_source'):plan['modele_source']=contrat['modele_source']
                 _plan_valide(plan,ids)
                 limite = limite_de_pages(demande)
-                if limite:plan['pages_max']=limite
+                if limite:plan['pages_max']=limite;plan['limite_personne']=limite
                 if plan.get('pages_max') and limite:
                     _repartir_les_mots(plan,structure_modele)
                 else:
@@ -1066,7 +1078,9 @@ async def composer_immediat(data,user):
                         'N’écris une réserve que pour une information INDISPENSABLE à cette rubrique et introuvable dans toutes les preuves reçues : deux réserves au plus, une phrase chacune, jamais sur le fonctionnement du dossier (pièces, fragments, preuves, modèle). '
                         'Seule une donnée d’entreprise réellement introuvable reste [À CONFIRMER] ; ne reprends jamais le nom, les quantités ou les engagements d’un ancien chantier. '
                         'Une limite signalée dans UNE pièce ne prouve pas une absence dans tout le dossier. Consulte pieces_disponibles : ne déclare jamais absente une pièce qui y figure. Ne transforme pas une information non sélectionnée pour cette rubrique en information absente du dossier. Réserve uniquement la donnée précise non établie (date, effectif, choix), sans déclarer son document manquant. Une option ouverte par une pièce ne prouve pas que l’entreprise la retient : présente-la comme option à valider. '
-                        'Ne répète pas le titre de section dans les blocs. Respecte le budget de mots indicatif sans sacrifier une rubrique obligatoire. '
+                        'Ne répète pas le titre de section dans les blocs. '
+                        +('LA PERSONNE A FIXÉ UNE LIMITE DE '+str(plan['limite_personne'])+' PAGES : section.mots_cibles est un PLAFOND, pas une indication — ne le dépasse pas ; va à l’essentiel, sans rubrique vide ni élément exigé omis. '
+                          if plan.get('limite_personne') else 'Respecte le budget de mots indicatif sans sacrifier une rubrique obligatoire. ')+
                         'Schéma {"blocs":[{"bloc":"paragraphe","texte":"..."} ou {"bloc":"liste","items":["..."]} ou '
                         '{"bloc":"tableau","entetes":["..."],"lignes":[["..."]]}],"preuves":["source:fragment"],"reserves":["informations manquantes"]}. '
                         'Ne promets pas une action ultérieure et ne demande pas de reformuler : produis le contenu utile dès maintenant.',
@@ -1659,6 +1673,20 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     await dire(uid,fil,tache,'conversion du Word pour compter ses pages')
     controle_pages=await asyncio.to_thread(verifier_pages,provisoire,plan.get('pages_max'))
     information_longueur=''
+    # UNE PASSE POUR TENIR LA LIMITE DE LA PERSONNE (18/09, banc Duret, Q20 : 19 puis 14 pages pour
+    # « 8 pages maximum »). Livrer d'abord reste la règle : les contrôles ne bloquent pas. Mais une
+    # limite que la personne a FIXÉE et que le rendu dépasse nettement vaut UNE réécriture plus courte
+    # de chaque rubrique (le chemin de correction existant, facteur à l'appui) ; ensuite on livre,
+    # dépassement dit s'il en reste.
+    if (plan.get('pages_max') and not controle_pages.get('conforme') and not controles_bloquants
+            and limite_de_pages(contrat.get('demande') or '') and controle_pages.get('pages')
+            and controle_pages['pages']>plan['pages_max']*1.15
+            and not await asyncio.to_thread(dossiers.etape,uid,fil,tache,'raccourci_tente')):
+        await asyncio.to_thread(dossiers.etape,uid,fil,tache,'raccourci_tente',{'pages':controle_pages['pages'],'limite':plan['pages_max']})
+        await dire(uid,fil,tache,'le document fait '+str(controle_pages['pages'])+' pages pour les '+str(plan['pages_max'])+' demandées : réécriture plus courte de chaque rubrique')
+        await _a_corriger(uid,fil,tache,jeton,{'problemes':['Tenir la limite de '+str(plan['pages_max'])+' pages fixée par la personne : raccourcir chaque rubrique rédigée, sans en retirer ni omettre un élément exigé.'],
+                                              'facteur_longueur':max(.2,plan['pages_max']/controle_pages['pages']*.85)})
+        raise ValueError('Le document fait '+str(controle_pages['pages'])+' pages pour les '+str(plan['pages_max'])+' demandées : une réécriture plus courte est lancée.')
     if plan.get('pages_max') and not controle_pages.get('conforme') and not controles_bloquants:
         # LA LIMITE DE PAGES NE BLOQUE PLUS NON PLUS (17/09) : le mémoire réel repartait
         # raccourcir ses 22 rubriques, essai après essai, sans jamais sortir. Le

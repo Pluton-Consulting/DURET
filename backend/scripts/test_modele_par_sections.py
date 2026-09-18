@@ -418,6 +418,15 @@ except ValueError as e:
     refus = str(e)
 verifier("limite de la PERSONNE lue dans sa demande (pas dans le plan du modèle) : trop de rubriques rédigées pour 7 pages (garde 4 + reprise 1 + 6 × ½) → refus chiffré au premier essai",
          "Limite de 7 pages fixée par la personne" in refus and "rubriques_modele_retirees" in refus, refus[:240])
+# « Points à confirmer » est le récapitulatif AUTOMATIQUE (18/09, Q20 : la rubrique sortait deux fois).
+avec_recap = _normaliser_plan({"sections": [{"titre": "Présentation", "sources": ["a"]}, {"titre": "Points à confirmer", "sources": ["b"], "mots_cibles": 368}]}, ["a", "b"], None, None)
+verifier("une rubrique « Points à confirmer » prévue par le plan est retirée (le récapitulatif est automatique), sa source écartée avec raison",
+         [x["titre"] for x in avec_recap["sections"]] == ["Présentation"] and "b" in (avec_recap.get("sources_ecartees") or {}), str(avec_recap)[:300])
+src_dd = (BACKEND / "skills" / "documents_dossier.py").read_text(encoding="utf-8")
+verifier("sous la limite de la PERSONNE, le budget de mots d'une rubrique est un PLAFOND pour le rédacteur",
+         "section.mots_cibles est un PLAFOND" in src_dd and "plan['limite_personne']=limite" in src_dd)
+verifier("…et un rendu qui la dépasse nettement vaut UNE réécriture plus courte (marquée, jamais deux)",
+         "'raccourci_tente'" in src_dd and "controle_pages['pages']>plan['pages_max']*1.15" in src_dd)
 _dater_la_garde(bon)
 verifier("la date de la garde est celle du jour, jamais « à confirmer »", bon["remplacements_modele"]["Date : le 24/07/2026"] == "Date : le " + _date_du_jour()
          and bon["remplacements_modele"]["Projet : ancien"] == "Projet : neuf", str(bon["remplacements_modele"]))

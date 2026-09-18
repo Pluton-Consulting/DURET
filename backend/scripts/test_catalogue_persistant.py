@@ -182,6 +182,23 @@ verifier("un dossier DÉPLACÉ : le refus dit « déplacé ou renommé » et pro
          "DÉPLACÉ" in r_dep and "ETUDES TERMINEE/- AFF 2026/AFF 150-26" in r_dep
          and r_dep.find("AFF 150-26") < r_dep.find("ETUDES EN COURS/construction 29 lgts sociaux la test de buch 18-09-2026\"") if "18-09-2026\"" in r_dep else "AFF 150-26" in r_dep, r_dep[:500])
 verifier("un nom d'un seul mot significatif ne propose rien au hasard", onas._deplace_ailleurs("PDF") == [])
+# 18/09 (navigateur) : la racine ouverte est /home/Drive, le chemin exact d'une affaire a disparu
+# pendant une réorganisation du NAS → la résolution cherchait le NOM « home » et rendait « plusieurs
+# dossiers correspondent à home » (les deux « …custHOME »). Elle part désormais de la racine.
+ARBRE["/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE"] = ["- AFF 2020"]
+ARBRE["/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2020"] = ["AFF 100-20 eiffage sinistre custHOME"]
+acces.dossiers_autorises = lambda: ["/home/Drive"]
+acces._CATALOGUE["entrees"] += [
+    {"nom": "AFF 100-20 eiffage sinistre custHOME", "chemin": "/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2020/AFF 100-20 eiffage sinistre custHOME", "dossier": True, "modifie": 5},
+    {"nom": "AFF 100-20 eiffage sinistre custHOME", "chemin": "/home/Drive/04-Chantiers a executer/AFF 100-20 eiffage sinistre custHOME", "dossier": True, "modifie": 6}]
+try:
+    asyncio.run(onas._resoudre(None, "", "", "/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2020/AFF 145-20 CIS St Aguilin"))
+    r_home = "résolu"
+except Exception as e:
+    r_home = f"{type(e).__name__}: {e}"
+verifier("un chemin sous la racine /home/Drive se descend depuis elle : le segment manquant est NOMMÉ, jamais « home »",
+         "« home »" not in r_home and "Aucun dossier « AFF 145-20 CIS St Aguilin » dans /home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2020" in r_home,
+         r_home[:300])
 
 # 18/09 (banc Duret, Q6) : « combien de DPGF par affaire » → 200 résultats et aucun décompte.
 aff = acces.affaire_du_chemin

@@ -52,6 +52,18 @@ async def _enfants_dossiers(client, base, sid, chemin: str) -> list[dict]:
     return [e for e in (brut.get("entrees") or []) if e.get("dossier")]
 
 
+async def _racine_vivante(client, base, sid, racine: str) -> bool:
+    """Une racine configurée existe-t-elle sur le NAS ? Elle se liste, ou le catalogue en porte des
+    entrées (un relais qui ne répond pas ne fait pas d'une vraie racine une racine fantôme)."""
+    try:
+        await _enfants_dossiers(client, base, sid, racine)
+        return True
+    except Exception:  # noqa: BLE001
+        from nas.acces import catalogue_pret as _cat
+        _c = _cat()
+        return bool(_c and any(str(e.get("chemin") or "").startswith(racine.rstrip("/") + "/") for e in _c))
+
+
 async def _resoudre(client, base, sid, chemin: str) -> str:
     """Un NOM (« Drive », « Compta/2026 ») vers son chemin réel sur le serveur.
 
@@ -125,7 +137,24 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
     # et la résolution rendait le chemin même qui venait d'échouer, pendant que
     # le vrai /home/Drive attendait deux niveaux plus loin.
     courant = None
+    suivants = segments[1:]
+    # UN CHEMIN QUI COMMENCE PAR UNE RACINE OUVERTE PART DE CETTE RACINE (18/09, banc Duret dans le
+    # navigateur). La racine est /home/Drive ; un chemin exact devenu faux (dossier déplacé pendant
+    # une réorganisation du NAS) repartait en recherche du NOM « home » — deux dossiers
+    # « …custHOME » — et rendait « plusieurs dossiers correspondent à home ». On descend depuis la
+    # racine, segment par segment : l'échec dira quel segment manque, et où il a pu partir.
     for r in racines:
+        base_r = r.rstrip("/")
+        if not (vise == base_r or vise.startswith(base_r + "/")):
+            continue
+        restants = [x for x in vise[len(base_r):].split("/") if x]
+        if not restants:
+            break                       # la racine elle-même a déjà échoué au listage exact
+        if not await _racine_vivante(client, base, sid, base_r):
+            continue                    # racine FANTÔME (configurée, absente du NAS)
+        courant, suivants = base_r, restants
+        break
+    for r in (racines if courant is None else []):
         if r.rsplit("/", 1)[-1].lower() == segments[0].lower():
             try:
                 await _enfants_dossiers(client, base, sid, r)
@@ -244,7 +273,7 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
             "Reprends le `chemin` EXACT d'un listage, ou cherche-le avec `nas_chercher`.")
 
     # Segments suivants : contraints à leur parent — c'est le sens d'un chemin.
-    for segment in segments[1:]:
+    for segment in suivants:
         try:
             enfants = await _enfants_dossiers(client, base, sid, courant)
         except NasRefuse:

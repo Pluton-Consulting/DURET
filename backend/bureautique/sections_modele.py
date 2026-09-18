@@ -246,6 +246,93 @@ def _greffer(element, rendu, modele):
     return copie
 
 
+def _relancer_la_numerotation(doc) -> int:
+    """CHAQUE RUBRIQUE RELANCE LA NUMÉROTATION DE SES SOUS-TITRES (18/09, banc Duret).
+
+    Dans la trame de Duret, les sous-titres (« Titre 3 ») forment une liste À PART des
+    titres de rubrique, et chaque rubrique la relance par une définition propre posée
+    sur son PREMIER sous-titre. Les rubriques rédigées n'en portaient pas : sous
+    « VIII. PERSONNEL ET OUVRIERS », les sous-titres continuaient la série de la
+    rubrique d'avant (« 5) Personnel », « 6) Planning »). Même geste que la trame :
+    le premier sous-titre d'un style donné après un titre de rubrique, s'il n'a pas
+    sa relance, en reçoit une (même définition, départ remis). Rien n'est touché
+    quand sous-titres et rubriques partagent une liste à plusieurs niveaux : elle
+    se relance seule."""
+    from docx.oxml.ns import qn
+    try:
+        numerotation = doc.part.numbering_part.element
+    except Exception:  # noqa: BLE001 — pas de numérotation : rien à relancer
+        return 0
+    styles = {st.get(qn("w:styleId")): st for st in doc.styles.element.iter(qn("w:style"))}
+
+    def liste_du_style(ident):
+        vus = set()
+        while ident and ident not in vus:
+            vus.add(ident)
+            st = styles.get(ident)
+            if st is None:
+                return None
+            n = st.find("./" + qn("w:pPr") + "/" + qn("w:numPr"))
+            if n is not None and n.find(qn("w:numId")) is not None:
+                il = n.find(qn("w:ilvl"))
+                return n.find(qn("w:numId")).get(qn("w:val")), int(il.get(qn("w:val"))) if il is not None else 0
+            base = st.find(qn("w:basedOn"))
+            ident = base.get(qn("w:val")) if base is not None else None
+        return None
+
+    abstraits = {}
+    for num in numerotation.findall(qn("w:num")):
+        a = num.find(qn("w:abstractNumId"))
+        if a is not None:
+            abstraits[num.get(qn("w:numId"))] = a.get(qn("w:val"))
+    if not abstraits:
+        return 0
+    prochain = max([int(k) for k in abstraits if str(k).isdigit()] + [0]) + 1
+    liste_rubrique, vus, relances = None, set(), 0
+    for paragraphe in doc.paragraphs:
+        niveau = _niveau(paragraphe)
+        if not niveau:
+            continue
+        ppr = paragraphe._p.find(qn("w:pPr"))
+        ident = ppr.find(qn("w:pStyle")).get(qn("w:val")) if ppr is not None and ppr.find(qn("w:pStyle")) is not None else None
+        if niveau == 1:
+            vus = set()
+            liste_rubrique = (liste_du_style(ident) or (None,))[0]
+            continue
+        if ident in vus:
+            continue
+        vus.add(ident)
+        if ppr is not None and ppr.find(qn("w:numPr")) is not None:
+            continue                       # la trame pose déjà sa relance ici
+        liste = liste_du_style(ident)
+        if not liste or liste[0] == liste_rubrique or liste[0] not in abstraits:
+            continue
+        num_id, ilvl = liste
+        depart = 1
+        for abstrait in numerotation.findall(qn("w:abstractNum")):
+            if abstrait.get(qn("w:abstractNumId")) == abstraits[num_id]:
+                for lvl in abstrait.findall(qn("w:lvl")):
+                    if lvl.get(qn("w:ilvl")) == str(ilvl) and lvl.find(qn("w:start")) is not None:
+                        depart = int(lvl.find(qn("w:start")).get(qn("w:val")) or 1)
+        nouveau = numerotation.makeelement(qn("w:num"), {qn("w:numId"): str(prochain)})
+        ref = nouveau.makeelement(qn("w:abstractNumId"), {qn("w:val"): abstraits[num_id]})
+        surcharge = nouveau.makeelement(qn("w:lvlOverride"), {qn("w:ilvl"): str(ilvl)})
+        surcharge.append(surcharge.makeelement(qn("w:startOverride"), {qn("w:val"): str(depart)}))
+        nouveau.append(ref)
+        nouveau.append(surcharge)
+        derniers = numerotation.findall(qn("w:num"))
+        derniers[-1].addnext(nouveau)
+        abstraits[str(prochain)] = abstraits[num_id]
+        numpr = ppr.makeelement(qn("w:numPr"), {})
+        numpr.append(numpr.makeelement(qn("w:ilvl"), {qn("w:val"): str(ilvl)}))
+        numpr.append(numpr.makeelement(qn("w:numId"), {qn("w:val"): str(prochain)}))
+        style_el = ppr.find(qn("w:pStyle"))
+        (style_el.addnext(numpr) if style_el is not None else ppr.insert(0, numpr))
+        prochain += 1
+        relances += 1
+    return relances
+
+
 def assembler(original: bytes, rendu_chemin: str, titres: list[str], reprises: dict) -> dict:
     """Compose le document final DANS le modèle et l'écrit à la place du rendu.
 
@@ -311,6 +398,10 @@ def assembler(original: bytes, rendu_chemin: str, titres: list[str], reprises: d
         if rel.reltype == RT.IMAGE and f'"{rid}"' not in encore:
             del modele.part.rels[rid]
             retirees += 1
+    try:
+        relances = _relancer_la_numerotation(modele)
+    except Exception:  # noqa: BLE001 — une numérotation imparfaite ne vaut pas un document perdu
+        relances = 0
     tmp = f"{rendu_chemin}.{os.getpid()}.assemble.tmp"
     # LA TABLE DES MATIÈRES DU MODÈLE SE RECALCULE À L'OUVERTURE : ses lignes sont du
     # texte figé (celles de l'ancien document) ; Word les refait dès qu'on l'y invite.
@@ -326,7 +417,7 @@ def assembler(original: bytes, rendu_chemin: str, titres: list[str], reprises: d
     os.replace(tmp, rendu_chemin)
     return {"assemble": True, "garde_conservee": bool(garde), "rubriques_reprises": len(reprises_faites),
             "rubriques_redigees": len(redigees), "rubriques_sans_contenu": manquantes,
-            "images_ecartees": retirees}
+            "images_ecartees": retirees, "numerotations_relancees": relances}
 
 
 def copier_entete(document: bytes, source: bytes) -> tuple[bytes, dict]:

@@ -546,6 +546,10 @@ def _docx(entete: dict, elements, sortie: str) -> str:
         titres_plan = entete.get("_titres_plan") or [
             e.get("texte") for e in elements if e.get("bloc") == "titre" and int(e.get("niveau") or 1) == 1]
         bilan = assembler(octets, sortie, titres_plan, entete.get("_reprises") or {})
+        # LE SOMMAIRE DE LA TRAME DIT CE QUE LE DOCUMENT CONTIENT (18/09) : ses lignes
+        # figées étaient celles de l'ancien chantier. Voir bureautique/sommaire.py.
+        from bureautique.sommaire import actualiser as _sommaire_a_jour
+        bilan["sommaire"] = _sommaire_a_jour(sortie)
         logger.info("Document composé dans son modèle : %s", bilan)
     return sortie
 

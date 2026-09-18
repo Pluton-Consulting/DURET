@@ -250,6 +250,29 @@ r2 = asyncio.run(dd.dossier_du_travail(uid, fil, {}, user, demande, "quantitatif
 verifier("au 2ᵉ essai rien n'est rechargé, et le compte rendu garde les 6 pièces", len(r2["ajoutes"]) == 6 and len(dossiers.manifeste(uid, fil)) == 6, str(len(r2["ajoutes"])))
 r3 = asyncio.run(dd.dossier_du_travail(uid, fil, {"dossier": "dossier introuvable"}, user, "fais les métrés", "quantitatif"))
 verifier("un dossier introuvable n'arrête rien : il est signalé", r3 and r3.get("introuvable") and not r3["ajoutes"])
+# LE DOSSIER NOMMÉ SE RÉSOUT AVANT LA MISE EN FILE (18/09, Q27 réel : douze « La Teste »).
+import contextlib, nas.acces as nas_acces, outils.nas as outils_nas
+from skills.erreurs import SkillError
+@contextlib.asynccontextmanager
+async def _cnx():
+    yield (None, "/home", "sid")
+async def _res_ambigu(client, base, sid, chemin):
+    raise nas_acces.NasRefuse("Plusieurs dossiers correspondent à « La Teste » (12), dans des branches différentes — Candidats : /A/La Teste ; /B/LA TESTE DE BUCH")
+async def _res_ok(client, base, sid, chemin):
+    return "/home/Drive/03-Appel d'offres etudes/2026-71 la test de buch"
+nas_acces.connexion, nas_acces.verifier_role = _cnx, lambda u: None
+outils_nas._resoudre = _res_ambigu
+try:
+    asyncio.run(dd.figer_le_dossier({"dossier": "La Teste", "demande": "métrés"}, user)); verifier("un dossier AMBIGU refuse la mise en file, avec les candidats", False)
+except SkillError as e:
+    verifier("un dossier AMBIGU refuse la mise en file, avec les candidats", "LA TESTE DE BUCH" in str(e) and "demande à la personne" in str(e), str(e)[:160])
+outils_nas._resoudre = _res_ok
+fige = asyncio.run(dd.figer_le_dossier({"dossier": "la test de buch", "demande": "métrés"}, user))
+verifier("un dossier trouvé est FIGÉ par son chemin exact (le fond n'ouvrira pas un homonyme)", fige["dossier"].endswith("2026-71 la test de buch"), str(fige))
+verifier("sans dossier nommé, rien ne change", asyncio.run(dd.figer_le_dossier({"demande": "métrés des pièces jointes"}, user)) == {"demande": "métrés des pièces jointes"})
+async def _res_panne(client, base, sid, chemin): raise RuntimeError("NAS injoignable")
+outils_nas._resoudre = _res_panne
+verifier("un serveur muet ne bloque pas : la file retentera", asyncio.run(dd.figer_le_dossier({"dossier": "x", "demande": "m"}, user)) == {"dossier": "x", "demande": "m"})
 verifier("sans dossier nommé ni cité : rien n'est ouvert", asyncio.run(dd.dossier_du_travail(uid, fil, {}, user, "fais les métrés des pièces jointes", "quantitatif")) is None)
 
 fil2 = dossiers.identite(uid, "fil-file")[1]

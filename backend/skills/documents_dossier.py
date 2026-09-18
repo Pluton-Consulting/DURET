@@ -534,6 +534,35 @@ def _refus_definitif(message):
     """Une ValueError que la file ne rejoue pas : la cause ne changera pas au 8ᵉ essai (18/09)."""
     e=ValueError(message);e.definitif=True;return e
 
+async def figer_le_dossier(data,user):
+    """LE DOSSIER NOMMÉ SE RÉSOUT AVANT LA MISE EN FILE (18/09). « Les métrés … à partir du
+    dossier de La Teste » : douze dossiers de ce nom sur le serveur ; le travail partait en
+    file, échouait en fond, et la conversation recevait un refus rédigé pour le modèle. Ici,
+    dans le tour : ambigu ou introuvable → SkillError, le modèle DEMANDE lequel (avec la
+    liste) ; trouvé → son chemin EXACT remplace le nom dans `dossier`, et le fond ouvre
+    celui-là, pas un homonyme plus récent. Un nom absent ne change rien."""
+    from skills.erreurs import SkillError
+    nom=str(data.get('dossier') or '').strip() or dossier_cite(data.get('_demande_utilisateur') or data.get('demande'))
+    if not nom or data.get('tache'):return data
+    try:
+        from nas.acces import connexion, verifier_role
+        from outils.nas import _resoudre
+        from nas.acces import NasRefuse
+    except ImportError:return data          # socle sans NAS (Symbiose) : rien à figer ici
+    try:
+        verifier_role(user)
+        async with connexion() as (client,base,sid):
+            reel=await _resoudre(client,base,sid,nom)
+    except NasRefuse as e:
+        raise SkillError('Le dossier « '+nom+' » ne se laisse pas désigner sans ambiguïté : '+' '.join(str(e).split())
+                         +' — Ne lance PAS le travail : demande à la personne lequel de ces dossiers est visé (cite-les), puis relance avec ce chemin dans `dossier`.')
+    except Exception as e:  # noqa: BLE001 — serveur muet : le fond retentera, comme avant
+        logger.info('Dossier « %s » non figé avant la file (%s) : %s',nom[:60],type(e).__name__,str(e)[:120]);return data
+    if reel and reel!=nom:
+        logger.info('Dossier « %s » figé avant la file : %s',nom[:60],reel[-100:])
+        return {**data,'dossier':reel}
+    return data
+
 async def dossier_du_travail(uid,fil,data,user,demande,usage='document'):
     """Charge le dossier nommé par le geste (`dossier`) ou cité entre guillemets
     dans la demande. Rend le compte rendu, ou None. Un nom qui ne se résout pas
@@ -1654,6 +1683,7 @@ async def _a_corriger(uid,fil,tache,jeton,correction):
 async def composer(data,user):
     from ressources.documents_file import soumettre
     uid,fil=_identite(data,user)
+    data=await figer_le_dossier(data,user)
     data=await asyncio.to_thread(dossiers.normaliser_selection,uid,fil,data)
     sources=await asyncio.to_thread(dossiers.sources,uid,fil,data.get('sources'))
     # Un dossier du serveur nommé (ou cité entre guillemets) sera chargé par le

@@ -548,7 +548,9 @@ async def produire_immediat(data,user):
 
 async def produire(data,user):
     from ressources.documents_file import soumettre
+    from skills.documents_dossier import figer_le_dossier
     uid,fil=dossiers.identite(getattr(user,'id',None),data.get('_fil'))
+    data=await figer_le_dossier(data,user)
     return await asyncio.to_thread(soumettre,uid,fil,'quantitatif',data)
 
 SKILLS={'produire_quantitatif' :Declaration(produire,'Produire un Excel de quantités depuis les plans, CCTP/DPGF et tableaux du dossier : détail par poste/local/niveau, unités et calculs vérifiés, synthèse et réserves. Aucun chiffre inventé. `dossier` : le NOM ou le chemin du dossier du serveur nommé par la demande (« les métrés du projet X », « à partir du dossier X ») — tous ses fichiers lisibles sont chargés, sous-dossiers compris, SANS les ajouter un par un. Les tableaux chiffrés (DPGF, DQE, BPU) sont lus par le code, ligne à ligne, avec leur cellule pour preuve. Ajouter les pièces avec ajouter_source_dossier et lire les plans graphiques avec analyser_plan_source avant si nécessaire.',requis=['demande'],optionnels=['sources','dossier','titre'],effet='ecriture_interne',expert='agent2',libelle='je calcule le quantitatif et vérifie ses sources')}

@@ -199,7 +199,15 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
               <MessageContent data-testid="message-assistant" data-en-attente="oui"
                    className="sym-in sym-attente sym-attente-ia"
                    style={{ maxWidth: "70%", minWidth: 260 }}>
-                <span>{msg.content || "réponse en cours"}</span>
+                {/* Ce qui attend un accord peut porter des blocs (le PLAN à approuver,
+                    le message exact — 18/09, porté de Symbiose) : ils se rendent comme
+                    dans une réponse, au lieu de s'afficher en JSON brut. */}
+                {msg.content && msg.content.includes("```") ? (
+                  <MessageRenderer content={msg.content} onAction={onAction}
+                                   apiUrl={apiUrl} backendToken={backendToken} dernier={false} />
+                ) : (
+                  <span>{msg.content || "réponse en cours"}</span>
+                )}
                 <span className="sym-attente-fil" aria-hidden="true" />
               </MessageContent>
             </Message>

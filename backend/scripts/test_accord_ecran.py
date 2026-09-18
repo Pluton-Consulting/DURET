@@ -53,7 +53,17 @@ chatwin = (FRONTEND / "components" / "chat" / "ChatWindow.tsx").read_text(encodi
 
 verifier("la bulle d'accord est attachée à sa validation (`accord:<id>`)",
          "const cleAccord = (id?: string | null) => (id ? `accord:${id}` : null)" in chatwin
-         and "const bulleAccord = (validationId?: string | null) =>" in chatwin)
+         and "const bulleAccord = (validationId?: string | null, apercu?: string | null) =>" in chatwin)
+# 18/09, banc Duret dans le navigateur (porté de Symbiose 26422cd + 019c552) : un plan proposé
+# n'affichait que « une action attend votre accord ». Le flux porte l'aperçu, la bulle le montre
+# AU-DESSUS de l'attente, et un bloc (le plan) s'y rend au lieu du JSON brut.
+runtime_src = (BACKEND / "agents" / "runtime.py").read_text(encoding="utf-8")
+liste_src = (FRONTEND / "components" / "chat" / "MessageList.tsx").read_text(encoding="utf-8")
+verifier("l'événement d'accord du flux porte l'aperçu (sans bloc d'action), et la bulle l'affiche rendu",
+         '"response": _apercu_d_attente(state),' in runtime_src and "_texte_visible(state.get(\"llm_response\")" in runtime_src
+         and "suspendre(String(event.validation_id ?? \"\") || undefined, String(event.response ?? \"\"))" in chatwin
+         and "const texte = vu ? `${vu}\\n\\n${TEXTE_ATTENTE_ACCORD}` : TEXTE_ATTENTE_ACCORD" in chatwin
+         and 'msg.content && msg.content.includes("```") ?' in liste_src)
 verifier("tous les chemins qui posaient la bulle générique passent par `bulleAccord`",
          'pushAssistant("⏳ Une action attend votre accord' not in chatwin
          and chatwin.count("bulleAccord(") >= 4)

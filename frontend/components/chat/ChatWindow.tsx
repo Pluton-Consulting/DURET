@@ -412,13 +412,17 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // marqué résultat en cours »). Attachée à `accord:<id>`, elle passe à
   // « Résultat en cours… » dès le clic et se remplit de la réponse.
   const cleAccord = (id?: string | null) => (id ? `accord:${id}` : null)
-  const bulleAccord = (validationId?: string | null) => {
+  // `apercu` : ce que la personne valide (étapes d'un plan, message exact). Sans lui,
+  // la bulle disait seulement qu'un accord était attendu (18/09, porté de Symbiose).
+  const bulleAccord = (validationId?: string | null, apercu?: string | null) => {
     const cle = cleAccord(validationId)
-    if (!cle) { pushAssistant(TEXTE_ATTENTE_ACCORD, true); return }
+    const vu = (apercu || "").trim()
+    const texte = vu ? `${vu}\n\n${TEXTE_ATTENTE_ACCORD}` : TEXTE_ATTENTE_ACCORD
+    if (!cle) { pushAssistant(texte, true); return }
     // La question n'est pas marquée « en creux » : ce n'est pas une tâche de
     // fond, c'est le tour lui-même qui attend.
     if (!tachesSuiviesRef.current.has(cle)) marquerEnAttente(null, cle)
-    majBulle(cle, TEXTE_ATTENTE_ACCORD)
+    majBulle(cle, texte)
   }
 
   // ── Sondage : l'etat de la file et des accords, en une requete ───────
@@ -1306,7 +1310,7 @@ ${texteAffiche}`)
     // l'approbation d'apres reprendrait un graphe qui n'est plus au point ou il
     // s'etait arrete. Les messages suivants partent donc en file — le backend
     // refuse de toute facon un tour sur un fil suspendu.
-    const suspendre = (validationId?: string) => {
+    const suspendre = (validationId?: string, apercu?: string) => {
       if (settled) return
       settled = true
       clearStall()
@@ -1327,7 +1331,7 @@ ${texteAffiche}`)
       } else {
         setThinkingNode(null)
         setLoading(false)
-        bulleAccord(validationId)
+        bulleAccord(validationId, apercu)
       }
       // Le fil principal reste PRIS : c'est ce qui envoie les messages suivants
       // en file au lieu de les lancer sur un fil suspendu. On note quel accord
@@ -1397,7 +1401,7 @@ ${texteAffiche}`)
             : { etat: "terminee", reponse: res.response ?? "", activite: "terminée" })
           if (attend) rafraichirEtat()
         } else if (attend) {
-          bulleAccord(res.validation_id ? String(res.validation_id) : undefined)
+          bulleAccord(res.validation_id ? String(res.validation_id) : undefined, res.response)
           rafraichirEtat()
         } else {
           pushAssistant(res.response ?? "")
@@ -1453,7 +1457,7 @@ ${texteAffiche}`)
           } else if (t === "final" || (t === undefined && event.response !== undefined)) {
             finish(event.response ?? "")
           } else if (t === "pending_validation") {
-            suspendre(String(event.validation_id ?? "") || undefined)
+            suspendre(String(event.validation_id ?? "") || undefined, String(event.response ?? ""))
           } else if (t === "validation_required") {
             // Emis PENDANT le parcours ; c'est `pending_validation`, qui suit
             // avec l'identifiant persiste, qui fait foi. Rien a faire ici.

@@ -696,7 +696,9 @@ async def passer_la_main_node(state: AgentState) -> dict:
                     + ". Cherche-la sur le serveur (`nas_chercher`, dans le dossier que la conversation "
                     "nomme s'il y en a un), lis-la, puis réponds à la demande en entier en croisant ce "
                     "que l'image montre avec ce que dit la pièce. Si plusieurs affaires en ont une, dis "
-                    "laquelle tu as retenue — ou demande.]")
+                    "laquelle tu as retenue — ou demande. Une photo ne dit pas de quel chantier elle "
+                    "vient : ta conclusion vaut SI elle est bien de cette affaire, dis-le ; et ce qui ne "
+                    "se voit pas sur une photo (épaisseur, classement, référence) reste à vérifier.]")
     return {
         # `target_agent` N'EST PAS TOUCHÉ, ET C'EST VOLONTAIRE. Il ne sert plus
         # au routage à ce stade (on entre dans l'assistant par un edge direct) :

@@ -95,5 +95,30 @@ sk = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
 verifier("`nas_chercher` expose `plus_recents` au catalogue et n'exige plus `motif`", '"plus_recents"' in sk and 'requis=[], optionnels=["motif", "dossier", "plus_recents"]' in sk)
 verifier("le listage porte la date des dossiers, et la recherche affiche « Modifié le »", '"modifie": (add.get("time") or {}).get("mtime"),' in src and '"Modifié le"' in (BACKEND / "skills" / "affichage.py").read_text(encoding="utf-8"))
 
+print("— Plusieurs dossiers du même nom : on ne devine pas")
+import outils.nas as onas
+async def _pas_de_chemin(client, base, sid, chemin):
+    if chemin in ("/home/Drive",): return []
+    raise acces.NasRefuse("inexistant")
+onas._enfants_dossiers = _pas_de_chemin
+acces.dossiers_autorises = lambda: ["/home/Drive"]
+acces._CATALOGUE.update({"etat": "pret", "complet": True, "construit_le": 10 ** 9, "entrees": [
+    {"nom": "AFF 102-24 Bloc sanitaire college Dheurle La Teste", "chemin": "/home/Drive/04-Chantiers a executer/CHANTIERS 2024/AFF 102-24 Bloc sanitaire college Dheurle La Teste", "dossier": True, "modifie": 1700000000},
+    {"nom": "construction 29 lgts sociaux la test de buch 18-09-2026", "chemin": "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/construction 29 lgts sociaux la test de buch 18-09-2026", "dossier": True, "modifie": 1800000000},
+    {"nom": "AFF 093-25 ALSH LA TESTE DE BUCH", "chemin": "/home/Drive/02-Devis-affaires/12-Affaires 2025/AFF 093-25 ALSH LA TESTE DE BUCH", "dossier": True, "modifie": 1750000000},
+    {"nom": "Photos", "chemin": "/home/Drive/04-Chantiers a executer/CHANTIERS 2024/AFF 102-24 Bloc sanitaire college Dheurle La Teste/Photos", "dossier": True, "modifie": 1},
+    {"nom": "ETUDES EN COURS", "chemin": "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS", "dossier": True, "modifie": 1}]})
+try:
+    print("   résolu à tort :", asyncio.run(onas._resoudre(None, "", "", "La Teste"))); refus = ""
+except Exception as e:
+    refus = f"{type(e).__name__}: {e}"
+# (le dossier des 29 logements s'écrit « la test de buch » sur le serveur — une faute — et ne
+#  correspond donc pas à « La Teste » : deux candidats, dans deux branches, et rien de choisi)
+verifier("« La Teste » vit dans deux affaires : REFUS qui les liste, la plus récente d'abord (avant : le collège Dheurle choisi en silence)",
+         "Plusieurs dossiers" in refus and refus.find("ALSH") < refus.find("Dheurle") and "29 lgts" not in refus, refus[:400])
+verifier("un nom qui ne désigne qu'un dossier se résout toujours", asyncio.run(onas._resoudre(None, "", "", "ETUDES EN COURS")) == "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS")
+verifier("des candidats emboîtés (un dossier et son sous-dossier) ne sont pas une ambiguïté : le plus haut gagne",
+         asyncio.run(onas._resoudre(None, "", "", "Dheurle")).endswith("Dheurle La Teste"))
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

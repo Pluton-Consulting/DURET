@@ -334,7 +334,8 @@ def garantir_listage(resultat: dict, quoi: str, ouvreur: str = "nas_ouvrir") -> 
     dossiers = sum(1 for e in entrees if e.get("dossier"))
     fichiers = len(entrees) - dossiers
     resultat["bloc_ui"] = {"type": "table",
-                           "titre": f"Contenu — {(resultat.get('chemin') or quoi or '').rsplit('/', 1)[-1]}",
+                           "titre": f"Contenu — {(resultat.get('chemin') or quoi or '').rsplit('/', 1)[-1]}"
+                                    + (" (du plus récent au plus ancien)" if resultat.get("tri") else ""),
                            "columns": ["Nom", "Type", "Taille"] + (["Modifié le"] if avec_dates else []),
                            "rows": lignes}
     resultat["bloc_garanti"] = True

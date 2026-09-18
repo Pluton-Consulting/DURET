@@ -242,7 +242,7 @@ if NAS:
              'optionnels=["chemin", "nom"]' in outils_sk and "AFFICHE dans le chat" in outils_sk)
     nas_sk = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
     verifier("`nas_lister` rend un tableau garanti (garantir_listage) et `nas_lire` dépose pour la personne",
-             "garantir_listage(await lister(chemin)" in nas_sk and 'await lire(chemin, str(getattr(user, "id", "") or ""))' in nas_sk)
+             ("garantir_listage(await lister(chemin)" in nas_sk or "garantir_listage(resultat, chemin" in nas_sk) and 'await lire(chemin, str(getattr(user, "id", "") or ""))' in nas_sk)
     outils_nas = (BACKEND / "outils" / "nas.py").read_text(encoding="utf-8")
     verifier("`outils.nas.ouvrir` transmet le propriétaire aux deux lectures (chemin direct, résultat de recherche)",
              outils_nas.count("_lire_ouvert(client, base, sid, demande, proprietaire)") == 1

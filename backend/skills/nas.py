@@ -105,7 +105,15 @@ async def nas_lister(data: dict, user) -> dict:
                             "hasard : tu ne sais pas lesquels existent.")}
     try:
         from skills.affichage import garantir_listage
-        return garantir_listage(await lister(chemin), chemin, ouvreur="nas_ouvrir")
+        resultat = await lister(chemin)
+        # « LE DERNIER », « LE PLUS RÉCENT » (18/09, test réel : le modèle a présenté un chantier
+        # de 2017 comme « le dernier chantier terminé ») : `tri: "date"` range du plus récent
+        # au plus ancien, et le dit dans le titre.
+        if str(data.get("tri") or "").lower() in ("date", "recent", "récent", "modifie", "modifié"):
+            entrees = [e for e in (resultat.get("entrees") or []) if isinstance(e, dict)]
+            resultat["entrees"] = sorted(entrees, key=lambda e: int(e.get("modifie") or 0), reverse=True)
+            resultat["tri"] = "date de modification décroissante"
+        return garantir_listage(resultat, chemin, ouvreur="nas_ouvrir")
     except NasRefuse as e:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001 - un NAS injoignable n'est pas une panne du chat
@@ -307,10 +315,12 @@ SKILLS = {
         libelle="je vais chercher les photos"),
     "nas_lister": Declaration(
         fonction=nas_lister,
-        description=("LISTE le detail d'un dossier du serveur. Sans `chemin`, "
-                     "les dossiers ouverts a l'assistant. Prefere `nas_apercu` "
-                     "pour compter"),
-        optionnels=["chemin"],
+        description=("LISTE le detail d'un dossier du serveur, avec la date de "
+                     "modification de chaque entree. `tri: date` range du plus recent "
+                     "au plus ancien : c'est LA voie pour « le dernier », « le plus "
+                     "recent » — ne le devine jamais d'apres un nom. Sans `chemin`, "
+                     "les dossiers ouverts a l'assistant. Prefere `nas_apercu` pour compter"),
+        optionnels=["chemin", "tri"],
         effet="lecture",
         libelle="je liste un dossier du serveur"),
     "nas_lire": Declaration(

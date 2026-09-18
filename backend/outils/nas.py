@@ -175,6 +175,26 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
             # proche de la racine est presque toujours celui qu'on nomme.
             choisis = sorted(exacts or candidats,
                              key=lambda e: str(e.get("chemin") or "").count("/"))
+            # PLUSIEURS AFFAIRES PORTENT CE NOM : ON NE DEVINE PAS (18/09, test réel). « le dossier
+            # de La Teste » a résolu sur le collège Dheurle (chantier 2024) alors que la personne
+            # parlait des 29 logements de La Teste (appel d'offres en cours) — et le métré, puis
+            # trois réponses, ont porté sur le mauvais projet SANS le dire. Sans nom exact, quand
+            # les candidats vivent dans des branches différentes, le refus LISTE les candidats,
+            # les plus récents d'abord : le modèle précise (ou demande) au lieu de choisir.
+            if not exacts:
+                distincts = []
+                for e in choisis:
+                    ch = str(e.get("chemin") or "")
+                    if not any(ch.startswith(d.rstrip("/") + "/") for d in distincts):
+                        distincts.append(ch)
+                if len(distincts) > 1:
+                    par_chemin = {str(e.get("chemin") or ""): e for e in choisis}
+                    recents = sorted(distincts, key=lambda c: int(par_chemin[c].get("modifie") or 0), reverse=True)
+                    raise NasRefuse(
+                        f"Plusieurs dossiers correspondent à « {segments[0]} » ({len(distincts)}), dans des branches "
+                        "différentes — je ne choisis pas à ta place. Reprends le `chemin` EXACT de celui qui est "
+                        "visé (si la conversation en nomme un, c'est lui), sinon demande lequel. Candidats, les plus "
+                        "récents d'abord : " + " ; ".join(recents[:8]) + (" ; …" if len(recents) > 8 else ""))
             courant = choisis[0]["chemin"]
     if courant is None:
         raise NasRefuse(

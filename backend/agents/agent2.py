@@ -706,7 +706,8 @@ def suite_du_tour(demande: str, retouche_possible: bool) -> str:
         from agents.router import _SUITE_ATTENDUE
     except Exception:  # noqa: BLE001 — le routeur importe agent2 : pas de boucle ici
         _SUITE_ATTENDUE = ("devis", "chiffr", "mail", "document", "rapport",
-                           "compte rendu", "prépare", "prepare", "rédige", "redige")
+                           "compte rendu", "prépare", "prepare", "rédige", "redige",
+                           "cctp", "ccap", "dpgf", "dce", "conforme", "conformité")
     import re
     texte = (demande or "").lower()
     # Une interdiction n'est pas une commande de retouche. En recette, « ne

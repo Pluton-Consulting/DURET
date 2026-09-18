@@ -96,11 +96,18 @@ sys.modules["ressources.dossiers"] = dossier
 espace = {"AgentState": dict, "__name__": "agent1_extrait"}
 exec("import re as _re_pieces\n" + "\n\n".join(morceaux), espace)
 
-# LE CAS DE PROD : le PDF re-joint (déjà au dossier, même nom), et l'analyse des
-# photos du tour d'avant qui traîne dans l'état.
+# LE CAS DE PROD, tel que le routeur du chat le transmet : un PDF joint SEUL n'a pas
+# d'`attachment_name` (il ne désigne que le premier fichier VISUEL) — seul le texte
+# joint, marqué à son nom, dit quelle pièce vient d'arriver.
+src_chat = (BACKEND / "routers" / "chat.py").read_text(encoding="utf-8")
+verifier("le routeur marque TOUT texte joint à son nom, même seul",
+         "textes.append(f\"=== Fichier joint : {piece['nom']} ===\\n{texte}\")" in src_chat
+         and "if len(pieces) > 1 else texte" not in src_chat)
+verifier("…et `attachment_name` reste celui du premier fichier visuel (d'où la marque)",
+         'tete = visuels[0] if visuels else {}' in src_chat and 'attachment_name=tete.get("nom")' in src_chat)
 etat = {"user_id": "u", "thread_id": "f", "query": "Lis ce document",
-        "attachment_text": "Questions réponses Domofrance Pessac 111 logements",
-        "attachment_name": "Questions réponses.pdf", "has_attachment": True,
+        "attachment_text": "=== Fichier joint : Questions réponses.pdf ===\nQuestions réponses Domofrance Pessac 111 logements",
+        "attachment_name": None, "has_attachment": True,
         "vision_analysis": None}
 r = asyncio.run(espace["rag_node"](etat))
 chunks = r.get("raw_chunks") or []

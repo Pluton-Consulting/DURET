@@ -251,8 +251,12 @@ async def _pieces_jointes(pieces: list, surplus: int = 0, utilisateur=None, fil=
             # LE NOM DU FICHIER EN TÊTE dès qu'il y en a plusieurs : sans lui,
             # deux tableaux collés bout à bout deviennent un seul document sans
             # frontière, et le modèle attribue au premier ce qui vient du second.
-            textes.append(f"=== Fichier joint : {piece['nom']} ===\n{texte}"
-                          if len(pieces) > 1 else texte)
+            # …ET MÊME QUAND IL EST SEUL (18/09, banc Duret dans le navigateur) : un PDF
+            # joint seul arrivait sans son nom — `attachment_name` ne désigne que le premier
+            # fichier VISUEL. Dans un fil qui portait déjà quinze pièces, « lis ce document »
+            # a résumé un compte rendu d'un tour précédent : rien ne disait laquelle venait
+            # d'arriver. La marque porte le nom ; `rag_node` s'en sert pour la distinguer.
+            textes.append(f"=== Fichier joint : {piece['nom']} ===\n{texte}")
             if lignes:
                 tableaux.append(lignes)
         else:

@@ -659,6 +659,12 @@ _SUITE_ATTENDUE = (
     # DÉCRIT le photomontage à faire, et aucune image n'a été produite.
     "doit ", "doivent", "garde ", "garde-", "laisse ", "représent", "represent",
     "refai", "fais ", "fais-", "photomontage", "montage", "identique",
+    # 18/09 (banc Duret, dans le navigateur) : une photo + « est-ce conforme au CCTP du lot 12 ? »
+    # → « impossible de confirmer sur la seule image ». Le CCTP était sur le serveur, mais la
+    # vision ne cherche rien et la consigne `[SUITE]` n'a pas été suivie par le modèle. Une pièce
+    # de marché NOMMÉE dans la demande est une pièce à aller chercher : c'est l'assistant qui le fait.
+    "cctp", "ccap", "dpgf", "dqe", "bpu", "dce", "règlement de consultation",
+    "reglement de consultation", "cahier des charges", "conforme", "conformité", "conformite",
 )
 
 # Ce que dit la VISION quand elle a compris qu'on attend une image : sa propre

@@ -1031,7 +1031,11 @@ def _nom_correspond(nom: str, motif: str, mots_entiers: bool = False) -> bool:
     import re
     nom, motif = _sans_accent_nas(nom), _sans_accent_nas(motif).strip()
     if not motif:return False
-    if motif in nom and not mots_entiers:return True
+    # UN SIGLE COURT EST UN MOT, PAS UN MORCEAU DE MOT (18/09, banc Duret : « RC » remontait
+    # « ARCHIVES », « Planning masse chantier » — le « rc » de « archives », de « marche »).
+    # Sous quatre caractères, la sous-chaîne brute ne vaut rien : seuls les mots entiers comptent.
+    court = len(re.sub(r"[^a-z0-9]", "", motif)) < 4
+    if motif in nom and not mots_entiers and not court:return True
     def mots(t):
         t=re.sub(r'(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])',' ',t)
         return re.findall(r'[a-z0-9]+',t)

@@ -222,5 +222,13 @@ verifier("le décompte porte sur tout le catalogue, fichiers seuls, groupé et t
          compte)
 verifier("un catalogue partiel se DIT dans le décompte", "PARTIEL" in (compte.get("note") or ""))
 
+# 18/09 : « RC » remontait « ARCHIVES », « Planning masse chantier… ».
+nc = acces._nom_correspond
+verifier("un sigle court se cherche en MOT entier : « RC » trouve « RC.pdf », « 01.NVAQ392-RC.pdf », pas « ARCHIVES »",
+         nc("RC.pdf", "RC") and nc("01.NVAQ392-RC.pdf", "RC") and not nc("ARCHIVES 2024", "RC")
+         and not nc("Planning masse chantier 2024.xlsx", "RC"))
+verifier("au-delà de trois caractères, le morceau de mot reste permis (« dpgf » dans « CDPGF »)",
+         nc("AAS 4207 - ECO DCE - CDPGF Lot 212.xlsx", "DPGF") and nc("Dpgf_lot 11.xls", "dpgf"))
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

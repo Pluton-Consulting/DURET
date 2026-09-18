@@ -220,10 +220,20 @@ def garantir_recherche(resultat: dict, motif: str, ouvreur: str | None = None) -
         "au hasard », « un autre », « des exemples ». Ne rouvre pas un fichier déjà "
         "montré dans cette conversation quand on te demande d'en trouver un. "
         if dossiers else "")
+    # PLUSIEURS AFFAIRES DU MÊME NOM (18/09, test réel) : « la date limite de remise des offres
+    # de La Teste » — sept dossiers « La Teste », et l'assistant a répondu sur le collège Dheurle
+    # (2024, échéance passée) sans dire pourquoi, puis l'a défendu au tour suivant. Le choix
+    # reste au modèle, mais il se DIT : lequel, et pourquoi.
+    plusieurs = (
+        "PLUSIEURS DOSSIERS portent ce nom : si la demande ne dit pas lequel, ne choisis pas en "
+        "silence. Retiens celui qui répond à la question (une échéance À VENIR se cherche dans "
+        "une affaire EN COURS, la plus récente ; un historique dans une affaire terminée) et DIS "
+        "lequel tu as retenu et pourquoi — ou demande lequel en les citant. "
+        if dossiers >= 2 else "")
     resultat["a_faire"] = (
         "Les résultats sont DÉJÀ affichés à l'écran par un bloc mécanique : ne "
         "les recopie pas, n'écris aucun bloc doc ou fichier pour eux. "
-        + rangement +
+        + rangement + plusieurs +
         "SI LA DEMANDE DE CE TOUR EST D'OUVRIR OU DE LIRE UN DOCUMENT (« ouvre un "
         "devis », « un au hasard », « le plus récent », « trouve X et ouvre-le ») : "
         f"enchaîne MAINTENANT avec {geste} sur le NOM EXACT d'une ligne de type "

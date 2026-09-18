@@ -100,7 +100,14 @@ client = lire("vectorstore/client.py")
 lexical = client[client.find("async def search_lexical("): client.find("async def count_lexical(")] if "async def search_lexical(" in client else ""
 verifier("voie lexicale : plein texte FRANÇAIS (websearch_to_tsquery)", "websearch_to_tsquery('french', $1)" in lexical)
 verifier("voie lexicale : trigrammes de MOTS (<%), pas `content %`", "$1 <% content" in lexical and "content % $1" not in client)
-verifier("voie lexicale : les trigrammes complètent le plein texte, sans doublon", "if len(resultats) < top_k" in lexical and "not in vus" in lexical)
+# 18/09, mesuré en production (130 893 morceaux) : plein texte 53 ms, filet trigramme 64 s, compte 125 s.
+comptage = client[client.find("async def count_lexical("): client.find("async def search_hybrid(")]
+verifier("le filet trigramme ne part que si le plein texte ne trouve presque rien, et sous un délai borné",
+         "SEUIL_FILET_TRIGRAMMES" in lexical and "statement_timeout" in lexical)
+verifier("le compte ne relit plus tout le corpus par trigrammes (pas de « OR <% » dans la même requête)",
+         "OR $1 <% content" not in comptage and "statement_timeout" in comptage)
+verifier("voie lexicale : les trigrammes complètent le plein texte, sans doublon",
+         ("if len(resultats) < top_k" in lexical or "if len(resultats) < min(top_k, SEUIL_FILET_TRIGRAMMES)" in lexical) and "not in vus" in lexical)
 verifier("le COMPTE exact des morceaux ET des documents", "COUNT(DISTINCT (source_type, source_id))" in client)
 hybride = client[client.find("async def search_hybrid("):] if "async def search_hybrid(" in client else ""
 verifier("hybride : la voie lexicale est appelée TOUJOURS, pas seulement sans embedding",

@@ -103,6 +103,12 @@ r3 = aff.garantir_recherche({"motif": "devis", "nombre": 5, "page": 1, "pages": 
                             "devis", ouvreur="nas_ouvrir")
 verifier("sans fichier du tout, pas de fausse piste « type: fichiers »",
          "type:" not in str(r3.get("a_faire")))
+# 18/09 : sept dossiers « La Teste », réponse sur le collège Dheurle (2024) sans dire pourquoi.
+r4 = aff.garantir_recherche({"motif": "La Teste", "nombre": 2, "pages": 1,
+                             "resultats": [{"nom": "AFF 102-24 Dheurle La Teste", "chemin": "/C/AFF 102-24", "dossier": True},
+                                           {"nom": "construction 29 lgts la test de buch", "chemin": "/E/29 lgts", "dossier": True}]}, "La Teste")
+verifier("plusieurs dossiers du même nom : la consigne demande de DIRE lequel est retenu et pourquoi (ou de demander)",
+         "PLUSIEURS DOSSIERS" in str(r4.get("a_faire")) and "PLUSIEURS DOSSIERS" not in str(r2.get("a_faire")))
 sk_nas = BACKEND / "skills" / "nas.py"
 if sk_nas.exists():
     verifier("Duret : `nas_chercher` passe son ouvreur à la recherche",

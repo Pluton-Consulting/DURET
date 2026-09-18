@@ -334,6 +334,17 @@ def _depouiller(texte: str) -> str:
     return " ".join(mots).replace("' ", "'").strip()
 
 
+def _jour_de_paris(d: datetime) -> str:
+    """Un instant (UTC) écrit comme la personne le lit : le jour, à l'heure de Paris."""
+    from zoneinfo import ZoneInfo
+    return (d.astimezone(ZoneInfo("Europe/Paris")) if d.tzinfo else d).strftime("%d/%m/%Y")
+
+
+def _iso_de_paris(d: datetime) -> str:
+    from zoneinfo import ZoneInfo
+    return (d.astimezone(ZoneInfo("Europe/Paris")) if d.tzinfo else d).isoformat()
+
+
 def depuis_quand(valeur) -> Optional[datetime]:
     """« 7j », « semaine », « les 7 derniers jours », « lundi », « 2026-08-15 » →
     l'instant de départ, en UTC.
@@ -881,12 +892,12 @@ async def lire_boite(boite: str, dossier: str = "recus",
     suivant=messages[-1].get('curseur_suivant') if messages and total and total>len(messages) else None
     if mots and total is None:
         compte = (f"{len(messages)} message(s) trouvé(s) pour « {mots} »"
-                  + (f" (avant le {borne.date().strftime('%d/%m/%Y')})" if borne else "")
+                  + (f" (avant le {_jour_de_paris(borne)})" if borne else "")
                   + " ; le total des correspondances n'est pas connu du fournisseur.")
     elif mots:
         compte = (f"{total}{'+' if total >= MAX_COMPTE else ''} message(s) correspondant à « {mots} »"
-                  + (f" depuis le {debut.date().strftime('%d/%m/%Y')}" if debut else "")
-                  + (f" avant le {borne.date().strftime('%d/%m/%Y')}" if borne else "")
+                  + (f" depuis le {_jour_de_paris(debut)}" if debut else "")
+                  + (f" avant le {_jour_de_paris(borne)}" if borne else "")
                   + (f", dont voici les {len(messages)} plus récents." if total > len(messages)
                      else ", tous détaillés ci-dessous."))
     elif total is None:
@@ -894,7 +905,7 @@ async def lire_boite(boite: str, dossier: str = "recus",
                   "obtenu du fournisseur.")
     elif debut:
         compte = (f"{total}{'+' if total >= MAX_COMPTE else ''} message(s) reçu(s) depuis le "
-                  f"{debut.date().strftime('%d/%m/%Y')}"
+                  f"{_jour_de_paris(debut)}"
                   + (f", dont voici les {len(messages)} plus récents." if total > len(messages)
                      else ", tous détaillés ci-dessous."))
     else:
@@ -912,7 +923,8 @@ async def lire_boite(boite: str, dossier: str = "recus",
         "boite": boite, "dossier": cle, "nombre": len(messages),
         "periode_non_comprise": non_comprise or None,
         "total_periode": total,
-        "periode_depuis": debut.isoformat() if debut else None,
+        # À l'heure de Paris : « ce mois-ci » part du 1er à minuit, que l'UTC écrit « le 31 » (18/09).
+        "periode_depuis": _iso_de_paris(debut) if debut else None,
         "tronque": bool(total is not None and total > len(messages)),
         "recherche": mots,
         "avant": borne.isoformat() if borne else None,

@@ -25,6 +25,12 @@ from security.acces import ROLE_ACCESS_LEVELS  # noqa: F401
 from config import settings
 
 
+# Le filet par trigrammes (fautes, formes voisines) : seulement quand le plein texte
+# trouve moins de SEUIL morceaux, et jamais plus de DELAI ms (18/09).
+SEUIL_FILET_TRIGRAMMES = 5
+DELAI_FILET_TRIGRAMMES_MS = 10000
+
+
 class VectorStoreClient:
     """Interface principale pour les opérations pgvector. Singleton — instancier une fois au démarrage."""
 
@@ -172,21 +178,34 @@ class VectorStoreClient:
                 LIMIT $3
             """, *params)
             resultats = [dict(r) for r in rows]
-            if len(resultats) < top_k:
+            # LE FILET DES TRIGRAMMES EST UN FILET, PAS UNE SECONDE RECHERCHE (18/09, mesuré en
+            # production sur 130 893 morceaux) : le plein texte répond en 53 ms, mais « date limite
+            # de remise des offres La Teste » faisait rouvrir 89 881 morceaux par l'index trigramme
+            # — 64 s — parce que le plein texte avait trouvé 29 morceaux « seulement » sur 60
+            # demandés. Chaque `rechercher_documents` coûtait trois minutes. Le filet ne part plus
+            # que si le plein texte ne trouve presque RIEN (fautes, formes voisines), et jamais
+            # plus de 10 s : au-delà il cède, les résultats du plein texte restent.
+            if len(resultats) < min(top_k, SEUIL_FILET_TRIGRAMMES):
                 vus = {str(r["id"]) for r in resultats}
-                rows = await conn.fetch(f"""
-                    SELECT id, content, source_type, source_id, source_filename,
-                           chunk_index, chunk_total,
-                           word_similarity($1, content) AS similarity
-                    FROM documents
-                    WHERE access_level = ANY($2::text[])
-                      AND is_anonymized = true
-                      AND $1 <% content
-                      {filtres}
-                    ORDER BY similarity DESC
-                    LIMIT $3
-                """, *params)
-                resultats += [dict(r) for r in rows if str(r["id"]) not in vus]
+                try:
+                    async with conn.transaction():
+                        await conn.execute(f"SET LOCAL statement_timeout = '{DELAI_FILET_TRIGRAMMES_MS}'")
+                        rows = await conn.fetch(f"""
+                            SELECT id, content, source_type, source_id, source_filename,
+                                   chunk_index, chunk_total,
+                                   word_similarity($1, content) AS similarity
+                            FROM documents
+                            WHERE access_level = ANY($2::text[])
+                              AND is_anonymized = true
+                              AND $1 <% content
+                              {filtres}
+                            ORDER BY similarity DESC
+                            LIMIT $3
+                        """, *params)
+                    resultats += [dict(r) for r in rows if str(r["id"]) not in vus]
+                except Exception as e:  # noqa: BLE001 — délai dépassé : le plein texte suffit
+                    import logging
+                    logging.getLogger(__name__).info("Filet trigramme écarté (%s) : plein texte seul", type(e).__name__)
             return resultats[:top_k]
 
     async def count_lexical(
@@ -206,16 +225,32 @@ class VectorStoreClient:
             return 0, 0
         params: list = [texte, allowed_levels]
         filtres = self._filtres(params, source_types, fichier, boites)
+        # LE COMPTE SE FAIT PAR LE PLEIN TEXTE (18/09) : l'alternative trigramme dans la même requête forçait la relecture
+        # trigramme de tout le corpus — 125 s mesurées en production pour un compte. Les trigrammes
+        # ne comptent que si le plein texte ne trouve rien, et cèdent au bout de 10 s.
         async with get_db() as conn:
             row = await conn.fetchrow(f"""
                 SELECT COUNT(*) AS morceaux, COUNT(DISTINCT (source_type, source_id)) AS documents
                 FROM documents
                 WHERE access_level = ANY($2::text[])
                   AND is_anonymized = true
-                  AND (to_tsvector('french', content) @@ websearch_to_tsquery('french', $1)
-                       OR $1 <% content)
+                  AND to_tsvector('french', content) @@ websearch_to_tsquery('french', $1)
                   {filtres}
             """, *params)
+            if int(row["morceaux"] or 0) == 0:
+                try:
+                    async with conn.transaction():
+                        await conn.execute(f"SET LOCAL statement_timeout = '{DELAI_FILET_TRIGRAMMES_MS}'")
+                        row = await conn.fetchrow(f"""
+                            SELECT COUNT(*) AS morceaux, COUNT(DISTINCT (source_type, source_id)) AS documents
+                            FROM documents
+                            WHERE access_level = ANY($2::text[])
+                              AND is_anonymized = true
+                              AND $1 <% content
+                              {filtres}
+                        """, *params)
+                except Exception:  # noqa: BLE001 — délai dépassé : le compte du plein texte (zéro) reste
+                    pass
             return int(row["morceaux"] or 0), int(row["documents"] or 0)
 
     async def search_hybrid(

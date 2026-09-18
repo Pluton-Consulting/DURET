@@ -602,8 +602,11 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
     # jusqu'à un quart d'heure sur le NAS de l'entreprise, et la carte restait
     # sur « 0 traité(s) » : rien ne se comptait avant l'ouverture des fichiers.
     await _prevenir(0, None, "je relève l'arborescence du NAS · démarrage du parcours")
+    # RELEVÉ COMPLET, pas incrémental (18/09) : la synchronisation compare la date de chaque
+    # FICHIER à son ingestion, et la date d'un dossier ne bouge pas quand un fichier est
+    # modifié en place — un relevé incrémental lui cacherait les fichiers mis à jour.
     entrees, complet = await acces.catalogue_attendu(
-        sur_progres=lambda texte: _prevenir(0, None, texte))
+        sur_progres=lambda texte: _prevenir(0, None, texte), relire_tout=True)
 
     # UNE RACINE QUI NE REND RIEN SE DIT. C'est la racine fantôme du .env :
     # silencieuse, elle faisait croire à un NAS vide.

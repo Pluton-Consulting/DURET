@@ -637,7 +637,8 @@ async def _balayer(client, base, sid, racines: list[str],
                    dossiers_max: int = BALAYAGE_DOSSIERS_MAX,
                    profondeur: int = BALAYAGE_PROFONDEUR,
                    arret_au_premier: bool = False,
-                   progres: Optional[dict] = None) -> tuple[list[dict], bool]:
+                   progres: Optional[dict] = None,
+                   connu: Optional[dict] = None) -> tuple[list[dict], bool]:
     """Descend l'arborescence et rend les entrées retenues par `correspond`.
 
     `correspond(entree) -> bool` reçoit un dict `{nom, chemin, dossier, octets}`.
@@ -648,6 +649,16 @@ async def _balayer(client, base, sid, racines: list[str],
     dossiers repérés, fichiers repérés, niveau, dernier dossier lu. Relevé de
     Noa : « je relève l'arborescence du NAS · depuis 11 min · 0 traité(s) »,
     rien ne disait que le parcours avançait.
+
+    `connu` (18/09) : LE RELEVÉ PRÉCÉDENT, pour un parcours INCRÉMENTAL —
+    {"dates": {chemin du dossier: sa date de modification}, "enfants": {chemin:
+    [ses entrées]}}. Un dossier dont la date n'a pas bougé depuis le relevé
+    précédent n'est pas relu : ses entrées d'alors sont reprises. Mesuré en
+    production : 110 000 entrées en 40 minutes et toujours partiel ; d'un
+    relevé à l'autre, seuls les dossiers qui ont changé se listent, et la
+    couverture grandit jusqu'à être complète. ⚠️ La date d'un DOSSIER ne bouge
+    pas quand un fichier est modifié EN PLACE : une synchronisation qui compare
+    les dates des fichiers ne doit pas passer par là (`relire_tout`).
     """
     import time as _t
 
@@ -656,17 +667,27 @@ async def _balayer(client, base, sid, racines: list[str],
     trouves: list[dict] = []
     vus: set = set()
     complet = True
-    niveau = [r for r in racines if r]
+    niveau = [(r, None) for r in racines if r]
     listes = 0
+    dates_connues = (connu or {}).get("dates") or {}
+    enfants_connus = (connu or {}).get("enfants") or {}
     if progres is not None:
         progres.update({"debut": debut, "delai_s": delai_s, "dossiers_lus": 0,
                         "dossiers_vus": len(niveau), "fichiers_vus": 0, "niveau": 0,
-                        "dernier": ""})
+                        "dernier": "", "reutilises": 0})
 
     coupe = False
 
-    async def _un(chemin: str) -> list[dict]:
+    async def _un(couple) -> list[dict]:
         nonlocal coupe
+        chemin, date_courante = couple
+        # LE DOSSIER N'A PAS CHANGÉ DEPUIS LE RELEVÉ PRÉCÉDENT : ses entrées d'alors valent, sans
+        # listage (la date vient du listage du PARENT, faite à l'instant — pas de l'ancien relevé).
+        if (date_courante and chemin in enfants_connus and dates_connues.get(chemin)
+                and int(date_courante) == int(dates_connues[chemin])):
+            if progres is not None:
+                progres["reutilises"] = progres.get("reutilises", 0) + 1
+            return enfants_connus[chemin]
         garde = _CACHE_LISTAGE.get(chemin)
         if garde and garde[0] > _t.monotonic():
             return garde[1]
@@ -724,7 +745,7 @@ async def _balayer(client, base, sid, racines: list[str],
                     if arret_au_premier:
                         return trouves, complet
                 if e.get("dossier"):
-                    suivant.append(chemin)
+                    suivant.append((chemin, e.get("modifie")))
                 elif progres is not None:
                     progres["fichiers_vus"] = progres.get("fichiers_vus", 0) + 1
         if progres is not None:
@@ -818,10 +839,27 @@ def restaurer_catalogue() -> bool:
         return False
 
 
-async def construire_catalogue() -> dict:
+def _releve_precedent() -> Optional[dict]:
+    """Le relevé en mémoire sous la forme que `_balayer` sait réutiliser."""
+    entrees = _CATALOGUE.get("entrees") or []
+    if not entrees:
+        return None
+    dates, enfants = {}, {}
+    for e in entrees:
+        chemin = str(e.get("chemin") or "")
+        if not chemin:
+            continue
+        enfants.setdefault(posixpath.dirname(chemin), []).append(e)
+        if e.get("dossier") and e.get("modifie"):
+            dates[chemin] = e["modifie"]
+    return {"dates": dates, "enfants": enfants}
+
+
+async def construire_catalogue(relire_tout: bool = False) -> dict:
     """Balaye tout le périmètre et garde le résultat en mémoire. Une seule
     construction à la fois : un second appel pendant la première n'en lance
-    pas une autre, il rend l'état."""
+    pas une autre, il rend l'état. `relire_tout` : aucun dossier repris du relevé
+    précédent (synchronisation, qui compare les dates des FICHIERS)."""
     import time as _t
 
     if _CATALOGUE["en_cours"]:
@@ -838,16 +876,20 @@ async def construire_catalogue() -> dict:
         with en_systeme():
             async with connexion() as (client, base, sid):
                 _CATALOGUE["progression"] = {}
+                connu = None if relire_tout else _releve_precedent()
                 entrees, complet = await _balayer(
                     client, base, sid, racines, lambda e: True,
                     delai_s=CATALOGUE_DELAI_S, dossiers_max=CATALOGUE_DOSSIERS_MAX,
                     profondeur=CATALOGUE_PROFONDEUR,
-                    progres=_CATALOGUE["progression"])
+                    progres=_CATALOGUE["progression"], connu=connu)
+                if connu:
+                    logger.info("NAS : relevé incrémental — %d dossier(s) repris sans listage",
+                                int(_CATALOGUE["progression"].get("reutilises", 0)))
         # Un relevé partiel ne REMPLACE pas un catalogue complet relu du disque : il serait
         # moins bon que ce qu'on a. Il ne s'impose que s'il est complet, ou plus fourni.
         if complet or len(entrees) >= len(_CATALOGUE["entrees"]) or not _CATALOGUE.get("complet"):
             _CATALOGUE.update({"etat": "pret" if complet else "partiel",
-                               "entrees": entrees, "complet": complet,
+                               "entrees": entrees, "complet": complet, "incremental": bool(connu),
                                "construit_le": _t.monotonic(), "age_s": 0.0})
             _ecrire_catalogue(entrees, complet)
         logger.info("NAS : catalogue %s — %d entrées en %.0f s",
@@ -901,11 +943,13 @@ def decrire_progression(p: Optional[dict] = None) -> str:
              f"sur {nb(p.get('dossiers_vus', 0))} repérés · {nb(p.get('fichiers_vus', 0))} fichiers "
              f"repérés · profondeur {p.get('niveau', 0)} · {ecoule // 60} min {ecoule % 60:02d} s "
              f"(arrêt à {delai // 60} min)")
+    if p.get("reutilises"):
+        texte += f" · {nb(p['reutilises'])} dossiers repris du relevé précédent"
     return texte + (f" · {dernier}" if dernier else "")
 
 
 async def catalogue_attendu(attente_max_s: float = CATALOGUE_DELAI_S + 60,
-                            sur_progres=None) -> tuple[list, bool]:
+                            sur_progres=None, relire_tout: bool = False) -> tuple[list, bool]:
     """(entrées, complet) d'un catalogue FRAIS — attendu s'il se construit,
     construit s'il manque. Pour les traitements de fond (synchronisation) :
     un second balayage du même serveur pendant que le premier tourne ne
@@ -932,9 +976,12 @@ async def catalogue_attendu(attente_max_s: float = CATALOGUE_DELAI_S + 60,
         restaurer_catalogue()
     duree = CATALOGUE_DUREE_COMPLET_S if _CATALOGUE.get("complet") else CATALOGUE_DUREE_S
     frais = (_CATALOGUE["etat"] in ("pret", "partiel", "restaure")
-             and _t.monotonic() - _CATALOGUE["construit_le"] < duree)
+             and _t.monotonic() - _CATALOGUE["construit_le"] < duree
+             and not (relire_tout and _CATALOGUE.get("age_s", 0) > 0))
+    if relire_tout:
+        frais = frais and _CATALOGUE["etat"] == "pret" and not _CATALOGUE.get("incremental")
     if not frais and not _CATALOGUE["en_cours"]:
-        tache = asyncio.get_running_loop().create_task(construire_catalogue())
+        tache = asyncio.get_running_loop().create_task(construire_catalogue(relire_tout=relire_tout))
         while not tache.done():
             await _dire()
             await asyncio.wait({tache}, timeout=5)

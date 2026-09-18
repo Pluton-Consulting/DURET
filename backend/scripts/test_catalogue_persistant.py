@@ -48,5 +48,35 @@ open(acces._chemin_catalogue(), "w").write("{pas du json")
 acces._CATALOGUE.update({"etat": "vide", "entrees": [], "construit_le": 0.0, "complet": False})
 verifier("un fichier abîmé ne casse rien : on repart sans catalogue", acces.restaurer_catalogue() is False and acces._CATALOGUE["etat"] == "vide")
 
+print("— Le relevé INCRÉMENTAL : un dossier dont la date n'a pas bougé n'est pas relisté")
+import asyncio
+ARBRE = {"/home/Drive": [{"nom": "A", "chemin": "/home/Drive/A", "dossier": True, "modifie": 100},
+                         {"nom": "B", "chemin": "/home/Drive/B", "dossier": True, "modifie": 200}],
+         "/home/Drive/A": [{"nom": "a1.pdf", "chemin": "/home/Drive/A/a1.pdf", "dossier": False, "modifie": 5, "octets": 1}],
+         "/home/Drive/B": [{"nom": "b1.pdf", "chemin": "/home/Drive/B/b1.pdf", "dossier": False, "modifie": 6, "octets": 1},
+                           {"nom": "C", "chemin": "/home/Drive/B/C", "dossier": True, "modifie": 300}],
+         "/home/Drive/B/C": [{"nom": "c1.pdf", "chemin": "/home/Drive/B/C/c1.pdf", "dossier": False, "modifie": 7, "octets": 1}]}
+LISTES = []
+async def _faux_lister(client, base, sid, chemin, tout=False):
+    LISTES.append(chemin); return {"entrees": ARBRE.get(chemin, [])}
+acces._lister_ouvert = _faux_lister
+acces._CACHE_LISTAGE.clear()
+entrees, complet = asyncio.run(acces._balayer(None, "", "", ["/home/Drive"], lambda e: True, delai_s=60, dossiers_max=1000, profondeur=10))
+verifier("premier relevé : tout est listé (4 dossiers), 6 entrées, complet", len(LISTES) == 4 and len(entrees) == 6 and complet, str((len(LISTES), len(entrees), complet)))
+acces._CATALOGUE.update({"entrees": entrees, "complet": True, "etat": "pret"})
+connu = acces._releve_precedent()
+verifier("le relevé précédent donne la date de chaque dossier et ses enfants", connu["dates"]["/home/Drive/A"] == 100 and len(connu["enfants"]["/home/Drive/B"]) == 2)
+# B a changé (un fichier ajouté) ; A n'a pas bougé
+ARBRE["/home/Drive"][1]["modifie"] = 201
+ARBRE["/home/Drive/B"].append({"nom": "b2.pdf", "chemin": "/home/Drive/B/b2.pdf", "dossier": False, "modifie": 8, "octets": 1})
+LISTES.clear(); acces._CACHE_LISTAGE.clear(); progres = {}
+entrees2, complet2 = asyncio.run(acces._balayer(None, "", "", ["/home/Drive"], lambda e: True, delai_s=60, dossiers_max=1000, profondeur=10, progres=progres, connu=connu))
+verifier("second relevé : A et C repris sans listage, B relisté, le nouveau fichier vu",
+         sorted(LISTES) == ["/home/Drive", "/home/Drive/B"] and len(entrees2) == 7 and complet2 and progres.get("reutilises") == 2, str((sorted(LISTES), len(entrees2), progres.get("reutilises"))))
+verifier("la synchronisation demande un relevé COMPLET (les dates des fichiers ne se voient pas dans celle d'un dossier)",
+         "relire_tout=True" in (BACKEND / "ingestion" / "connectors" / "synology.py").read_text(encoding="utf-8")
+         and "def construire_catalogue(relire_tout: bool = False)" in src.replace("async ", ""))
+verifier("l'avancement dit les dossiers repris", "dossiers repris du relevé précédent" in acces.decrire_progression({"debut": 0.0, "delai_s": 60, "reutilises": 12}))
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

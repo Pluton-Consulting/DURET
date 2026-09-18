@@ -1613,6 +1613,10 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
     await asyncio.to_thread(verifier_poursuite)
     await dire(uid,fil,tache,'mise en page finale dans le modèle de l’entreprise (garde, rubriques reprises, rubriques rédigées, images)')
     r=await terminer_document({'document_id':jeton,'_fil':fil},user)
+    if controle_pages.get('pages'):
+        # La mesure réelle remplace l'estimation, sur la fiche ET dans le résultat : un seul chiffre.
+        await asyncio.to_thread(atelier.noter_pages,jeton,uid,controle_pages['pages'])
+        r={**r,'pages_estimees':controle_pages['pages']}
     # Vérification du fichier rendu, pas seulement du titre de sa carte.
     from docx import Document
     chemin=await asyncio.to_thread(atelier.chemin_fichier,jeton,uid)

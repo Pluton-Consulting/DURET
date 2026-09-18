@@ -392,6 +392,20 @@ def termines(proprietaire: str, fil: str | None = None) -> list[dict]:
 
 
 @_serialise
+def noter_pages(jeton: str, proprietaire: str, pages) -> bool:
+    """Le nombre de pages MESURÉ (conversion réelle) remplace l'estimation (18/09, banc Duret) :
+    un mémoire rendu à 26 pages portait « pages_estimees : 17 », et le modèle a répondu « 17 pages,
+    sous la limite de 20 » sur la foi de l'estimation. Deux chiffres pour un document, c'est un faux."""
+    f = _lire_fiche(jeton)
+    if not f or f.get("proprietaire") != proprietaire or type(pages) is not int or pages < 1:
+        return False
+    f["pages_mesurees"] = pages
+    f["pages_estimees"] = pages
+    _ecrire_fiche(jeton, f)
+    return True
+
+
+@_serialise
 def fiche(jeton: str, proprietaire: str) -> dict | None:
     """Fiche du document SI elle appartient à cette personne, sinon None.
 

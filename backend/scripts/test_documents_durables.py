@@ -414,6 +414,15 @@ class Recette(unittest.TestCase):
     from docx.oxml.ns import qn
     self.assertEqual(len(list(neuf.sections[0].header._element.iter(qn('w:drawing')))),1)
     atelier.abandonner(jeton,self.uid)
+ def test_pages_mesurees_remplacent_l_estimation(self):
+    # 18/09 (navigateur) : un mémoire rendu à 26 pages portait « pages_estimees : 17 » sur sa fiche, et le
+    # modèle a répondu « 17 pages, sous la limite ». La mesure réelle remplace l'estimation.
+    jeton=atelier.ouvrir({'titre':'Mémoire','format':'docx'},self.uid,self.fil)
+    self.assertTrue(atelier.noter_pages(jeton,self.uid,26))
+    f=atelier.fiche(jeton,self.uid);self.assertEqual(f.get('pages_estimees'),26);self.assertEqual(f.get('pages_mesurees'),26)
+    self.assertFalse(atelier.noter_pages(jeton,'autre-compte',3))
+    self.assertIn("atelier.noter_pages,jeton,uid,controle_pages['pages']",(BACKEND/'skills/documents_dossier.py').read_text(encoding='utf-8'))
+    atelier.abandonner(jeton,self.uid)
  def test_composition_complete_et_reprise_idempotente(self):
     ids=[dossiers.enregistrer(self.uid,self.fil,'source'+str(i)+'.txt','Exigence vérifiée '+str(i)) for i in range(2)]
     compteur=[]

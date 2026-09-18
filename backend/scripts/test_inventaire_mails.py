@@ -206,6 +206,10 @@ a1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("le résultat d'un inventaire n'est pas recoupé après avoir été parcouru en entier",
          "action['skill']=='lire_mails' and isinstance(sortie,dict) and sortie.get('inventaire'):plafond=190000" in a1)
 
+jour = esp3["_jour_lisible"]
+verifier("la date se lit en ISO comme en RFC 2822 (voie IMAP de Duret : « Se/18/Fri, 2026 » avant)",
+         jour({"date": "2026-09-18T08:32:14"}) == "18/09/2026 08:32" and jour({"date": "Fri, 18 Sep 2026 08:32:14 +0000"}) == "18/09/2026 10:32"
+         and jour({"date": "n'importe quoi", "date_iso": "2026-09-18"}) == "18/09/2026" and jour({}) == "", str([jour({"date": "Fri, 18 Sep 2026 08:32:14 +0000"})]))
 nomme = esp3["_expediteur_lisible"]
 verifier("l'expéditeur se dit « Prénom Nom (adresse) » quand la messagerie donne le nom (18/09)",
          nomme({"de": "d.j@europiscine.fr", "de_nom": "David J."}) == "David J. (d.j@europiscine.fr)"

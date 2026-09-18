@@ -1047,8 +1047,24 @@ async def _classer_les_mails(messages: list[dict], categories: list[str]) -> int
 
 
 def _jour_lisible(m: dict) -> str:
-    brut = str(m.get("date") or m.get("date_iso") or "")
-    return f"{brut[8:10]}/{brut[5:7]}/{brut[:4]}" + (f" {brut[11:16]}" if len(brut) >= 16 else "") if len(brut) >= 10 else brut
+    """« 18/09/2026 10:32 ». La voie IMAP (Duret) rend `date` au format RFC 2822
+    (« Fri, 18 Sep 2026 08:32:14 +0000 ») : lu tel quel, il donnait « Se/18/Fri, 2026 »
+    dans le tableau (18/09). L'ISO d'abord ; sinon la date se PARSE, jamais se tranche."""
+    brut = str(m.get("date") or "")
+    iso = str(m.get("date_iso") or "")
+    if len(brut) >= 10 and brut[4] == "-" and brut[7] == "-":
+        return f"{brut[8:10]}/{brut[5:7]}/{brut[:4]}" + (f" {brut[11:16]}" if len(brut) >= 16 else "")
+    if brut:
+        try:
+            from email.utils import parsedate_to_datetime
+            from zoneinfo import ZoneInfo
+            d = parsedate_to_datetime(brut)
+            return (d.astimezone(ZoneInfo("Europe/Paris")) if d.tzinfo else d).strftime("%d/%m/%Y %H:%M")
+        except (TypeError, ValueError, IndexError):
+            pass
+    if len(iso) >= 10:
+        return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}"
+    return brut[:16]
 
 
 def _expediteur_lisible(m: dict) -> str:

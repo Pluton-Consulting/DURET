@@ -113,6 +113,10 @@ verifier("l'historique ne rouvre pas un dossier d'hier", dossier_cite("refais-le
 verifier("les lots nommés : 11 et 12, ni 29, ni 18, ni 9", lots_vises(demande) == {11, 12}, str(lots_vises(demande)))
 verifier("« lot 11 du dossier 29 lgts 18-09-2026 » ne vise que le 11", lots_vises("lot 11 du dossier 29 lgts 18-09-2026") == {11})
 verifier("« lots 3, 4 et 12 » vise les trois", lots_vises("les lots 3, 4 et 12") == {3, 4, 12})
+verifier("un point FINAL ne fait pas perdre le dernier lot (18/09 : « lots 11 et 12. » → lot 11 seul)",
+         lots_vises("Lance les métrés des lots 11 et 12.") == {11, 12} and lots_vises("le lot 12.") == {12})
+verifier("…mais un numéro d'article (3.2) ou une date (18.09) reste écarté",
+         lots_vises("article du lot 3.2") == set() and lots_vises("lot 11 et 18.09") == {11})
 
 
 def f(nom, dossier="1 - DCE", octets=1000, modifie=100):

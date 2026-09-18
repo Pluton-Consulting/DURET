@@ -393,7 +393,10 @@ def dossier_cite(demande):
     m=_DOSSIER_CITE.search(courante)
     return m.group(1).strip() if m else None
 
-_LOT_NOMME=re.compile(r'\blots?\s*(?:n°|n)?\s*0*(\d{1,2})(?![\d/.])((?:\s*(?:,|;|et|&|\+|/|-)\s*0*\d{1,2}(?![\d/.-]))*)',re.I)
+# UN POINT FINAL N'EST PAS UNE DÉCIMALE (18/09, métré réel) : « Lance les métrés des lots 11 et 12. »
+# ne rendait que le lot 11 — le « 12. » était rejeté comme « 3.2 » — et le classeur livré n'avait
+# aucune ligne du lot 12. Seul un point SUIVI d'un chiffre (article 3.2, date 18.09) écarte le nombre.
+_LOT_NOMME=re.compile(r'\blots?\s*(?:n°|n)?\s*0*(\d{1,2})(?![\d/]|\.\d)((?:\s*(?:,|;|et|&|\+|/|-)\s*0*\d{1,2}(?![\d/-]|\.\d))*)',re.I)
 _LOT_DU_NOM=re.compile(r'\blot\s*n?°?\s*0*(\d{1,2})\b\s*[-–—_:]?\s*([^.]*)',re.I)
 _PIECE_CHIFFREE=re.compile(r'(dpgf|dqe|bpu|d[ée]tail\s+quantitatif|bordereau|\bsurfaces?\b|m[ée]tr[ée]s?\b|quantit)',re.I)
 _PIECE_ECRITE=re.compile(r'(cctp|dispositions?\s+communes|g[ée]n[ée]ralit|notice|nomenclature|questions?\s+r[ée]ponses)',re.I)

@@ -155,6 +155,27 @@ async def nas_chercher(data: dict, user) -> dict:
         _echec(str(e))
     motif = (data.get("motif") or data.get("nom") or data.get("client") or "").strip()
     recents = data.get("plus_recents") or data.get("recents")
+    par_affaire = str(data.get("par_affaire") or data.get("compter") or "").strip().lower() in ("1", "true", "oui", "vrai")
+    if par_affaire:
+        if not motif:
+            _echec("Donne `motif` (le nom compté, ex. « DPGF ») avec `par_affaire: true`.")
+        try:
+            from outils.nas import resoudre_dossier
+            from nas.acces import compter_par_affaire
+            dossier = (data.get("dossier") or "").strip() or None
+            compte = compter_par_affaire(motif, await resoudre_dossier(dossier) if dossier else None)
+        except NasRefuse as e:
+            _echec(str(e))
+        lignes = [[g["affaire"], str(g["fichiers"]), g["chemin"]] for g in compte["groupes"]]
+        titre = f"Fichiers « {motif} » par affaire — {compte['total']} fichier(s), {compte.get('affaires', 0)} affaire(s)"
+        return {**{k: v for k, v in compte.items() if k != "groupes"},
+                "groupes": compte["groupes"][:60], "groupes_total": len(compte["groupes"]),
+                "bloc_garanti": True,
+                "bloc_ui": {"type": "table", "titre": titre, "columns": ["Affaire", "Fichiers", "Emplacement"],
+                            "rows": lignes},
+                "a_faire": ("Le tableau COMPLET (toutes les affaires) s'affiche automatiquement : ne le recopie pas. "
+                            "Donne le total, le nombre d'affaires et les trois plus fournies, en une ou deux phrases"
+                            + (" ; dis que le catalogue est encore partiel." if compte.get("note") else "."))}
     try:
         if recents:
             # « Les fichiers les plus récents » : un classement par date depuis le catalogue,
@@ -343,9 +364,11 @@ SKILLS = {
             "`dossier` (optionnel) : ou chercher -- le `chemin` EXACT d'un "
             "listage, ce qui rend la recherche BEAUCOUP plus rapide. Sans lui, "
             "tout le serveur est parcouru : c'est long, ne le relance pas a "
-            "l'identique. `plus_recents`: N -> les N fichiers modifies le plus "
+            "l'identique. `par_affaire: true` + `motif` -> COMBIEN de fichiers portent ce nom, AFFAIRE PAR "
+            "AFFAIRE, sur tout le serveur (« combien de DPGF par affaire ») : le decompte est calcule, pas "
+            "une liste a compter. `plus_recents`: N -> les N fichiers modifies le plus "
             "recemment (sous `dossier` ou sur tout le serveur), avec leur date"),
-        requis=[], optionnels=["motif", "dossier", "plus_recents"],
+        requis=[], optionnels=["motif", "dossier", "plus_recents", "par_affaire"],
         effet="lecture",
         libelle="je cherche ce nom sur le serveur"),
     "nas_deposer": Declaration(

@@ -58,7 +58,7 @@ logger = logging.getLogger("duret.skills.reunion")
 MAX_RESUME = 700          # caractères — trois à cinq lignes
 MAX_POINTS = 8
 MAX_DECISIONS = 8
-MAX_ACTIONS = 12
+MAX_ACTIONS = 15
 MAX_SUSPENS = 6
 MAX_PARTICIPANTS = 20
 MAX_LIGNE = 260           # un point de compte rendu est une phrase, pas un paragraphe
@@ -105,6 +105,12 @@ CE QUI FAIT UN BON COMPTE RENDU, dans l'ordre :
 - HIÉRARCHISÉ. Le plus engageant d'abord : ce qui est décidé, puis ce qui est à faire, puis le reste.
 - SANS INVENTION. Une action dont personne n'a pris la charge garde "qui" VIDE ; une échéance non dite garde "quand" VIDE. Ne devine JAMAIS un responsable ni une date : un compte rendu qui attribue une tâche à quelqu'un qui ne l'a pas acceptée fait plus de dégâts qu'un compte rendu incomplet.
 - FIDÈLE AUX CHIFFRES. Montants, quantités, dates et références se recopient à l'identique.
+- LES ACTIONS QUI COMPTENT D'ABORD (au plus {actions}). En tête, celles qui conditionnent la suite :
+  mesures, essais, procès-verbaux, validations, choix attendus, mises à jour du planning. Les
+  reprises de détail d'une tournée (logement par logement, pièce par pièce) se REGROUPENT en une
+  action par responsable (« Reprises des logements A02, D08 », qui : Hugo Marchand) ; celles sans
+  responsable en une seule action « à attribuer ». Une action tronquée par la limite doit être
+  une reprise de détail, jamais une mesure ou un essai.
 
 Distingue franchement une DÉCISION (c'est tranché, on avance) d'un POINT CLÉ (c'est dit, c'est utile à savoir) et d'un POINT EN SUSPENS (ce n'est pas réglé).
 {focus}
@@ -114,7 +120,7 @@ Réponds UNIQUEMENT par un objet JSON, sans commentaire :
   "resume": "3 à 5 lignes",
   "points_cles": ["au plus {points} points"],
   "decisions": ["au plus {decisions}"],
-  "actions": [{{"quoi": "...", "qui": "...", "quand": "..."}}],
+  "actions": [{{"quoi": "...", "qui": "...", "quand": "..."}}] (au plus {actions}, les plus engageantes d'abord),
   "en_suspens": ["au plus {suspens}"]}}
 
 RELEVÉS :
@@ -474,7 +480,7 @@ async def compte_rendu_reunion(data: dict, user) -> dict:
     # palier rapide rend une liste à plat.
     brut = await _appeler(CONSIGNE_SYNTHESE.format(
         n=len(masques), maxi=MAX_RESUME, points=MAX_POINTS,
-        decisions=MAX_DECISIONS, suspens=MAX_SUSPENS,
+        decisions=MAX_DECISIONS, suspens=MAX_SUSPENS, actions=MAX_ACTIONS,
         focus=(f"\nL'utilisateur demande d'insister sur : {focus}\n" if focus else ""),
         releves=matiere[:60000]), "complex")
     sortie = _json_de(brut)

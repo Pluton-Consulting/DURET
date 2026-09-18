@@ -1200,6 +1200,59 @@ def plus_recents(dossier: Optional[str], nombre: int = 20) -> dict:
                if not _CATALOGUE.get("complet") else {})}
 
 
+_AFFAIRE_RE = re.compile(r"^AFF\s*\d", re.I)
+_CATEGORIE_RE = re.compile(r"^(\d{2}\s*-|ETUDES?\b|CHANTIERS?\b|-\s*AFF\s*\d{4}|AFF\s*\d{4}\s*$)", re.I)
+
+
+def affaire_du_chemin(chemin: str) -> tuple:
+    """(nom de l'affaire, chemin de son dossier) d'un fichier du classement de Duret.
+
+    L'affaire est le dossier « AFF … » le plus haut sur le chemin ; à défaut, le dossier placé
+    juste SOUS la dernière catégorie de classement (« ETUDES EN COURS », « CHANTIERS 2024 »,
+    « - AFF 2020 », « 03-Appel d'offres etudes »…) ; à défaut, le dossier parent. Fonction pure."""
+    morceaux = [m for m in str(chemin or "").split("/") if m]
+    dossiers = morceaux[:-1]
+    for i, seg in enumerate(dossiers):
+        if _AFFAIRE_RE.match(seg):
+            return seg, "/" + "/".join(morceaux[:i + 1])
+    derniere = max((i for i, seg in enumerate(dossiers) if _CATEGORIE_RE.match(seg.strip())), default=None)
+    if derniere is not None and derniere + 1 < len(dossiers):
+        return dossiers[derniere + 1], "/" + "/".join(morceaux[:derniere + 2])
+    if dossiers:
+        return dossiers[-1], "/" + "/".join(dossiers)
+    return "(racine)", "/"
+
+
+def compter_par_affaire(motif: str, dossier: Optional[str] = None) -> dict:
+    """Combien de FICHIERS portent `motif` dans leur nom, affaire par affaire, sur TOUT le
+    catalogue (18/09, banc Duret, Q6 : « combien de DPGF par affaire » → 200 résultats, un
+    parcours interrompu, et aucun décompte). Filtré par les droits ; un catalogue partiel se dit."""
+    cat = catalogue_pret()
+    if cat is None:
+        return {"groupes": [], "total": 0, "methode": "aucune",
+                "note": "Le catalogue du serveur n'est pas encore construit : le décompte n'est pas possible pour l'instant, réessaie dans quelques minutes."}
+    racines = [verifier(dossier)] if dossier else dossiers_autorises()
+    cible = _sans_accent_nas(motif or "")
+    from security.lecteur import role_lecteur
+    from nas import niveaux
+    fichiers = [e for e in cat if not e.get("dossier")
+                and any(str(e.get("chemin") or "").startswith(r.rstrip("/") + "/") for r in racines)
+                and (cible in _sans_accent_nas(e.get("nom") or "") or _nom_correspond(e.get("nom") or "", motif))]
+    fichiers = niveaux.filtrer(fichiers, role_lecteur())
+    groupes: dict = {}
+    for e in fichiers:
+        nom, chemin = affaire_du_chemin(str(e.get("chemin") or ""))
+        g = groupes.setdefault(chemin, {"affaire": nom, "chemin": chemin, "fichiers": 0, "exemples": []})
+        g["fichiers"] += 1
+        if len(g["exemples"]) < 3:
+            g["exemples"].append(e.get("nom") or "")
+    ordre = sorted(groupes.values(), key=lambda g: (-g["fichiers"], g["affaire"].lower()))
+    return {"groupes": ordre, "total": len(fichiers), "affaires": len(ordre), "motif": motif,
+            "methode": "catalogue", "dossiers_explores": racines,
+            **({"note": "Parcours du serveur encore PARTIEL : des fichiers d'une branche non relevée peuvent manquer au décompte — dis-le."}
+               if not _CATALOGUE.get("complet") else {})}
+
+
 async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
     """Recherche par NOM de fichier, dans le périmètre autorisé."""
     async with connexion() as (client, base, sid):

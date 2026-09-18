@@ -92,7 +92,7 @@ verifier("sous un dossier précis : seulement ce qui vit dessous", [x["nom"] for
 acces._CATALOGUE.update({"etat": "vide", "entrees": []}); acces.restaurer_catalogue = lambda: False
 verifier("sans catalogue : rien d'inventé, la limite est dite", acces.plus_recents(None, 5)["resultats"] == [] and "pas encore construit" in acces.plus_recents(None, 5)["note"])
 sk = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
-verifier("`nas_chercher` expose `plus_recents` au catalogue et n'exige plus `motif`", '"plus_recents"' in sk and 'requis=[], optionnels=["motif", "dossier", "plus_recents"]' in sk)
+verifier("`nas_chercher` expose `plus_recents` au catalogue et n'exige plus `motif`", '"plus_recents"' in sk and 'requis=[], optionnels=["motif", "dossier", "plus_recents", "par_affaire"]' in sk)
 verifier("le listage porte la date des dossiers, et la recherche affiche « Modifié le »", '"modifie": (add.get("time") or {}).get("mtime"),' in src and '"Modifié le"' in (BACKEND / "skills" / "affichage.py").read_text(encoding="utf-8"))
 
 print("— Plusieurs dossiers du même nom : on ne devine pas")
@@ -182,6 +182,28 @@ verifier("un dossier DÉPLACÉ : le refus dit « déplacé ou renommé » et pro
          "DÉPLACÉ" in r_dep and "ETUDES TERMINEE/- AFF 2026/AFF 150-26" in r_dep
          and r_dep.find("AFF 150-26") < r_dep.find("ETUDES EN COURS/construction 29 lgts sociaux la test de buch 18-09-2026\"") if "18-09-2026\"" in r_dep else "AFF 150-26" in r_dep, r_dep[:500])
 verifier("un nom d'un seul mot significatif ne propose rien au hasard", onas._deplace_ailleurs("PDF") == [])
+
+# 18/09 (banc Duret, Q6) : « combien de DPGF par affaire » → 200 résultats et aucun décompte.
+aff = acces.affaire_du_chemin
+verifier("l'affaire d'un fichier : le dossier « AFF … » le plus haut",
+         aff("/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2020/AFF 145-20 CIS St Aguilin/Piéces techniques/DPGF lot 01.xlsx")
+         == ("AFF 145-20 CIS St Aguilin", "/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2020/AFF 145-20 CIS St Aguilin"))
+verifier("sans dossier AFF : le dossier sous la dernière catégorie de classement",
+         aff("/home/Drive/03-Appel d'offres etudes/ETUDE PERDU/LE COL - OPERATION SARAH/dpgf_lot 11.xls")[0] == "LE COL - OPERATION SARAH"
+         and aff("/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/Construction 12 lgts Vayres 21-09-2026 emarchepublics/1 - DCE/DPGF.pdf")[0]
+         == "Construction 12 lgts Vayres 21-09-2026 emarchepublics")
+acces._CATALOGUE.update({"etat": "pret", "complet": False, "construit_le": 10 ** 9, "entrees": [
+    {"nom": "DPGF lot 01.xlsx", "chemin": "/home/Drive/E/ETUDES TERMINEE/- AFF 2020/AFF 145-20 CIS/P/DPGF lot 01.xlsx", "dossier": False},
+    {"nom": "DPGF lot 11.xlsx", "chemin": "/home/Drive/E/ETUDES TERMINEE/- AFF 2020/AFF 145-20 CIS/P/DPGF lot 11.xlsx", "dossier": False},
+    {"nom": "dpgf_lot 11.xls", "chemin": "/home/Drive/E/ETUDE PERDU/LE COL/dpgf_lot 11.xls", "dossier": False},
+    {"nom": "DPGF", "chemin": "/home/Drive/E/ETUDE PERDU/LE COL/DPGF", "dossier": True},
+    {"nom": "CCTP.pdf", "chemin": "/home/Drive/E/ETUDE PERDU/LE COL/CCTP.pdf", "dossier": False}]})
+acces.dossiers_autorises = lambda: ["/home"]
+compte = acces.compter_par_affaire("DPGF")
+verifier("le décompte porte sur tout le catalogue, fichiers seuls, groupé et trié par affaire",
+         compte["total"] == 3 and [(g["affaire"], g["fichiers"]) for g in compte["groupes"]] == [("AFF 145-20 CIS", 2), ("LE COL", 1)],
+         compte)
+verifier("un catalogue partiel se DIT dans le décompte", "PARTIEL" in (compte.get("note") or ""))
 
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

@@ -311,15 +311,29 @@ def garantir_listage(resultat: dict, quoi: str, ouvreur: str = "nas_ouvrir") -> 
     entrees = [e for e in (resultat.get("entrees") or []) if isinstance(e, dict)]
     if not entrees:
         return resultat
+    # LA DATE, LISIBLE (18/09) : « les 5 dossiers les plus récents » ne pouvait pas se répondre —
+    # le tableau n'avait pas de date, et le résultat portait une heure en secondes.
+    def _date(e):
+        m = e.get("modifie")
+        try:
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(int(m), tz=timezone.utc).astimezone().strftime("%d/%m/%Y") if m else ""
+        except (TypeError, ValueError, OverflowError, OSError):
+            return ""
+    for e in entrees:
+        if e.get("modifie") and not e.get("modifie_le"):
+            e["modifie_le"] = _date(e)
+    avec_dates = any(e.get("modifie_le") for e in entrees)
     lignes = [[str(e.get("nom") or ""),
                "Dossier" if e.get("dossier") else "Fichier",
                ("" if e.get("dossier") else octets_lisibles(e.get("octets") or 0))]
+              + ([e.get("modifie_le") or ""] if avec_dates else [])
               for e in entrees]
     dossiers = sum(1 for e in entrees if e.get("dossier"))
     fichiers = len(entrees) - dossiers
     resultat["bloc_ui"] = {"type": "table",
                            "titre": f"Contenu — {(resultat.get('chemin') or quoi or '').rsplit('/', 1)[-1]}",
-                           "columns": ["Nom", "Type", "Taille"],
+                           "columns": ["Nom", "Type", "Taille"] + (["Modifié le"] if avec_dates else []),
                            "rows": lignes}
     resultat["bloc_garanti"] = True
     resultat["message_final"] = (f"{dossiers} dossier(s) et {fichiers} fichier(s) dans "

@@ -25,9 +25,14 @@ CE QUE CE BANC PROUVE (modules EXÉCUTÉS contre un NAS doublé) :
 Tombe sur la version d'avant.
 """
 import asyncio
+import os
 import pathlib
 import sys
+import tempfile
 import types
+# Le catalogue du NAS se relit depuis DOCUMENTS_DIR (18/09) : un banc joué avant celui-ci peut y avoir
+# écrit le sien. Ce banc juge la CONSTRUCTION : il a son propre dossier, vide.
+os.environ["DOCUMENTS_DIR"] = tempfile.mkdtemp(prefix="progression-nas-")
 
 BACKEND = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "backend").resolve()
 RACINE = BACKEND.parent

@@ -336,8 +336,9 @@ async def _lister_ouvert(client, base, sid, chemin: str, tout: bool = False) -> 
             "octets": (add.get("size") if not f.get("isdir") else None),
             # La date de modification sert à la synchronisation : un fichier
             # qui n'a pas bougé depuis son ingestion n'est pas retéléchargé.
-            "modifie": ((add.get("time") or {}).get("mtime")
-                        if not f.get("isdir") else None),
+            # La date vaut aussi pour un DOSSIER (18/09, test réel : « les 5 dossiers les plus
+            # récents » → « le listage ne renvoie pas les dates des dossiers »).
+            "modifie": (add.get("time") or {}).get("mtime"),
         })
     total = int(total if total is not None else len(bruts))
     total -= len(bruts if tout else bruts[:MAX_ENTREES]) - len(entrees)
@@ -752,12 +753,69 @@ async def _balayer(client, base, sid, racines: list[str],
 #
 # Tant que le catalogue n'est pas prêt (première minute après un
 # redéploiement), la recherche retombe sur le balayage borné, et le DIT.
-CATALOGUE_DUREE_S = 3600
-CATALOGUE_DELAI_S = 900
-CATALOGUE_DOSSIERS_MAX = 60000
+# UN CATALOGUE COMPLET, ET QUI SURVIT AU REDÉMARRAGE (18/09, banc de tests réel). Mesuré en
+# production : « catalogue partiel — 60 341 entrées en 916 s », puis 37 600 : le serveur de
+# Duret dépasse le plafond, donc CHAQUE recherche par nom disait « parcours interrompu, une
+# absence n'est pas prouvée », pour toujours. Et chaque redéploiement repartait de zéro
+# (quinze minutes de balayage de secours). Désormais : le relevé va jusqu'au bout (40 min,
+# 250 000 entrées), le résultat est ÉCRIT sur le disque et RELU au démarrage — servi tout de
+# suite, marqué de son âge —, et un catalogue complet ne se refait que toutes les six heures.
+CATALOGUE_DUREE_S = 3600                # entre deux reconstructions d'un catalogue PARTIEL
+CATALOGUE_DUREE_COMPLET_S = 6 * 3600    # …et d'un catalogue COMPLET
+CATALOGUE_DELAI_S = 2400
+CATALOGUE_DOSSIERS_MAX = 250000
 CATALOGUE_PROFONDEUR = 40
+CATALOGUE_FICHIER = "nas_catalogue.json"
 _CATALOGUE: dict = {"etat": "vide", "entrees": [], "construit_le": 0.0,
-                    "complet": False, "en_cours": False, "progression": {}}
+                    "complet": False, "en_cours": False, "progression": {}, "age_s": 0.0}
+
+
+def _chemin_catalogue():
+    import os
+    from config import settings
+    base = str(getattr(settings, "documents_dir", "") or os.environ.get("DOCUMENTS_DIR") or "/tmp/duret-documents")
+    # Dans un SOUS-DOSSIER : l'atelier prend tout `.json` posé à la racine de DOCUMENTS_DIR
+    # pour la fiche d'un document (piège payé le 17/09 avec des sauvegardes de file).
+    return os.path.join(base, "cache", CATALOGUE_FICHIER)
+
+
+def _ecrire_catalogue(entrees: list, complet: bool) -> None:
+    """Le catalogue sur le disque, écrit d'un bloc (fichier temporaire puis renommage)."""
+    import json as _json, os, time as _t
+    try:
+        chemin = _chemin_catalogue()
+        os.makedirs(os.path.dirname(chemin), exist_ok=True)
+        tmp = f"{chemin}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump({"construit_le": _t.time(), "complet": bool(complet), "entrees": entrees}, f, ensure_ascii=False)
+        os.replace(tmp, chemin)
+    except Exception as e:  # noqa: BLE001 — un disque plein ne casse pas la recherche
+        logger.warning("NAS : catalogue non écrit sur le disque : %s", str(e)[:120])
+
+
+def restaurer_catalogue() -> bool:
+    """Relit le catalogue écrit par un processus précédent. Vrai s'il a été chargé.
+    Il est servi tout de suite (recherche instantanée dès le démarrage) et marqué de son
+    âge ; la reconstruction de fond part quand même et le remplacera."""
+    import json as _json, os, time as _t
+    try:
+        chemin = _chemin_catalogue()
+        if not os.path.exists(chemin) or _CATALOGUE["entrees"]:
+            return False
+        with open(chemin, encoding="utf-8") as f:
+            data = _json.load(f)
+        entrees = data.get("entrees") or []
+        if not isinstance(entrees, list) or not entrees:
+            return False
+        age = max(0.0, _t.time() - float(data.get("construit_le") or 0))
+        _CATALOGUE.update({"etat": "restaure", "entrees": entrees, "complet": bool(data.get("complet")),
+                           "construit_le": _t.monotonic() - age, "age_s": age})
+        logger.info("NAS : catalogue relu depuis le disque — %d entrées, %s, âgé de %.0f min",
+                    len(entrees), "complet" if data.get("complet") else "partiel", age / 60)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("NAS : catalogue du disque illisible : %s", str(e)[:120])
+        return False
 
 
 async def construire_catalogue() -> dict:
@@ -785,11 +843,15 @@ async def construire_catalogue() -> dict:
                     delai_s=CATALOGUE_DELAI_S, dossiers_max=CATALOGUE_DOSSIERS_MAX,
                     profondeur=CATALOGUE_PROFONDEUR,
                     progres=_CATALOGUE["progression"])
-        _CATALOGUE.update({"etat": "pret" if complet else "partiel",
-                           "entrees": entrees, "complet": complet,
-                           "construit_le": _t.monotonic()})
+        # Un relevé partiel ne REMPLACE pas un catalogue complet relu du disque : il serait
+        # moins bon que ce qu'on a. Il ne s'impose que s'il est complet, ou plus fourni.
+        if complet or len(entrees) >= len(_CATALOGUE["entrees"]) or not _CATALOGUE.get("complet"):
+            _CATALOGUE.update({"etat": "pret" if complet else "partiel",
+                               "entrees": entrees, "complet": complet,
+                               "construit_le": _t.monotonic(), "age_s": 0.0})
+            _ecrire_catalogue(entrees, complet)
         logger.info("NAS : catalogue %s — %d entrées en %.0f s",
-                    _CATALOGUE["etat"], len(entrees), _t.monotonic() - debut)
+                    "pret" if complet else "partiel", len(entrees), _t.monotonic() - debut)
     except Exception as e:  # noqa: BLE001 — un NAS injoignable ne casse pas le démarrage
         logger.warning("NAS : catalogue non construit : %s", str(e)[:160])
     finally:
@@ -802,8 +864,11 @@ def catalogue_pret() -> Optional[list]:
     cas la construction part en tâche de fond si rien ne tourne déjà."""
     import time as _t
 
-    frais = (_CATALOGUE["etat"] in ("pret", "partiel")
-             and _t.monotonic() - _CATALOGUE["construit_le"] < CATALOGUE_DUREE_S)
+    if _CATALOGUE["etat"] == "vide":
+        restaurer_catalogue()
+    duree = CATALOGUE_DUREE_COMPLET_S if _CATALOGUE.get("complet") else CATALOGUE_DUREE_S
+    frais = (_CATALOGUE["etat"] in ("pret", "partiel", "restaure")
+             and _t.monotonic() - _CATALOGUE["construit_le"] < duree)
     if frais:
         return _CATALOGUE["entrees"]
     if not _CATALOGUE["en_cours"]:
@@ -863,8 +928,11 @@ async def catalogue_attendu(attente_max_s: float = CATALOGUE_DELAI_S + 60,
     while _CATALOGUE["en_cours"] and _t.monotonic() - debut < attente_max_s:
         await _dire()
         await asyncio.sleep(5)
-    frais = (_CATALOGUE["etat"] in ("pret", "partiel")
-             and _t.monotonic() - _CATALOGUE["construit_le"] < CATALOGUE_DUREE_S)
+    if _CATALOGUE["etat"] == "vide":
+        restaurer_catalogue()
+    duree = CATALOGUE_DUREE_COMPLET_S if _CATALOGUE.get("complet") else CATALOGUE_DUREE_S
+    frais = (_CATALOGUE["etat"] in ("pret", "partiel", "restaure")
+             and _t.monotonic() - _CATALOGUE["construit_le"] < duree)
     if not frais and not _CATALOGUE["en_cours"]:
         tache = asyncio.get_running_loop().create_task(construire_catalogue())
         while not tache.done():
@@ -876,9 +944,14 @@ async def catalogue_attendu(attente_max_s: float = CATALOGUE_DELAI_S + 60,
 
 async def demarrer_catalogue() -> None:
     """La tâche de fond : construire, puis reconstruire à chaque heure."""
+    import time as _t
+    restaurer_catalogue()
+    # Un catalogue complet et récent relu du disque : inutile de refaire 40 minutes de listages.
+    if _CATALOGUE.get("complet") and _CATALOGUE.get("age_s", 0) < CATALOGUE_DUREE_COMPLET_S:
+        await asyncio.sleep(max(60.0, CATALOGUE_DUREE_COMPLET_S - _CATALOGUE.get("age_s", 0)))
     while True:
         await construire_catalogue()
-        await asyncio.sleep(CATALOGUE_DUREE_S)
+        await asyncio.sleep(CATALOGUE_DUREE_COMPLET_S if _CATALOGUE.get("complet") else CATALOGUE_DUREE_S)
 
 
 def _sans_accent_nas(texte: str) -> str:

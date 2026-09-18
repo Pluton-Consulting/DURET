@@ -133,7 +133,7 @@ esp = {"logger": _Journal(), "get_llm": lambda tier: _LLM(), "LLMTier": types.Si
        "_tracer_filet": lambda *a, **k: None, "MAX_FORCAGES_PAR_TOUR": 2,
        "_re_livrables": re, "AgentState": dict}
 manque = extraire(racine / "agents" / "agent1.py",
-                  {"verifier_node", "route_apres_verifier", "_BLOC_UI_RE", "_blocs_de"}, esp)
+                  {"verifier_node", "route_apres_verifier", "_BLOC_UI_RE", "_blocs_de", "_gestes_pour_le_relecteur"}, esp)
 # Le texte visible et la compaction des résultats ont leurs propres bancs : ici,
 # on juge la relecture, pas eux.
 esp["_texte_visible"] = lambda t: t
@@ -236,6 +236,25 @@ etat_src = (racine / "agents" / "state.py").read_text(encoding="utf-8")
 verifier("`verification` est déclarée dans l'état", "verification: Optional[dict]" in etat_src)
 conf = (racine / "config.py").read_text(encoding="utf-8")
 verifier("la relecture se coupe par réglage", "verifier_reponses: bool = True" in conf)
+
+# 18/09 (Duret, navigateur ; porté de Symbiose) : « d'abord dis-moi si le dossier est complet » →
+# quatre sous-dossiers lus, puis « il me reste à ouvrir cinq sous-dossiers ». Le relecteur, qui ne
+# connaissait pas les gestes et excluait « une proposition de suite », rendait « ok ».
+_c = V.consigne("dis-moi d'abord si le dossier est complet", "1. nas_lister() → ok",
+                "- nas_lister : …", "Il me reste à ouvrir cinq sous-dossiers.", [],
+                gestes="- nas_lister : le contenu d'un dossier du serveur")
+verifier("le relecteur reçoit la liste des gestes disponibles",
+         "GESTES DONT L'ASSISTANT DISPOSAIT" in _c and "- nas_lister :" in _c)
+verifier("règle 6 : une partie de la demande seulement annoncée alors qu'un geste existait se relève",
+         "6. une partie EXPLICITE de la demande" in _c and "ESSAYER D'ABORD" in _c)
+verifier("« une proposition de suite » n'est plus exclue en bloc, seulement au-delà de la demande",
+         "suite qui va AU-DELÀ" in _c and "les suggestions, une proposition de suite, une question" not in _c)
+_v = V.lire_verdict('{"verdict":"a_corriger","problemes":[{"affirmation":"il me reste à ouvrir","raison":"pas fait"}],'
+                    '"action_manquante":"nas_lister","consigne":"liste les cinq sous-dossiers restants"}')
+verifier("un geste manquant connu part au forceur même quand d'autres gestes ont tourné",
+         V.suite(_v, {"nas_lister", "nas_chercher"}, 0, 2, False) == "forcer")
+verifier("le nœud verifier transmet le catalogue court", "gestes=_gestes_pour_le_relecteur(state.get(\"user_role\"))" in src
+         and "def _gestes_pour_le_relecteur" in src)
 
 print()
 if echecs:

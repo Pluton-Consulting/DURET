@@ -131,6 +131,29 @@ def _normaliser_plan(plan,ids,modele,structure,sources_word=None):
         plan['modele_source']=modele
         if isinstance(plan.get('sources_ecartees'),dict) and not any(modele in (s.get('sources') or []) for s in plan['sections'] if isinstance(s,dict)):
             plan['sources_ecartees'].setdefault(modele,'Modèle de présentation de l’entreprise : ses rubriques sont reprises ou servent de trame.')
+    # UN OUBLI DE RATTACHEMENT SE SIGNALE, IL NE BLOQUE PAS LA RÉDACTION (18/09, banc Duret dans le
+    # navigateur) : mémoire de La Teste, trente pièces du DCE, deux plans refusés de suite pour « chaque
+    # source doit être affectée » — l'essai entier tombait, alors que la règle de la maison est de LIVRER
+    # d'abord et de signaler. Une pièce oubliée est écartée d'office, avec une raison qui le dit ; une
+    # référence inconnue dans une rubrique est retirée. Les deux sont remontées avec le document.
+    ids=set(ids or [])
+    if ids:
+        inconnues=[]
+        for sec in plan['sections']:
+            if isinstance(sec,dict) and isinstance(sec.get('sources'),list):
+                garde=[x for x in sec['sources'] if x in ids]
+                inconnues+=[x for x in sec['sources'] if x not in ids]
+                sec['sources']=garde
+        if not isinstance(plan.get('sources_ecartees'),dict):plan['sources_ecartees']={}
+        plan['sources_ecartees']={k:(v if isinstance(v,str) and v.strip() else 'Écartée par le plan sans raison dite.')
+                                  for k,v in plan['sources_ecartees'].items() if k in ids}
+        rattachees={x for sec in plan['sections'] if isinstance(sec,dict) for x in (sec.get('sources') or [])}
+        oubliees=sorted(ids-rattachees-set(plan['sources_ecartees']))
+        for x in oubliees:
+            plan['sources_ecartees'][x]='Non rattachée par le plan : écartée d’office, à vérifier.'
+        if oubliees or inconnues:
+            plan['sources_non_rattachees']=oubliees
+            plan['references_inconnues']=sorted(set(map(str,inconnues)))[:20]
     return plan
 
 _MOIS=('janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre')
@@ -1616,6 +1639,8 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             'sections_controlees':len(sections),'reserves':reserves,'controle_pages':controle_pages,
             **({'outcome':'partial','points_a_reprendre':restants} if restants else {}),
             'reserves_hors_document':reserves_ecartees[:30],'rubriques_a_relire':a_relire[:20],
+            **({'pieces_non_rattachees':[next((x['nom'] for x in sources if x['id']==i),i) for i in plan['sources_non_rattachees']][:30]}
+               if plan.get('sources_non_rattachees') else {}),
             **({'longueur':information_longueur} if information_longueur else {}),
             **({'couverture_de_la_consultation':{'elements_exiges':len(plan['elements_exiges']),
                 'non_couverts':[e['element'] for e in plan['elements_exiges'] if not e.get('rubrique')][:20],

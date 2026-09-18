@@ -449,5 +449,21 @@ verifier("second essai : l'élément inventé est écarté, le vrai reste — si
 verifier("le rédacteur et le relecteur connaissent les éléments exigés ; le résultat rend la table de couverture",
          composeur.count("elements_a_couvrir") >= 4 and "'couverture_de_la_consultation'" in composeur and "Un PLANNING ne se reconstruit pas" in composeur)
 
+# 18/09 (navigateur) : mémoire de La Teste, trente pièces ; deux plans refusés de suite pour « chaque source doit
+# être affectée » et l'essai entier tombait. Une pièce oubliée est écartée d'office et signalée.
+from skills.documents_dossier import _plan_valide
+oubli = _normaliser_plan({"sections": [{"titre": "Méthodes", "sources": ["a", "inconnue"]}],
+                          "sources_ecartees": {"c": "sans objet"}}, ["a", "b", "c"], None, None)
+verifier("une pièce OUBLIÉE par le plan est écartée d'office avec une raison, et remontée",
+         oubli["sources_ecartees"].get("b", "").startswith("Non rattachée par le plan") and oubli["sources_non_rattachees"] == ["b"], oubli)
+verifier("une référence inconnue dans une rubrique est retirée (et remontée)",
+         oubli["sections"][0]["sources"] == ["a"] and oubli["references_inconnues"] == ["inconnue"])
+try:
+    _plan_valide(oubli, ["a", "b", "c"]); _ok = True
+except ValueError as e:
+    _ok = False; print("   refus :", e)
+verifier("le plan ainsi complété passe la validation (la rédaction n'est plus bloquée)", _ok)
+verifier("les pièces non rattachées sont rendues avec le document", "'pieces_non_rattachees'" in composeur)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

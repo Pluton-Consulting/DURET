@@ -147,7 +147,8 @@ def espace_redaction(reponse):
     return extraire({"_rediger_par_le_modele", "_texte_visible", "_sans_identifiants", "_essentiel",
                      "_CLES_TECHNIQUES", "_IDENTIFIANT_RE"},
                     {"logger": _Journal(), "est_une_annonce": annonce.est_une_annonce,
-                     "promesse_sans_suite": annonce.promesse_sans_suite})
+                     "promesse_sans_suite": annonce.promesse_sans_suite,
+                     "pretend_avoir_livre": annonce.pretend_avoir_livre})
 
 
 RESULTATS = [res("liste_fournisseurs", {"nombre": 90, "message_final": "90 fournisseurs."})]
@@ -175,6 +176,34 @@ e = espace_redaction("La demande n'a pas pu être traitée ce tour-ci.")
 prose = asyncio.run(e["_rediger_par_le_modele"]("fais un truc", [], "banc"))
 verifier("sans résultat, l'aveu d'échec vient aussi du modèle",
          prose.startswith("La demande") and "honnêtement" in appels[-1], appels[-1][:200])
+
+# ── 2 bis. un travail LANCÉ s'annonce, avec ce qu'il prévoit (18/09, Q20b) ──
+print("\n2 bis. Un travail long lancé en arrière-plan : le modèle dit ce qui est prévu")
+EN_FILE = [{"skill": "composer_document_dossier", "ok": True,
+            "args": {"demande": "Condense le mémoire du lot 12 à 8 pages : SUPPRIMER l'organigramme et les "
+                                "capacités financières ; RÉDUIRE la fiche signalétique à 3 lignes ; CONSERVER "
+                                "les principes de réalisation des sols souples et le planning DCE.",
+                     "titre": "Mémoire technique – Lot 12 – 8 pages"},
+            "resultat_masque": json.dumps({"en_cours": True, "tache_documentaire": "6ea0",
+                                           "note": "La rédaction est enregistrée et se poursuit en arrière-plan."},
+                                          ensure_ascii=False)}]
+appels.clear()
+e = espace_redaction("Je lance la version en 8 pages : je retire l'organigramme et les capacités financières, "
+                     "je réduis la fiche signalétique et je garde les principes de réalisation et le planning. "
+                     "Le document arrivera dans cette conversation.")
+prose = asyncio.run(e["_rediger_par_le_modele"]("Refais ce mémoire en 8 pages : dis-moi ce que tu retires",
+                                                EN_FILE, "travail_en_file"))
+verifier("l'annonce d'un travail lancé est gardée (ce n'est pas une rechute)",
+         prose.startswith("Je lance la version en 8 pages"), prose[:120])
+verifier("le prompt porte la consigne TRANSMISE au travail (ce qui sera coupé)",
+         "SUPPRIMER l'organigramme" in appels[-1] and "pas terminé" in appels[-1].lower().replace("n'est pas", "pas"),
+         appels[-1][:300])
+e = espace_redaction("Le document Word en 8 pages est prêt et téléchargeable ci-dessous.")
+verifier("…mais dire le document PRÊT alors qu'il tourne est refusé",
+         asyncio.run(e["_rediger_par_le_modele"]("Refais ce mémoire en 8 pages", EN_FILE, "travail_en_file")) == "")
+src_a1 = (racine / "agents" / "agent1.py").read_text(encoding="utf-8")
+verifier("rehydrate fait rédiger le travail en file par le modèle, la note du serveur en dernier recours",
+         '[resultat], "travail_en_file")' in src_a1 and "text = prose or str(en_fond.get(\"note\")" in src_a1)
 
 # ── 3. plus une seule phrase préécrite dans les filets livrés ──────────────
 print("\n3. Le code livré ne porte plus de prose en dur")

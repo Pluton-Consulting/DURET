@@ -2214,7 +2214,38 @@ async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> st
         lignes.append(f"- {r.get('skill') or '?'} : "
                       f"{'réussie' if r.get('ok') else 'EN ÉCHEC'}\n  {brut}")
 
-    if lignes:
+    if lignes and cause == "travail_en_file":
+        # UN TRAVAIL LONG LANCÉ N'EST PAS UN TRAVAIL FAIT (18/09, banc Duret, Q20b).
+        # « Refais ce mémoire en 8 pages : dis-moi ce que tu retires » : la
+        # rédaction part en file et le tour s'arrête sur son bloc d'action. La
+        # personne ne lisait que la phrase fixe du serveur (« la rédaction se
+        # poursuit en arrière-plan ») — alors que la consigne transmise au
+        # travail portait la liste exacte des coupes. Ici l'annonce EST la
+        # réponse juste : elle dit ce qui a été lancé et ce qui est prévu, d'après
+        # les paramètres transmis, sans jamais dire le document prêt.
+        consignes_transmises = []
+        for r in dicts:
+            args = r.get("args") if isinstance(r.get("args"), dict) else {}
+            for cle in ("demande", "titre", "consigne"):
+                if isinstance(args.get(cle), str) and args[cle].strip():
+                    consignes_transmises.append(f"- {cle} : {args[cle].strip()[:2500]}")
+        consigne = (
+            "Tu rédiges la réponse d'un assistant d'entreprise, en français. Un "
+            "travail long vient d'être LANCÉ en arrière-plan : il n'est PAS terminé, "
+            "son résultat arrivera plus tard dans cette conversation. Dis ce qui a "
+            "été lancé et, si la demande réclame de savoir ce qui sera fait (ce qui "
+            "est retiré, raccourci, gardé, changé), dis-le précisément d'après la "
+            "consigne transmise au travail — au futur ou au présent, jamais comme "
+            "un fait accompli. Ne prétends pas que le document est prêt, ne cite ni "
+            "nombre de pages obtenu ni contenu que le travail n'a pas encore "
+            "produit. Ne cite JAMAIS d'identifiant technique ni de nom de skill. "
+            "N'écris AUCUN bloc de code ni ```ui. 2 à 8 phrases ou une liste "
+            "courte, sans salutation.")
+        corps = (f"Demande de l'utilisateur :\n{demande}\n\n"
+                 "Consigne transmise au travail lancé :\n"
+                 + ("\n".join(consignes_transmises) or "(aucune)")
+                 + "\n\nÉtat du travail :\n" + "\n".join(lignes))
+    elif lignes:
         consigne = (
             "Tu rédiges la réponse FINALE d'un assistant d'entreprise, en "
             "français. Les actions ci-dessous ont DÉJÀ été exécutées : écris au "
@@ -2250,9 +2281,13 @@ async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> st
         reponse = await get_llm(_T.STANDARD).ainvoke(
             [_H(content=consigne + "\n\n" + corps)])
         texte = _texte_visible(str(getattr(reponse, "content", "") or ""))
+        # Un travail lancé s'ANNONCE : le seul défaut à refuser est de le dire fini.
+        if cause == "travail_en_file":
+            if texte and not pretend_avoir_livre(texte):
+                return texte
         # Un modèle qui répond ici par une promesse ou une question n'a pas
         # fait le travail : on préfère les blocs seuls à une rechute.
-        if texte and not est_une_annonce(texte) and not promesse_sans_suite(texte):
+        elif texte and not est_une_annonce(texte) and not promesse_sans_suite(texte):
             return texte
     except Exception as e:  # noqa: BLE001 — le secours ne casse jamais un tour
         logger.info("Rédaction de secours par le modèle indisponible (%s) : %s",
@@ -3278,7 +3313,12 @@ async def rehydrate_node(state: AgentState) -> dict:
                 continue
             if isinstance(en_fond, dict) and en_fond.get("en_cours") and en_fond.get("tache_documentaire"):
                 if not text or pretend_avoir_livre(text):
-                    text = str(en_fond.get("note") or "La rédaction est enregistrée et se poursuit dans cette conversation.")
+                    # Le MODÈLE dit ce qui est lancé et ce qui est prévu ; la note
+                    # du serveur ne reste que si aucun fournisseur ne répond.
+                    prose = await _rediger_par_le_modele(
+                        state.get("anonymized_query") or state.get("query", ""),
+                        [resultat], "travail_en_file")
+                    text = prose or str(en_fond.get("note") or "La rédaction est enregistrée et se poursuit dans cette conversation.")
                 besoin = None
                 break
     if besoin:

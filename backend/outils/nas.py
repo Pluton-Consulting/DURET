@@ -689,10 +689,15 @@ async def octets(nom_ou_chemin: str, plafond: int = MAX_OCTETS_PIECE) -> tuple:
                     "pas une preuve qu'il n'existe pas : il peut être hors du "
                     "périmètre autorisé.")
             chemin = verifier(fichiers[0]["chemin"])
-        brut = await c._telecharger(client, base, sid, chemin)
+        brut, raison = await c._telecharger_ou_raison(client, base, sid, chemin)
 
     if not brut:
-        raise NasRefuse(f"« {demande} » est introuvable ou vide sur le serveur.")
+        if str(raison).startswith("le téléchargement a échoué"):
+            from nas.acces import NasIndisponible
+            raise NasIndisponible(f"Le serveur de fichiers n'a pas rendu « {demande} » ({raison}) : "
+                                  "incident passager, pas un refus — réessaie dans un instant.")
+        raise NasRefuse(f"« {demande} » est introuvable ou vide sur le serveur"
+                        + (f" ({raison})." if raison else "."))
     if len(brut) > plafond:
         # La raison dépend de l'appelant : un MAIL ne passe pas, une trame a
         # son propre plafond. « Envoie plutôt le chemin » à qui voulait retenir

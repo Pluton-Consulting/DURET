@@ -184,7 +184,14 @@ if SERVEUR_NAS:
 
     _poser("ingestion")
     _poser("ingestion.connectors")
-    _poser("ingestion.connectors.synology", _appel=_appel, _telecharger=_telecharger)
+    async def _telecharger_ou_raison(client, base, sid, chemin):
+        if chemin.endswith("relais 502.pdf"):     # le relais QuickConnect du 18/09
+            return None, "le téléchargement a échoué (HTTPStatusError : Server error '502 Bad Gateway')"
+        octets = await _telecharger(client, base, sid, chemin)
+        return octets, ("" if octets else "fichier absent")
+
+    _poser("ingestion.connectors.synology", _appel=_appel, _telecharger=_telecharger,
+           _telecharger_ou_raison=_telecharger_ou_raison)
 
     class _Cnx:
         async def __aenter__(self):
@@ -205,8 +212,11 @@ if SERVEUR_NAS:
         return {"motif": motif, "nombre": len(trouves), "resultats": trouves}
 
     _poser("nas")
+    class NasIndisponible(ConnectionError):
+        pass
+
     _poser("nas.acces", connexion=lambda: _Cnx(), verifier=_verifier,
-           _chercher_ouvert=_chercher_ouvert, NasRefuse=NasRefuse,
+           _chercher_ouvert=_chercher_ouvert, NasRefuse=NasRefuse, NasIndisponible=NasIndisponible,
            dossiers_autorises=lambda: ["/home"], normaliser=lambda c: "/" + c.strip("/"))
 
     chemin_outils = BACKEND / "outils" / "nas.py"
@@ -265,6 +275,11 @@ if SERVEUR_NAS:
     _, refus_hors = asyncio.run(att.resoudre(["/homes/prive/secret.docx"], _Moi(), "eric@duret.fr"))
     verifier("un chemin hors du périmètre reste REFUSÉ, avec sa raison",
              len(refus_hors) == 1 and "périmètre" in refus_hors[0]["raison"], refus_hors)
+    verifier("…et ce refus est marqué comme un refus de DROITS", refus_hors and refus_hors[0].get("droits") is True, refus_hors)
+    # 18/09 : un 502 du relais levait « introuvable ou vide » comme un refus de droits → métré bloqué.
+    _, refus_502 = asyncio.run(att.resoudre(["/home/Drive/plans/relais 502.pdf"], _Moi(), "eric@duret.fr"))
+    verifier("un échec RÉSEAU (relais en 502) n'est pas un refus de droits, et le dit",
+             len(refus_502) == 1 and refus_502[0].get("droits") is False and "incident passager" in refus_502[0]["raison"], refus_502)
 
 # ── 2. Premier temps : la STRUCTURE, pas encore le document ──
 verifier("le geste `reproduire_document` existe", callable(getattr(sk, "reproduire_document", None)))

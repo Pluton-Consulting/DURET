@@ -323,7 +323,7 @@ verifier("`octets()` existe, pendant exact de `drive.octets()` chez le jumeau",
          "async def octets(" in nas)
 verifier("le binaire est rapatrié tel quel, sans passer par l'extracteur de "
          "texte (qui perdrait justement ce qu'on veut envoyer)",
-         "_telecharger(client, base, sid, chemin)" in nas
+         ("_telecharger(client, base, sid, chemin)" in nas or "_telecharger_ou_raison(client, base, sid, chemin)" in nas)
          # Le CODE, pas la prose : le docstring cite `_lire_ouvert` pour dire
          # justement qu'on ne passe PAS par lui.
          and "await _lire_ouvert" not in nas.split("async def octets(")[1][:2000])

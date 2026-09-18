@@ -49,6 +49,12 @@ MAX_OCTETS_TELECHARGEMENT = 40 * 1024 * 1024
 MAX_CARACTERES = 40_000
 
 
+class NasIndisponible(ConnectionError):
+    """Le serveur n'a pas répondu (relais QuickConnect en 502, délai) : un aléa, pas un refus.
+    18/09 : ce cas levait `NasRefuse` (« fichier absent »), lu comme un retrait de droits,
+    et un métré entier se bloquait sur un fichier qu'il avait déjà lu."""
+
+
 class NasRefuse(PermissionError):
     """Chemin hors périmètre, ou NAS non configuré."""
 

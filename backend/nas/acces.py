@@ -1145,7 +1145,7 @@ async def _chercher_ouvert(client, base, sid, motif: str,
         if balayes or not pannes:
             trouves = [{"nom": e.get("nom"), "chemin": e.get("chemin"),
                         "dossier": bool(e.get("dossier")),
-                        "octets": e.get("octets")} for e in balayes]
+                        "octets": e.get("octets"), "modifie": e.get("modifie")} for e in balayes]
             methode = methode_repli
             inacheve = not complet
         elif pannes and len(pannes) == len(groupes):
@@ -1157,7 +1157,20 @@ async def _chercher_ouvert(client, base, sid, motif: str,
     from security.lecteur import role_lecteur
     from nas import niveaux
     trouves = niveaux.filtrer(trouves, role_lecteur())
+    # LE PLUS RÉCENT D'ABORD (18/09, banc Duret dans le navigateur) : « la date limite de remise des
+    # offres de La Teste » — dix-huit affaires portent ce nom, rendues dans l'ordre du parcours ; le
+    # modèle a fouillé un chantier de 2024 pendant huit minutes, l'appel d'offres modifié le jour même
+    # arrivant loin derrière. La date fait partie du résultat et l'ordonne ; une entrée sans date suit.
+    trouves.sort(key=lambda t: int(t.get("modifie") or 0), reverse=True)
+    for t in trouves:
+        if t.get("modifie") and not t.get("modifie_le"):
+            try:
+                from datetime import datetime, timezone
+                t["modifie_le"] = datetime.fromtimestamp(int(t["modifie"]), tz=timezone.utc).astimezone().strftime("%d/%m/%Y")
+            except (TypeError, ValueError, OverflowError, OSError):
+                pass
     sortie = {"motif": motif, "nombre": len(trouves), "resultats": trouves[:200],
+              "tri": "du plus récemment modifié au plus ancien",
               "dossiers_explores": racines, "methode": methode}
     if inacheve:
         sortie["note"] = ("Parcours INTERROMPU avant d'avoir tout vu (temps ou "

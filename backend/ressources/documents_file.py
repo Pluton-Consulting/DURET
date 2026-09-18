@@ -250,8 +250,11 @@ async def traiter(job):
                             from skills.quantitatifs import produire_immediat
                             resultat=await produire_immediat(donnees,user)
             except asyncio.CancelledError:
+                # UN TRAVAIL RETIRÉ RESTE RETIRÉ (18/09) : l'arrêt du backend pendant l'essai
+                # d'un travail qu'on venait de retirer le remettait en « attente » — et la
+                # dédup entre conversations répondait ensuite « déjà en cours ailleurs ».
                 with dossiers.base() as c:
-                    c.execute("UPDATE file_documentaire SET statut='attente',prochain=? WHERE id=? AND statut!='suspendu'",(time.time()+10,job['id']))
+                    c.execute("UPDATE file_documentaire SET statut='attente',prochain=? WHERE id=? AND statut NOT IN ('suspendu','retire')",(time.time()+10,job['id']))
                 raise
             except Exception as e:
                 # La TRACE part au journal (17/09) : seul le nom de l'exception y figurait, et un

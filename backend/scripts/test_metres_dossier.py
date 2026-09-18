@@ -23,6 +23,8 @@ BACKEND = Path(sys.argv[1] if len(sys.argv) > 1 else "backend").resolve()
 sys.path.insert(0, str(BACKEND))
 TEMP = tempfile.TemporaryDirectory(prefix="banc-metres-")
 os.environ["DOCUMENTS_DIR"] = TEMP.name + "/documents"
+for k, v in {"DATABASE_URL": "postgresql://x:x@localhost/x", "JWT_SECRET_KEY": "x" * 40, "RESEND_API_KEY": "x"}.items():
+    os.environ.setdefault(k, v)  # `traiter` lit les réglages
 ECHECS = []
 
 
@@ -262,6 +264,26 @@ with dossiers.base() as c:
 verifier("sans dossier, les sources restent figées au dépôt (règle d'origine)", '"sources"' in fige)
 df.piloter(uid, fil2, j1["tache_documentaire"], retirer=True)
 verifier("un travail retiré disparaît de l'écran", all(x["id"] != j1["tache_documentaire"] for x in df.progression(uid, fil2)))
+# UN TRAVAIL RETIRÉ RESTE RETIRÉ (18/09) : l'arrêt du backend (déploiement) annulait
+# l'essai en cours, qui réécrivait « attente » — et la dédup entre conversations
+# répondait « déjà en cours dans une autre conversation » pour un travail retiré.
+async def _annule_pendant_l_essai():
+    import tasks.identity as ti, skills.quantitatifs as sq
+    async def _executant(_uid): return user
+    async def _cancel(*a, **k):
+        # la personne retire le travail PENDANT l'essai, puis le backend s'arrête
+        df.piloter(uid, fil2, j1["tache_documentaire"], retirer=True)
+        raise asyncio.CancelledError()
+    ti.charger_executant, sq.produire_immediat = _executant, _cancel
+    with dossiers.base() as c:
+        c.execute("UPDATE file_documentaire SET statut='attente',prochain=0,annonce=0 WHERE id=?", (j1["tache_documentaire"],))
+        job = dict(c.execute("SELECT * FROM file_documentaire WHERE id=?", (j1["tache_documentaire"],)).fetchone())
+    try: await df.traiter(job)
+    except asyncio.CancelledError: pass
+asyncio.run(_annule_pendant_l_essai())
+with dossiers.base() as c:
+    statut_r = c.execute("SELECT statut FROM file_documentaire WHERE id=?", (j1["tache_documentaire"],)).fetchone()[0]
+verifier("un essai ANNULÉ (arrêt du backend) ne ressuscite pas un travail retiré", statut_r == "retire", statut_r)
 j1b = df.soumettre(uid, fil2, "quantitatif", {"demande": demande, "_demande_utilisateur": demande})
 with dossiers.base() as c:
     statut = c.execute("SELECT statut,essais FROM file_documentaire WHERE id=?", (j1b["tache_documentaire"],)).fetchone()

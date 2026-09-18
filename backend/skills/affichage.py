@@ -179,12 +179,14 @@ def garantir_recherche(resultat: dict, motif: str, ouvreur: str | None = None) -
             "PUBLIC (fiche technique, norme, tarif public), dis que le classement "
             "ne le porte pas et enchaîne `chercher_web`.")
         return resultat
+    avec_dates = any(r.get("modifie_le") for r in entrees)
     lignes = [[str(r.get("nom") or ""),
                "Dossier" if r.get("dossier") else "Fichier",
-               str(r.get("chemin") or "")] for r in entrees]
+               str(r.get("chemin") or "")] + ([str(r.get("modifie_le") or "")] if avec_dates else [])
+              for r in entrees]
     resultat["bloc_ui"] = {"type": "table",
                            "titre": f"Recherche — {motif}",
-                           "columns": ["Nom", "Type", "Emplacement"],
+                           "columns": ["Nom", "Type", "Emplacement"] + (["Modifié le"] if avec_dates else []),
                            "rows": lignes}
     # Mêmes données que `rows` : on ne les rend pas deux fois (cf. le `schema`
     # de l'arborescence, retiré pour la même raison).

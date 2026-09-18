@@ -351,7 +351,9 @@ def _est_jeton_tableau(valeur) -> bool:
     return isinstance(valeur, str) and valeur.strip().lower() in JETONS_TABLEAU
 
 
-RESULTATS_GENEREUX = {"lire_source_dossier", "chercher_source_dossier", "drive_chercher", "nas_chercher", "drive_apercu", "drive_lister",
+# `nas_lister` (18/09, test réel) : « CHANTIERS TERMINES » a 143 entrées, le modèle n'en voyait que 26
+# (résultat coupé au plafond de 4 000) et ne pouvait ni trier ni choisir.
+RESULTATS_GENEREUX = {"lire_source_dossier", "chercher_source_dossier", "drive_chercher", "nas_chercher", "nas_lister", "drive_apercu", "drive_lister",
                       # 08/09 : les cartes de relance et la liste des factures suivies.
                       "relancer_factures", "factures_suivies", "inventaire_dossier",
                       "courrier_entrant",

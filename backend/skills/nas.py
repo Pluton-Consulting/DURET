@@ -146,8 +146,21 @@ async def nas_chercher(data: dict, user) -> dict:
     except NasRefuse as e:
         _echec(str(e))
     motif = (data.get("motif") or data.get("nom") or data.get("client") or "").strip()
+    recents = data.get("plus_recents") or data.get("recents")
     try:
-        resultat = await chercher(motif, data.get("dossier"))
+        if recents:
+            # « Les fichiers les plus récents » : un classement par date depuis le catalogue,
+            # sous un dossier résolu par son nom — pas une recherche par nom.
+            from outils.nas import resoudre_dossier
+            from nas.acces import plus_recents
+            dossier = (data.get("dossier") or "").strip() or None
+            resultat = plus_recents(await resoudre_dossier(dossier) if dossier else None,
+                                    int(recents) if str(recents).isdigit() else 20)
+            motif = motif or "fichiers les plus récents"
+        else:
+            if not motif:
+                _echec("Donne `motif` (le nom cherché) ou `plus_recents` (N fichiers les plus récents).")
+            resultat = await chercher(motif, data.get("dossier"))
     except NasRefuse as e:
         _echec(str(e))
     except Exception as e:  # noqa: BLE001
@@ -320,8 +333,9 @@ SKILLS = {
             "`dossier` (optionnel) : ou chercher -- le `chemin` EXACT d'un "
             "listage, ce qui rend la recherche BEAUCOUP plus rapide. Sans lui, "
             "tout le serveur est parcouru : c'est long, ne le relance pas a "
-            "l'identique"),
-        requis=["motif"], optionnels=["dossier"],
+            "l'identique. `plus_recents`: N -> les N fichiers modifies le plus "
+            "recemment (sous `dossier` ou sur tout le serveur), avec leur date"),
+        requis=[], optionnels=["motif", "dossier", "plus_recents"],
         effet="lecture",
         libelle="je cherche ce nom sur le serveur"),
     "nas_deposer": Declaration(

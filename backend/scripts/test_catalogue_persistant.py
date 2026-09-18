@@ -78,5 +78,22 @@ verifier("la synchronisation demande un relevé COMPLET (les dates des fichiers 
          and "def construire_catalogue(relire_tout: bool = False)" in src.replace("async ", ""))
 verifier("l'avancement dit les dossiers repris", "dossiers repris du relevé précédent" in acces.decrire_progression({"debut": 0.0, "delai_s": 60, "reutilises": 12}))
 
+print("— Les fichiers les plus récents, d'après le catalogue")
+acces._CATALOGUE.update({"etat": "pret", "complet": False, "construit_le": 10 ** 9, "entrees": [
+    {"nom": "a.pdf", "chemin": "/home/Drive/x/a.pdf", "dossier": False, "modifie": 1700000000, "octets": 3},
+    {"nom": "b.pdf", "chemin": "/home/Drive/y/b.pdf", "dossier": False, "modifie": 1800000000, "octets": 3},
+    {"nom": "y", "chemin": "/home/Drive/y", "dossier": True, "modifie": 1800000000}]})
+acces.dossiers_autorises = lambda: ["/home/Drive"]; acces.verifier = lambda c: c
+import nas.niveaux as _nv; _nv.filtrer = lambda e, r: e
+r = acces.plus_recents(None, 5)
+verifier("`plus_recents` rend les FICHIERS du plus récent au plus ancien, datés en clair, et dit si le relevé est partiel",
+         [x["nom"] for x in r["resultats"]] == ["b.pdf", "a.pdf"] and r["resultats"][0]["modifie_le"].startswith("15/01/2027") and "PARTIEL" in r["note"], str(r)[:200])
+verifier("sous un dossier précis : seulement ce qui vit dessous", [x["nom"] for x in acces.plus_recents("/home/Drive/x", 5)["resultats"]] == ["a.pdf"])
+acces._CATALOGUE.update({"etat": "vide", "entrees": []}); acces.restaurer_catalogue = lambda: False
+verifier("sans catalogue : rien d'inventé, la limite est dite", acces.plus_recents(None, 5)["resultats"] == [] and "pas encore construit" in acces.plus_recents(None, 5)["note"])
+sk = (BACKEND / "skills" / "nas.py").read_text(encoding="utf-8")
+verifier("`nas_chercher` expose `plus_recents` au catalogue et n'exige plus `motif`", '"plus_recents"' in sk and 'requis=[], optionnels=["motif", "dossier", "plus_recents"]' in sk)
+verifier("le listage porte la date des dossiers, et la recherche affiche « Modifié le »", '"modifie": (add.get("time") or {}).get("mtime"),' in src and '"Modifié le"' in (BACKEND / "skills" / "affichage.py").read_text(encoding="utf-8"))
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

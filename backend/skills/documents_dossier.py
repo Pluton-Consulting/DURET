@@ -364,7 +364,9 @@ async def lire(data,user):
     return {'ok':True,**r,'texte':texte[position:fin],'position':position,'fin':fin,
             'complet':r['complet'] and position==0 and fin==len(texte),
             'pour_continuer':{'skill':'lire_source_dossier','args':suite} if suite else None,
-            'note':'Ce passage est une page de lecture ; poursuis avec pour_continuer jusqu’à couvrir la demande.'}
+            'note':'Ce passage est une page de lecture ; poursuis avec pour_continuer jusqu’à couvrir la demande. '
+                   'Si la demande porte sur le document ENTIER (comparer, résumer, lister ce qui est exigé, vérifier une absence), '
+                   'lis TOUTES les pages avant de répondre — rien ne te limite en nombre de lectures ; une absence ne se conclut jamais sur des pages non lues.'}
 
 async def ajouter(data,user):
     uid,fil=_identite(data,user)

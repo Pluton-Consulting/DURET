@@ -1149,6 +1149,39 @@ async def _chercher_ouvert(client, base, sid, motif: str,
     return sortie
 
 
+def plus_recents(dossier: Optional[str], nombre: int = 20) -> dict:
+    """Les fichiers modifiés le plus récemment sous un dossier (ou tout le périmètre), d'après le
+    CATALOGUE (18/09, test réel : « le fichier modifié le plus récemment sur tout le serveur » →
+    « aucune action ne trie par date »). Le catalogue porte la date de chaque fichier ; une
+    absence de catalogue se dit, elle ne s'invente pas."""
+    from datetime import datetime, timezone
+    cat = catalogue_pret()
+    if cat is None:
+        return {"resultats": [], "nombre": 0, "methode": "aucune",
+                "note": "Le catalogue du serveur n'est pas encore construit : ce classement par date n'est pas possible pour l'instant, réessaie dans quelques minutes."}
+    racines = [verifier(dossier)] if dossier else dossiers_autorises()
+    from security.lecteur import role_lecteur
+    from nas import niveaux
+    fichiers = [e for e in cat if not e.get("dossier") and e.get("modifie")
+                and any(str(e.get("chemin") or "").startswith(r.rstrip("/") + "/") for r in racines)]
+    fichiers = niveaux.filtrer(fichiers, role_lecteur())
+    fichiers.sort(key=lambda e: int(e.get("modifie") or 0), reverse=True)
+    n = max(1, min(int(nombre or 20), 200))
+    sortie = []
+    for e in fichiers[:n]:
+        d = {k: e.get(k) for k in ("nom", "chemin", "octets", "modifie")}
+        d["dossier"] = False
+        try:
+            d["modifie_le"] = datetime.fromtimestamp(int(e["modifie"]), tz=timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+        except (TypeError, ValueError, OverflowError, OSError):
+            d["modifie_le"] = ""
+        sortie.append(d)
+    return {"resultats": sortie, "nombre": len(fichiers), "methode": "catalogue",
+            "dossiers_explores": racines, "tri": "date de modification décroissante",
+            **({"note": "Parcours du serveur encore PARTIEL : un fichier plus récent peut exister dans une branche non relevée."}
+               if not _CATALOGUE.get("complet") else {})}
+
+
 async def chercher(motif: str, dossier: Optional[str] = None) -> dict:
     """Recherche par NOM de fichier, dans le périmètre autorisé."""
     async with connexion() as (client, base, sid):

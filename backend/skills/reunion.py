@@ -155,6 +155,37 @@ def _lignes(v, maxi: int) -> list[str]:
     return sorties
 
 
+def _mots_action(t: str) -> set:
+    return {m for m in re.findall(r"[a-z0-9]+", _texte(t).lower()) if len(m) > 3}
+
+
+def _avec_les_engagements(actions: list[dict], releves: list) -> list[dict]:
+    """UN ENGAGEMENT PRIS EN RÉUNION NE DISPARAÎT PAS DU COMPTE RENDU (18/09, banc Duret).
+
+    Transcription de 40 000 caractères, deux essais : « nouvelle mesure d'humidité bâtiment C,
+    Hugo, d'ici le 28 » et « le PV d'essai, Julien, vendredi » tombaient sous le plafond de la
+    synthèse, remplacés par des reprises de logements. Une action qui porte, dans un relevé, un
+    responsable NOMMÉ et une échéance DITE est un engagement : si la synthèse ne l'a pas gardée
+    (même responsable et moitié des mots au moins), elle est rajoutée. Fidélité aux données,
+    pas une liste de sujets."""
+    finales = list(actions)
+    for r in releves or []:
+        for a in ((r or {}).get("actions") or []):
+            if not isinstance(a, dict):
+                continue
+            quoi, qui, quand = (_texte(a.get(k))[:MAX_LIGNE if k == "quoi" else 60] for k in ("quoi", "qui", "quand"))
+            if not (quoi and qui and quand) or re.fullmatch(r"(à |a )?(définir|definir|désigner|designer)|tbd", qui.lower()):
+                continue
+            mots = _mots_action(quoi)
+            deja = any(
+                (qui.lower().split()[0] in (f.get("qui") or "").lower())
+                and mots and len(mots & _mots_action(f.get("quoi") or "")) >= max(1, len(mots) // 2)
+                for f in finales)
+            if not deja:
+                finales.append({"quoi": quoi, "qui": qui, "quand": quand})
+    return finales
+
+
 def _actions(v, maxi: int) -> list[dict]:
     """Les actions, responsable et échéance VIDES quand ils n'ont pas été dits."""
     sorties: list[dict] = []
@@ -489,7 +520,7 @@ async def compte_rendu_reunion(data: dict, user) -> dict:
         "resume": _texte(sortie.get("resume"))[:MAX_RESUME],
         "points_cles": _lignes(sortie.get("points_cles"), MAX_POINTS),
         "decisions": _lignes(sortie.get("decisions"), MAX_DECISIONS),
-        "actions": _actions(sortie.get("actions"), MAX_ACTIONS),
+        "actions": _avec_les_engagements(_actions(sortie.get("actions"), MAX_ACTIONS), releves),
         "en_suspens": _lignes(sortie.get("en_suspens"), MAX_SUSPENS),
         "participants": _lignes(sortie.get("participants"), MAX_PARTICIPANTS),
     }

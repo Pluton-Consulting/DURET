@@ -423,6 +423,18 @@ verifier("le raccourci laisse la place à la transcription", "Transcription :" i
 verifier("il dit de ne rien inventer",
          "N'invente aucun responsable" in raccourcis)
 
+# 18/09 (banc Duret) : deux engagements nominatifs et datés tombaient sous le plafond de la synthèse.
+releves_ = [{"actions": [{"quoi": "Nouvelle mesure d'humidité du bâtiment C", "qui": "Hugo", "quand": "d'ici le 28"},
+                         {"quoi": "Comparer les deux DPGF", "qui": "", "quand": ""}]},
+            {"actions": [{"quoi": "Envoyer le PV d'essai d'étanchéité", "qui": "Julien Roux", "quand": "vendredi"}]}]
+finales_ = [{"quoi": "Reprises des logements A02, D08", "qui": "Hugo Marchand", "quand": "semaine prochaine"},
+            {"quoi": "Envoyer le PV d'essai d'étanchéité à la MOE", "qui": "Julien Roux", "quand": "vendredi"}]
+res_ = reunion._avec_les_engagements(finales_, releves_)
+verifier("un engagement NOMMÉ et DATÉ d'un relevé ne disparaît pas : il est rajouté",
+         any("humidité" in a["quoi"] and a["qui"] == "Hugo" for a in res_), res_)
+verifier("…sans doublon quand la synthèse l'a déjà gardé, et sans rajouter une action sans responsable",
+         sum("PV d'essai" in a["quoi"] for a in res_) == 1 and not any("Comparer les deux DPGF" == a["quoi"] for a in res_), res_)
+
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("le résultat du compte rendu échappe à la coupe à 4 000 caractères",
          '"compte_rendu_reunion"' in agent1)

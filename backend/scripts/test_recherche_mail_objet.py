@@ -62,7 +62,7 @@ verifier("Outlook : « objet: » devient subject: en KQL", "subject:" in str(lec
 import asyncio, types
 lecture.fournisseur = lambda: "imap"
 appels_imap = []
-async def faux_lire_imap(boite, dossier, limite, depuis, recherche=None, avant=None, apercu=None, curseur=None):
+async def faux_lire_imap(boite, dossier, limite, depuis, recherche=None, avant=None, apercu=None, curseur=None, extra=None):
     appels_imap.append(dossier)
     if dossier in ("recus", "INBOX"): return [], 0
     return [{"objet": "Maxime - Mémoire Technique", "date_iso": "2026-09-17T15:31:00", "de": "x@exemple-sols.fr"}], 1

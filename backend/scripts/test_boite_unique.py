@@ -106,15 +106,26 @@ class _IMAP:
         JOURNAL["select"].append((dossier, readonly)); return "OK", [b"2"]
 
     def uid(self, commande, *args):
+        if commande == "SEARCH" and args[1] == "UNSEEN":
+            JOURNAL["unseen"] = True; return "OK", [b"7 9 11 13 15"]
         if commande == "search":
             JOURNAL["search"].append(args[1]); return "OK", [b"101 102"]
         if commande == "fetch":
-            uid = args[0]
-            if uid not in BOITE:
-                return "OK", [None]
-            m, entete = BOITE[uid]
-            return "OK", [(entete, m.as_bytes())]
+            # 17/09 : les aperçus se chargent PAR LOT (« 101,102 ») avec UID et RFC822.SIZE en tête
+            uids = args[0].split(b",") if isinstance(args[0], bytes) else [args[0]]
+            sortie = []
+            for uid in uids:
+                if uid not in BOITE:
+                    continue
+                m, entete = BOITE[uid]
+                brut = m.as_bytes()
+                sortie.append((entete.replace(b"BODY[]", b"RFC822.SIZE %d BODY[]" % len(brut)), brut))
+            return "OK", sortie or [None]
         raise AssertionError(commande)
+
+    def response(self, code):
+        # UIDVALIDITY : la pagination par curseur la relit (échec hérité de la livraison du 16/09)
+        return "OK", [b"12345"] if code == "UIDVALIDITY" else [None]
 
     def logout(self):
         JOURNAL["logout"] = True
@@ -157,9 +168,13 @@ imap = charger(src, "imap_double")
 verifier("configuré dès que l'adresse et le mot de passe d'application sont là ; l'adresse est normalisée",
          imap.configure() is True and imap.boite_unique() == "contact@exemple-sols.fr")
 verifier("les critères IMAP : depuis / avant à la journée, recherche dans objet et corps",
-         imap._criteres(datetime(2026, 9, 1), "devis carrelage", datetime(2026, 9, 8)) == 'SINCE 01-Sep-2026 BEFORE 08-Sep-2026 TEXT "devis carrelage"'
-         and imap._criteres(None, None, None) == "ALL")
-fiches, total = imap.lister("contact@exemple-sols.fr", "INBOX", 10, datetime(2026, 9, 1), None, None, 160)
+         imap._criteres(datetime(2026, 9, 1), "devis carrelage", datetime(2026, 9, 8)) == ("SINCE 01-Sep-2026 BEFORE 08-Sep-2026 TEXT", "devis carrelage")
+         and imap._criteres(None, None, None) == ("ALL", None)
+         and imap._criteres(None, "objet: maxime", None) == ("SUBJECT", "maxime"))
+extra = {}
+fiches, total = imap.lister("contact@exemple-sols.fr", "INBOX", 10, datetime(2026, 9, 1), None, None, 160, None, extra)
+verifier("le compte EXACT des non lus du dossier vient du serveur (SEARCH UNSEEN), pas de l'échantillon (18/09)",
+         extra.get("non_lus") == 5 and JOURNAL.get("unseen") is True, str(extra))
 verifier("la connexion : l'hôte, l'identifiant, le dossier en lecture seule, la déconnexion",
          JOURNAL["hote"] == ("imap.gmail.com", 993) and JOURNAL["login"][0] == "contact@exemple-sols.fr"
          and JOURNAL["select"][-1] == ('"INBOX"', True) and JOURNAL.get("logout"))

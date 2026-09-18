@@ -508,7 +508,9 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "les valeurs reelles avant de filtrer",
         [], ["source_type", "filtres", "contient", "agreger", "annee", "depuis", "page"]),
     "lire_mails": (
-        "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. "
+        "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. « Combien de "
+        "non lus ? » : un appel sans filtre, le résultat porte `non_lus_dossier` (tout le dossier, "
+        "compté par le serveur) — jamais un compte sur l'échantillon. "
         "`depuis` : une DURÉE (« 7j », « semaine », « mois », « lundi » = depuis lundi) — "
         "jamais une date que tu calcules — OBLIGATOIRE dès qu'on parle d'une période (« cette semaine », "
         "« depuis lundi ») : le résultat dit alors « N messages sur la période, voici "

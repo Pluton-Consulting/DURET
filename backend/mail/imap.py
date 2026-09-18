@@ -467,11 +467,23 @@ def _charger_apercus(client, uids):
 
 def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = None,
            recherche: Optional[str] = None, avant: Optional[datetime] = None,
-           longueur_apercu: int = 160, curseur: Optional[str] = None) -> tuple[list[dict], Optional[int]]:
-    """(fiches des `limite` plus récents, nombre total de correspondances)."""
+           longueur_apercu: int = 160, curseur: Optional[str] = None,
+           extra: Optional[dict] = None) -> tuple[list[dict], Optional[int]]:
+    """(fiches des `limite` plus récents, nombre total de correspondances).
+
+    `extra`, s'il est donné, reçoit `non_lus` : le nombre EXACT de messages non lus du
+    dossier entier (SEARCH UNSEEN, côté serveur). 18/09 : « combien de mails non lus
+    j'ai, exactement ? » répondait « 13 parmi les 15 plus récents » — le compte était
+    tiré des fiches, le serveur le sait en une commande."""
     client = _connexion()
     try:
         _selectionner(client, dossier)
+        if extra is not None:
+            try:
+                statut, brut = client.uid("SEARCH", None, "UNSEEN")
+                extra["non_lus"] = len((brut[0] or b"").split()) if statut == "OK" else None
+            except Exception as e:  # noqa: BLE001 — un compte absent n'empêche pas la lecture
+                logger.info("IMAP : compte des non lus indisponible (%s)", str(e)[:80])
         uids = _uids(client, _criteres(depuis, recherche, avant))
         _, validite_brute=client.response('UIDVALIDITY')
         validite=(validite_brute[0] or b'').decode() if validite_brute else ''

@@ -768,12 +768,12 @@ async def _ouvrir_gmail(boite: str, identifiant: str) -> dict:
 async def _lire_imap(boite: str, dossier: str, limite: int,
                      depuis: Optional[datetime], recherche: Optional[str] = None,
                      avant: Optional[datetime] = None,
-                     apercu=None, curseur=None) -> tuple[list[dict], Optional[int]]:
+                     apercu=None, curseur=None, extra=None) -> tuple[list[dict], Optional[int]]:
     import asyncio
     from mail import imap
     longueur = _longueur_apercu(limite, apercu)
     return await asyncio.to_thread(
-        imap.lister, boite, imap.dossier_imap(dossier), limite, depuis, recherche, avant, longueur, curseur)
+        imap.lister, boite, imap.dossier_imap(dossier), limite, depuis, recherche, avant, longueur, curseur, extra)
 
 
 async def _ouvrir_imap(boite: str, identifiant: str) -> dict:
@@ -822,12 +822,15 @@ async def lire_boite(boite: str, dossier: str = "recus",
                 f", depuis {debut.date()}" if debut else "",
                 f", avant {borne.date()}" if borne else "",
                 ", recherche" if mots else "", nom)
+    non_lus_dossier = None
     if nom == "outlook":
         messages, total = await _lire_outlook(boite, DOSSIERS["outlook"][cle], limite, debut,
                                               recherche=mots, avant=borne, apercu=apercu)
     elif nom == "imap":
+        extra_imap: dict = {}
         messages, total = await _lire_imap(boite, cle, limite, debut,
-                                           recherche=mots, avant=borne, apercu=apercu, curseur=curseur)
+                                           recherche=mots, avant=borne, apercu=apercu, curseur=curseur, extra=extra_imap)
+        non_lus_dossier = extra_imap.get("non_lus")
         # UNE RECHERCHE NE S'ARRÊTE PAS À LA RÉCEPTION (17/09, Duret). « Le mail dont l'objet
         # est Maxime - Mémoire Technique » : zéro résultat — un filtre Gmail le range dans
         # le libellé « _Maxime » sans passer par la réception. Rien trouvé en réception :
@@ -916,6 +919,11 @@ async def lire_boite(boite: str, dossier: str = "recus",
         "compte": (compte + (f" Rien en boîte de réception : trouvé(s) dans « {elargi} »." if elargi else "")),
         **({"trouve_hors_reception": elargi} if elargi else {}),
         "domaine_entreprise": _domaine_entreprise(),
+        # Le compte EXACT des non lus du dossier entier (IMAP : SEARCH UNSEEN), pas celui
+        # de l'échantillon : c'est lui qu'on cite pour « combien de non lus ».
+        **({"non_lus_dossier": non_lus_dossier,
+            "pour_les_non_lus": f"{non_lus_dossier} message(s) non lu(s) dans TOUT le dossier — c'est le chiffre exact à citer."}
+           if non_lus_dossier is not None else {}),
         "expediteurs_internes": internes,
         "expediteurs_automatiques": automatiques,
         # Dit explicitement ce que cet échantillon N'EST PAS. Sans cela, le

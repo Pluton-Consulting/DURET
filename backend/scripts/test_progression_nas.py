@@ -132,7 +132,7 @@ if hasattr(acces, "decrire_progression"):
     DITS = []
     vrai_sleep = asyncio.sleep
 
-    async def _construire_lent():
+    async def _construire_lent(relire_tout=False):
         acces._CATALOGUE["en_cours"] = True
         acces._CATALOGUE["progression"] = {"debut": 0.0, "delai_s": 900, "dossiers_lus": 12,
                                            "dossiers_vus": 40, "fichiers_vus": 300, "niveau": 3,

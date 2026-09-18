@@ -1197,9 +1197,10 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
 
 
 async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: str = "",
-                     autorises=None) -> dict:
+                     autorises=None, dans_archive=None) -> dict:
     """UNE pièce jointe, par sa `ref` — ou par son nom dans un message (`mail` =
-    la ref du message, sinon le dernier reçu). Récupérée, déposée, lue."""
+    la ref du message, sinon le dernier reçu). Récupérée, déposée, lue.
+    `dans_archive` : pour un zip, le fichier à en extraire et à lire (18/09)."""
     from mail.pieces import analyser
     info = piece_connue(str(ref or ""), boite) if ref else None
     if info and fournisseur() == "imap":
@@ -1223,13 +1224,27 @@ async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: st
                               + ", ".join(str(p.get("nom")) for p in pieces))
         info = piece_connue(choisie["ref"], boite)
     octets = await telecharger_piece(boite, info)
-    lu = await analyser(info.get("nom") or "", info.get("type"), octets, proprietaire)
+    archive = None
+    if dans_archive and str(dans_archive).strip():
+        import asyncio
+        from mail.pieces import extraire_de_l_archive
+        nom_membre, octets_membre = await asyncio.to_thread(extraire_de_l_archive, octets, str(dans_archive))
+        archive = info.get("nom") or "archive"
+        lu = await analyser(nom_membre, None, octets_membre, proprietaire)
+        lu["archive"] = archive
+    else:
+        lu = await analyser(info.get("nom") or "", info.get("type"), octets, proprietaire)
     lu["ref"] = _ref(f"{info['message']}|{info.get('id') or info.get('nom')}")
     bloc = lu.pop("bloc", None)
+    est_zip = (not archive) and str(info.get("nom") or "").lower().endswith(".zip")
     lu["a_faire"] = ("La pièce est LUE : son texte est dans `texte` (méthode : " + str(lu.get("methode")) + ")"
                      + (", coupé" if lu.get("tronque") else "")
                      + ". Sa carte (aperçu, téléchargement) s'affiche automatiquement sous ta réponse : "
                      "n'écris aucun bloc ```ui, parle de son CONTENU."
+                     + (" C'est une ARCHIVE : `texte` en liste les fichiers. Pour LIRE l'un d'eux, rappelle "
+                        "lire_piece_jointe avec la même `ref` et `dans_archive` = un bout de son nom — "
+                        "ne dis jamais que le contenu d'une archive est illisible." if est_zip else "")
+                     + (f" Fichier extrait de l'archive « {archive} »." if archive else "")
                      if lu.get("lisible") else
                      "La pièce n'a pas pu être lue (" + str(lu.get("methode")) + ") : elle reste "
                      "téléchargeable, sa carte s'affiche sous ta réponse. Dis-le, sans inventer son contenu.")

@@ -617,8 +617,10 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "version, DXF par ses textes, archive par son contenu. `ref` : celle rendue par "
         "`lire_mail` dans `pieces_jointes` ; sinon `nom` (un bout du nom de fichier) et "
         "`mail` (la ref du message, sinon le dernier reçu). Parle ensuite de son CONTENU "
-        "(`texte`), et dis la `methode` si elle a des limites",
-        [], ["ref", "nom", "mail", "mailbox"]),
+        "(`texte`), et dis la `methode` si elle a des limites. ARCHIVE (.zip) : le premier appel "
+        "en liste les fichiers ; `dans_archive` (un bout du nom, ex. « DPGF lot 01 ») EXTRAIT et "
+        "LIT ce fichier-là — une archive n'est jamais « illisible »",
+        [], ["ref", "nom", "mail", "mailbox", "dans_archive"]),
     "triage_email_entrant": (
         # `mailbox` ÉTAIT REQUIS ICI, et c'était un piège. Le cas normal est un
         # message COLLÉ dans le chat (« voici ce que je viens de recevoir ») :

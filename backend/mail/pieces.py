@@ -214,17 +214,78 @@ def vignette_dwg(brut: bytes) -> tuple[Optional[bytes], str, str]:
     return None, "", nom_version
 
 
+def nom_dans_zip(info: zipfile.ZipInfo) -> str:
+    """Le nom d'un fichier de l'archive, accents compris. Sans le drapeau UTF-8 (bit 11),
+    Python lit le nom en CP437 : une archive faite sous Windows donnait « DPGF lot 01 Faяence »
+    ou « Ã© ». On retente l'UTF-8 puis le CP850 avant de garder la lecture brute."""
+    nom = info.filename
+    if info.flag_bits & 0x800:
+        return nom
+    try:
+        brut = nom.encode("cp437")
+    except UnicodeEncodeError:
+        return nom
+    for codage in ("utf-8", "cp850"):
+        try:
+            return brut.decode(codage)
+        except UnicodeDecodeError:
+            continue
+    return nom
+
+
 def lire_archive(brut: bytes, maximum: int = 60) -> str:
     """Ce qu'une archive zip contient : noms et tailles, sans rien extraire."""
     try:
         with zipfile.ZipFile(io.BytesIO(brut)) as z:
             infos = [i for i in z.infolist() if not i.is_dir()]
-            lignes = [f"{i.filename} ({i.file_size} octets)" for i in infos[:maximum]]
+            lignes = [f"{nom_dans_zip(i)} ({i.file_size} octets)" for i in infos[:maximum]]
             if len(infos) > maximum:
                 lignes.append(f"… et {len(infos) - maximum} autre(s) fichier(s)")
             return "\n".join(lignes)
     except zipfile.BadZipFile:
         return ""
+
+
+def _plat(texte: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texte or "")).encode("ascii", "ignore").decode().lower()
+    return " ".join("".join(c if c.isalnum() else " " for c in t).split())
+
+
+def extraire_de_l_archive(brut: bytes, voulu: str) -> tuple[str, bytes]:
+    """UN fichier de l'archive, désigné par un bout de son nom (accents, casse, séparateurs
+    indifférents). 18/09, test réel : « y a-t-il un DPGF dans les pièces de la semaine ?
+    ouvre-le » → le DPGF était DANS le zip de la consultation, et l'assistant a répondu
+    « je ne peux pas lire le contenu, le serveur ne décompresse pas ». Plusieurs fichiers
+    correspondent → le nom exact prime, sinon on ne choisit pas : LookupError avec la liste.
+    Un fichier annoncé plus lourd que la limite n'est jamais décompressé (bombe de zip)."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(brut))
+    except zipfile.BadZipFile as e:
+        raise ValueError("Ce n'est pas une archive zip lisible.") from e
+    with z:
+        infos = [i for i in z.infolist() if not i.is_dir()]
+        noms = {i.filename: nom_dans_zip(i) for i in infos}
+        cible = _plat(voulu)
+        if not cible:
+            raise LookupError("Nomme le fichier de l'archive à ouvrir. Contenu : "
+                              + " ; ".join(noms[i.filename] for i in infos[:40]))
+        def court(i):
+            return _plat(noms[i.filename].rsplit("/", 1)[-1])
+        exacts = [i for i in infos if court(i) == cible or _plat(noms[i.filename]) == cible]
+        proches = exacts or [i for i in infos if cible in _plat(noms[i.filename])]
+        if not proches:
+            raise LookupError(f"Aucun fichier de l'archive ne correspond à « {voulu} ». Contenu : "
+                              + " ; ".join(noms[i.filename] for i in infos[:40]))
+        if len(proches) > 1:
+            raise LookupError(f"Plusieurs fichiers de l'archive correspondent à « {voulu} » : "
+                              + " ; ".join(noms[i.filename] for i in proches[:20])
+                              + ". Redonne un nom plus précis (`dans_archive`).")
+        info = proches[0]
+        if info.file_size > MAX_OCTETS_PIECE:
+            raise ValueError(f"« {noms[info.filename]} » pèse {info.file_size // (1024 * 1024)} Mo "
+                             "décompressé : trop lourd pour être lu ici.")
+        return noms[info.filename].rsplit("/", 1)[-1], z.read(info)
 
 
 def _en_png(octets: bytes) -> bytes:

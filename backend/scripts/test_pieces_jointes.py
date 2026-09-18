@@ -97,6 +97,29 @@ if pieces:
         zf.writestr("plans/RDC.pdf", b"x" * 10); zf.writestr("photo.jpg", b"y" * 5)
     verifier("archive : la liste de ce qu'elle contient", "plans/RDC.pdf (10 octets)" in pieces.lire_archive(z.getvalue()) and "photo.jpg" in pieces.lire_archive(z.getvalue()))
     verifier("une archive corrompue rend une chaîne vide", pieces.lire_archive(b"pas un zip") == "")
+    # 18/09 : le DPGF était DANS le zip de la consultation → « le serveur ne décompresse pas ».
+    z2 = io.BytesIO()
+    with zipfile.ZipFile(z2, "w") as zf:
+        zf.writestr("DCE/DPGF lot 01 SOL DUR FAIENCE.xlsx", b"dpgf01"); zf.writestr("DCE/DPGF lot 02 MINT.xlsx", b"dpgf02")
+        zf.writestr("DCE/PLANNING DCE.pdf", b"planning")
+        # un nom accentué SANS drapeau UTF-8 (archive faite sous Windows) : octets CP850
+        info = zipfile.ZipInfo("DCE/Notice acoustique.pdf"); zf.writestr(info, b"notice")
+    brut2 = z2.getvalue()
+    nom_e, oct_e = pieces.extraire_de_l_archive(brut2, "dpgf lot 01")
+    verifier("un fichier de l'archive s'extrait par un bout de son nom (casse, séparateurs indifférents)", (nom_e, oct_e) == ("DPGF lot 01 SOL DUR FAIENCE.xlsx", b"dpgf01"))
+    verifier("…le nom exact prime", pieces.extraire_de_l_archive(brut2, "PLANNING DCE.pdf")[1] == b"planning")
+    try:
+        pieces.extraire_de_l_archive(brut2, "DPGF"); verifier("plusieurs correspondances : on ne choisit pas, on liste", False)
+    except LookupError as e:
+        verifier("plusieurs correspondances : on ne choisit pas, on liste", "lot 01" in str(e) and "lot 02" in str(e))
+    try:
+        pieces.extraire_de_l_archive(brut2, "CCTP"); verifier("aucun fichier : le contenu est dit", False)
+    except LookupError as e:
+        verifier("aucun fichier : le contenu est dit", "PLANNING DCE.pdf" in str(e))
+    zi = zipfile.ZipInfo("Fa\u00efence.pdf".encode("utf-8").decode("cp437")); zi.flag_bits = 0
+    verifier("un nom UTF-8 écrit sans drapeau se relit avec ses accents", pieces.nom_dans_zip(zi) == "Faïence.pdf", pieces.nom_dans_zip(zi))
+    src_l = (BACKEND / "mail" / "lecture.py").read_text(encoding="utf-8")
+    verifier("la lecture d'une pièce zip dit comment en lire un fichier (`dans_archive`)", "dans_archive" in src_l and "ne dis jamais que le contenu d'une archive est illisible" in src_l)
 
     print("\n2. Lecture par type (parseurs doublés)")
     faux_parsers = types.ModuleType("ingestion.parsers")
@@ -264,7 +287,7 @@ verifier("skill `lire_piece_jointe` déclaré, effet lecture", 'SKILLS_NATIFS["l
 verifier("lire_mail transmet `pieces` et le propriétaire (la personne connectée)", "pieces=" in skills and "proprietaire=str(user.id)" in skills)
 protocole = lire("skills/protocol.py")
 verifier("catalogue : lire_mail accepte pieces ; lire_piece_jointe existe avec ref/nom/mail",
-         re.search(r'"lire_mail": \(.*?"pieces"', protocole, re.S) and re.search(r'"lire_piece_jointe": \(.*?\["ref", "nom", "mail", "mailbox"\]', protocole, re.S))
+         re.search(r'"lire_mail": \(.*?"pieces"', protocole, re.S) and re.search(r'"lire_piece_jointe": \(.*?\["ref", "nom", "mail", "mailbox"(, "dans_archive")?\]', protocole, re.S))
 verifier("journal : « je lis la pièce jointe »", '"lire_piece_jointe"' in lire("agents/journal.py"))
 atelier = lire("bureautique/atelier.py")
 verifier("atelier : deposer_fichier (n'importe quelle extension), et les pièces jointes ne comptent pas comme documents produits",

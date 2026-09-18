@@ -72,8 +72,21 @@ verifier("le plafond du tour laisse passer un long travail (120 actions)",
          espace["MAX_ACTIONS_PAR_TOUR"] >= 120)
 agent1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("le compte « même skill » écarte les pages de plus",
-         re.search(r"memes = sum\(.*?_est_une_page_de_plus\(r\.get\(\"args\"\), "
-                   r"action\.get\(\"args\"\)\)", agent1, re.S))
+         "_appels_meme_skill(resultats, action[\"skill\"], action.get(\"args\"))" in agent1
+         and "_est_une_page_de_plus(r.get(\"args\"), args)" in agent1)
+# 18/09 (Duret, navigateur) : dix `nas_lister` sur dix dossiers DIFFÉRENTS coupaient une vérification
+# en cours. Le plafond compte les appels SANS PROGRÈS (échec, ou résultat déjà obtenu).
+esp2 = {}
+extraire(BACKEND / "agents" / "agent1.py", {"_est_une_page_de_plus", "_CLES_PAGINATION", "_appels_meme_skill"}, esp2)
+compte = esp2["_appels_meme_skill"]
+dix_dossiers = [{"skill": "nas_lister", "args": {"chemin": f"/d{i}"}, "ok": True, "resultat_masque": f"contenu {i}"} for i in range(10)]
+verifier("dix listages de dossiers DIFFÉRENTS qui rendent du neuf : zéro appel sans progrès",
+         compte(dix_dossiers, "nas_lister", {"chemin": "/d10"}) == (0, 10))
+tourne = [{"skill": "interroger_donnees", "args": {"f": i}, "ok": True, "resultat_masque": "même chose"} for i in range(10)]
+verifier("dix variations qui rendent la MÊME chose : neuf sans progrès (la boucle s'arrête)",
+         compte(tourne, "interroger_donnees", {"f": 11})[0] == 9)
+echecs_ = [{"skill": "nas_ouvrir", "args": {"n": i}, "ok": False, "resultat_masque": f"refus {i}"} for i in range(3)]
+verifier("un échec compte toujours comme sans progrès", compte(echecs_, "nas_ouvrir", {"n": 9}) == (3, 3))
 
 # ── 2. La mémoire : les pages profondes existent ─────────────────────────
 rag = (BACKEND / "vectorstore" / "rag.py").read_text(encoding="utf-8")

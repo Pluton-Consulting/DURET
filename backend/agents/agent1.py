@@ -152,7 +152,15 @@ TOUR_DUREE_MAX_S = 8 * 60
 # nombre, la boucle sort sur une note et le modèle rédige avec ce qu'il a.
 # Les gestes qui CONSTRUISENT un document par morceaux sont exemptés : un
 # rapport de douze sections, c'est douze `ajouter_document` légitimes.
+#
+# LE PLAFOND COMPTE LES APPELS QUI N'APPORTENT RIEN, PAS LES APPELS (18/09, banc Duret dans le
+# navigateur) : « dis-moi d'abord si le dossier est complet » — dix `nas_lister` sur DIX dossiers
+# différents, chacun rendant du neuf, et la garde coupait la vérification en cours (« il me reste
+# à ouvrir cinq sous-dossiers »). Un appel sans progrès = un échec, ou un résultat déjà obtenu :
+# dix de ceux-là arrêtent la boucle. Les appels qui avancent ne sont bornés que par un plafond
+# large et par le temps imparti au tour (TOUR_DUREE_MAX_S).
 MAX_APPELS_MEME_SKILL = 10
+MAX_APPELS_MEME_SKILL_TOTAL = 40
 SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
 # Les gestes à qui le SERVEUR donne la conversation en cours (`_fil`).
 SKILLS_QUI_CONNAISSENT_LE_FIL = frozenset({
@@ -1706,13 +1714,12 @@ async def tools_node(state: AgentState, config=None) -> dict:
     sortie = None
     # Une page de plus ne compte pas : enchaîner les pages est le comportement
     # DEMANDÉ (TOUT SIGNIFIE TOUT), pas une boucle.
-    memes = sum(1 for r in resultats
-                if r.get("skill") == action["skill"]
-                and not _est_une_page_de_plus(r.get("args"), action.get("args")))
-    if memes >= MAX_APPELS_MEME_SKILL and action["skill"] not in SKILLS_SANS_PLAFOND:
-        return _sortir(f"l'action « {action['skill']} » a déjà été appelée {memes} fois "
-                       "ce tour sans que la demande aboutisse : elle ne donnera pas "
-                       "davantage, il faut répondre avec ce qui a été obtenu.")
+    memes, total_meme_skill = _appels_meme_skill(resultats, action["skill"], action.get("args"))
+    if ((memes >= MAX_APPELS_MEME_SKILL or total_meme_skill >= MAX_APPELS_MEME_SKILL_TOTAL)
+            and action["skill"] not in SKILLS_SANS_PLAFOND):
+        return _sortir(f"l'action « {action['skill']} » a déjà été appelée {total_meme_skill} fois "
+                       f"ce tour ({memes} sans rien apporter de neuf) sans que la demande aboutisse : "
+                       "elle ne donnera pas davantage, il faut répondre avec ce qui a été obtenu.")
     deja = [r for r in resultats if r.get("payload_hash") == empreinte]
     if deja:
         # UNE ACTION QUI A ÉCHOUÉ NE RÉUSSIRA PAS EN LA REDEMANDANT TELLE QUELLE.
@@ -4555,6 +4562,24 @@ async def verifier_node(state: AgentState, config=None) -> dict:
                       action_manquante=verdict["action_manquante"] or None)
     verdict["reponse_relue"] = _BLOC_UI_RE.sub("", visible).strip()[:3000]
     return {"verification": verdict}
+
+
+def _appels_meme_skill(resultats: list, skill: str, args) -> tuple:
+    """(appels sans progrès, appels en tout) d'un skill dans le tour, pages de plus exclues.
+
+    Sans progrès : l'appel a échoué, ou il a rendu exactement un résultat déjà obtenu. C'est une
+    mesure du RÉSULTAT, pas une liste de tournures : elle vaut pour tous les gestes."""
+    import hashlib as _h
+    vus, sans, total = set(), 0, 0
+    for r in resultats:
+        if r.get("skill") != skill or _est_une_page_de_plus(r.get("args"), args):
+            continue
+        total += 1
+        trace = _h.sha256(str(r.get("resultat_masque") or "").encode("utf-8", "ignore")).hexdigest()
+        if not r.get("ok") or trace in vus:
+            sans += 1
+        vus.add(trace)
+    return sans, total
 
 
 def _gestes_pour_le_relecteur(role) -> str:

@@ -214,12 +214,17 @@ verifier("rien n'est envoyé aux autres fournisseurs ni aux modèles non mesuré
          r("openrouter", "deepseek-v4-flash") is None and r("ollama_cloud", "gpt-oss:120b") is None)
 esp["settings"].ollama_cloud_reflexion = "libre"
 verifier("OLLAMA_CLOUD_REFLEXION=libre rend la main aux modèles", r("ollama_cloud", "deepseek-v4-flash:0731") is None)
-verifier("deepseek-v4.1-flash VOIT : il n'est plus écarté sur son nom",
-         not esp["texte_seul"]("deepseek-v4.1-flash") and esp["texte_seul"]("deepseek-v4-flash:0731") and esp["texte_seul"]("deepseek-v4-pro:0813"))
+# 18/09 : mesuré sur de vraies photos, deepseek-v4.1-flash NE VOIT PAS (« je ne vois aucune image »).
+verifier("aucun modèle deepseek n'est pris pour la vision (v4.1-flash compris), kimi et qwen le sont",
+         esp["texte_seul"]("deepseek-v4.1-flash") and esp["texte_seul"]("deepseek-v4-flash:0731")
+         and not esp["texte_seul"]("kimi-k3") and not esp["texte_seul"]("qwen3.5:397b"))
 
 reglages_src = (BACKEND / "llm" / "reglages.py").read_text(encoding="utf-8")
-verifier("le réglage « Vision » accepte lui aussi deepseek-v4.1-flash (même liste que la cascade)",
-         '"deepseek-v4-flash", "deepseek-v4-pro"' in reglages_src and '("deepseek-v4", "deepseek-chat"' not in reglages_src)
+verifier("le réglage « Vision » refuse tout modèle deepseek (même règle que la cascade)",
+         'if nom == "modele_vision" and "deepseek" in (brut or "").lower():' in reglages_src)
+config_src = (BACKEND / "config.py").read_text(encoding="utf-8")
+verifier("la vision par défaut est un modèle qui VOIT (kimi-k3, secours qwen3.5)",
+         'model_ollama_cloud_vision: str = "kimi-k3"' in config_src and 'model_ollama_cloud_vision_secours: str = "qwen3.5:397b"' in config_src)
 
 print("8. L'écran et l'exploitation")
 chat = (BACKEND.parent / "frontend" / "components" / "chat" / "ChatWindow.tsx").read_text(encoding="utf-8")

@@ -212,11 +212,9 @@ async def enregistrer(nom: str, brut: str | None, user_id: str) -> str:
         if f.strip().lower() not in admis or not m.strip():
             raise ValueError("Forme attendue : « fournisseur:modele », fournisseur parmi "
                              + ", ".join(admis) + ".")
-    # 17/09 : la MÊME liste que la cascade (`llm.router._TEXTE_SEUL`). « deepseek-v4 »
-    # tout court refusait aussi `deepseek-v4.1-flash`, qui VOIT — et qui est le
-    # plus rapide des modèles de vision mesurés sur le compte (4,7 s).
-    if nom == "modele_vision" and any(x in (brut or "").lower() for x in (
-            "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner")):
+    # La MÊME règle que la cascade (`llm.router._TEXTE_SEUL`) : 18/09, mesuré sur de vraies
+    # photos, aucun modèle deepseek du compte ne voit les images (v4.1-flash compris).
+    if nom == "modele_vision" and "deepseek" in (brut or "").lower():
         raise ValueError("Ce modèle ne lit pas les images ; choisissez un modèle multimodal pour la vision.")
     from database.connection import get_db
 

@@ -216,10 +216,11 @@ class Settings(BaseSettings):
     model_ollama_cloud_puissant: str = "deepseek-v4-pro:0813"   # 1M de contexte
     # Vision et OCR : les deux modèles du catalogue qui déclarent lire les
     # images, un très gros lecteur et un très rapide.
-    # 17/09, MESURÉ (planche de coupes réelle, 1 600 px) : deepseek-v4.1-flash
-    # 4,7 s, kimi-k3 8,3 s, glm-5.3-flash 10 s ; qwen3.5:397b 44 s ou VIDE.
-    model_ollama_cloud_vision: str = "deepseek-v4.1-flash"
-    model_ollama_cloud_vision_secours: str = "kimi-k3"
+    # 18/09, MESURÉ SUR DE VRAIES PHOTOS (sans texte) : kimi-k3 2,4 s et juste,
+    # qwen3.5:397b 13 s et juste, deepseek-v4.1-flash AVEUGLE (« je ne vois aucune
+    # image » — la mesure du 17/09 lisait le texte de la planche, pas l'image).
+    model_ollama_cloud_vision: str = "kimi-k3"
+    model_ollama_cloud_vision_secours: str = "qwen3.5:397b"
     # « mesuree » : la réflexion des modèles raisonnants est bridée d'après la
     # table de llm/router.py ; « libre » : rien n'est envoyé (comportement d'avant).
     ollama_cloud_reflexion: str = "mesuree"

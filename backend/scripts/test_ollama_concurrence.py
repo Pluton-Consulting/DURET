@@ -61,7 +61,7 @@ verifier("la vision le propose, DEVANT OpenRouter depuis la mesure du 17/09",
          re.search(r'"ollama_cloud", s\.model_ollama_cloud_vision\).*?'
                    r'"openrouter", s\.model_openrouter_vision\)', routeur, re.S)
          and "MESURÉ" in routeur)
-verifier("un modèle qui VOIT n'est plus écarté sur son seul nom (deepseek-v4.1-flash)",
+verifier("un modèle qui ne voit pas est écarté de la vision (liste `_TEXTE_SEUL`, mesurée le 18/09)",
          "_TEXTE_SEUL" in routeur and "if texte_seul(model):" in routeur)
 verifier("le catalogue de l'écran le montre en premier",
          '("ollama_cloud", "Ollama Cloud"' in routeur)

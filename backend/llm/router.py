@@ -682,10 +682,14 @@ def reflexion_mesuree(provider: str, model: Optional[str], palier: str = "standa
     return None
 
 
-# CE QUI NE VOIT PAS (17/09). La garde refusait tout nom contenant
-# « deepseek-v4 » — donc aussi `deepseek-v4.1-flash`, qui VOIT, et qui est le
-# plus rapide des modèles de vision du compte (4,7 s mesurées).
-_TEXTE_SEUL = ("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner")
+# CE QUI NE VOIT PAS. 18/09, MESURÉ AVEC DE VRAIES PHOTOS (deux marches d'escalier, sans
+# aucun texte) : `deepseek-v4.1-flash` reçoit 60 jetons et répond « Je ne vois aucune
+# image » ; kimi-k3 décrit les deux photos en 2,4 s (3 744 jetons), qwen3.5:397b en 13 s.
+# La mesure du 17/09 qui l'avait déclaré « voyant » portait sur une planche de coupes
+# dont le TEXTE et les coordonnées étaient donnés dans la consigne : il lisait le texte.
+# Toute la famille deepseek est TEXTE SEUL sur ce compte — photos jointes, OCR de scans,
+# illustrations du mémoire : l'assistant de Duret était aveugle.
+_TEXTE_SEUL = ("deepseek",)
 
 
 def texte_seul(model: Optional[str]) -> bool:

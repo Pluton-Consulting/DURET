@@ -1053,6 +1053,25 @@ async def _classer_les_mails(messages: list[dict], categories: list[str]) -> int
     return sum(await asyncio.gather(*[_un_lot(l) for l in lots]))
 
 
+def _comptes_par_expediteur(messages: list[dict], limite: int = 20) -> list[dict]:
+    """« Qui m'a écrit le plus ce mois-ci ? » (18/09, Q44 réel : 13 minutes — une lecture
+    CLASSÉE de 400 mails, une relecture forcée, puis une réécriture). Un compte se calcule,
+    il ne se demande pas au modèle : les expéditeurs les plus fréquents, avec l'adresse
+    et jusqu'à trois objets récents chacun, sur les messages LUS (le résultat dit combien)."""
+    par: dict = {}
+    for m in messages:
+        adresse = str(m.get("de") or "").strip()
+        cle = adresse.lower()
+        if not cle:
+            continue
+        entree = par.setdefault(cle, {"expediteur": _expediteur_lisible(m), "nombre": 0, "objets": []})
+        entree["nombre"] += 1
+        objet = str(m.get("objet") or "").strip()[:90]
+        if objet and len(entree["objets"]) < 3 and objet not in entree["objets"]:
+            entree["objets"].append(objet)
+    return sorted(par.values(), key=lambda e: -e["nombre"])[:limite]
+
+
 def _jour_lisible(m: dict) -> str:
     """« 18/09/2026 10:32 ». La voie IMAP (Duret) rend `date` au format RFC 2822
     (« Fri, 18 Sep 2026 08:32:14 +0000 ») : lu tel quel, il donnait « Se/18/Fri, 2026 »
@@ -1147,7 +1166,7 @@ async def _livrer_inventaire(inventaire: dict, user, *, classer: bool, fichier: 
             f"{en_tete} priorité(s) retrouvée(s) sur {len(priorites) if isinstance(priorites, list) else 1} : "
             "désigne chaque mail par un fragment EXACT de son objet.")}
     return {**inventaire, "classes": classes if classer else None, "priorites_en_tete": en_tete or None,
-            "par_categorie": dict(par_categorie) or None, "fichier": url,
+            "par_categorie": dict(par_categorie) or None, "par_expediteur": _comptes_par_expediteur(messages), "fichier": url,
             "fichier_non_produit": bool(fichier and lignes and not url) or None,
             "message_final": phrase, "bloc_garanti": True, "bloc_ui": blocs,
             "a_faire": ("Le tableau COMPLET (" + str(len(lignes)) + " lignes)"
@@ -1263,8 +1282,14 @@ async def lire_mails(data: dict, user) -> dict:
                 "compte": (f"{total if total is not None else len(messages)} message(s) sur la période ; "
                            f"{len(messages)} détaillé(s) ci-dessous"
                            + (", c'est-à-dire TOUS." if complet else " — le reste suit par `curseur`.")),
-                "a_faire": ("La liste porte TOUS les messages de la période : traite-les TOUS, sans "
-                            "« etc. » ni échantillon. Ne rappelle pas ce geste." if complet else None)}
+                # Les comptes PAR EXPÉDITEUR sont calculés ici : « qui m'écrit le plus » ne demande
+                # ni classement ni relecture — et un résultat partiel (plafond) dit sur combien.
+                "par_expediteur": _comptes_par_expediteur(messages),
+                "a_faire": (("La liste porte TOUS les messages de la période : traite-les TOUS, sans "
+                             "« etc. » ni échantillon. " if complet else
+                             f"Les {len(messages)} plus récents sur {total} sont lus (plafond) : réponds sur ceux-là en le disant, "
+                             "NE relis PAS avec `rafraichir`. ")
+                            + "`par_expediteur` porte les comptes par expéditeur, déjà calculés : ne recompte pas. Ne rappelle pas ce geste.")}
         if veut_classement or veut_fichier or options["priorites"]:
             return await _livrer_inventaire(inventaire, user, cle=cle_inv, **options)
         _retenir_inventaire(cle_inv, inventaire, ())

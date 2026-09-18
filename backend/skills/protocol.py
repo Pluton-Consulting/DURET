@@ -535,7 +535,9 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "ni `creer_document`. La liste est GARDÉE 30 min : le rappel ne relit ni ne reclasse "
         "rien (`rafraichir: true` pour relire). `priorites` : fragments d'OBJET des mails à "
         "mettre EN TÊTE, surlignés dans l'Excel (`surlignage` : orange|jaune|vert|rouge|bleu|gris) "
-        "— c'est LE geste pour « ajoute une colonne priorité / surligne les plus urgents »",
+        "— c'est LE geste pour « ajoute une colonne priorité / surligne les plus urgents ». "
+        "« QUI M'A ÉCRIT LE PLUS » : `depuis` + `exhaustif: true` SANS `classer` — le résultat porte "
+        "`par_expediteur` (comptes calculés par le serveur, objets récents) : réponds dessus",
         [], ["mailbox", "dossier", "limite", "depuis", "recherche", "objet", "avant", "curseur", "exhaustif",
              "classer", "categories", "fichier", "priorites", "surlignage", "rafraichir"]),
     "lire_mail": (

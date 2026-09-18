@@ -83,7 +83,7 @@ exec("\n".join(ast.get_source_segment(sk, n) for n in ast.parse(sk).body
                if (isinstance(n, (ast.Assign, ast.AnnAssign)) and getattr(getattr(n, "targets", [getattr(n, "target", None)])[0], "id", "")
                    in ("DUREE_INVENTAIRE_S", "_INVENTAIRES"))
                or (isinstance(n, ast.FunctionDef) and n.name in ("_cle_inventaire", "_inventaire_retenu", "_retenir_inventaire",
-                                                                 "_sans_accents", "_lettres", "_mettre_en_tete"))), esp2)
+                                                                 "_sans_accents", "_lettres", "_mettre_en_tete", "_expediteur_lisible", "_comptes_par_expediteur"))), esp2)
 lire_mails = esp2["lire_mails"]
 user = types.SimpleNamespace(id="u", role="direction")
 
@@ -96,12 +96,16 @@ verifier("il se déclare inventaire (c'est ce qui lui ouvre le grand plafond de 
 verifier("quatre pages ont été lues côté serveur, avec l'extrait court de l'inventaire",
          [a[0] for a in appels] == [0, 25, 50, 75] and all(a[2] == 200 for a in appels), str(appels))
 
+verifier("les comptes PAR EXPÉDITEUR sont calculés par le serveur (« qui m'a écrit le plus »)",
+         r["par_expediteur"][0]["nombre"] == 97 and r["par_expediteur"][0]["expediteur"] == "client@exemple.fr" and len(r["par_expediteur"][0]["objets"]) == 3
+         and "par_expediteur" in r["a_faire"], str(r.get("par_expediteur"))[:120])
 appels.clear()
 r2 = asyncio.run(lire_mails({"depuis": "7j"}, user))
 verifier("SANS `exhaustif`, une seule page comme avant (rapide)", len(appels) == 1 and r2["nombre"] == 25 and not r2.get("inventaire"))
 BOITE.extend({"ref": f"x{i}", "objet": "x", "de": "a@b.fr", "date": "2026-09-10"} for i in range(400))
 appels.clear()
 r3 = asyncio.run(lire_mails({"depuis": "30j", "tous": True}, user))
+verifier("au plafond, la consigne dit sur combien on répond et interdit `rafraichir`", "NE relis PAS" in r3["a_faire"] and "400 plus récents" in r3["a_faire"], r3["a_faire"][:120])
 verifier("le parcours est BORNÉ (400), et au-delà la suite est DITE, jamais tue",
          r3["nombre"] == 400 and r3["tronque"] is True and r3["curseur_suivant"] == "saut:400" and "curseur=saut:400" in (r3.get("pour_continuer") or ""))
 verifier("au-delà du 250ᵉ message, l'extrait se resserre pour que tout tienne dans UN résultat",
@@ -137,7 +141,7 @@ esp3 = esp2
 exec("\n".join(ast.get_source_segment(sk, n) for n in ast.parse(sk).body
                if (isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in ("CATEGORIES_MAILS", "LOT_CLASSEMENT"))
                or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                   and n.name in ("_categories_voulues", "_lire_classement", "_classer_les_mails", "_jour_lisible", "_expediteur_lisible", "_livrer_inventaire"))), esp3)
+                   and n.name in ("_categories_voulues", "_lire_classement", "_classer_les_mails", "_jour_lisible", "_expediteur_lisible", "_comptes_par_expediteur", "_livrer_inventaire"))), esp3)
 r4 = asyncio.run(lire_mails({"depuis": "7j", "classer": True, "fichier": True}, user))
 blocs = r4["bloc_ui"]
 table = next(b for b in blocs if b["type"] == "table")

@@ -112,13 +112,36 @@ try:
     print("   résolu à tort :", asyncio.run(onas._resoudre(None, "", "", "La Teste"))); refus = ""
 except Exception as e:
     refus = f"{type(e).__name__}: {e}"
-# (le dossier des 29 logements s'écrit « la test de buch » sur le serveur — une faute — et ne
-#  correspond donc pas à « La Teste » : deux candidats, dans deux branches, et rien de choisi)
-verifier("« La Teste » vit dans deux affaires : REFUS qui les liste, la plus récente d'abord (avant : le collège Dheurle choisi en silence)",
-         "Plusieurs dossiers" in refus and refus.find("ALSH") < refus.find("Dheurle") and "29 lgts" not in refus, refus[:400])
+# 18/09 : le dossier des 29 logements s'écrit « la test de buch » sur le serveur (une faute). Il
+# n'était jamais proposé pour « La Teste » — l'appel d'offres EN COURS manquait à la liste. À une
+# lettre finale près, il y est, le plus récent en tête.
+verifier("« La Teste » vit dans trois affaires : REFUS qui les liste, la plus récente d'abord — « la test de buch » compris",
+         "Plusieurs dossiers" in refus and -1 < refus.find("29 lgts") < refus.find("ALSH") < refus.find("Dheurle"), refus[:400])
+verifier("la tolérance ne vaut que pour une lettre FINALE (s, e, x) sur un mot d'au moins quatre lettres",
+         acces._mot_proche("teste", "test") and acces._mot_proche("chantiers", "chantier") and not acces._mot_proche("de", "des")
+         and not acces._mot_proche("test", "texte") and not acces._mot_proche("lot", "lots"))
 verifier("un nom qui ne désigne qu'un dossier se résout toujours", asyncio.run(onas._resoudre(None, "", "", "ETUDES EN COURS")) == "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS")
 verifier("des candidats emboîtés (un dossier et son sous-dossier) ne sont pas une ambiguïté : le plus haut gagne",
          asyncio.run(onas._resoudre(None, "", "", "Dheurle")).endswith("Dheurle La Teste"))
+
+# 18/09 : relais en 502, la racine ne se listait pas → « home » partait en recherche par nom et
+# attrapait « …custHOME » (sous-chaîne) → fausse ambiguïté.
+acces._CATALOGUE["entrees"] += [
+    {"nom": "AFF 100-20 eiffage sinistre custDRIVE", "chemin": "/home/Drive/03-Appel d'offres etudes/AFF 100-20 eiffage sinistre custDRIVE", "dossier": True, "modifie": 5},
+    {"nom": "AFF 100-20 eiffage sinistre custDRIVE", "chemin": "/home/Drive/04-Chantiers a executer/AFF 100-20 eiffage sinistre custDRIVE", "dossier": True, "modifie": 6}]
+async def _tout_en_panne(client, base, sid, chemin):
+    raise RuntimeError("502 Bad Gateway")
+onas._enfants_dossiers = _tout_en_panne
+verifier("une racine qui ne répond pas reste la racine quand le catalogue prouve qu'elle existe",
+         asyncio.run(onas._resoudre(None, "", "", "Drive")) == "/home/Drive")
+onas._enfants_dossiers = _pas_de_chemin
+try:
+    r_mot = asyncio.run(onas._resoudre(None, "", "", "eiffage"))
+except Exception as e:
+    r_mot = f"{type(e).__name__}: {e}"
+verifier("…et « drive » n'attrape plus « custDRIVE » quand un nom correspond mot pour mot",
+         acces._nom_correspond("AFF 100-20 eiffage sinistre custDRIVE", "drive", mots_entiers=True) is False
+         and acces._nom_correspond("2029 AIRBORNE SONOVISION", "airborne", mots_entiers=True) is True)
 
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

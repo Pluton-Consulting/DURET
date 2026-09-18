@@ -134,7 +134,16 @@ def _sans_accent_nas(texte):
                    if unicodedata.category(c) != "Mn")
 
 
+# Les règles de correspondance des noms sont celles du module LIVRÉ (18/09 : mots entiers,
+# une lettre finale tolérée) — relues dans sa source, pas réécrites ici.
+import ast as _ast
+_src_acces = (BACKEND / "nas" / "acces.py").read_text(encoding="utf-8")
+_esp_noms = {"_sans_accent_nas": _sans_accent_nas}
+exec("\n\n".join(_ast.get_source_segment(_src_acces, n) for n in _ast.parse(_src_acces).body
+                   if isinstance(n, _ast.FunctionDef) and n.name in ("_mot_proche", "_nom_correspond")), _esp_noms)
+
 _poser("nas.acces", _lister_ouvert=_lister_ouvert, _chercher_ouvert=_chercher_ouvert,
+       _nom_correspond=_esp_noms["_nom_correspond"], _mot_proche=_esp_noms["_mot_proche"],
        _lire_ouvert=_lire_ouvert, connexion=lambda: _Connexion(),
        dossiers_autorises=lambda: list(RACINES), _balayer=_balayer,
        catalogue_pret=lambda: None, _CATALOGUE={}, decoder=lambda c: c,

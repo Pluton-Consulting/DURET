@@ -113,6 +113,14 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
                 courant = r
                 break
             except Exception:  # noqa: BLE001 - racine fantôme : on cherche ailleurs
+                # UNE RACINE QUI NE RÉPOND PAS N'EST PAS UNE RACINE FANTÔME (18/09) : relais en
+                # 502, « home » ne se listait pas et partait en recherche par nom — deux dossiers
+                # « …custHOME » rendus comme ambiguïté. Le catalogue prouve qu'elle existe.
+                from nas.acces import catalogue_pret as _cat
+                _c = _cat()
+                if _c and any(str(e.get("chemin") or "").startswith(r.rstrip("/") + "/") for e in _c):
+                    courant = r
+                    break
                 continue
     # PAR NIVEAUX, ET AUSSI PROFOND QU'IL LE FAUT (08/09). La première version
     # s'arrêtait à 3 niveaux et 60 listages : « ETUDES EN COURS » (niveau 3) et
@@ -137,8 +145,17 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
         # L'EXACT PRIME LE « CONTIENT », mais on ne peut pas s'arrêter au
         # premier venu : « DCE » est le début de vingt noms. On récolte donc
         # tout ce qui correspond au cours du balayage, puis on tranche.
+        # PAR MOTS ENTIERS D'ABORD (18/09) : « home » attrapait « …custHOME » ; et à une lettre
+        # finale près, « La Teste » retrouve « … la test de buch ». La sous-chaîne brute ne sert
+        # que si aucun nom ne correspond mot pour mot.
+        from nas.acces import _nom_correspond
+
         def _correspond(e):
-            return e.get("dossier") and cible in _sans_accent_nas(e.get("nom") or "")
+            return e.get("dossier") and (cible in _sans_accent_nas(e.get("nom") or "")
+                                         or _nom_correspond(e.get("nom") or "", segments[0]))
+
+        def _par_mots(e):
+            return _nom_correspond(e.get("nom") or "", segments[0], mots_entiers=True)
 
         for r in racines:
             try:
@@ -170,6 +187,8 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
             if not candidats:
                 candidats, complet = await _balayer(client, base, sid, racines, _correspond)
         exacts = [e for e in candidats if _sans_accent_nas(e.get("nom") or "") == cible]
+        if not exacts and any(_par_mots(e) for e in candidats):
+            candidats = [e for e in candidats if _par_mots(e)]
         if exacts or candidats:
             # Le plus HAUT dans l'arborescence l'emporte à égalité : un dossier
             # proche de la racine est presque toujours celui qu'on nomme.

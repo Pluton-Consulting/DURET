@@ -194,7 +194,7 @@ class Recette(unittest.TestCase):
     self.assertNotEqual(c['tache_documentaire'],a['tache_documentaire'])
  def test_recherche_nas_noms_et_confirmation_superflue(self):
     if (BACKEND/'nas/acces.py').exists():
-     ns=fonctions(BACKEND/'nas/acces.py',{'_nom_correspond','_sans_accent_nas'})
+     ns=fonctions(BACKEND/'nas/acces.py',{'_nom_correspond','_sans_accent_nas','_mot_proche'})
      correspond=ns['_nom_correspond']
      self.assertTrue(correspond('2029 - AIRBORNE_SONOVISION.pdf','2029 airborne sonovision'))
      self.assertTrue(correspond('17 IKOS CCTP 17 Plâtrerie.pdf','CCTP17'))

@@ -1014,17 +1014,29 @@ def _sans_accent_nas(texte: str) -> str:
                    if unicodedata.category(c) != "Mn")
 
 
-def _nom_correspond(nom: str, motif: str) -> bool:
-    """Tolérer espaces/tirets/underscores et CCTP17 ↔ CCTP 17, sans deviner."""
+def _mot_proche(demande: str, present: str) -> bool:
+    """Deux mots égaux, ou qui ne diffèrent que d'une lettre FINALE s, e ou x (pluriel,
+    féminin, faute de frappe). 18/09 : l'appel d'offres en cours est rangé sous
+    « … la test de buch » ; « La Teste » ne le trouvait jamais, et l'assistant répondait
+    sur une autre affaire de La Teste. Au moins quatre lettres : « de » ≠ « des »."""
+    if demande == present:
+        return True
+    court, long_ = sorted((demande, present), key=len)
+    return len(court) >= 4 and len(long_) == len(court) + 1 and long_.startswith(court) and long_[-1] in "sex"
+
+
+def _nom_correspond(nom: str, motif: str, mots_entiers: bool = False) -> bool:
+    """Tolérer espaces/tirets/underscores et CCTP17 ↔ CCTP 17, sans deviner.
+    `mots_entiers` : pas de sous-chaîne brute (« home » n'est pas dans « custHOME »)."""
     import re
     nom, motif = _sans_accent_nas(nom), _sans_accent_nas(motif).strip()
     if not motif:return False
-    if motif in nom:return True
+    if motif in nom and not mots_entiers:return True
     def mots(t):
         t=re.sub(r'(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])',' ',t)
         return re.findall(r'[a-z0-9]+',t)
     termes=mots(motif);disponibles=set(mots(nom))
-    return bool(termes) and all(m in disponibles for m in termes)
+    return bool(termes) and all(any(_mot_proche(m, n) for n in disponibles) for m in termes)
 
 
 async def _chercher_ouvert(client, base, sid, motif: str,

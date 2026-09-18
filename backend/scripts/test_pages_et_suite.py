@@ -128,9 +128,6 @@ verifier("« enlève les oliviers » appelle une retouche, là où elle existe",
          suite("enlève les oliviers sur cette photo", True) == espace["SUITE_RETOUCHE"])
 verifier("LÀ OÙ AUCUN MOTEUR N'EST INSTALLÉ, la même demande ne passe pas la main",
          suite("enlève les oliviers sur cette photo", False) == espace["SUITE_SANS_MOTEUR"])
-verifier("une photo + « est-ce conforme au CCTP du lot 12 ? » : l'assistant va chercher le CCTP (18/09)",
-         suite("C'est quoi ce revêtement et est-ce qu'il est conforme au CCTP du lot 12 ?", False)
-         == espace["SUITE_DOCUMENT"])
 verifier("« c'est quoi cette plante ? » n'appelle personne",
          suite("c'est quoi cette plante ?", True) == espace["SUITE_AUCUNE"])
 verifier("une demande de devis reste un document même sans moteur d'images",

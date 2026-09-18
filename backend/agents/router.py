@@ -660,12 +660,6 @@ _SUITE_ATTENDUE = (
     # DÉCRIT le photomontage à faire, et aucune image n'a été produite.
     "doit ", "doivent", "garde ", "garde-", "laisse ", "représent", "represent",
     "refai", "fais ", "fais-", "photomontage", "montage", "identique",
-    # 18/09 (banc Duret, dans le navigateur) : une photo + « est-ce conforme au CCTP du lot 12 ? »
-    # → « impossible de confirmer sur la seule image ». Le CCTP était sur le serveur, mais la
-    # vision ne cherche rien et la consigne `[SUITE]` n'a pas été suivie par le modèle. Une pièce
-    # de marché NOMMÉE dans la demande est une pièce à aller chercher : c'est l'assistant qui le fait.
-    "cctp", "ccap", "dpgf", "dqe", "bpu", "dce", "règlement de consultation",
-    "reglement de consultation", "cahier des charges", "conforme", "conformité", "conformite",
 )
 
 # Ce que dit la VISION quand elle a compris qu'on attend une image : sa propre
@@ -687,18 +681,6 @@ async def passer_la_main_node(state: AgentState) -> dict:
     """
     analyse = state.get("vision_analysis") or state.get("final_response") or ""
     nom = state.get("attachment_name") or "plan joint"
-    manquantes = pieces_citees_non_jointes(state.get("query") or "", state)
-    if manquantes:
-        # 18/09 (banc Duret, navigateur) : photo + « est-ce conforme au CCTP du lot 12 ? » →
-        # la main passait bien à l'assistant, qui répondait « ne peut pas être jugé sur la
-        # photo seule » sans chercher le CCTP, rangé sur le serveur.
-        analyse += ("\n\n[La demande cite une pièce qui n'est PAS jointe : " + ", ".join(manquantes)
-                    + ". Cherche-la sur le serveur (`nas_chercher`, dans le dossier que la conversation "
-                    "nomme s'il y en a un), lis-la, puis réponds à la demande en entier en croisant ce "
-                    "que l'image montre avec ce que dit la pièce. Si plusieurs affaires en ont une, dis "
-                    "laquelle tu as retenue — ou demande. Une photo ne dit pas de quel chantier elle "
-                    "vient : ta conclusion vaut SI elle est bien de cette affaire, dis-le ; et ce qui ne "
-                    "se voit pas sur une photo (épaisseur, classement, référence) reste à vérifier.]")
     return {
         # `target_agent` N'EST PAS TOUCHÉ, ET C'EST VOLONTAIRE. Il ne sert plus
         # au routage à ce stade (on entre dans l'assistant par un edge direct) :
@@ -715,25 +697,6 @@ async def passer_la_main_node(state: AgentState) -> dict:
         # demandera si un geste l'exige, par le chemin habituel.
         "requires_validation": False,
     }
-
-
-_PIECE_DE_MARCHE = re.compile(
-    r"\b(cctp|ccap|dpgf|dqe|bpu|dce|r[èe]glement de consultation|cahier des charges)"
-    r"(?:\s+(?:du\s+|des\s+)?lots?\s*n?°?\s*\d{1,2})?", re.I)
-
-
-def pieces_citees_non_jointes(demande: str, state) -> list:
-    """Les pièces de marché que la demande CITE et qui ne sont pas parmi les fichiers joints."""
-    joints = " ".join(str(p.get("nom") or "") for p in (state.get("attachments") or []) if isinstance(p, dict))
-    joints += " " + str(state.get("attachment_name") or "")
-    joints += " " + " ".join(re.findall(r"=== Fichier joint : (.*?) ===", str(state.get("attachment_text") or "")))
-    joints = joints.lower()
-    vues = []
-    for m in _PIECE_DE_MARCHE.finditer(demande or ""):
-        piece = " ".join(m.group(0).split())
-        if m.group(1).lower() not in joints and piece.lower() not in (v.lower() for v in vues):
-            vues.append(piece)
-    return vues
 
 
 def route_apres_agent2(state: AgentState) -> str:

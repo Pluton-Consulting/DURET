@@ -144,23 +144,13 @@ r3 = asyncio.run(espace["rag_node"](etat3))
 verifier("sans pièce jointe, aucune marque ni en-tête",
          not any("JOINTE" in c for c in (r3.get("raw_chunks") or [])))
 
-# ── 3. Une pièce de marché CITÉE mais non jointe se cherche (18/09, Q67 dans le navigateur) ──
-import re as _re
+# ── 3. Poursuivre après la vision se JUGE, ne se détecte pas par des mots (18/09, règle de Noa) ──
 src_r = (BACKEND / "agents" / "router.py").read_text(encoding="utf-8")
-mod_r = ast.parse(src_r)
-ns = {"re": _re}
-for n in mod_r.body:
-    if (isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "_PIECE_DE_MARCHE" for t in n.targets)) \
-            or (isinstance(n, ast.FunctionDef) and n.name == "pieces_citees_non_jointes"):
-        exec(ast.get_source_segment(src_r, n), ns)
-citees = ns["pieces_citees_non_jointes"]
-verifier("photo + « conforme au CCTP du lot 12 ? » : le CCTP du lot 12 est une pièce à chercher",
-         citees("C'est quoi ce revêtement et est-ce qu'il est conforme au CCTP du lot 12 ?",
-                {"attachments": [{"nom": "APRES SAV 2.JPG"}]}) == ["CCTP du lot 12"])
-verifier("un CCTP JOINT au message ne se cherche pas ailleurs",
-         citees("compare au CCTP", {"attachment_text": "=== Fichier joint : CCTP Lot 11.pdf ===\nx"}) == [])
-verifier("le passage de main porte la consigne de chercher la pièce citée",
-         "pieces_citees_non_jointes(state.get(\"query\") or \"\", state)" in src_r and "Cherche-la sur le serveur" in src_r)
+src_v = (BACKEND / "agents" / "agent2.py").read_text(encoding="utf-8")
+verifier("aucune liste de pièces de marché ni de « conforme » ajoutée pour une question",
+         "pieces_citees_non_jointes" not in src_r and '"cctp", "ccap"' not in src_r and '"cctp", "ccap"' not in src_v)
+verifier("la vision demande au MODÈLE s'il faut poursuivre (`juger_suite`), la liste n'est qu'un repli",
+         "async def juger_suite(" in src_v and "jugement = await juger_suite(question, reponse)" in src_v)
 
 print("\n" + ("✓ 0 échec" if not ECHECS else f"✗ {len(ECHECS)} échec(s)"))
 sys.exit(1 if ECHECS else 0)

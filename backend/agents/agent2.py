@@ -701,6 +701,44 @@ _RETOUCHE = ("retouch", "photomontage", "montage", "modifi", "ajout", "remplac",
              "illustr", "dessine", "à la place", "a la place")
 
 
+CONSIGNE_SUITE = (
+    "Une personne a joint des images à sa demande. Un expert qui VOIT les images lui a répondu. "
+    "Derrière lui, l'assistant de l'entreprise peut chercher sur le serveur de fichiers, dans les "
+    "documents et les mails, lire et croiser des pièces, produire un document ou un tableau, "
+    "rédiger un message.\n"
+    "La réponse de l'expert répond-elle ENTIÈREMENT à la demande avec les seules images ? Ou "
+    "l'assistant doit-il poursuivre : aller chercher une pièce citée ou nécessaire, croiser avec un "
+    "document, retrouver un chantier, produire ou rédiger quelque chose ?\n"
+    "Réponds UNIQUEMENT par un objet JSON : "
+    "{{\"poursuivre\": true ou false, \"besoin\": \"ce que l'assistant doit faire, en une phrase ; vide si rien\"}}\n\n"
+    "Demande : {demande}\n\nRéponse de l'expert : {reponse}")
+
+
+async def juger_suite(demande: str, reponse: str):
+    """Le MODÈLE décide si l'assistant doit poursuivre après la vision, et quoi faire.
+
+    18/09 (banc Duret, navigateur) : photo + « est-ce conforme au CCTP du lot 12 ? » → la vision
+    répondait « impossible à trancher sur la photo seule » et le tour s'arrêtait, le CCTP restant
+    sur le serveur. Ajouter « cctp » à une liste de mots ne corrige que cette phrase-là ; la
+    question « faut-il aller plus loin ? » se pose au modèle, pour toutes les demandes.
+    Un appel court, palier léger. Rend {"poursuivre", "besoin"} ou None (panne : repli sur la
+    liste de mots)."""
+    try:
+        from llm.router import get_llm, LLMTier
+        from langchain_core.messages import HumanMessage
+        invite = CONSIGNE_SUITE.format(demande=(demande or "")[:1500], reponse=(reponse or "")[:3000])
+        r = await asyncio.wait_for(get_llm(LLMTier.LIGHT).ainvoke([HumanMessage(content=invite)]), timeout=40)
+        trouve = re.search(r"\{.*\}", str(getattr(r, "content", r) or ""), re.S)
+        d = json.loads(trouve.group(0)) if trouve else None
+        if not isinstance(d, dict) or "poursuivre" not in d:
+            return None
+        return {"poursuivre": d.get("poursuivre") in (True, "true", "oui", 1),
+                "besoin": re.sub(r"\s+", " ", str(d.get("besoin") or "")).strip()[:300]}
+    except Exception as e:  # noqa: BLE001 — sans jugement, la liste de mots décide
+        logger.info("Jugement de suite après la vision indisponible (%s)", type(e).__name__)
+        return None
+
+
 def suite_du_tour(demande: str, retouche_possible: bool) -> str:
     """Ce que ce tour de vision appelle APRÈS lui. Fonction pure : elle se
     vérifie au banc, et elle ne dépend pas de ce que le modèle a répondu."""
@@ -708,8 +746,7 @@ def suite_du_tour(demande: str, retouche_possible: bool) -> str:
         from agents.router import _SUITE_ATTENDUE
     except Exception:  # noqa: BLE001 — le routeur importe agent2 : pas de boucle ici
         _SUITE_ATTENDUE = ("devis", "chiffr", "mail", "document", "rapport",
-                           "compte rendu", "prépare", "prepare", "rédige", "redige",
-                           "cctp", "ccap", "dpgf", "dce", "conforme", "conformité")
+                           "compte rendu", "prépare", "prepare", "rédige", "redige")
     import re
     texte = (demande or "").lower()
     # Une interdiction n'est pas une commande de retouche. En recette, « ne
@@ -861,14 +898,27 @@ async def _repondre(pieces: list, illisibles: list, demande: str, candidats, con
     # Duret dans le navigateur) : `demande` porte aussi le suivi de la conversation, où « rendu »,
     # « visuel », « ajout » reviennent sans cesse — « est-ce conforme au CCTP du lot 12 ? » était
     # lu comme une RETOUCHE indisponible, et la main ne passait jamais à l'assistant.
-    suite = suite_du_tour(requete if requete is not None else demande, _retouche_disponible())
+    question = requete if requete is not None else demande
+    suite = suite_du_tour(question, _retouche_disponible())
     if autres and suite in (SUITE_AUCUNE, SUITE_SANS_MOTEUR):
         # Les autres pièces sont chez l'assistant : lui seul peut répondre en entier.
         suite = SUITE_DOCUMENT
+    elif suite not in (SUITE_RETOUCHE, SUITE_SANS_MOTEUR):
+        # LE MODÈLE JUGE S'IL FAUT POURSUIVRE (18/09, règle de Noa : des correctifs flexibles,
+        # pas une liste de mots par question). La liste `_SUITE_ATTENDUE` ne décide plus que si
+        # ce jugement se tait (panne, réponse illisible).
+        jugement = await juger_suite(question, reponse)
+        if jugement is not None:
+            suite = SUITE_DOCUMENT if jugement["poursuivre"] else SUITE_AUCUNE
+            if jugement["poursuivre"] and jugement["besoin"] and not besoin:
+                besoin = jugement["besoin"]
     if besoin:
-        complet += (f"\n\n[À compléter par l'assistant : {besoin}. Va chercher cette pièce "
-                    "(serveur, documents, mails) avec tes actions, puis réponds à la demande "
-                    "en entier en t'appuyant sur ce que l'image montre ci-dessus.]")
+        complet += (f"\n\n[À compléter par l'assistant : {besoin}. Fais-le avec tes actions "
+                    "(serveur, documents, mails : cherche, lis, croise), puis réponds à la demande "
+                    "en entier en t'appuyant sur ce que l'image montre ci-dessus. Une photo ne dit "
+                    "pas de quel chantier elle vient : une conclusion tirée d'une pièce trouvée vaut "
+                    "SI la photo est bien de cette affaire, dis-le ; ce qui ne se voit pas sur une "
+                    "image (épaisseur, classement, référence) reste à vérifier.]")
         if suite == SUITE_AUCUNE:
             suite = SUITE_DOCUMENT
     return {

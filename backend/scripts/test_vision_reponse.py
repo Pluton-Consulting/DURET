@@ -314,13 +314,43 @@ verifier("des photos SEULES + « analyse » gardent le relevé, une analyse par 
 
 # LA SUITE SE DÉCIDE SUR LA QUESTION, PAS SUR LE SUIVI DU TRAVAIL (18/09, navigateur) : le suivi
 # de la conversation (« rendu », « visuel »…) faisait lire « conforme au CCTP ? » comme une retouche.
+class _Juge:
+    """Le modèle léger qui juge s'il faut poursuivre après la vision."""
+    def __init__(self, sortie):
+        self.sortie, self.invites = sortie, []
+    async def ainvoke(self, messages, config=None):
+        self.invites.append(messages[0].content)
+        if isinstance(self.sortie, Exception):
+            raise self.sortie
+        return types.SimpleNamespace(content=self.sortie)
+
+sys.modules["langchain_core.messages"].HumanMessage = getattr(
+    sys.modules["langchain_core.messages"], "HumanMessage", None) or (lambda content: types.SimpleNamespace(content=content))
+sys.modules["llm.router"].LLMTier = types.SimpleNamespace(LIGHT="light")
+juge = _Juge('{"poursuivre": true, "besoin": "chercher le CCTP du lot 12 sur le serveur et comparer"}')
+sys.modules["llm.router"].get_llm = lambda tier, **k: juge
 suivi = _ModeleDouble(["Sol PVC en lés."])
-sys.modules["llm.router"].get_vision_candidates = lambda: [(suivi, "m:test")]
 res8 = asyncio.run(agent2._repondre(
     [DEUX[0]], [], "est-ce conforme au CCTP du lot 12 ?\n\nSUIVI DU TRAVAIL : rendu visuel ajouté au mémoire",
     [(suivi, "m:test")], requete="est-ce conforme au CCTP du lot 12 ?"))
 verifier("le suivi du travail ne transforme pas une question de conformité en retouche",
          res8.get("vision_suite") == "document", res8.get("vision_suite"))
+verifier("c'est le MODÈLE qui juge : il reçoit la question seule et la réponse de la vision",
+         juge.invites and "est-ce conforme au CCTP du lot 12 ?" in juge.invites[0]
+         and "SUIVI DU TRAVAIL" not in juge.invites[0] and "Sol PVC en lés." in juge.invites[0])
+verifier("son besoin passe à l'assistant, avec la prudence sur l'origine d'une photo",
+         "chercher le CCTP du lot 12" in res8["vision_analysis"] and "Une photo ne dit pas de quel chantier" in res8["vision_analysis"])
+juge.sortie = '{"poursuivre": false, "besoin": ""}'
+res9 = asyncio.run(agent2._repondre([DEUX[0]], [], "fais-moi un mail sur cette plante", [(_ModeleDouble(["Un érable."]), "m")],
+                                    requete="fais-moi un mail sur cette plante"))
+verifier("quand le modèle juge que la vision suffit, sa décision prime sur la liste de mots",
+         res9.get("vision_suite") == "aucune", res9.get("vision_suite"))
+juge.sortie = RuntimeError("panne")
+res10 = asyncio.run(agent2._repondre([DEUX[0]], [], "fais-moi un mail sur cette plante", [(_ModeleDouble(["Un érable."]), "m")],
+                                     requete="fais-moi un mail sur cette plante"))
+verifier("jugement en panne : la liste de mots reprend la main (repli)", res10.get("vision_suite") == "document", res10.get("vision_suite"))
+juge.sortie = '{"poursuivre": false}'
+sys.modules["llm.router"].get_llm = lambda tier, **k: (_ for _ in ()).throw(RuntimeError("aucun modèle"))
 verifier("les deux appels du régime réponse passent la question seule",
          src.count('requete=state.get("query") or ""') >= 2)
 

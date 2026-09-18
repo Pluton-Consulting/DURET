@@ -349,8 +349,7 @@ class Recette(unittest.TestCase):
     documents_dossier._analyse_valide({'faits':[{'fait':'surface','citation':'42,5 m²'}],'limites':[]},'Salle : 42,5 m²')
     with self.assertRaises(ValueError):documents_dossier._analyse_valide({'faits':[{'fait':'surface','citation':'52 m²'}],'limites':[]},'Salle : 42,5 m²')
  def test_image_et_word(self):
-    fn=fonctions(BACKEND/'agents/router.py',{'passer_la_main_node','pieces_citees_non_jointes'},
-                 {'re':re,'_PIECE_DE_MARCHE':re.compile(r'\b(cctp|dpgf)\b',re.I)})['passer_la_main_node']
+    fn=fonctions(BACKEND/'agents/router.py',{'passer_la_main_node'})['passer_la_main_node']
     r=asyncio.run(fn({'attachment_text':'WORD : exigences importantes','vision_analysis':'IMAGE : trois rubriques','attachment_name':'rc.png'}))
     self.assertIn('WORD : exigences importantes',r['attachment_text']);self.assertIn('IMAGE : trois rubriques',r['attachment_text'])
  def test_tableau_apres_couverture_et_autres_feuilles(self):

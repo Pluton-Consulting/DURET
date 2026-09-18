@@ -312,6 +312,18 @@ sys.modules["llm.router"].get_vision_candidates = lambda: [(seul, "m:test")]
 asyncio.run(agent2.vision_node({"query": "Analyse ces photos", "attachments": DEUX}))
 verifier("des photos SEULES + « analyse » gardent le relevé, une analyse par photo", len(seul.appels) == 2)
 
+# LA SUITE SE DÉCIDE SUR LA QUESTION, PAS SUR LE SUIVI DU TRAVAIL (18/09, navigateur) : le suivi
+# de la conversation (« rendu », « visuel »…) faisait lire « conforme au CCTP ? » comme une retouche.
+suivi = _ModeleDouble(["Sol PVC en lés."])
+sys.modules["llm.router"].get_vision_candidates = lambda: [(suivi, "m:test")]
+res8 = asyncio.run(agent2._repondre(
+    [DEUX[0]], [], "est-ce conforme au CCTP du lot 12 ?\n\nSUIVI DU TRAVAIL : rendu visuel ajouté au mémoire",
+    [(suivi, "m:test")], requete="est-ce conforme au CCTP du lot 12 ?"))
+verifier("le suivi du travail ne transforme pas une question de conformité en retouche",
+         res8.get("vision_suite") == "document", res8.get("vision_suite"))
+verifier("les deux appels du régime réponse passent la question seule",
+         src.count('requete=state.get("query") or ""') >= 2)
+
 # ══════════════════════════════════════════════════════════════════════════
 # 4. LE RÉGIME RELEVÉ — inchangé
 # ══════════════════════════════════════════════════════════════════════════

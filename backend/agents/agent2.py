@@ -590,12 +590,14 @@ async def vision_node(state: AgentState, config=None) -> dict:
     # passe la main à l'assistant, qui a tout le reste sous les yeux.
     autres = _noms_textes_joints(state)
     if autres:
-        return await _repondre(pieces, illisibles, demande, candidats, config, autres=autres)
+        return await _repondre(pieces, illisibles, demande, candidats, config, autres=autres,
+                               requete=state.get("query") or "")
 
     # LA DEMANDE DÉCIDE DU RÉGIME (voir REPONSE_PROMPT). Une question précise
     # reçoit sa réponse, dans un seul appel qui voit toutes les images.
     if not demande_un_releve(state.get("query")):
-        return await _repondre(pieces, illisibles, demande, candidats, config)
+        return await _repondre(pieces, illisibles, demande, candidats, config,
+                               requete=state.get("query") or "")
 
     async def _analyser(rang: int, piece: dict) -> dict:
         """Un fichier, sa cascade de candidats, son analyse — ou sa raison d'échec."""
@@ -802,7 +804,7 @@ async def _appel_vision(candidats, entete: str, images: list, nom: str, config=N
 
 
 async def _repondre(pieces: list, illisibles: list, demande: str, candidats, config=None,
-                    autres: tuple = ()) -> dict:
+                    autres: tuple = (), requete: str | None = None) -> dict:
     """Le régime RÉPONSE : un seul appel, toutes les images, la demande pour seule consigne.
 
     POURQUOI UN SEUL APPEL ICI, quand le relevé en fait un par fichier : une
@@ -855,7 +857,11 @@ async def _repondre(pieces: list, illisibles: list, demande: str, candidats, con
     # la réponse ET le relevé — l'écran, lui, ne reçoit que la réponse.
     complet = reponse if not releve else (
         f"{reponse}\n\n[Relevé technique fait pendant ce tour, non montré à l'écran]\n{releve}")
-    suite = suite_du_tour(demande, _retouche_disponible())
+    # LA SUITE SE DÉCIDE SUR LA QUESTION DE LA PERSONNE, PAS SUR LE SUIVI DU TRAVAIL (18/09, banc
+    # Duret dans le navigateur) : `demande` porte aussi le suivi de la conversation, où « rendu »,
+    # « visuel », « ajout » reviennent sans cesse — « est-ce conforme au CCTP du lot 12 ? » était
+    # lu comme une RETOUCHE indisponible, et la main ne passait jamais à l'assistant.
+    suite = suite_du_tour(requete if requete is not None else demande, _retouche_disponible())
     if autres and suite in (SUITE_AUCUNE, SUITE_SANS_MOTEUR):
         # Les autres pièces sont chez l'assistant : lui seul peut répondre en entier.
         suite = SUITE_DOCUMENT

@@ -1668,9 +1668,23 @@ async def verifier_acces(sources,user):
     references={s['reference']:s for s in sources if s.get('reference') and not s['reference'].startswith(('/api/documents/','trame:'))}
     if not references:return
     from mail.attaches import resoudre
+    # UN INCIDENT RÉSEAU N'EST PAS UN RETRAIT DE DROITS (18/09, métré réel de La Teste) : le relais
+    # QuickConnect a rendu un 502 sur « 12 SURFACES.pdf » et le travail s'est bloqué après quatre
+    # essais — alors que le texte de la pièce est conservé dans le dossier et que la personne y
+    # avait accès en la chargeant. Seul un REFUS de droits arrête ; un aléa se retente une fois,
+    # puis se journalise et le travail continue avec la lecture conservée.
     for ref,s in references.items():
-        pretes,_=await resoudre([ref],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
-        if not pretes:raise ValueError('Source distante devenue inaccessible : '+s['nom'])
+        pretes=refusees=None
+        for essai in range(2):
+            pretes,refusees=await resoudre([ref],user,str(getattr(user,'email','') or ''),plafond=60*1024*1024)
+            if pretes or any(r.get('droits') for r in refusees):break
+            await asyncio.sleep(3)
+        if not pretes:
+            if any(r.get('droits') for r in refusees):
+                raise ValueError('Source distante devenue inaccessible (accès refusé) : '+s['nom'])
+            logger.warning('Source « %s » non revérifiée (serveur injoignable : %s) : lecture conservée utilisée',
+                           s['nom'][:60],(refusees[0].get('raison') if refusees else '')[:120])
+            continue
         if hashlib.sha256(pretes[0]['octets']).hexdigest()!=s['empreinte']:
             raise ValueError('La source a changé depuis sa lecture : '+s['nom']+'. Ajoute sa version actuelle au dossier avant une nouvelle rédaction.')
 

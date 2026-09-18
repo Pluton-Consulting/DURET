@@ -188,7 +188,9 @@ async def resoudre(brut, user, boite: str, plafond: int | None = None) -> tuple:
                 octets, nom, mime = await _du_nas(ref, user, plafond)
         except Exception as e:  # noqa: BLE001 — un refus est une donnée, pas un plantage
             logger.info("Pièce « %s » non résolue : %s", etiquette[:60], e)
-            refusees.append({"nom": etiquette, "raison": str(e)[:200]})
+            # `droits` : un REFUS (périmètre, rôle) se distingue d'un incident passager (relais
+            # QuickConnect en 502, délai) — l'appelant qui revérifie une source déjà lue en a besoin (18/09).
+            refusees.append({"nom": etiquette, "raison": str(e)[:200], "droits": isinstance(e, PermissionError)})
             continue
 
         if not octets:

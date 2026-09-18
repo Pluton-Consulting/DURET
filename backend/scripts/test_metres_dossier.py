@@ -206,6 +206,7 @@ verifier("sans clause de localisation : aucune ligne, et c'est dit", not l1 and 
 print("6. Le dossier se charge une fois, se suit à l'écran, et la file ne le perd pas")
 import importlib
 import json as json_mod
+import hashlib
 import types
 
 importlib.reload(dossiers)                      # la vraie base SQLite, dans le dossier temporaire
@@ -250,6 +251,40 @@ r2 = asyncio.run(dd.dossier_du_travail(uid, fil, {}, user, demande, "quantitatif
 verifier("au 2ᵉ essai rien n'est rechargé, et le compte rendu garde les 6 pièces", len(r2["ajoutes"]) == 6 and len(dossiers.manifeste(uid, fil)) == 6, str(len(r2["ajoutes"])))
 r3 = asyncio.run(dd.dossier_du_travail(uid, fil, {"dossier": "dossier introuvable"}, user, "fais les métrés", "quantitatif"))
 verifier("un dossier introuvable n'arrête rien : il est signalé", r3 and r3.get("introuvable") and not r3["ajoutes"])
+# UN INCIDENT RÉSEAU N'EST PAS UN RETRAIT DE DROITS (18/09) : relais QuickConnect en 502 sur
+# « 12 SURFACES.pdf » → quatre essais bloqués alors que la pièce était déjà lue et conservée.
+import mail.attaches as attaches_mod
+SOURCES = [{"reference": "/home/Drive/x/12 SURFACES.pdf", "nom": "12 SURFACES.pdf", "empreinte": hashlib.sha256(b"plan").hexdigest()}]
+_appels_res = []
+async def _res_502(refs, user, boite, plafond=None):
+    _appels_res.append(refs); return [], [{"nom": refs[0], "raison": "HTTP 502 relais", "droits": False}]
+async def _res_refus(refs, user, boite, plafond=None):
+    return [], [{"nom": refs[0], "raison": "hors du périmètre autorisé", "droits": True}]
+async def _res_ok(refs, user, boite, plafond=None):
+    return [{"nom": "12 SURFACES.pdf", "octets": b"plan"}], []
+async def _res_change(refs, user, boite, plafond=None):
+    return [{"nom": "12 SURFACES.pdf", "octets": b"plan v2"}], []
+_sleep = asyncio.sleep
+asyncio.sleep = lambda s: _sleep(0)
+attaches_mod.resoudre = _res_502
+asyncio.run(dd.verifier_acces(SOURCES, user))
+verifier("un serveur muet (502) est retenté une fois puis TOLÉRÉ : la lecture conservée sert", len(_appels_res) == 2)
+attaches_mod.resoudre = _res_refus
+try:
+    asyncio.run(dd.verifier_acces(SOURCES, user)); verifier("un REFUS de droits arrête toujours", False)
+except ValueError as e:
+    verifier("un REFUS de droits arrête toujours", "accès refusé" in str(e))
+attaches_mod.resoudre = _res_change
+try:
+    asyncio.run(dd.verifier_acces(SOURCES, user)); verifier("une source qui a CHANGÉ arrête toujours", False)
+except ValueError as e:
+    verifier("une source qui a CHANGÉ arrête toujours", "a changé" in str(e))
+attaches_mod.resoudre = _res_ok
+asyncio.run(dd.verifier_acces(SOURCES, user)); verifier("une source intacte passe", True)
+asyncio.sleep = _sleep
+src_att = (BACKEND / "mail" / "attaches.py").read_text(encoding="utf-8")
+verifier("la résolution des pièces distingue un refus de droits (PermissionError) d'un incident", '"droits": isinstance(e, PermissionError)' in src_att)
+
 # LE DOSSIER NOMMÉ SE RÉSOUT AVANT LA MISE EN FILE (18/09, Q27 réel : douze « La Teste »).
 import contextlib, nas.acces as nas_acces, outils.nas as outils_nas
 from skills.erreurs import SkillError

@@ -58,7 +58,7 @@ logger = logging.getLogger("duret.skills.reunion")
 MAX_RESUME = 700          # caractères — trois à cinq lignes
 MAX_POINTS = 8
 MAX_DECISIONS = 8
-MAX_ACTIONS = 15
+MAX_ACTIONS = 20
 MAX_SUSPENS = 6
 MAX_PARTICIPANTS = 20
 MAX_LIGNE = 260           # un point de compte rendu est une phrase, pas un paragraphe
@@ -111,6 +111,9 @@ CE QUI FAIT UN BON COMPTE RENDU, dans l'ordre :
   action par responsable (« Reprises des logements A02, D08 », qui : Hugo Marchand) ; celles sans
   responsable en une seule action « à attribuer ». Une action tronquée par la limite doit être
   une reprise de détail, jamais une mesure ou un essai.
+- AVANT DE RENDRE, relis les relevés : chaque action qui y porte un responsable NOMMÉ et une
+  échéance DITE doit figurer dans ta liste, seule ou dans un regroupement — un engagement pris
+  en réunion ne disparaît pas du compte rendu. Ne la recopie pas deux fois pour autant.
 
 Distingue franchement une DÉCISION (c'est tranché, on avance) d'un POINT CLÉ (c'est dit, c'est utile à savoir) et d'un POINT EN SUSPENS (ce n'est pas réglé).
 {focus}
@@ -153,37 +156,6 @@ def _lignes(v, maxi: int) -> list[str]:
         if len(sorties) >= maxi:
             break
     return sorties
-
-
-def _mots_action(t: str) -> set:
-    return {m for m in re.findall(r"[a-z0-9]+", _texte(t).lower()) if len(m) > 3}
-
-
-def _avec_les_engagements(actions: list[dict], releves: list) -> list[dict]:
-    """UN ENGAGEMENT PRIS EN RÉUNION NE DISPARAÎT PAS DU COMPTE RENDU (18/09, banc Duret).
-
-    Transcription de 40 000 caractères, deux essais : « nouvelle mesure d'humidité bâtiment C,
-    Hugo, d'ici le 28 » et « le PV d'essai, Julien, vendredi » tombaient sous le plafond de la
-    synthèse, remplacés par des reprises de logements. Une action qui porte, dans un relevé, un
-    responsable NOMMÉ et une échéance DITE est un engagement : si la synthèse ne l'a pas gardée
-    (même responsable et moitié des mots au moins), elle est rajoutée. Fidélité aux données,
-    pas une liste de sujets."""
-    finales = list(actions)
-    for r in releves or []:
-        for a in ((r or {}).get("actions") or []):
-            if not isinstance(a, dict):
-                continue
-            quoi, qui, quand = (_texte(a.get(k))[:MAX_LIGNE if k == "quoi" else 60] for k in ("quoi", "qui", "quand"))
-            if not (quoi and qui and quand) or re.fullmatch(r"(à |a )?(définir|definir|désigner|designer)|tbd", qui.lower()):
-                continue
-            mots = _mots_action(quoi)
-            deja = any(
-                (qui.lower().split()[0] in (f.get("qui") or "").lower())
-                and mots and len(mots & _mots_action(f.get("quoi") or "")) >= max(1, len(mots) // 2)
-                for f in finales)
-            if not deja:
-                finales.append({"quoi": quoi, "qui": qui, "quand": quand})
-    return finales
 
 
 def _actions(v, maxi: int) -> list[dict]:
@@ -520,7 +492,7 @@ async def compte_rendu_reunion(data: dict, user) -> dict:
         "resume": _texte(sortie.get("resume"))[:MAX_RESUME],
         "points_cles": _lignes(sortie.get("points_cles"), MAX_POINTS),
         "decisions": _lignes(sortie.get("decisions"), MAX_DECISIONS),
-        "actions": _avec_les_engagements(_actions(sortie.get("actions"), MAX_ACTIONS), releves),
+        "actions": _actions(sortie.get("actions"), MAX_ACTIONS),
         "en_suspens": _lignes(sortie.get("en_suspens"), MAX_SUSPENS),
         "participants": _lignes(sortie.get("participants"), MAX_PARTICIPANTS),
     }

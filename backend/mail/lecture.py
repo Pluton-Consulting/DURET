@@ -312,7 +312,7 @@ _MOTS_PERIODE = {
     "hier": 1, "yesterday": 1,
     "semaine": 7, "cette semaine": 7, "7 jours": 7, "week": 7, "1s": 7, "7j": 7,
     "15 jours": 15, "quinzaine": 15, "deux semaines": 14, "2 semaines": 14,
-    "mois": 30, "ce mois": 30, "30 jours": 30, "month": 30,
+    "mois": 30, "30 jours": 30, "month": 30,
     "trimestre": 90, "3 mois": 90, "semestre": 180, "6 mois": 180, "année": 365, "annee": 365, "an": 365,
 }
 
@@ -350,6 +350,21 @@ def depuis_quand(valeur) -> Optional[datetime]:
         jours = int(valeur)
     else:
         brut = str(valeur).strip().lower()
+        # LE MOIS EN COURS EST UN MOIS DU CALENDRIER (18/09) : « qui m'a écrit le plus ce
+        # mois-ci ? » un 18 septembre rendait les mails depuis le 19 AOÛT (30 jours
+        # glissants), et « ce mois-ci » n'était pas lu du tout. « ce mois », « mois en
+        # cours », « cette année »… partent du 1er, à minuit heure de Paris ; « mois »
+        # seul et « les 30 derniers jours » restent glissants.
+        calendaire = ("mois" if re.search(r"\b(ce mois|mois en cours|mois courant|d[ée]but du mois)", brut)
+                      else "annee" if re.search(r"\b(cette ann[ée]e|ann[ée]e en cours|d[ée]but de l.?ann[ée]e)", brut)
+                      else None)
+        if calendaire:
+            from zoneinfo import ZoneInfo
+            local = maintenant.astimezone(ZoneInfo("Europe/Paris"))
+            debut = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            if calendaire == "annee":
+                debut = debut.replace(month=1)
+            return debut.astimezone(timezone.utc)
         # « semaine dernière » se lit AVANT le dépouillage : « dernière » y change le
         # sens (la semaine d'avant), alors qu'il n'habille que « les 7 derniers jours ».
         if "semaine derni" in brut or "semaine pass" in brut:
@@ -1197,7 +1212,7 @@ async def lire_message(boite: str, ref=None, objet=None, de=None, dossier: str =
 
 
 async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: str = "",
-                     autorises=None, dans_archive=None) -> dict:
+                     autorises=None, dans_archive=None, page=None) -> dict:
     """UNE pièce jointe, par sa `ref` — ou par son nom dans un message (`mail` =
     la ref du message, sinon le dernier reçu). Récupérée, déposée, lue.
     `dans_archive` : pour un zip, le fichier à en extraire et à lire (18/09)."""
@@ -1230,17 +1245,21 @@ async def lire_piece(boite: str, ref=None, nom=None, mail=None, proprietaire: st
         from mail.pieces import extraire_de_l_archive
         nom_membre, octets_membre = await asyncio.to_thread(extraire_de_l_archive, octets, str(dans_archive))
         archive = info.get("nom") or "archive"
-        lu = await analyser(nom_membre, None, octets_membre, proprietaire)
+        lu = await analyser(nom_membre, None, octets_membre, proprietaire, page=page or 1)
         lu["archive"] = archive
     else:
-        lu = await analyser(info.get("nom") or "", info.get("type"), octets, proprietaire)
+        lu = await analyser(info.get("nom") or "", info.get("type"), octets, proprietaire, page=page or 1)
     lu["ref"] = _ref(f"{info['message']}|{info.get('id') or info.get('nom')}")
     bloc = lu.pop("bloc", None)
     est_zip = (not archive) and str(info.get("nom") or "").lower().endswith(".zip")
-    lu["a_faire"] = ("La pièce est LUE : son texte est dans `texte` (méthode : " + str(lu.get("methode")) + ")"
-                     + (", coupé" if lu.get("tronque") else "")
-                     + ". Sa carte (aperçu, téléchargement) s'affiche automatiquement sous ta réponse : "
-                     "n'écris aucun bloc ```ui, parle de son CONTENU."
+    suite = (f" Texte en {lu.get('pages')} morceaux, voici le n°{lu.get('page')} : pour le suivant, rappelle "
+             f"lire_piece_jointe avec la même `ref`" + (" et le même `dans_archive`" if archive else "")
+             + f" et page={int(lu.get('page') or 1) + 1}." if lu.get("tronque") else "")
+    lu["a_faire"] = ("La pièce est LUE : son texte est dans `texte` (méthode : " + str(lu.get("methode")) + ")."
+                     + suite
+                     + (" Sa carte (aperçu, téléchargement) s'affiche automatiquement sous ta réponse : "
+                        "n'écris aucun bloc ```ui, parle de son CONTENU." if int(lu.get("page") or 1) == 1 else
+                        " C'est la SUITE d'une pièce déjà montrée : n'écris aucun bloc ```ui, parle de ce morceau.")
                      + (" C'est une ARCHIVE : `texte` en liste les fichiers. Pour LIRE l'un d'eux, rappelle "
                         "lire_piece_jointe avec la même `ref` et `dans_archive` = un bout de son nom — "
                         "ne dis jamais que le contenu d'une archive est illisible." if est_zip else "")

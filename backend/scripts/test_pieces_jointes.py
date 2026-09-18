@@ -147,6 +147,16 @@ if pieces:
     verifier("type inconnu → rien, téléchargeable seulement", pieces.texte_de("x.bin", None, b"\x00")["texte"] == "" and "téléchargeable" in pieces.texte_de("x.bin", None, b"\x00")["methode"])
     faux_parsers.lire_pdf = lambda b: (_ for _ in ()).throw(_NS("pdfplumber absent"))
     verifier("une dépendance absente se dit, sans exception", "non lu" in pieces.texte_de("devis.pdf", None, b"%PDF")["methode"])
+    # 18/09 : « lis la suite du planning » était proposé sans aucun moyen de le faire.
+    long = "\n".join(f"ligne {i:05d} du planning" for i in range(700))
+    import asyncio as _aio
+    p1 = _aio.run(pieces.lire_sans_deposer("planning.txt", "text/plain", long.encode()))
+    p2 = _aio.run(pieces.lire_sans_deposer("planning.txt", "text/plain", long.encode(), page=2))
+    verifier("un texte long se lit par morceaux : page 1 coupée, page 2 = la SUITE exacte",
+             p1["tronque"] and p1["pages"] == 3 and p2["page"] == 2 and (p1["texte"] + p2["texte"]) == long[:2 * pieces.MAX_TEXTE_PIECE],
+             f"{p1.get('pages')} {p2.get('page')}")
+    p3 = _aio.run(pieces.lire_sans_deposer("planning.txt", "text/plain", long.encode(), page=3))
+    verifier("la dernière page n'est plus coupée", p3["tronque"] is False and p3["texte"].endswith("ligne 00699 du planning"))
 
     print("\n3. analyser() : dépôt + lecture, sur des dépôts doublés")
     depots = {"visuels": [], "fichiers": []}
@@ -215,7 +225,7 @@ try:
     faux_pieces.cids_du_html = (pieces.cids_du_html if pieces
                                 else (lambda h: []))
     lus = []
-    async def _analyser(nom, mime, brut, proprietaire):
+    async def _analyser(nom, mime, brut, proprietaire, page=1):
         lus.append((nom, brut, proprietaire))
         return {"nom": nom, "type": "pdf", "taille": len(brut), "texte": "lu:" + nom, "methode": "PDF",
                 "lisible": True, "url": "/api/documents/j-" + nom, "bloc": {"type": "fichier", "url": "/api/documents/j-" + nom, "nom": nom}}
@@ -287,7 +297,7 @@ verifier("skill `lire_piece_jointe` déclaré, effet lecture", 'SKILLS_NATIFS["l
 verifier("lire_mail transmet `pieces` et le propriétaire (la personne connectée)", "pieces=" in skills and "proprietaire=str(user.id)" in skills)
 protocole = lire("skills/protocol.py")
 verifier("catalogue : lire_mail accepte pieces ; lire_piece_jointe existe avec ref/nom/mail",
-         re.search(r'"lire_mail": \(.*?"pieces"', protocole, re.S) and re.search(r'"lire_piece_jointe": \(.*?\["ref", "nom", "mail", "mailbox"(, "dans_archive")?\]', protocole, re.S))
+         re.search(r'"lire_mail": \(.*?"pieces"', protocole, re.S) and re.search(r'"lire_piece_jointe": \(.*?\["ref", "nom", "mail", "mailbox"(, "dans_archive")?(, "page")?\]', protocole, re.S))
 verifier("journal : « je lis la pièce jointe »", '"lire_piece_jointe"' in lire("agents/journal.py"))
 atelier = lire("bureautique/atelier.py")
 verifier("atelier : deposer_fichier (n'importe quelle extension), et les pièces jointes ne comptent pas comme documents produits",

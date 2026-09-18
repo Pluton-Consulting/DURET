@@ -401,7 +401,11 @@ CONSIGNE_OCR = (
     "première lecture optique, à corriger d'après l'image : {ebauche}")
 
 
-async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str) -> dict:
+class _DejaMontree(Exception):
+    """La suite d'une pièce déjà déposée : pas de second dépôt."""
+
+
+async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str, page: int = 1) -> dict:
     """UNE pièce → déposée (téléchargeable, aperçu) et LUE. Ne lève jamais."""
     nom = nom or "piece-jointe"
     taille = len(brut or b"")
@@ -412,7 +416,10 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
         return fiche
 
     # 1. Le dépôt — l'écran d'abord : même illisible, la pièce se télécharge.
+    #    La SUITE d'une pièce déjà montrée (page 2 et plus) ne la redépose pas.
     try:
+        if int(page or 1) > 1:
+            raise _DejaMontree()
         if est_image(nom, mime):
             from visuels.depot import deposer_octets
             octets_img, mime_img = brut, (mime or "image/png").split(";")[0]
@@ -430,6 +437,8 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
                 fiche["url"] = f"/api/documents/{jeton}"
                 fiche["bloc"] = {"type": "fichier", "url": fiche["url"], "nom": nom,
                                  "titre": nom.rsplit(".", 1)[0], "format": fiche["type"], "octets": taille}
+    except _DejaMontree:
+        pass
     except Exception as e:  # noqa: BLE001
         logger.warning("Dépôt de la pièce « %s » impossible : %s", nom, e)
 
@@ -438,7 +447,7 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
         return fiche
 
     # 2. La lecture — la même que celle d'un fichier du classement.
-    lu = await lire_sans_deposer(nom, mime, brut)
+    lu = await lire_sans_deposer(nom, mime, brut, page=page)
     # La vignette d'un DWG devient une image déposée, montrée à côté.
     if lu.get("vignette_png"):
         try:
@@ -449,13 +458,14 @@ async def analyser(nom: str, mime: Optional[str], brut: bytes, proprietaire: str
         except Exception as e:  # noqa: BLE001
             logger.info("Vignette DWG non déposée : %s", e)
     fiche.update({"texte": lu.get("texte") or "", "methode": lu.get("methode") or "",
-                  "tronque": bool(lu.get("tronque")), "lisible": bool(lu.get("texte"))})
+                  "tronque": bool(lu.get("tronque")), "lisible": bool(lu.get("texte")),
+                  "page": lu.get("page", 1), "pages": lu.get("pages", 1)})
     return fiche
 
 
 async def lire_sans_deposer(nom: str, mime: Optional[str], brut: bytes,
                             consigne_vision: Optional[str] = None,
-                            consigne_ocr: Optional[str] = None) -> dict:
+                            consigne_ocr: Optional[str] = None, page: int = 1) -> dict:
     """UN fichier → LU, sans rien déposer : {texte, methode, tronque, vignette_png?}.
 
     Le cœur de `analyser` (les pièces d'un mail), partagé depuis le 09/09 avec
@@ -513,8 +523,17 @@ async def lire_sans_deposer(nom: str, mime: Optional[str], brut: bytes,
 
     if complement:
         texte = (complement + ("\n\n" + texte if texte else "")).strip()
-    if len(texte) > MAX_TEXTE_PIECE:
-        sortie["tronque"] = True
-        texte = texte[:MAX_TEXTE_PIECE]
+    # LA SUITE SE LIT (18/09) : une pièce se montrait par ses 6 000 premiers caractères et
+    # l'assistant proposait « lis la suite du planning » sans aucun moyen de le faire. `page`
+    # rend le morceau suivant ; `pages` dit combien il y en a.
+    try:
+        page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        page = 1
+    pages = max(1, -(-len(texte) // MAX_TEXTE_PIECE))
+    debut = (page - 1) * MAX_TEXTE_PIECE
+    sortie["tronque"] = page < pages
+    sortie.update({"page": page, "pages": pages})
+    texte = texte[debut:debut + MAX_TEXTE_PIECE]
     sortie.update({"texte": texte, "methode": methode})
     return sortie

@@ -511,7 +511,8 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. « Combien de "
         "non lus ? » : un appel sans filtre, le résultat porte `non_lus_dossier` (tout le dossier, "
         "compté par le serveur) — jamais un compte sur l'échantillon. "
-        "`depuis` : une DURÉE (« 7j », « semaine », « mois », « lundi » = depuis lundi) — "
+        "`depuis` : une DURÉE (« 7j », « semaine », « mois » = 30 jours glissants, « lundi » = depuis lundi, "
+        "« ce mois » = depuis le 1er du mois, « cette année » = depuis le 1er janvier) — "
         "jamais une date que tu calcules — OBLIGATOIRE dès qu'on parle d'une période (« cette semaine », "
         "« depuis lundi ») : le résultat dit alors « N messages sur la période, voici "
         "les 25 plus récents ». `recherche` : des MOTS-CLÉS cherchés dans TOUTE la "
@@ -619,8 +620,9 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "`mail` (la ref du message, sinon le dernier reçu). Parle ensuite de son CONTENU "
         "(`texte`), et dis la `methode` si elle a des limites. ARCHIVE (.zip) : le premier appel "
         "en liste les fichiers ; `dans_archive` (un bout du nom, ex. « DPGF lot 01 ») EXTRAIT et "
-        "LIT ce fichier-là — une archive n'est jamais « illisible »",
-        [], ["ref", "nom", "mail", "mailbox", "dans_archive"]),
+        "LIT ce fichier-là — une archive n'est jamais « illisible ». Un texte long se lit par "
+        "morceaux : `page` (2, 3…) rend la SUITE, le résultat dit `pages`",
+        [], ["ref", "nom", "mail", "mailbox", "dans_archive", "page"]),
     "triage_email_entrant": (
         # `mailbox` ÉTAIT REQUIS ICI, et c'était un piège. Le cas normal est un
         # message COLLÉ dans le chat (« voici ce que je viens de recevoir ») :

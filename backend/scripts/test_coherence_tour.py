@@ -52,7 +52,14 @@ try:
     verifier("« semaine », « cette semaine », « 7j », « les 7 derniers jours » → 7 jours",
              [jours(v) for v in ("semaine", "cette semaine", "7j", "les 7 derniers jours", "depuis 7 jours")] == [7] * 5,
              str([jours(v) for v in ("semaine", "cette semaine", "7j", "les 7 derniers jours", "depuis 7 jours")]))
-    verifier("« ce mois », « 30 derniers jours », « trimestre » → 30, 30, 90", [jours("ce mois"), jours("les 30 derniers jours"), jours("trimestre")] == [30, 30, 90])
+    verifier("« mois », « 30 derniers jours », « trimestre » → 30, 30, 90 (glissants)", [jours("mois"), jours("les 30 derniers jours"), jours("trimestre")] == [30, 30, 90])
+    # 18/09 : « ce mois-ci » = le mois du CALENDRIER, à minuit heure de Paris (le 19 août rendu un 18 septembre).
+    from zoneinfo import ZoneInfo
+    _loc = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Paris"))
+    _premier = _loc.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    verifier("« ce mois-ci », « ce mois », « mois en cours » → le 1er du mois, minuit à Paris",
+             all(dq(v) == _premier for v in ("ce mois-ci", "ce mois", "le mois en cours", "depuis le début du mois")), str(dq("ce mois-ci")))
+    verifier("« cette année » → le 1er janvier, minuit à Paris", dq("cette année") == _premier.astimezone(ZoneInfo("Europe/Paris")).replace(month=1).astimezone(timezone.utc))
     verifier("« aujourd'hui », « ce matin », « hier » → 0, 0, 1", [jours("aujourd'hui"), jours("ce matin"), jours("hier")] == [0, 0, 1])
     wd = datetime.now(timezone.utc).weekday()
     verifier("« lundi » = le dernier lundi (aujourd'hui si on est lundi)", jours("depuis lundi") == wd % 7, str(jours("depuis lundi")))

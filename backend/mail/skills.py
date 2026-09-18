@@ -1390,7 +1390,8 @@ async def lire_piece_jointe(data: dict, user) -> dict:
     from mail.lecture import DossierInterdit
     try:
         return await lire_piece(boite, ref=ref, nom=nom, mail=mail, proprietaire=str(user.id),
-                                autorises=await dossiers_autorises(user), dans_archive=dans_archive)
+                                autorises=await dossiers_autorises(user), dans_archive=dans_archive,
+                                page=data.get("page") or data.get("suite"))
     except DossierInterdit as e:
         raise MailSkillError(str(e))
     except NotImplementedError as e:

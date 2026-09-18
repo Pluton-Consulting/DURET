@@ -492,12 +492,31 @@ def plan(jeton: str, limite: int = 30) -> list[str]:
     return titres
 
 
-@_serialise
+def _nom_de_feuille(e) -> str:
+    return _aplati((e or {}).get("nom") or "") if isinstance(e, dict) and e.get("bloc") == "feuille" else ""
+
+
 def ajouter(jeton: str, elements: list[dict], proprietaire: str,
             refuser_repetition: bool = True) -> int:
     """Ajoute des éléments. Rend le nombre retenu.
 
     Lève `DejaPresent` quand l'essentiel du versement est déjà dans le document.
+    """
+    return ajouter_detail(jeton, elements, proprietaire, refuser_repetition)[0]
+
+
+@_serialise
+def ajouter_detail(jeton: str, elements: list[dict], proprietaire: str,
+                   refuser_repetition: bool = True) -> tuple[int, list[str]]:
+    """Comme `ajouter`, et rend aussi les NOMS des feuilles remplacées.
+
+    UNE FEUILLE REVERSÉE SOUS SON NOM REMPLACE LA PRÉCÉDENTE (18/09). « Mets-moi
+    dans un Excel tous les mails de la semaine » : le modèle a versé la feuille
+    « Mails de la semaine » (171 lignes), puis l'a REVERSÉE, plus complète, sous le
+    même nom. Un onglet a un nom unique : le rendu suffixait « _2 », et le classeur
+    livré portait deux fois le même tableau. Le contrôle des répétitions ne voyait
+    rien (un seul élément, texte différent). Quand le modèle reverse une feuille du
+    même nom, c'est SA version corrigée : elle prend la place de l'ancienne.
     """
     from bureautique.modele import normaliser_element, deplier_feuilles, MAX_ELEMENTS
 
@@ -508,11 +527,15 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str,
         raise ValueError("document déjà terminé")
 
     retenus = [e for e in (normaliser_element(x) for x in deplier_feuilles(elements)) if e]
-    if refuser_repetition and int(f.get("elements") or 0) > 0:
+    reversees = {_nom_de_feuille(e) for e in retenus} - {""}
+    remplacees = []
+    if reversees and int(f.get("elements") or 0) > 0:
+        remplacees = sorted({str(e.get("nom")) for e in elements_du(jeton) if _nom_de_feuille(e) in reversees})
+    if refuser_repetition and int(f.get("elements") or 0) > 0 and not remplacees:
         presents, distinctifs, exemples = deja_presents(jeton, retenus)
         if distinctifs and presents >= 2 and presents / distinctifs >= PART_DEJA_PRESENTE:
             raise DejaPresent(presents, distinctifs, exemples)
-    place = MAX_ELEMENTS - int(f.get("elements") or 0)
+    place = MAX_ELEMENTS - int(f.get("elements") or 0) + len(remplacees)
     if place <= 0:
         raise ValueError(f"document plein ({MAX_ELEMENTS} éléments)")
     retenus = retenus[:place]
@@ -522,6 +545,13 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str,
     # les deux écritures laisse un compteur en retard — jamais en avance —,
     # que `_reconcilier` remet d'aplomb à la lecture suivante.
     with _verrou(jeton):
+        if remplacees:
+            gardes = [e for e in elements_du(jeton) if _nom_de_feuille(e) not in reversees]
+            with open(_chemin(jeton, "jsonl"), "w", encoding="utf-8") as fichier:
+                for e in gardes:
+                    fichier.write(json.dumps(e, ensure_ascii=False) + "\n")
+                fichier.flush()
+                os.fsync(fichier.fileno())
         with open(_chemin(jeton, "jsonl"), "a", encoding="utf-8") as fichier:
             for e in retenus:
                 fichier.write(json.dumps(e, ensure_ascii=False) + "\n")
@@ -530,7 +560,7 @@ def ajouter(jeton: str, elements: list[dict], proprietaire: str,
         f = _lire_fiche(jeton) or f
         f["elements"] = _compter_elements(jeton)
         _ecrire_fiche(jeton, f)
-    return len(retenus)
+    return len(retenus), remplacees
 
 
 @_serialise
@@ -577,6 +607,11 @@ def mettre_a_jour_entete(jeton: str, proprietaire: str, entete: dict) -> None:
         raise ValueError("document déjà terminé")
     f["entete"] = dict(entete or {})
     _ecrire_fiche(jeton, f)
+
+
+def elements_du(jeton: str) -> list:
+    """Tous les éléments du document, en liste (pour une réécriture)."""
+    return list(elements(jeton))
 
 
 def elements(jeton: str):

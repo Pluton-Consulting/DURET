@@ -186,7 +186,7 @@ async def abandonner_document(data: dict, user) -> dict:
 
 async def ajouter_document(data: dict, user) -> dict:
     """Verse des éléments dans un document ouvert."""
-    from bureautique.atelier import DejaPresent, ajouter, fiche, plan
+    from bureautique.atelier import DejaPresent, ajouter_detail, fiche, plan
 
     jeton = (data.get("document_id") or "").strip()
     elements = data.get("elements") or data.get("contenu") or []
@@ -245,8 +245,9 @@ async def ajouter_document(data: dict, user) -> dict:
                 "note": ((f"Présentation mise à jour : {', '.join(presentation)}." if presentation
                           else "Présentation inchangée.") + _note_refus(refus)
                          + " Continue d'ajouter, ou appelle `terminer_document`.")}
+    remplacees: list[str] = []
     try:
-        retenus = ajouter(jeton, elements, _proprietaire(user))
+        retenus, remplacees = ajouter_detail(jeton, elements, _proprietaire(user))
     except KeyError:
         # Le `document_id` reçu ne correspond à aucun document ouvert. Le plus
         # souvent il a été INVENTÉ : les vrais jetons sont imprévisibles, un
@@ -283,7 +284,10 @@ async def ajouter_document(data: dict, user) -> dict:
         # passe suivante verse la suite au lieu de recommencer le début.
         "plan_du_document": plan(jeton),
         "presentation_modifiee": presentation or None,
+        "feuilles_remplacees": remplacees,
         "note": (f"{retenus} élément(s) ajouté(s)."
+                 + (" Feuille(s) REMPLACÉE(S) par cette version, l'ancienne est retirée : "
+                    + ", ".join(f"« {x} »" for x in remplacees) + "." if remplacees else "")
                  + (f" Présentation mise à jour : {', '.join(presentation)}." if presentation else "")
                  + (f" {ignores} écarté(s) : type de bloc inconnu ou contenu vide."
                     if ignores > 0 else "")

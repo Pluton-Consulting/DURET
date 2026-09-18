@@ -76,5 +76,23 @@ wb = classeur([{"type": "feuille", "nom": "Lot 11", "contenu": [{"type": "tablea
                {"bloc": "feuille", "titre": "Lot 12"}, {"bloc": "tableau", "entetes": ["Poste", "Qté"], "lignes": [["PVC", "1 230,1"]]}])
 verifier("feuille qui PORTE ses blocs + feuille-séparateur : deux onglets, nombres compris", wb.sheetnames == ["Lot 11", "Lot 12"] and wb["Lot 11"]["B2"].value == 412.5 and wb["Lot 12"]["B2"].value == 1230.1, str(wb.sheetnames))
 
+# UNE FEUILLE REVERSÉE SOUS SON NOM REMPLACE LA PRÉCÉDENTE (18/09) : le modèle avait versé
+# « Mails de la semaine » (171 lignes) puis l'avait reversée, plus complète, sous le même nom —
+# classeur livré avec deux onglets identiques (« …_2 »).
+os.environ["DOCUMENTS_DIR"] = tempfile.mkdtemp(prefix="banc-feuilles-")
+import importlib, bureautique.atelier as atelier
+importlib.reload(atelier)
+jeton = atelier.ouvrir({"titre": "Mails", "format": "xlsx"}, "moi")
+n1, r1 = atelier.ajouter_detail(jeton, [{"bloc": "feuille", "nom": "Mails de la semaine", "entetes": ["De", "Objet"], "lignes": [["a", "x"], ["b", "y"]]}], "moi")
+n2, r2 = atelier.ajouter_detail(jeton, [{"bloc": "feuille", "nom": "Mails de la semaine", "entetes": ["De", "Objet"], "lignes": [["a <a@x.fr>", "x"], ["b <b@x.fr>", "y"], ["c", "z"]]},
+                                       {"bloc": "feuille", "nom": "Par catégorie", "entetes": ["Cat", "N"], "lignes": [["chantier", "2"]]}], "moi")
+noms = [e.get("nom") for e in atelier.elements_du(jeton)]
+verifier("la feuille reversée sous le même nom REMPLACE l'ancienne, l'autre s'ajoute", (n1, r1, n2, r2) == (1, [], 2, ["Mails de la semaine"]) and noms == ["Mails de la semaine", "Par catégorie"], f"{(n1, r1, n2, r2)} {noms}")
+verifier("…et c'est la NOUVELLE version qui reste", [e for e in atelier.elements_du(jeton) if e.get("nom") == "Mails de la semaine"][0]["lignes"][0][0] == "a <a@x.fr>")
+verifier("le compteur d'éléments suit", (atelier.fiche(jeton, "moi") or {}).get("elements") == 2)
+fini = atelier.terminer(jeton, "moi")
+wb2 = openpyxl.load_workbook(atelier.chemin_fichier(jeton, "moi"))
+verifier("le classeur rendu n'a plus d'onglet « _2 »", wb2.sheetnames == ["Mails de la semaine", "Par catégorie"] and wb2["Mails de la semaine"].max_row == 4, str(wb2.sheetnames))
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

@@ -316,7 +316,10 @@ src_skills = lire("backend/mail/skills.py")
 for geste in ("lire_mails", "lire_mail", "lire_piece_jointe"):
     corps = src_skills.split(f"async def {geste}(")[1].split("\nSKILLS_NATIFS")[0]
     verifier(f"« {geste} » passe les dossiers du profil et traduit le refus",
-             "autorises=await dossiers_autorises(user)" in corps and "except DossierInterdit" in corps)
+             ("autorises=await dossiers_autorises(user)" in corps
+              # 18/09 : l'inventaire de `lire_mails` lit plusieurs pages avec les MÊMES dossiers
+              or ("autorises = await dossiers_autorises(user)" in corps and "autorises=autorises" in corps))
+             and "except DossierInterdit" in corps)
 verifier("le geste « dossiers_mail » existe et se déclare en lecture",
          'SKILLS_NATIFS["dossiers_mail"]' in src_skills and '"dossiers_mail": "lecture"' in src_skills
          and '"dossiers_mail": (' in lire("backend/skills/protocol.py"))

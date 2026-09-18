@@ -526,8 +526,18 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "le rend ; limite : 1 à 25. Sans mailbox, la boîte de la personne "
         "connectée. Chaque `apercu` rendu est un EXTRAIT, pas le message : pour le "
         "corps complet, `lire_mail` avec la `ref`. Pour un POINT complet avec "
-        "résumés et propositions de réponse, préfère `check_mails`",
-        [], ["mailbox", "dossier", "limite", "depuis", "recherche", "objet", "avant", "curseur"]),
+        "résumés et propositions de réponse, préfère `check_mails`. "
+        "TOUS LES MAILS D'UNE PÉRIODE EN LISTE OU EN EXCEL : `depuis` + `classer: true` "
+        "(résumé et catégorie de CHAQUE mail ; `categories` pour imposer la liste) + "
+        "`fichier: true` pour l'Excel. Le tableau complet et le fichier s'affichent SEULS, "
+        "toutes lignes comprises : ne recopie jamais la liste, et pour « mets-le dans un "
+        "Excel » rappelle ce geste avec `fichier: true` — n'utilise PAS `produire_document` "
+        "ni `creer_document`. La liste est GARDÉE 30 min : le rappel ne relit ni ne reclasse "
+        "rien (`rafraichir: true` pour relire). `priorites` : fragments d'OBJET des mails à "
+        "mettre EN TÊTE, surlignés dans l'Excel (`surlignage` : orange|jaune|vert|rouge|bleu|gris) "
+        "— c'est LE geste pour « ajoute une colonne priorité / surligne les plus urgents »",
+        [], ["mailbox", "dossier", "limite", "depuis", "recherche", "objet", "avant", "curseur", "exhaustif",
+             "classer", "categories", "fichier", "priorites", "surlignage", "rafraichir"]),
     "lire_mail": (
         "OUVRE UN message EN ENTIER : le corps complet (jusqu'à 10 000 caractères) et "
         "ses pièces jointes nommées. L'`apercu` rendu par `lire_mails` ou `check_mails` "

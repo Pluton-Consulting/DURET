@@ -153,7 +153,14 @@ def _reecrire(doc, entrees: list[tuple], qn) -> bool:
     parent = debut.getparent()
     prefixe = re.sub(r"\d+$", "", _style_id(debut, qn) or "")
     fin = _fin_du_champ(debut, qn)
-    if fin is None or fin is debut or not prefixe:
+    if fin is None:
+        return False
+    if fin is debut:
+        # LE CHAMP TIENT DANS UN SEUL PARAGRAPHE : le sommaire posé par notre rendu (« Le sommaire se
+        # met à jour à l'ouverture dans Word… ») ou un champ vide. Aucune ligne à imiter : on les
+        # construit (style de sommaire du document s'il existe, points de conduite, retrait par niveau).
+        return _ecrire_lignes(doc, parent, [debut], True, {}, _ouverture(debut, qn), entrees, qn)
+    if not prefixe:
         return False
     anciennes = [debut]
     suivant = debut.getnext()
@@ -182,13 +189,44 @@ def _reecrire(doc, entrees: list[tuple], qn) -> bool:
         gabarits[int(m.group(1))] = (ppr, rpr)
     if not gabarits:
         return False
-    # Les trois pièces qui OUVRENT le champ restent (début, instruction, séparateur).
+    return _ecrire_lignes(doc, parent, anciennes, fin_dans_la_derniere, gabarits, _ouverture(debut, qn), entrees, qn)
+
+
+def _ouverture(debut, qn):
+    """Les pièces qui OUVRENT le champ restent : début, instruction, séparateur."""
     ouverture = []
     for r in debut.findall(qn("w:r")):
         ouverture.append(r)
-        fc = r.find(qn("w:fldChar"))
-        if fc is not None and fc.get(qn("w:fldCharType")) == "separate":
+        # Début, instruction et séparateur peuvent tenir dans UNE même portion (notre rendu).
+        if any(fc.get(qn("w:fldCharType")) == "separate" for fc in r.findall(qn("w:fldChar"))):
             break
+    return ouverture
+
+
+def _mise_en_forme_par_defaut(doc, niveau, qn):
+    """pPr d'une ligne de sommaire sans ligne à imiter : le style « sommaire N » du document s'il
+    existe, sinon un taquet droit à points de conduite en bout de ligne et un retrait par niveau."""
+    from docx.oxml import OxmlElement
+    ppr = OxmlElement("w:pPr")
+    ids = {st.get(qn("w:styleId")) for st in doc.styles.element.iter(qn("w:style"))}
+    style = next((i for i in ids if i and re.fullmatch(r"(?:TM|TOC|toc|Sommaire)\s*" + str(niveau), i)), None)
+    if style:
+        ps = OxmlElement("w:pStyle"); ps.set(qn("w:val"), style); ppr.append(ps)
+    try:
+        sec = doc.sections[-1]
+        largeur = int((sec.page_width - sec.left_margin - sec.right_margin) / 635)
+    except Exception:  # noqa: BLE001
+        largeur = 9062
+    tabs = OxmlElement("w:tabs"); tab = OxmlElement("w:tab")
+    tab.set(qn("w:val"), "right"); tab.set(qn("w:leader"), "dot"); tab.set(qn("w:pos"), str(largeur))
+    tabs.append(tab); ppr.append(tabs)
+    if not style:
+        ind = OxmlElement("w:ind"); ind.set(qn("w:left"), str(220 * (niveau - 1))); ppr.append(ind)
+    return ppr
+
+
+def _ecrire_lignes(doc, parent, anciennes, fin_dans_la_derniere, gabarits, ouverture, entrees, qn):
+    from docx.oxml import OxmlElement
 
     def run(texte=None, tab=False, rpr=None):
         r = OxmlElement("w:r")
@@ -205,8 +243,11 @@ def _reecrire(doc, entrees: list[tuple], qn) -> bool:
 
     neufs = []
     for rang, (niveau, titre, page, numero) in enumerate(entrees):
-        cle = niveau if niveau in gabarits else min(gabarits, key=lambda k: abs(k - niveau))
-        ppr, rpr = gabarits[cle]
+        if gabarits:
+            cle = niveau if niveau in gabarits else min(gabarits, key=lambda k: abs(k - niveau))
+            ppr, rpr = gabarits[cle]
+        else:
+            ppr, rpr = _mise_en_forme_par_defaut(doc, niveau, qn), None
         p = OxmlElement("w:p")
         if ppr is not None:
             p.append(deepcopy(ppr))
@@ -216,8 +257,9 @@ def _reecrire(doc, entrees: list[tuple], qn) -> bool:
         if numero:
             # Un numéro plus large que le premier taquet (« XVIII. ») enverrait le titre
             # derrière les points de conduite : une espace le suit alors, pas une tabulation.
-            p.append(run(numero + (" " if len(numero) >= 5 else ""), rpr=rpr))
-            if len(numero) < 5:
+            taquet = bool(gabarits) and len(numero) < 5
+            p.append(run(numero + ("" if taquet else " "), rpr=rpr))
+            if taquet:
                 p.append(run(tab=True, rpr=rpr))
         p.append(run(titre, rpr=rpr))
         p.append(run(tab=True, rpr=rpr))
@@ -286,7 +328,7 @@ def actualiser(chemin: str, convertir=None) -> dict:
             if [p for p, _ in reperes2] == [p for p, _ in reperes]:
                 break
             entrees = [(n, t, pg, num or ancien) for (n, t), (pg, num), (_, ancien) in zip(titres, reperes2, reperes)]
-            doc = Document(tmp)
+            doc = Document(chemin)             # la seconde passe repart de l'original, pas de nos lignes
         os.replace(tmp, chemin)
         sans_page = sum(1 for e in entrees if not e[2])
         return {"sommaire": "actualisé", "lignes": len(entrees), "sans_page": sans_page}

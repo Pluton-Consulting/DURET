@@ -129,6 +129,25 @@ verifier("sans moteur de rendu : « non actualisé », fichier intact", r2.get("
 nu = Document(); nu.add_heading("Titre", level=1); nu.save(f"{dossier}/nu.docx")
 verifier("un document sans sommaire n'est pas touché", sommaire.actualiser(f"{dossier}/nu.docx", convertir=convertir) == {"sommaire": "absent"})
 
+# ── Le sommaire posé par NOTRE rendu : un champ d'un seul paragraphe, avec une phrase d'attente ──
+from bureautique.rendu import _sommaire
+propre = Document()
+propre.add_paragraph("Garde")
+_sommaire(propre)
+propre.add_heading("INFORMATIONS GÉNÉRALES", level=1)
+propre.add_paragraph("Texte.")
+propre.add_heading("DÉMARCHE ENVIRONNEMENTALE", level=1)
+propre.save(f"{dossier}/propre.docx")
+RENDU2 = ["Garde\nSommaire", "INFORMATIONS GÉNÉRALES\nTexte.", "DÉMARCHE ENVIRONNEMENTALE"]
+r3 = sommaire.actualiser(f"{dossier}/propre.docx", convertir=lambda c: faux_pdf(RENDU2))
+d3 = Document(f"{dossier}/propre.docx")
+textes3 = [" ".join(t.text for t in p.iter(qn("w:t"))) for p in d3.element.body.iter(qn("w:p"))]
+types3 = [fc.get(qn("w:fldCharType")) for fc in d3.element.body.iter(qn("w:fldChar"))]
+verifier("sommaire d'un seul paragraphe (notre rendu) : les lignes sont construites, la phrase d'attente disparaît",
+         r3.get("sommaire") == "actualisé" and not any("se met à jour" in t for t in textes3)
+         and "INFORMATIONS GÉNÉRALES 2" in textes3 and "DÉMARCHE ENVIRONNEMENTALE 3" in textes3, (r3, textes3[:6]))
+verifier("…et le champ reste équilibré (un début, une fin)", types3.count("begin") == 1 and types3.count("end") == 1, types3)
+
 # ── La numérotation des sous-titres repart dans chaque rubrique (même geste que la trame) ──
 print("\nNumérotation des sous-titres rédigés")
 from bureautique.sections_modele import _relancer_la_numerotation

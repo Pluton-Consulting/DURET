@@ -264,6 +264,34 @@ verifier("tous les candidats en échec → vision_failed, les fichiers nommés",
          res3.get("error") == "vision_failed" and res3.get("vision_analysis") is None
          and "imagemaison.jpg" in res3["llm_response"])
 
+# LA VISION NOMME CE QUI LUI MANQUE (18/09, Q67 du banc Duret) : « conforme au CCTP
+# du lot 12 ? » sur une photo → avant, « le CCTP n'a pas été fourni », et le tour
+# s'arrêtait là alors que le CCTP était sur le serveur.
+sp = agent2._separer_suite
+verifier("[SUITE] : le besoin est séparé de la réponse montrée",
+         sp("Sol PVC en lés.\n[SUITE] le CCTP du lot 12") == ("le CCTP du lot 12", "Sol PVC en lés."))
+verifier("sans ligne [SUITE], rien ne change", sp("Sol PVC.") == ("", "Sol PVC."))
+verifier("« [SUITE] : » avec deux-points est reconnu aussi",
+         sp("x\n[suite] : le DPGF")[0] == "le DPGF")
+manque = _ModeleDouble(["- Revêtement : PVC en lés, bandes striées.\n"
+                        "- Conformité : dépend des prescriptions du CCTP.\n[SUITE] le CCTP du lot 12"])
+sys.modules["llm.router"].get_vision_candidates = lambda: [(manque, "m:test")]
+res5 = asyncio.run(agent2.vision_node({"query": "c'est quoi ce revêtement et est-il conforme au CCTP du lot 12 ?",
+                                       "attachments": [DEUX[0]]}))
+verifier("la consigne dit à la vision de NOMMER la pièce manquante",
+         "[SUITE]" in manque.appels[0]["texte"] and "n'a pas été fournie" in manque.appels[0]["texte"])
+verifier("un besoin nommé → la main passe à l'assistant (suite « document »)",
+         res5.get("vision_suite") == "document", res5.get("vision_suite"))
+verifier("la ligne [SUITE] n'est PAS montrée à l'écran",
+         "[SUITE]" not in (res5.get("vision_reponse") or "") and "PVC en lés" in res5["vision_reponse"])
+verifier("l'assistant reçoit le besoin avec l'analyse",
+         "À compléter par l'assistant : le CCTP du lot 12" in res5["vision_analysis"])
+sans = _ModeleDouble(["Un érable du Japon."])
+sys.modules["llm.router"].get_vision_candidates = lambda: [(sans, "m:test")]
+res6 = asyncio.run(agent2.vision_node({"query": "c'est quoi cette plante ?", "attachments": [DEUX[0]]}))
+verifier("sans besoin nommé, la vision garde la main (suite « aucune »)",
+         res6.get("vision_suite") == "aucune" and "À compléter" not in res6["vision_analysis"])
+
 # ══════════════════════════════════════════════════════════════════════════
 # 4. LE RÉGIME RELEVÉ — inchangé
 # ══════════════════════════════════════════════════════════════════════════

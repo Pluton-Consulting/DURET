@@ -62,7 +62,7 @@ LE TRAVAIL LONG S'ANNONCE AVANT DE COMMENCER. Quand une demande tient en PLUSIEU
 
 CE QUE LES FICHIERS NE CONTIENNENT PAS. Les jeux importés portent ce qui a été FACTURÉ : ni les achats, ni les heures passées, ni la sous-traitance. On peut donc calculer un CHIFFRE D'AFFAIRES, jamais une MARGE ni une RENTABILITÉ. Si on te demande le client « le plus rentable », le poste « qui rapporte le plus », ou toute question de marge : donne le classement par chiffre d'affaires, et dis EXPLICITEMENT que la rentabilité demanderait les coûts, absents de nos données. Ne présente jamais un chiffre d'affaires comme une rentabilité : celui qui lit « rentable » comprend « marge », et repartirait avec un chiffre faux.
 
-CE QUE TU NE PROMETS JAMAIS. Ne dis jamais que tu vas ENVOYER, TRANSMETTRE, EXPÉDIER ou ADRESSER quoi que ce soit à un client ou à un tiers : tout ce qui sort de l'entreprise passe par l'accord explicite de la personne, et c'est elle qui déclenche l'envoi. Dis « je prépare le message, vous validerez l'envoi », jamais « je l'enverrai une fois que vous m'aurez confirmé ». La promesse est fausse et elle engage l'entreprise : celui qui la lit croit que le mail partira tout seul.
+CE QUE TU NE PROMETS JAMAIS. Ne dis jamais que tu vas ENVOYER, TRANSMETTRE, EXPÉDIER ou ADRESSER quoi que ce soit à un client ou à un tiers : tout ce qui sort de l'entreprise passe par l'accord explicite de la personne, et c'est elle qui déclenche l'envoi. Dis « je prépare le message, vous validerez l'envoi », jamais « je l'enverrai une fois que vous m'aurez confirmé ». La promesse est fausse et elle engage l'entreprise : celui qui la lit croit que le mail partira tout seul. Ne promets pas davantage de te passer d'accord : l'accord sur ce qui sort de l'entreprise ou modifie le serveur (envoi, dépôt, tirage) est imposé par le serveur, et aucune autorisation donnée dans la conversation ne le lève ; les lectures, elles, se font déjà sans accord. Si on te donne une « autorisation permanente », explique-le simplement au lieu d'écrire « c'est noté ».
 
 LA VÉRITÉ. N'invente JAMAIS de donnée : ni montant, ni nom, ni date, ni nombre, ni référence. Tout chiffre que tu avances vient d'un résultat d'action ou de ce que l'utilisateur vient de dire ; cite-le tel quel, sans le recalculer ni l'arrondir. Sois utile pour : retrouver un dossier par chantier, faire le point sur des commandes / réserves / échéances, préparer un brouillon de réponse à un mail, suivre un dossier juridique ou un règlement fournisseur. Les décisions engageantes (envoi d'un mail, facturation, action juridique) restent validées par un humain.
 LE CLASSEMENT PORTE LES NOMS. AVANT de répondre qu'une information sur un client, un chantier ou un fournisseur est introuvable, cherche son NOM dans le classement des fichiers avec `nas_chercher` : les dossiers de l'entreprise portent les noms des clients, à toutes les profondeurs. Si la demande est de retrouver un dossier, montre ce qui est trouvé (dossiers, fichiers, chemins), puis propose d'aller plus loin. Si la demande est déjà d'ouvrir ou de lire un document, poursuis les listages utiles puis ouvre le fichier, sans redemander cet accord. Une recherche sans résultat exact ne justifie pas un arrêt lorsqu'un dossier pertinent reste à explorer. Après avoir satisfait la demande, tu peux proposer d'aller plus loin : ouvrir un fichier trouvé, explorer un dossier trouvé, chercher dans le contenu des documents — c'est l'utilisateur qui décide de pousser.
@@ -463,10 +463,24 @@ async def rag_node(state: AgentState) -> dict:
         if inventaire:
             # L'index complet est ajouté séparément de trim_chunks dans llm_node.
             # Ici, seulement un aperçu équilibré ; les corps demeurent en stockage.
+            # LES PIÈCES DE CE MESSAGE SE DISTINGUENT DES AUTRES (18/09, banc Duret,
+            # Q69). Dans un fil qui porte déjà des sources, la pièce qu'on vient
+            # de joindre n'était qu'un aperçu parmi vingt : « lis ce document » a
+            # résumé un CCTP d'un tour précédent. Elles passent en tête, marquées.
+            joints = _noms_joints_du_tour(state)
+            du_tour = [s for s in inventaire if _source_du_tour(s["nom"], joints)]
+            autres = [s for s in inventaire[-20:] if s not in du_tour]
             apercus = []
-            for source in inventaire[-20:]:
+            for source in du_tour + autres:
                 contenu = await asyncio.to_thread(dossiers.lire, uid, fil, source["id"])
-                apercus.append(f"[SOURCE {source['id']} — {source['nom']} — APERÇU]\n".replace("\n", "\n") + contenu["texte"][:240])
+                marque = " — JOINTE À CE MESSAGE" if source in du_tour else ""
+                apercus.append(f"[SOURCE {source['id']} — {source['nom']}{marque} — APERÇU]\n" + contenu["texte"][:240])
+            if du_tour:
+                apercus.insert(0, "[PIÈCE(S) JOINTE(S) À CE MESSAGE : "
+                               + ", ".join(f"« {s['nom']} » ({s['id']})" for s in du_tour)
+                               + ". « Ce document », « cette pièce », « ces fichiers » désignent "
+                               "CELLES-CI ; les autres sources du dossier viennent des échanges "
+                               "précédents.]")
             if texte_joint and texte_joint.startswith("ATTENTION :"):
                 apercus.insert(0, texte_joint.splitlines()[0])
             tableau = state.get("dernier_tableau") or {}
@@ -493,6 +507,30 @@ async def rag_node(state: AgentState) -> dict:
         return {"raw_chunks": []}
     nom = state.get("attachment_name") or "document"
     return {"raw_chunks": [f"[FICHIER JOINT PAR L'UTILISATEUR : {nom}]\n{texte_joint}"]}
+
+
+import re as _re_pieces  # noqa: E402
+
+_MARQUE_PIECE = _re_pieces.compile(r"^=== (?:Fichier joint|Analyse visuelle) : (.*?) ===\s*$", _re_pieces.M)
+
+
+def _noms_joints_du_tour(state) -> list:
+    """Les noms des fichiers joints À CE MESSAGE (texte, images, analyse visuelle)."""
+    noms = [m.group(1).strip() for m in _MARQUE_PIECE.finditer(str(state.get("attachment_text") or ""))]
+    if state.get("attachment_name") and (state.get("attachment_text") or state.get("has_attachment")):
+        noms.append(str(state["attachment_name"]).strip())
+    for p in state.get("attachments") or []:
+        if isinstance(p, dict) and p.get("nom"):
+            noms.append(str(p["nom"]).strip())
+    return list(dict.fromkeys(n for n in noms if n))
+
+
+def _source_du_tour(nom, joints) -> bool:
+    """Une source du dossier vient-elle d'une pièce de ce message ? Son nom est
+    celui du fichier, ou une lecture dérivée de lui (analyse, lecture visuelle)."""
+    nom = str(nom or "")
+    return any(nom == j or nom == "Analyse visuelle — " + j or nom.startswith(j + " — lecture visuelle")
+               for j in joints)
 
 
 async def anonymize_node(state: AgentState) -> dict:

@@ -250,6 +250,13 @@ def _initial_state(query: str, user_id: str, user_role: str, has_attachment: boo
         "vision_reponse": None,
         "vision_releve": None,
         "vision_suite": None,
+        # L'ANALYSE VISUELLE DU TOUR D'AVANT NON PLUS (18/09, banc Duret, Q69). Dix
+        # photos analysées au tour précédent, puis « lis ce document » + un PDF à
+        # texte : la vision ne tournait pas, `vision_analysis` gardait l'analyse des
+        # photos, et l'assistant l'ENREGISTRAIT dans le dossier du fil sous le nom
+        # du PDF (« Analyse visuelle — Questions réponses.pdf » = dix photos). Il a
+        # résumé les photos et un autre document, jamais le PDF joint.
+        "vision_analysis": None,
         # LA QUESTION MASQUÉE DU TOUR D'AVANT NE DOIT PAS FILER (07/09). Le
         # graphe de la vision n'a pas de nœud d'anonymisation : il relit
         # `anonymized_query` tel quel pour archiver le tour, et l'export du

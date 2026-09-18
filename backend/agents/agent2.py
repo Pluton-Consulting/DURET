@@ -172,6 +172,12 @@ REPONSE_PROMPT = (
     "produire un document, métrer et chiffrer), ne dis pas que tu ne peux pas : "
     "décris en deux à cinq phrases ce que l'image apporte à cette suite, l'assistant "
     "s'en chargera.\n"
+    "Si répondre juste exige une pièce ou une donnée que tu n'as PAS sous les yeux (un "
+    "CCTP, un DPGF, un devis, un historique de chantier, un mail, un fichier du serveur), "
+    "ne dis pas qu'elle manque ni qu'elle n'a pas été fournie : réponds sur ce que montre "
+    "l'image, puis écris en DERNIÈRE ligne [SUITE] suivi de ce qu'il faut aller chercher "
+    "(ex. « [SUITE] le CCTP du lot 12 du chantier concerné »). Cette ligne ne sera pas "
+    "montrée : l'assistant ira chercher la pièce et complétera ta réponse.\n"
     "Si tu as besoin d'un relevé détaillé pour répondre juste, écris-le D'ABORD entre "
     "les balises [RELEVE] et [/RELEVE] : il sera conservé mais pas montré. Puis, "
     "après la balise fermante, ta réponse.\n"
@@ -225,6 +231,28 @@ def _separer_releve(texte) -> tuple:
     if not reponse:
         return "", releve
     return releve, reponse
+
+
+# LA VISION DIT CE QUI LUI MANQUE (18/09, banc de tests Duret, Q67). « C'est quoi
+# ce revêtement et est-il conforme au CCTP du lot 12 ? » + une photo → « impossible
+# à statuer, le CCTP n'a pas été fourni ». Le CCTP était sur le serveur ; la vision
+# ne peut pas l'y chercher, et aucun mot de la demande ne passait la main à
+# l'assistant. C'est le MODÈLE qui sait ce qui lui manque pour répondre : il le
+# nomme sur une ligne `[SUITE] …`, retirée de l'écran, et le tour passe à
+# l'assistant, qui cherche la pièce et complète la réponse.
+_SUITE_RE = re.compile(r"^[ \t]*\[SUITE\][ \t]*:?[ \t]*(.*)$", re.M | re.I)
+
+
+def _separer_suite(texte) -> tuple:
+    """(ce qu'il faut aller chercher, réponse montrée). Sans ligne `[SUITE]` :
+    ("", texte). Plusieurs lignes : leurs besoins sont joints."""
+    texte = texte or ""
+    besoins = [b.strip() for b in _SUITE_RE.findall(texte)]
+    if not besoins:
+        return "", texte.strip()
+    reste = _SUITE_RE.sub("", texte).strip()
+    besoin = " ; ".join(b for b in besoins if b) or "une pièce du serveur"
+    return besoin, reste
 
 
 # Taille max d'image envoyée au modèle vision (coût / limites API).
@@ -785,6 +813,9 @@ async def _repondre(pieces: list, illisibles: list, demande: str, candidats, con
         }
 
     releve, reponse = _separer_releve(lu["analyse"])
+    besoin, reponse = _separer_suite(reponse)
+    if not reponse:
+        reponse = "Je complète avec les pièces du serveur."
     if illisibles:
         reponse += ("\n\n_Fichier(s) non lu(s) : "
                     + ", ".join(f"{p.get('nom')} ({p.get('erreur', 'illisible')})"
@@ -793,10 +824,17 @@ async def _repondre(pieces: list, illisibles: list, demande: str, candidats, con
     # la réponse ET le relevé — l'écran, lui, ne reçoit que la réponse.
     complet = reponse if not releve else (
         f"{reponse}\n\n[Relevé technique fait pendant ce tour, non montré à l'écran]\n{releve}")
+    suite = suite_du_tour(demande, _retouche_disponible())
+    if besoin:
+        complet += (f"\n\n[À compléter par l'assistant : {besoin}. Va chercher cette pièce "
+                    "(serveur, documents, mails) avec tes actions, puis réponds à la demande "
+                    "en entier en t'appuyant sur ce que l'image montre ci-dessus.]")
+        if suite == SUITE_AUCUNE:
+            suite = SUITE_DOCUMENT
     return {
         "vision_analysis": complet,
         "vision_mode": "reponse",
-        "vision_suite": suite_du_tour(demande, _retouche_disponible()),
+        "vision_suite": suite,
         "vision_reponse": reponse,
         "vision_releve": releve or None,
         "llm_response": reponse,

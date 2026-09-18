@@ -59,7 +59,7 @@ async def _imposer_modele(uid,fil,demande,ids,trame_proposee=None):
     """(id du modèle imposé ou None, ids éventuellement complétés par la trame)."""
     import unicodedata
     plat=lambda s:''.join(c for c in unicodedata.normalize('NFD',str(s or '').casefold()) if unicodedata.category(c)!='Mn')
-    courante=demande.split('DEMANDES UTILISATEUR ANTÉRIEURES')[0]
+    courante=_demande_courante(demande)
     try:
         from database.connection import get_db
         async with get_db() as c:
@@ -157,6 +157,15 @@ def _normaliser_plan(plan,ids,modele,structure,sources_word=None):
     return plan
 
 _MOIS=('janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre')
+_MARQUES_HORS_DEMANDE=('DEMANDES UTILISATEUR ANTÉRIEURES','PRÉCISIONS DE L’ASSISTANT')
+
+def _demande_courante(demande):
+    """Les mots de la PERSONNE seulement : ni l'historique, ni la lecture qu'en a faite l'assistant.
+    Une limite de pages, un dossier cité, « tout le dossier » se lisent là et nulle part ailleurs."""
+    texte=str(demande or '')
+    for marque in _MARQUES_HORS_DEMANDE:texte=texte.split(marque)[0]
+    return texte
+
 def _date_du_jour():
     from datetime import datetime
     try:
@@ -194,10 +203,18 @@ def _repartir_les_mots(plan,structure):
     # que la trame écrit en 1 400 mots). Une rubrique remplacée ne descend pas sous la longueur
     # que l'entreprise lui donne dans sa trame (bornée) ; le dépassement de pages est DIT au rendu.
     mots_modele={f['index']:int(f.get('mots') or 0) for f in (structure or {}).get('sections',[])}
+    planchers={id(s):(max(300,min(1200,mots_modele.get(s.get('remplace_modele'),0))) if type(s.get('remplace_modele')) is int else 250) for s in redigees}
+    # …SAUF DEVANT LA LIMITE QUE LA PERSONNE A FIXÉE (18/09, banc Duret, Q20b) : cette fonction ne
+    # sert qu'à elle, et des planchers de 1 200 mots rendaient « 8 pages maximum » intenable (19 p
+    # livrées). Les planchers se réduisent ensemble pour tenir dans les pages restantes, jamais
+    # sous 150 mots — une rubrique se rédige. Le dépassement qui reste est DIT au rendu.
+    somme=sum(planchers.values())
+    if somme>total:
+        facteur=total/somme if somme else 0
+        planchers={k:max(150,int(v*facteur)) for k,v in planchers.items()}
     for s in redigees:
         part=total*max(1,int(s.get('mots_cibles') or 300))/voulu if voulu else 0
-        plancher=max(300,min(1200,mots_modele.get(s.get('remplace_modele'),0))) if type(s.get('remplace_modele')) is int else 250
-        s['mots_cibles']=int(max(plancher,min(1500,part)))
+        s['mots_cibles']=int(max(planchers[id(s)],min(1500,part)))
     plan['pages_modele_reprises']=round(prises,1)
 
 def _plat(t):
@@ -291,7 +308,18 @@ def _plan_suit_modele(plan,structure,essai):
     # …et seulement quand LA PERSONNE a fixé cette limite dans sa demande (décision de Noa, 17/09 :
     # « un mémoire peut être très long s'il est intéressant »). Une limite lue dans le règlement de
     # consultation est une INFORMATION rendue avec le document ; elle ne retire jamais une rubrique.
-    limite=plan.get('pages_max') if essai.get('limite_personne') else None
+    limite=essai.get('limite_personne')
+    if type(limite) is not int:limite=plan.get('pages_max') if limite else None
+    if type(limite) is int and limite>0:
+        # AVANT LES REPRISES : la limite de la personne doit pouvoir tenir même avec une demi-page
+        # par rubrique rédigée (18/09, Q20b : 9 rubriques rédigées + garde de 4 pages pour 8 → 19 p).
+        poids_={f['index']:float(f.get('pages') or 1) for f in structure['sections']}
+        socle=float(structure.get('pages_garde',2))+sum(poids_.get(s['reprise_modele'],1.) for s in reprises)
+        redigees=[s for s in sections if type(s.get('reprise_modele')) is not int]
+        if socle+.5*len(redigees)>limite:
+            raise ValueError('Limite de '+str(limite)+' pages fixée par la personne : la garde et les rubriques reprises pèsent '+str(round(socle,1))
+                +' p, et '+str(len(redigees))+' rubriques rédigées demandent au moins une demi-page chacune — '+str(round(socle+.5*len(redigees),1))
+                +' p. Retire des rubriques (rubriques_modele_retirees, raison courte : la personne veut savoir ce qui est retiré) jusqu’à tenir '+str(limite)+' pages ; garde celles qui portent la note technique et les éléments exigés.')
     if type(limite) is int and limite>0 and reprises:
         poids={f['index']:float(f.get('pages') or 1) for f in structure['sections']}
         garde=float(structure.get('pages_garde',2))
@@ -428,7 +456,7 @@ _DOSSIER_CITE=re.compile(r'[«"“]\s*([^«»"“”]{8,160}?)\s*[»"”]')
 def dossier_cite(demande):
     """Le nom de dossier que la demande met entre guillemets, ou None. Seule la
     demande COURANTE compte : l'historique ne rouvre pas un dossier d'hier."""
-    courante=str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0]
+    courante=_demande_courante(demande)
     m=_DOSSIER_CITE.search(courante)
     return m.group(1).strip() if m else None
 
@@ -656,7 +684,7 @@ async def dossier_du_travail(uid,fil,data,user,demande,usage='document'):
         return {'dossier':nom,'ajoutes':[],'ignores':[],'introuvable':' '.join(str(e).split())[:400]}
 
 async def _charger_et_retenir(uid,fil,nom,user,lots,usage,demande,ancien,cle,nommes=True):
-    try:r=await charger_dossier(uid,fil,nom,user,lots,usage,bool(_TOUT_LE_DOSSIER.search(str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0])),nommes)
+    try:r=await charger_dossier(uid,fil,nom,user,lots,usage,bool(_TOUT_LE_DOSSIER.search(_demande_courante(demande))),nommes)
     except Exception:
         if ancien:return ancien
         raise
@@ -792,7 +820,7 @@ def limite_de_pages(demande):
     """La limite de pages que la PERSONNE fixe, dans l'ordre où elle l'écrit (18/09, banc Duret) :
     « refais le mémoire en 8 pages maximum » n'était pas lu — seul « maximum 8 pages » l'était — et le
     mémoire est sorti à 23 pages, la limite attribuée « à la consultation ». Rend l'entier ou None."""
-    texte=str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0]
+    texte=_demande_courante(demande)
     for motif in _LIMITE_PAGES:
         m=motif.search(texte)
         if m and 1<=int(m[1])<=2000:return int(m[1])
@@ -840,9 +868,18 @@ async def composer_immediat(data,user):
     demande=re.sub(r'\n[ \t]*\n(?:[ \t]*\n)+', '\n\n', str(data.get('_demande_utilisateur') or data.get('demande') or '')).strip()
     if not demande:raise ValueError('Demande complète obligatoire.')
     if data.get('format','docx') not in ('docx','pdf'):raise ValueError('Format de rédaction attendu : docx ou pdf.')
+    # LA LECTURE DE L'ASSISTANT ACCOMPAGNE LES MOTS DE LA PERSONNE (18/09, Q20b). « Refais ce mémoire
+    # en 8 pages : dis-moi ce que tu retires » — l'assistant avait relu le mémoire et transmis la liste
+    # des coupes ; le moteur ne gardait que la phrase de la personne, choisissait d'autres coupes, et le
+    # chat annonçait ce que le document ne ferait pas. Elle vient APRÈS la demande, qui prime.
+    precisions=' '.join(str(data.get('demande') or '').split())
+    if data.get('_demande_utilisateur') and precisions and precisions.casefold()!=' '.join(demande.split()).casefold():
+        precisions='\n\nPRÉCISIONS DE L’ASSISTANT (sa lecture de la demande ; à suivre si elles ne contredisent pas la demande de la personne) :\n'+str(data.get('demande')).strip()[:4000]
+    else:precisions=''
     if data.get('_historique_utilisateur'):
         historique='\n\n'.join(data['_historique_utilisateur'])
-        demande='DEMANDE COURANTE (prioritaire) :\n'+demande+'\n\nDEMANDES UTILISATEUR ANTÉRIEURES (contexte, appliquer seulement ce qui reste pertinent) :\n'+historique
+        demande='DEMANDE COURANTE (prioritaire) :\n'+demande+precisions+'\n\nDEMANDES UTILISATEUR ANTÉRIEURES (contexte, appliquer seulement ce qui reste pertinent) :\n'+historique
+    elif precisions:demande='DEMANDE COURANTE (prioritaire) :\n'+demande+precisions
     if data.get('_travail',{}).get('contraintes'):
         demande+='\nCONTRAINTES EXPLICITES ACTIVES :\n'+'\n'.join(c['citation'] for c in data['_travail']['contraintes'] if c.get('active',True))
     tache=data.get('tache')
@@ -904,7 +941,7 @@ async def composer_immediat(data,user):
                 except Exception as e:
                     logger.warning('Structure du modèle illisible (%s) : présentation seule reprise',type(e).__name__)
             _limite_dite=limite_de_pages(str(contrat.get('demande') or demande))
-            essai_plan={'n':0,'limite_personne':bool(_limite_dite)}
+            essai_plan={'n':0,'limite_personne':_limite_dite}
             def _verifier_le_plan(r):
                 # LE COMPTE DES ESSAIS AVANCE QUOI QU'IL ARRIVE : `_json` n'en accorde que deux. Un refus
                 # « de fond » (trame, couverture, limite) ne vaut qu'au PREMIER ; s'il tombait aussi au
@@ -925,9 +962,14 @@ async def composer_immediat(data,user):
                     'ou une entrée de "rubriques_modele_retirees": {"index":"raison"}. '
                     'N’AJOUTE une rubrique (sans index, avec "apres_modele": index pour la placer) QUE si la demande ou le règlement de consultation l’exige et qu’aucune rubrique du modèle ne la couvre '
                     '(ex. la réponse aux critères de jugement) ; une présentation du projet se place AVANT les rubriques de chantier (apres_modele = l’index de la rubrique qui les précède), la réponse aux critères en fin de document ; jamais une rubrique dont le sujet est déjà celui d’une rubrique reprise. Une rubrique ajoutée de réponse aux critères se RÉDIGE vraiment : ce que l’entreprise apporte sur chaque critère, avec renvoi aux rubriques. '
-                    'Chaque rubrique du modèle porte son poids en "pages". La longueur suit l’INTÉRÊT du contenu : ne rogne aucune rubrique pour tenir un nombre de pages. '
+                    +(('Chaque rubrique du modèle porte son poids en "pages". LA PERSONNE A FIXÉ ELLE-MÊME UNE LIMITE DE '+str(_limite_dite)+' PAGES : le document doit la tenir. '
+                    'La garde et chaque rubrique reprise comptent leur poids ; les rubriques rédigées se partagent ce qui reste, à raison d’environ 300 mots par page. '
+                    'Garde ce qui porte la note technique et les éléments exigés par la consultation ; retire le reste en le passant dans rubriques_modele_retirees, avec une raison qui dise clairement ce qui est retiré ou raccourci — la personne la lira ; '
+                    'donne aux rubriques rédigées des mots_cibles qui tiennent dans ce qui reste. ')
+                    if _limite_dite else
+                    ('Chaque rubrique du modèle porte son poids en "pages". La longueur suit l’INTÉRÊT du contenu : ne rogne aucune rubrique pour tenir un nombre de pages. '
                     'Si la consultation annonce une limite de pages, note-la dans pages_max (elle sera SIGNALÉE avec le document) mais ne retire pour elle AUCUNE rubrique d’entreprise : seule la personne en décide. '
-                    'rubriques_modele_retirees ne sert qu’à une rubrique sans objet pour ce projet (ex. un détail de l’ancien chantier absorbé ailleurs). '
+                    'rubriques_modele_retirees ne sert qu’à une rubrique sans objet pour ce projet (ex. un détail de l’ancien chantier absorbé ailleurs). '))+
                     'La date de la garde est la date du jour (date_du_jour), jamais "[À CONFIRMER]". '
                     if structure_modele else '')+'Établis le plan du LIVRABLE demandé, applicable à tout type de document. Reprends exactement les rubriques imposées par la demande ou le RC. '
                     'Un exemple sert de présentation et de faits stables d’entreprise ; ne réemploie pas ses anciens faits de chantier. '

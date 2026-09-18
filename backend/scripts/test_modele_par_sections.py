@@ -401,8 +401,23 @@ verifier("les pages qui restent après la garde et les reprises se partagent ent
          bon["pages_modele_reprises"] == 9.0 and mots[_TITRES[4]] == 1500 and mots[_TITRES[3]] == 660 and all(v >= 250 for v in mots.values()), str(mots))
 serre = {"pages_max": 6, "sections": [{"titre": "a", "remplace_modele": 4, "mots_cibles": 200}, {"titre": "c", "mots_cibles": 100}] + [{"titre": "x", "reprise_modele": i} for i in (0, 1)]}
 _repartir_les_mots(serre, {"pages_garde": 4, "sections": [{"index": i, "titre": t, "pages": 1.0, "mots": 1409 if i == 4 else 100} for i, t in enumerate(_TITRES)]})
-verifier("limite déjà mangée par les reprises : la rubrique de chantier garde la longueur que la trame lui donne (bornée), l'ajout 250 mots",
-         serre["sections"][0]["mots_cibles"] == 1200 and serre["sections"][1]["mots_cibles"] == 250, str(serre["sections"][:2]))
+# RÈGLE CHANGÉE LE 18/09 (banc Duret, Q20 « refais le mémoire en 8 pages maximum » → 19 pages) : cette
+# répartition ne sert QU'À la limite fixée par la PERSONNE, et les planchers de la trame la rendaient
+# intenable. Ils cèdent ensemble devant elle, jamais sous 150 mots.
+verifier("limite de la personne déjà mangée par les reprises : les rubriques rédigées descendent au minimum (150 mots), pas au plancher de la trame",
+         serre["sections"][0]["mots_cibles"] == 150 and serre["sections"][1]["mots_cibles"] == 150, str(serre["sections"][:2]))
+large = {"pages_max": 12, "sections": [{"titre": "a", "remplace_modele": 4, "mots_cibles": 1400}, {"titre": "c", "mots_cibles": 300}] + [{"titre": "x", "reprise_modele": i} for i in (0, 1)]}
+_repartir_les_mots(large, {"pages_garde": 4, "sections": [{"index": i, "titre": t, "pages": 1.0, "mots": 1409 if i == 4 else 100} for i, t in enumerate(_TITRES)]})
+verifier("…et quand la place suffit, la rubrique de chantier garde sa longueur de trame",
+         large["sections"][0]["mots_cibles"] >= 1200, str(large["sections"][:2]))
+struct_q20 = {"pages_garde": 4, "sections": [{"index": i, "titre": t, "pages": 1.0, "mots": 300} for i, t in enumerate(_TITRES)]}
+neuf = _normaliser_plan({"sections": [{"titre": "x", "reprise_modele": 0, "sources": []}] + [{"titre": "r" + str(i), "remplace_modele": i, "sources": []} for i in range(1, len(_TITRES))]}, [], None, struct_q20)
+try:
+    _plan_suit_modele(neuf, struct_q20, {"n": 0, "limite_personne": 7}); refus = ""
+except ValueError as e:
+    refus = str(e)
+verifier("limite de la PERSONNE lue dans sa demande (pas dans le plan du modèle) : trop de rubriques rédigées pour 7 pages (garde 4 + reprise 1 + 6 × ½) → refus chiffré au premier essai",
+         "Limite de 7 pages fixée par la personne" in refus and "rubriques_modele_retirees" in refus, refus[:240])
 _dater_la_garde(bon)
 verifier("la date de la garde est celle du jour, jamais « à confirmer »", bon["remplacements_modele"]["Date : le 24/07/2026"] == "Date : le " + _date_du_jour()
          and bon["remplacements_modele"]["Projet : ancien"] == "Projet : neuf", str(bon["remplacements_modele"]))

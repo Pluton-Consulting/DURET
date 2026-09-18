@@ -214,6 +214,16 @@ class Recette(unittest.TestCase):
     self.assertNotIn('tache',donnees)
     src=(BACKEND/'skills/documents_dossier.py').read_text(encoding='utf-8')
     self.assertIn('reprise_legitime',src)
+ def test_precisions_de_l_assistant_ne_fixent_ni_limite_ni_dossier(self):
+    # 18/09, Q20b : la lecture de l'assistant accompagne la demande, mais la limite de pages et le
+    # dossier cité ne se lisent que dans les mots de la PERSONNE.
+    d=documents_dossier
+    compose='DEMANDE COURANTE (prioritaire) :\nRefais-le plus court\n\nPRÉCISIONS DE L’ASSISTANT (sa lecture) :\nCondense à 8 pages maximum le dossier « AFF 079-26 construction 29 lgts »'
+    self.assertIsNone(d.limite_de_pages(compose))
+    self.assertIsNone(d.dossier_cite(compose))
+    self.assertEqual(d.limite_de_pages('DEMANDE COURANTE (prioritaire) :\nRefais ce mémoire en 8 pages maximum\n\nPRÉCISIONS DE L’ASSISTANT (x) :\n12 pages maximum'),8)
+    src=(BACKEND/'skills/documents_dossier.py').read_text(encoding='utf-8')
+    self.assertIn("PRÉCISIONS DE L’ASSISTANT (sa lecture de la demande",src)
  def test_recherche_nas_noms_et_confirmation_superflue(self):
     if (BACKEND/'nas/acces.py').exists():
      ns=fonctions(BACKEND/'nas/acces.py',{'_nom_correspond','_sans_accent_nas','_mot_proche'})

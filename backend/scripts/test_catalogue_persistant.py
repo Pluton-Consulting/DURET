@@ -43,6 +43,14 @@ src = (BACKEND / "nas" / "acces.py").read_text(encoding="utf-8")
 verifier("un relevé PARTIEL ne remplace pas un catalogue complet déjà en mémoire", "if complet or len(entrees) >= len(_CATALOGUE[\"entrees\"]) or not _CATALOGUE.get(\"complet\"):" in src)
 verifier("la tâche de fond relit le disque avant de balayer, et attend si le catalogue est complet et récent", "restaurer_catalogue()\n    # Un catalogue complet" in src and "await asyncio.sleep(max(60.0, CATALOGUE_DUREE_COMPLET_S" in src)
 verifier("`catalogue_attendu` (synchronisations) accepte un catalogue restauré", '("pret", "partiel", "restaure")' in src and src.count('("pret", "partiel", "restaure")') >= 2)
+# 18/09 : un catalogue construit par une règle plus ancienne (sans version) est servi, mais tenu pour partiel.
+import json as _json_v
+_json_v.dump({"construit_le": time.time(), "complet": True, "entrees": [{"nom": "x", "chemin": "/home/Drive/x", "dossier": True}]},
+             open(acces._chemin_catalogue(), "w", encoding="utf-8"))
+acces._CATALOGUE.update({"entrees": [], "complet": False, "etat": "vide"})
+verifier("un catalogue d'une règle antérieure (sans version) est relu mais tenu pour PARTIEL → reconstruit",
+         acces.restaurer_catalogue() and acces._CATALOGUE["complet"] is False and acces.CATALOGUE_VERSION >= 2)
+acces._CATALOGUE.update({"entrees": [], "complet": False, "etat": "vide"})
 # fichier illisible : pas de plantage
 open(acces._chemin_catalogue(), "w").write("{pas du json")
 acces._CATALOGUE.update({"etat": "vide", "entrees": [], "construit_le": 0.0, "complet": False})
@@ -70,12 +78,41 @@ verifier("le relevé précédent donne la date de chaque dossier et ses enfants"
 ARBRE["/home/Drive"][1]["modifie"] = 201
 ARBRE["/home/Drive/B"].append({"nom": "b2.pdf", "chemin": "/home/Drive/B/b2.pdf", "dossier": False, "modifie": 8, "octets": 1})
 LISTES.clear(); acces._CACHE_LISTAGE.clear(); progres = {}
+_prof = acces.PROFONDEUR_TOUJOURS_RELUE
+acces.PROFONDEUR_TOUJOURS_RELUE = 0          # le MÉCANISME de reprise, sur un arbre de deux niveaux
 entrees2, complet2 = asyncio.run(acces._balayer(None, "", "", ["/home/Drive"], lambda e: True, delai_s=60, dossiers_max=1000, profondeur=10, progres=progres, connu=connu))
+acces.PROFONDEUR_TOUJOURS_RELUE = _prof
 verifier("second relevé : A et C repris sans listage, B relisté, le nouveau fichier vu",
          sorted(LISTES) == ["/home/Drive", "/home/Drive/B"] and len(entrees2) == 7 and complet2 and progres.get("reutilises") == 2, str((sorted(LISTES), len(entrees2), progres.get("reutilises"))))
 verifier("la synchronisation demande un relevé COMPLET (les dates des fichiers ne se voient pas dans celle d'un dossier)",
          "relire_tout=True" in (BACKEND / "ingestion" / "connectors" / "synology.py").read_text(encoding="utf-8")
          and "def construire_catalogue(relire_tout: bool = False)" in src.replace("async ", ""))
+# 18/09 (test réel) : « AFF 079-26 … la test de buch » rangée dans « - AFF 2026 » ; la catégorie au-dessus
+# (« ETUDES TERMINEE ») n'avait pas bougé, donc reprise avec la date d'ALORS de « - AFF 2026 », reprise à son
+# tour : l'affaire déplacée avait disparu du catalogue. Les premiers niveaux se relisent toujours.
+ARBRE.clear(); ARBRE.update({
+    "/home/Drive": [{"nom": "03-AO", "chemin": "/home/Drive/03-AO", "dossier": True, "modifie": 10}],
+    "/home/Drive/03-AO": [{"nom": "EN COURS", "chemin": "/home/Drive/03-AO/EN COURS", "dossier": True, "modifie": 20},
+                          {"nom": "TERMINEE", "chemin": "/home/Drive/03-AO/TERMINEE", "dossier": True, "modifie": 30}],
+    "/home/Drive/03-AO/EN COURS": [{"nom": "29 lgts la test de buch", "chemin": "/home/Drive/03-AO/EN COURS/29 lgts la test de buch", "dossier": True, "modifie": 40}],
+    "/home/Drive/03-AO/EN COURS/29 lgts la test de buch": [{"nom": "RC.pdf", "chemin": "/home/Drive/03-AO/EN COURS/29 lgts la test de buch/RC.pdf", "dossier": False, "modifie": 1}],
+    "/home/Drive/03-AO/TERMINEE": [{"nom": "- AFF 2026", "chemin": "/home/Drive/03-AO/TERMINEE/- AFF 2026", "dossier": True, "modifie": 50}],
+    "/home/Drive/03-AO/TERMINEE/- AFF 2026": []})
+LISTES.clear(); acces._CACHE_LISTAGE.clear()
+e1, _ = asyncio.run(acces._balayer(None, "", "", ["/home/Drive"], lambda e: True, delai_s=60, dossiers_max=1000, profondeur=10))
+acces._CATALOGUE.update({"entrees": e1, "complet": True, "etat": "pret"})
+connu2 = acces._releve_precedent()
+# le déplacement : « EN COURS » et « - AFF 2026 » changent de date, « TERMINEE » et « 03-AO » non
+ARBRE["/home/Drive/03-AO"][0]["modifie"] = 21
+ARBRE["/home/Drive/03-AO/EN COURS"] = []
+ARBRE["/home/Drive/03-AO/TERMINEE"][0]["modifie"] = 51
+ARBRE["/home/Drive/03-AO/TERMINEE/- AFF 2026"] = [{"nom": "AFF 079-26 29 lgts la test de buch", "chemin": "/home/Drive/03-AO/TERMINEE/- AFF 2026/AFF 079-26 29 lgts la test de buch", "dossier": True, "modifie": 60}]
+ARBRE["/home/Drive/03-AO/TERMINEE/- AFF 2026/AFF 079-26 29 lgts la test de buch"] = [{"nom": "RC.pdf", "chemin": "/home/Drive/03-AO/TERMINEE/- AFF 2026/AFF 079-26 29 lgts la test de buch/RC.pdf", "dossier": False, "modifie": 1}]
+LISTES.clear(); acces._CACHE_LISTAGE.clear()
+e2, _ = asyncio.run(acces._balayer(None, "", "", ["/home/Drive"], lambda e: True, delai_s=60, dossiers_max=1000, profondeur=10, connu=connu2))
+verifier("une affaire DÉPLACÉE sous une catégorie inchangée entre au catalogue (les premiers niveaux se relisent)",
+         any("AFF 079-26" in (e.get("chemin") or "") for e in e2) and not any("/EN COURS/29 lgts" in (e.get("chemin") or "") for e in e2),
+         [e.get("chemin") for e in e2])
 verifier("l'avancement dit les dossiers repris", "dossiers repris du relevé précédent" in acces.decrire_progression({"debut": 0.0, "delai_s": 60, "reutilises": 12}))
 
 print("— Les fichiers les plus récents, d'après le catalogue")

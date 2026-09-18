@@ -638,6 +638,22 @@ BALAYAGE_DOSSIERS_MAX = 3000
 BALAYAGE_DELAI_S = 15
 
 
+# Les niveaux du classement où les affaires CHANGENT DE PLACE (catégorie, sous-catégorie, année) :
+# toujours relus par le relevé incrémental, pour que la date de chaque affaire soit fraîche.
+PROFONDEUR_TOUJOURS_RELUE = 3
+
+
+def _profondeur_relative(chemin: str, racines) -> int:
+    """Nombre de niveaux sous la racine ouverte qui porte ce chemin (0 = la racine elle-même)."""
+    chemin = str(chemin or "").rstrip("/")
+    for r in sorted((str(x).rstrip("/") for x in racines or [] if x), key=len, reverse=True):
+        if chemin == r:
+            return 0
+        if chemin.startswith(r + "/"):
+            return chemin[len(r):].count("/")
+    return 99
+
+
 async def _balayer(client, base, sid, racines: list[str],
                    correspond, delai_s: float = BALAYAGE_DELAI_S,
                    dossiers_max: int = BALAYAGE_DOSSIERS_MAX,
@@ -689,8 +705,14 @@ async def _balayer(client, base, sid, racines: list[str],
         chemin, date_courante = couple
         # LE DOSSIER N'A PAS CHANGÉ DEPUIS LE RELEVÉ PRÉCÉDENT : ses entrées d'alors valent, sans
         # listage (la date vient du listage du PARENT, faite à l'instant — pas de l'ancien relevé).
+        # …SAUF DANS LES PREMIERS NIVEAUX DU CLASSEMENT (18/09, test réel) : un dossier repris rend
+        # ses sous-dossiers avec leurs dates d'ALORS, qui décidaient à leur tour de les reprendre —
+        # « AFF 079-26 … la test de buch », rangée dans « - AFF 2026 » le jour de la remise, avait
+        # disparu du catalogue (son ancien parent relu, le nouveau jamais). Les catégories, années
+        # et affaires (profondeur ≤ PROFONDEUR_TOUJOURS_RELUE) se relisent toujours : ~800 listages.
         if (date_courante and chemin in enfants_connus and dates_connues.get(chemin)
-                and int(date_courante) == int(dates_connues[chemin])):
+                and int(date_courante) == int(dates_connues[chemin])
+                and _profondeur_relative(chemin, racines) > PROFONDEUR_TOUJOURS_RELUE):
             if progres is not None:
                 progres["reutilises"] = progres.get("reutilises", 0) + 1
             return enfants_connus[chemin]
@@ -806,6 +828,11 @@ def _chemin_catalogue():
     return os.path.join(base, "cache", CATALOGUE_FICHIER)
 
 
+# Version de la RÈGLE de construction du catalogue : l'augmenter fait reconstruire un catalogue écrit
+# par une règle antérieure (2 : relecture obligatoire des premiers niveaux, 18/09).
+CATALOGUE_VERSION = 2
+
+
 def _ecrire_catalogue(entrees: list, complet: bool) -> None:
     """Le catalogue sur le disque, écrit d'un bloc (fichier temporaire puis renommage)."""
     import json as _json, os, time as _t
@@ -814,7 +841,8 @@ def _ecrire_catalogue(entrees: list, complet: bool) -> None:
         os.makedirs(os.path.dirname(chemin), exist_ok=True)
         tmp = f"{chemin}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            _json.dump({"construit_le": _t.time(), "complet": bool(complet), "entrees": entrees}, f, ensure_ascii=False)
+            _json.dump({"construit_le": _t.time(), "complet": bool(complet), "version": CATALOGUE_VERSION,
+                        "entrees": entrees}, f, ensure_ascii=False)
         os.replace(tmp, chemin)
     except Exception as e:  # noqa: BLE001 — un disque plein ne casse pas la recherche
         logger.warning("NAS : catalogue non écrit sur le disque : %s", str(e)[:120])
@@ -835,10 +863,15 @@ def restaurer_catalogue() -> bool:
         if not isinstance(entrees, list) or not entrees:
             return False
         age = max(0.0, _t.time() - float(data.get("construit_le") or 0))
-        _CATALOGUE.update({"etat": "restaure", "entrees": entrees, "complet": bool(data.get("complet")),
+        # UN CATALOGUE D'UNE RÈGLE PLUS ANCIENNE SE REFAIT (18/09) : celui construit avant la relecture
+        # obligatoire des premiers niveaux peut avoir perdu des affaires déplacées. Servi tout de suite,
+        # mais tenu pour PARTIEL : la tâche de fond le reconstruit dans l'heure.
+        a_jour = int(data.get("version") or 0) >= CATALOGUE_VERSION
+        _CATALOGUE.update({"etat": "restaure", "entrees": entrees, "complet": bool(data.get("complet")) and a_jour,
                            "construit_le": _t.monotonic() - age, "age_s": age})
         logger.info("NAS : catalogue relu depuis le disque — %d entrées, %s, âgé de %.0f min",
-                    len(entrees), "complet" if data.get("complet") else "partiel", age / 60)
+                    len(entrees), "complet" if _CATALOGUE["complet"] else
+                    ("partiel" if a_jour or not data.get("complet") else "d'une règle ancienne, à refaire"), age / 60)
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("NAS : catalogue du disque illisible : %s", str(e)[:120])

@@ -49,7 +49,11 @@ for p in ["Voici la liste des devis du mois :",          # un tableau à l'écra
           "Voulez-vous que je crée le document ?",
           "Il est disponible mardi pour le rendez-vous.",  # une personne, pas un fichier
           "Je l'ai fait suivre à la comptabilité.",
-          "Le devis de M. Martin est de 3 200 euros."]:
+          "Le devis de M. Martin est de 3 200 euros.",
+          # 18/09 (Q20) : la NÉGATION d'une livraison, dans l'annonce honnête d'un travail lancé.
+          "Aucun document n'est disponible pour l'instant : je ne peux pas confirmer la pagination.",
+          "Le fichier n'est pas encore prêt.",
+          "Aucun fichier n'a été créé à ce stade."]:
     verifier(f"« {p[:60]} »", not annonce.pretend_avoir_livre(p))
 
 print("\n5. La demande qui réclame un fichier")

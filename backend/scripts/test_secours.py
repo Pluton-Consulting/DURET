@@ -198,6 +198,10 @@ verifier("l'annonce d'un travail lancé est gardée (ce n'est pas une rechute)",
 verifier("le prompt porte la consigne TRANSMISE au travail (ce qui sera coupé)",
          "SUPPRIMER l'organigramme" in appels[-1] and "pas terminé" in appels[-1].lower().replace("n'est pas", "pas"),
          appels[-1][:300])
+e = espace_redaction("La refonte est lancée en arrière-plan ; elle n'est pas terminée. Elle retirera l'organigramme. "
+                     "Aucun document n'est disponible pour l'instant : je ne peux pas confirmer de pagination.")
+verifier("l'annonce qui NIE que le document soit prêt (texte réel du 18/09) est gardée",
+         asyncio.run(e["_rediger_par_le_modele"]("Refais ce mémoire en 8 pages", EN_FILE, "travail_en_file")).startswith("La refonte est lancée"))
 e = espace_redaction("Le document Word en 8 pages est prêt et téléchargeable ci-dessous.")
 verifier("…mais dire le document PRÊT alors qu'il tourne est refusé",
          asyncio.run(e["_rediger_par_le_modele"]("Refais ce mémoire en 8 pages", EN_FILE, "travail_en_file")) == "")

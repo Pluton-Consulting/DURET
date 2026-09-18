@@ -423,11 +423,23 @@ def decrit_un_contenu_lu(texte: str) -> bool:
     return bool(_DECRIT_CONTENU_LU.search(_sans_accent(texte)))
 
 
+# LA NÉGATION N'EST PAS UNE AFFIRMATION (18/09, banc Duret, Q20) : « Aucun document n'est
+# disponible pour l'instant » — la phrase honnête d'un travail lancé en arrière-plan — était lue
+# « document … est disponible » : l'annonce juste était jetée au profit de la phrase du serveur.
+_NIE = re.compile(r"\bn['’]\s*(?:est|sont|a|ont)\b|\bne\s+(?:sont|est)\b|\bpas\b|\bjamais\b|\bpas encore\b")
+_NIE_AVANT = re.compile(r"\b(?:aucun|aucune|pas de|pas d['’]|sans|ni)\s*$")
+
+
 def pretend_avoir_livre(texte: str) -> bool:
-    """Le texte affirme-t-il qu'un fichier existe ou est téléchargeable ?"""
+    """Le texte affirme-t-il qu'un fichier existe ou est téléchargeable ? (une phrase qui le NIE, non)"""
     if not isinstance(texte, str) or not texte:
         return False
-    return bool(_PRETEND_LIVRE.search(_sans_accent(texte)))
+    t = _sans_accent(texte)
+    for m in _PRETEND_LIVRE.finditer(t):
+        if _NIE.search(m.group(0)) or _NIE_AVANT.search(t[max(0, m.start() - 20):m.start()]):
+            continue
+        return True
+    return False
 
 
 # LA DEMANDE VISE UN SEUL DOCUMENT (08/09, 11:09). « ouvre un appel d'offre au

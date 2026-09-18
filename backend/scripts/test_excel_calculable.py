@@ -76,6 +76,16 @@ wb = classeur([{"type": "feuille", "nom": "Lot 11", "contenu": [{"type": "tablea
                {"bloc": "feuille", "titre": "Lot 12"}, {"bloc": "tableau", "entetes": ["Poste", "Qté"], "lignes": [["PVC", "1 230,1"]]}])
 verifier("feuille qui PORTE ses blocs + feuille-séparateur : deux onglets, nombres compris", wb.sheetnames == ["Lot 11", "Lot 12"] and wb["Lot 11"]["B2"].value == 412.5 and wb["Lot 12"]["B2"].value == 1230.1, str(wb.sheetnames))
 
+# L'EN-TÊTE ÉCRIT COMME PREMIÈRE LIGNE (18/09, Q31 « ajoute 7 % de chutes… refais la synthèse ») :
+# entêtes vides, « Lot, Poste, …, Quantité » en première ligne — la colonne restait en texte.
+wb = classeur([{"bloc": "feuille", "nom": "Synthèse", "entetes": [], "lignes": [["Lot", "Poste", "Unité", "Quantité"],
+               ["Lot 11", "2.1.1 Démarches", "ft", "1"], ["Lot 12", "3.3 PVC R+1", "m²", "740,29"], ["Lot 11", "3.2.2 Ragréage", "m²", "1356"]]}])
+ws = wb["Synthèse"]
+verifier("première ligne toute en texte sur une colonne de nombres → l'en-tête ; les quantités sont des NOMBRES",
+         ws["D1"].value == "Quantité" and ws["D3"].value == 740.29 and ws["D4"].value == 1356 and ws.freeze_panes == "A2", f"{ws['D1'].value!r} {ws['D3'].value!r} {ws.freeze_panes}")
+wb = classeur([{"bloc": "tableau", "lignes": [["Nom", "Ville"], ["Dupont", "Cestas"]]}])
+verifier("un tableau tout en texte garde sa première ligne telle quelle", normaliser_element({"bloc": "tableau", "lignes": [["Nom", "Ville"], ["Dupont", "Cestas"]]})["entetes"] == [])
+
 # UNE FEUILLE REVERSÉE SOUS SON NOM REMPLACE LA PRÉCÉDENTE (18/09) : le modèle avait versé
 # « Mails de la semaine » (171 lignes) puis l'avait reversée, plus complète, sous le même nom —
 # classeur livré avec deux onglets identiques (« …_2 »).

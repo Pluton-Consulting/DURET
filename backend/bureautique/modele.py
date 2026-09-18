@@ -272,6 +272,9 @@ def deplier_feuilles(elements) -> list:
     return sortie
 
 
+_NOMBRE_SIMPLE = _re.compile(r"^\s*[+-]?\d[\d \u00a0\u202f]*(?:[.,]\d+)?\s*(?:€|%|m²|m2|m³|m3|ml|m|u|h|j|kg|t|l|ft|ens)?\s*$", _re.I)
+
+
 def normaliser_element(brut) -> dict | None:
     """Ramène un élément à sa forme sûre, ou None s'il est inexploitable.
 
@@ -430,6 +433,16 @@ def normaliser_element(brut) -> dict | None:
             lignes.append([_texte(c, 2000) for c in ligne][:MAX_COLONNES])
         if not entetes and not lignes:
             return None
+        # L'EN-TÊTE ÉCRIT COMME PREMIÈRE LIGNE (18/09, banc Duret, Q31) : « Lot, Poste, Niveau,
+        # Unité, Quantité » en tête des LIGNES, entêtes vides — le mot « Quantité » rendait toute la
+        # colonne non numérique, et le classeur des métrés avec chutes sortait en texte (ni somme ni
+        # tri). Une première ligne toute en texte, posée sur au moins une colonne de nombres, EST
+        # l'en-tête.
+        if not entetes and len(lignes) >= 2 and all(c.strip() and not _NOMBRE_SIMPLE.match(c) for c in lignes[0]):
+            colonnes = range(len(lignes[0]))
+            if any(all(_NOMBRE_SIMPLE.match(l[c]) for l in lignes[1:] if c < len(l) and l[c].strip())
+                   and any(c < len(l) and l[c].strip() for l in lignes[1:]) for c in colonnes):
+                entetes, lignes = lignes[0], lignes[1:]
         sortie = {"bloc": bloc, "entetes": entetes, "lignes": lignes}
         if bloc == "tableau":
             sortie["legende"] = _texte(brut.get("legende"), 300)

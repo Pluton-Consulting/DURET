@@ -266,11 +266,57 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
         choisi = exacts or contient
         if not choisi:
             noms = ", ".join(sorted((e.get("nom") or "") for e in enfants)[:25])
+            ailleurs = _deplace_ailleurs(segment, disparu=courant.rstrip("/") + "/" + segment)
             raise NasRefuse(
                 f"Aucun dossier « {segment} » dans {courant}. Dossiers "
-                f"présents : {noms}. Reprends le nom EXACT dans cette liste.")
+                f"présents : {noms}. "
+                + ("Il a pu être DÉPLACÉ ou RENOMMÉ depuis (un appel d'offres rendu change souvent de "
+                   "dossier) : " + ("dossiers du catalogue qui portent les mêmes mots, les plus récents "
+                                    "d'abord : " + " ; ".join(ailleurs) + ". Vérifie avec `nas_lister` et "
+                                    "dis à la personne où il se trouve maintenant."
+                                    if ailleurs else "aucun dossier du catalogue ne porte les mêmes mots "
+                                    "(le catalogue se rafraîchit toutes les heures). Dis-le tel quel.")))
         courant = choisi[0]["chemin"]
     return courant
+
+
+def _deplace_ailleurs(segment: str, limite: int = 5, disparu: str = "") -> list:
+    """Les dossiers du catalogue qui portent les MOTS d'un nom disparu (18/09, test réel).
+
+    L'appel d'offres « construction 29 lgts sociaux la test de buch 18-09-2026 … » a quitté
+    « ETUDES EN COURS » le jour de sa remise : le chemin exact recopié d'un listage du matin
+    devenait « aucun dossier de ce nom », sans piste. Un dossier déplacé garde presque
+    toujours les mots de son nom ; on les cherche dans le catalogue, filtré par les droits."""
+    import re as _re
+    from nas.acces import catalogue_pret, _sans_accent_nas
+    cat = catalogue_pret()
+    if not cat:
+        return []
+    # Les MOTS du nom, pas ses chiffres : la date de remise et le numéro d'affaire changent
+    # justement au classement (« … 18-09-2026 emarches publics » → « AFF 150-26 … »).
+    mots = [m for m in _re.findall(r"[a-z]+", _sans_accent_nas(segment)) if len(m) >= 4]
+    if len(mots) < 2:
+        return []
+    seuil = max(2, int(len(mots) * 0.6 + 0.999))
+    disparu = _sans_accent_nas(disparu).rstrip("/")
+    trouves = []
+    for e in cat:
+        if not e.get("dossier"):
+            continue
+        chemin = _sans_accent_nas(str(e.get("chemin") or "")).rstrip("/")
+        if disparu and (chemin == disparu or chemin.startswith(disparu + "/")):
+            continue            # l'ancien emplacement, encore au catalogue : c'est lui qui a disparu
+        nom = set(_re.findall(r"[a-z0-9]+", _sans_accent_nas(e.get("nom") or "")))
+        if sum(1 for m in mots if m in nom) >= seuil:
+            trouves.append(e)
+    try:
+        from security.lecteur import role_lecteur
+        from nas import niveaux
+        trouves = niveaux.filtrer(trouves, role_lecteur())
+    except Exception:  # noqa: BLE001 — sans règle de niveaux, le catalogue suffit
+        pass
+    trouves.sort(key=lambda e: int(e.get("modifie") or 0), reverse=True)
+    return [str(e.get("chemin") or "") for e in trouves[:limite]]
 
 
 async def _dossier_resolu(client, base, sid, dossier: Optional[str]) -> Optional[str]:

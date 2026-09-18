@@ -159,5 +159,29 @@ verifier("…et « drive » n'attrape plus « custDRIVE » quand un nom correspo
          acces._nom_correspond("AFF 100-20 eiffage sinistre custDRIVE", "drive", mots_entiers=True) is False
          and acces._nom_correspond("2029 AIRBORNE SONOVISION", "airborne", mots_entiers=True) is True)
 
+# 18/09 : l'appel d'offres de La Teste a QUITTÉ « ETUDES EN COURS » le jour de sa remise. Le chemin
+# exact d'un listage du matin rendait « aucun dossier de ce nom », sans piste : le refus propose
+# désormais les dossiers du catalogue qui portent les mêmes mots.
+ARBRE = {"/home": ["Drive"], "/home/Drive": ["03-Appel d'offres etudes"],
+         "/home/Drive/03-Appel d'offres etudes": ["ETUDES EN COURS", "ETUDES TERMINEE"],
+         "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS": ["AFF 00 Dossier Modèle"]}
+async def _arbre(client, base, sid, chemin):
+    if chemin in ARBRE:
+        return [{"nom": n, "chemin": chemin.rstrip("/") + "/" + n, "dossier": True} for n in ARBRE[chemin]]
+    raise RuntimeError("ce dossier ou fichier N'EXISTE PAS sur le NAS")
+onas._enfants_dossiers = _arbre
+acces.dossiers_autorises = lambda: ["/home"]
+acces._CATALOGUE["entrees"] += [
+    {"nom": "AFF 150-26 construction 29 lgts sociaux la test de buch", "chemin": "/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2026/AFF 150-26 construction 29 lgts sociaux la test de buch", "dossier": True, "modifie": 1900000000}]
+try:
+    asyncio.run(onas._resoudre(None, "", "", "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/construction 29 lgts sociaux la test de buch 18-09-2026 emarches publics"))
+    r_dep = "résolu"
+except Exception as e:
+    r_dep = f"{type(e).__name__}: {e}"
+verifier("un dossier DÉPLACÉ : le refus dit « déplacé ou renommé » et propose le nouvel emplacement, le plus récent d'abord",
+         "DÉPLACÉ" in r_dep and "ETUDES TERMINEE/- AFF 2026/AFF 150-26" in r_dep
+         and r_dep.find("AFF 150-26") < r_dep.find("ETUDES EN COURS/construction 29 lgts sociaux la test de buch 18-09-2026\"") if "18-09-2026\"" in r_dep else "AFF 150-26" in r_dep, r_dep[:500])
+verifier("un nom d'un seul mot significatif ne propose rien au hasard", onas._deplace_ailleurs("PDF") == [])
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

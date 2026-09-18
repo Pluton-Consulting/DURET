@@ -348,7 +348,23 @@ async def lister(data,user):
 
 async def lire(data,user):
     uid,fil=_identite(data,user)
-    r=await asyncio.to_thread(dossiers.lire,uid,fil,data['source'],data.get('fragment',1),data.get('recherche'))
+    try:
+        r=await asyncio.to_thread(dossiers.lire,uid,fil,data['source'],data.get('fragment',1),data.get('recherche'))
+    except ValueError as e:
+        # UNE PIÈCE PAS ENCORE AU DOSSIER S'Y AJOUTE DEPUIS LE SERVEUR (18/09, banc Duret dans le
+        # navigateur) : « la date limite de La Teste » → le modèle a voulu lire « 26T02481_RC.pdf »,
+        # vu dans une recherche du NAS, avec cet outil ; « aucune pièce ne s'appelle… dans cette
+        # conversation », et il a abandonné. La même résolution que `ajouter_source_dossier`
+        # (nom ou chemin du serveur, pièce d'un mail) : trouvée, elle rejoint le dossier et se lit.
+        if not str(e).startswith('Aucune pièce'):raise
+        try:
+            ajout=await ajouter({**data,'reference':data['source']},user)
+        except Exception as e2:  # noqa: BLE001 — le refus dit quoi faire, il ne se contente pas d'échouer
+            raise ValueError(str(e)+' Elle n’est pas non plus trouvée sur le serveur sous ce nom ('+str(e2)[:200]
+                             +'). Cherche le fichier avec nas_chercher, puis ouvre-le par son CHEMIN exact (nas_ouvrir) '
+                             'ou ajoute-le au dossier (ajouter_source_dossier).') from e
+        data={**data,'source':ajout['source']}
+        r=await asyncio.to_thread(dossiers.lire,uid,fil,data['source'],data.get('fragment',1),data.get('recherche'))
     texte=r.pop('texte');position=int(data.get('position',0))
     if data.get('recherche') and 'position' not in data:
         mots=[m for m in re.findall(r'\w+',str(data['recherche']).lower()) if len(m)>2]

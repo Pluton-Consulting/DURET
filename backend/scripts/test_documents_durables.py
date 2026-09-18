@@ -345,6 +345,22 @@ class Recette(unittest.TestCase):
      self.assertEqual(job['statut'],'bloque');self.assertEqual(job['essais'],3)
      self.assertEqual(json.loads(job['resultat'])['etapes_conservees'],0)
     asyncio.run(test())
+ def test_lire_une_piece_du_serveur_pas_encore_au_dossier(self):
+    # 18/09 (navigateur) : « 26T02481_RC.pdf », vu dans une recherche du NAS, lu avec l'outil des pièces
+    # de la conversation → « aucune pièce ne s'appelle… » et abandon. Elle rejoint le dossier et se lit.
+    async def test():
+     user=SimpleNamespace(id=self.uid,email='a@b.fr')
+     async def faux_ajout(d,u):
+      return {'source':dossiers.enregistrer(self.uid,self.fil,'26T02481_RC.pdf','Date limite de remise des offres : 18/09/2026 à 12h00','/home/Drive/x/26T02481_RC.pdf')}
+     with patch.object(documents_dossier,'ajouter',side_effect=faux_ajout):
+      r=await documents_dossier.lire({'source':'26T02481_RC.pdf','_fil':self.fil},user)
+     self.assertIn('18/09/2026',r['texte'])
+     async def refus(d,u):raise ValueError('aucun fichier')
+     with patch.object(documents_dossier,'ajouter',side_effect=refus):
+      with self.assertRaises(ValueError) as ctx:
+       await documents_dossier.lire({'source':'inconnu.pdf','_fil':self.fil},user)
+     self.assertIn('nas_chercher',str(ctx.exception));self.assertIn('nas_ouvrir',str(ctx.exception))
+    asyncio.run(test())
  def test_citations_reelles(self):
     documents_dossier._analyse_valide({'faits':[{'fait':'surface','citation':'42,5 m²'}],'limites':[]},'Salle : 42,5 m²')
     with self.assertRaises(ValueError):documents_dossier._analyse_valide({'faits':[{'fait':'surface','citation':'52 m²'}],'limites':[]},'Salle : 42,5 m²')

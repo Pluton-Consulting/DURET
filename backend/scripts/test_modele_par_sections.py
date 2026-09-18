@@ -465,5 +465,15 @@ except ValueError as e:
 verifier("le plan ainsi complété passe la validation (la rédaction n'est plus bloquée)", _ok)
 verifier("les pièces non rattachées sont rendues avec le document", "'pieces_non_rattachees'" in composeur)
 
+# 18/09 (navigateur) : « refais le mémoire en 8 pages maximum » n'était pas lu (seul « maximum 8 pages » l'était) ;
+# le mémoire est sorti à 23 pages, la limite attribuée « à la consultation ».
+from skills.documents_dossier import limite_de_pages
+verifier("la limite de la personne se lit dans les deux ordres et les tournures courantes",
+         limite_de_pages("Refais le mémoire en 8 pages maximum") == 8 and limite_de_pages("maximum 8 pages") == 8
+         and limite_de_pages("pas plus de 10 pages") == 10 and limite_de_pages("qu'il tienne en 6 pages") == 6
+         and limite_de_pages("12 pages max") == 12 and limite_de_pages("Remplis le mémoire") is None)
+verifier("le dépassement d'une limite fixée par la PERSONNE se dit comme tel, pas « la consultation annonce »",
+         "que vous avez demandées : la limite n’est PAS tenue" in composeur)
+
 print(("✗ %d échec(s) : %s" % (len(ECHECS), ", ".join(ECHECS))) if ECHECS else "✓ 0 échec")
 sys.exit(1 if ECHECS else 0)

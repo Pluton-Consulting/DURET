@@ -783,6 +783,21 @@ async def _analyses(uid,fil,tache,demande,sources):
     return resultats
 
 
+_LIMITE_PAGES=(
+    re.compile(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus|pas plus de|moins de)\s*[:=]?\s*(\d+)\s*pages?',re.I),
+    re.compile(r'(\d+)\s*pages?\s*(?:maximum|max\.?|au plus|au maximum|grand maximum|maxi)\b',re.I),
+    re.compile(r'(?:tien\w*|tenir|limit\w*)\s+(?:en|sur|à)\s*(\d+)\s*pages?',re.I))
+
+def limite_de_pages(demande):
+    """La limite de pages que la PERSONNE fixe, dans l'ordre où elle l'écrit (18/09, banc Duret) :
+    « refais le mémoire en 8 pages maximum » n'était pas lu — seul « maximum 8 pages » l'était — et le
+    mémoire est sorti à 23 pages, la limite attribuée « à la consultation ». Rend l'entier ou None."""
+    texte=str(demande or '').split('DEMANDES UTILISATEUR ANTÉRIEURES')[0]
+    for motif in _LIMITE_PAGES:
+        m=motif.search(texte)
+        if m and 1<=int(m[1])<=2000:return int(m[1])
+    return None
+
 def _plan_valide(plan,ids):
     sections=plan.get('sections')
     if not isinstance(sections,list) or not 1<=len(sections)<=40:raise ValueError('Plan attendu : de 1 à 40 sections.')
@@ -883,7 +898,7 @@ async def composer_immediat(data,user):
                     if structure_modele and not structure_modele['sections']:structure_modele=None
                 except Exception as e:
                     logger.warning('Structure du modèle illisible (%s) : présentation seule reprise',type(e).__name__)
-            _limite_dite=re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', str(contrat.get('demande') or demande), re.I)
+            _limite_dite=limite_de_pages(str(contrat.get('demande') or demande))
             essai_plan={'n':0,'limite_personne':bool(_limite_dite)}
             def _verifier_le_plan(r):
                 # LE COMPTE DES ESSAIS AVANCE QUOI QU'IL ARRIVE : `_json` n'en accorde que deux. Un refus
@@ -928,8 +943,8 @@ async def composer_immediat(data,user):
                     _verifier_le_plan)
                 if contrat.get('modele_source'):plan['modele_source']=contrat['modele_source']
                 _plan_valide(plan,ids)
-                limite = re.search(r'(?:maximum(?:\s+de)?|max\.?|limite(?:\s+de)?|au plus)\s*[:=]?\s*(\d+)\s*pages', demande, re.I)
-                if limite:plan['pages_max']=int(limite[1])
+                limite = limite_de_pages(demande)
+                if limite:plan['pages_max']=limite
                 if plan.get('pages_max') and limite:
                     _repartir_les_mots(plan,structure_modele)
                 else:
@@ -1603,8 +1618,14 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
         # dépassement est DIT ; raccourcir se demande ensuite, sur le document livré.
         # …et ce n'est pas un DÉFAUT du document (Noa, 17/09 : « un mémoire peut être très long s'il est
         # intéressant ») : une information rendue à part, qui ne classe pas le document « à reprendre ».
-        information_longueur=(str(controle_pages.get('pages') or '?')+' page(s). La consultation annonce '+str(plan['pages_max'])
-            +' pages maximum : rien n’a été coupé, à vous de décider s’il faut raccourcir et quoi.')
+        # QUI a fixé la limite se DIT : la personne (« en 8 pages maximum »), ou la consultation.
+        if limite_de_pages(contrat.get('demande') or ''):
+            information_longueur=(str(controle_pages.get('pages') or '?')+' page(s) pour les '+str(plan['pages_max'])
+                +' pages maximum que vous avez demandées : la limite n’est PAS tenue. Dites quelles rubriques raccourcir ou retirer, '
+                'ou acceptez cette longueur.')
+        else:
+            information_longueur=(str(controle_pages.get('pages') or '?')+' page(s). La consultation annonce '+str(plan['pages_max'])
+                +' pages maximum : rien n’a été coupé, à vous de décider s’il faut raccourcir et quoi.')
     elif plan.get('pages_max') and not controle_pages.get('conforme'):
         if controle_pages.get('pages'):
             await _a_corriger(uid,fil,tache,jeton,{'problemes':['Limiter la longueur en conservant toutes les rubriques.'],'facteur_longueur':max(.2,plan['pages_max']/controle_pages['pages']*.85)})

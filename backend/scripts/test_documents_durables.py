@@ -224,6 +224,15 @@ class Recette(unittest.TestCase):
     self.assertEqual(d.limite_de_pages('DEMANDE COURANTE (prioritaire) :\nRefais ce mémoire en 8 pages maximum\n\nPRÉCISIONS DE L’ASSISTANT (x) :\n12 pages maximum'),8)
     src=(BACKEND/'skills/documents_dossier.py').read_text(encoding='utf-8')
     self.assertIn("PRÉCISIONS DE L’ASSISTANT (sa lecture de la demande",src)
+ def test_annonce_dit_la_longueur_et_les_rubriques_retirees(self):
+    # 18/09, Q20 : « Le document est prêt » seul, alors que 10 pages pour 8 et 4 rubriques retirées.
+    from ressources.documents_file import texte_d_annonce
+    t=texte_d_annonce({'production_verifiee':True,'longueur':'10 page(s) pour les 8 pages maximum que vous avez demandées : la limite n’est PAS tenue.',
+                       'rubriques_du_modele_retirees':{'4':'Présentation du projet non exigée par le cadre ; retirée.'},'reserves':['Effectif 12 ou 10'],
+                       'bloc_ui':{'type':'fichier','url':'/api/documents/x'}})
+    self.assertIn('10 page(s) pour les 8 pages',t);self.assertIn('Rubriques du modèle retirées',t);self.assertIn('Présentation du projet',t)
+    self.assertLess(t.index('Rubriques du modèle retirées'),t.index('Points à vérifier'));self.assertIn('```ui',t)
+    self.assertEqual(texte_d_annonce({'production_verifiee':True}),'Le document est prêt.')
  def test_recherche_nas_noms_et_confirmation_superflue(self):
     if (BACKEND/'nas/acces.py').exists():
      ns=fonctions(BACKEND/'nas/acces.py',{'_nom_correspond','_sans_accent_nas','_mot_proche'})

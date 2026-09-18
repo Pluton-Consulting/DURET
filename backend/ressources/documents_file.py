@@ -216,13 +216,27 @@ def _maj(cle,**valeurs):
         garde=" AND statut NOT IN ('suspendu','retire')" if 'statut' in valeurs else ''
         _table(c);c.execute('UPDATE file_documentaire SET '+','.join(k+'=?' for k in valeurs)+' WHERE id=?'+garde,(*valeurs.values(),cle))
 
-async def annoncer(job,user,resultat):
-    from database.connection import get_rls_db
+def texte_d_annonce(resultat):
+    """Ce que la conversation reçoit à la fin d'un travail : la sortie du moteur, restituée.
+
+    18/09, banc Duret (Q20, « 8 pages maximum : dis-moi ce que tu retires ») : le document
+    livré faisait 10 pages et la trame avait perdu quatre rubriques, chacune avec sa raison —
+    et le message ne disait que « Le document est prêt » et les points à vérifier. La longueur
+    (phrase écrite pour la personne par le moteur) et les rubriques retirées sont rendues."""
     texte=('Le document est prêt.' if resultat.get('production_verifiee') else 'La rédaction nécessite une vérification avant livraison.')
+    if resultat.get('longueur'):texte+='\n\n'+str(resultat['longueur'])
+    retirees=resultat.get('rubriques_du_modele_retirees')
+    if isinstance(retirees,dict) and retirees:
+        texte+='\n\nRubriques du modèle retirées :\n'+'\n'.join('- '+str(v) for v in list(retirees.values())[:20])
     reserves=resultat.get('reserves') or []
     if reserves:texte+='\n\nPoints à vérifier :\n'+'\n'.join('- '+str(r) for r in reserves[:30])
     if not resultat.get('production_verifiee'):texte+='\n\n'+str(resultat.get('note') or 'Les étapes déjà contrôlées sont conservées.')
     if resultat.get('bloc_ui'):texte+='\n\n```ui\n'+json.dumps(resultat['bloc_ui'],ensure_ascii=False)+'\n```'
+    return texte
+
+async def annoncer(job,user,resultat):
+    from database.connection import get_rls_db
+    texte=texte_d_annonce(resultat)
     meta=json.dumps({'tache_planifiee':'document:'+job['id'],'tache_documentaire':job['id'],'statut':job['statut']})
     async with get_rls_db(str(user.id),user.role) as conn:
         async with conn.transaction():

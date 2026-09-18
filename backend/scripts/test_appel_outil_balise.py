@@ -319,5 +319,20 @@ verifier("le parseur, lui, sait toujours dire au modèle que son bloc a été co
          (protocol.extraire_action(COUPE, "direction")[2] or "").find("COUPÉ") >= 0,
          protocol.extraire_action(COUPE, "direction")[2])
 
+# 18/09 (Duret, navigateur) : un appel COMPLET, seule la clôture ``` manque → pris pour « coupé », parti au
+# forceur qui n'a rien produit : « je n'ai pas accès au mémoire ». Un JSON complet et valide s'exécute.
+SANS_CLOTURE = '\n\n```action\n{"skill":"lire_mails","args":{"depuis":"7j"}}'
+a_, reste_, e_ = protocol.extraire_action(SANS_CLOTURE, "direction")
+verifier("un bloc sans clôture mais au JSON COMPLET est un appel, exécuté",
+         a_ == {"skill": "lire_mails", "args": {"depuis": "7j"}} and not e_, (a_, e_))
+verifier("…et le routeur le voit comme une demande d'action",
+         protocol.demande_une_action(SANS_CLOTURE, "direction") is True)
+TRONQUE = '\n\n```action\n{"skill":"lire_mails","args":{"depu'
+verifier("un JSON réellement TRONQUÉ garde son chemin (forceur), sans réparation devinée",
+         protocol.demande_une_action(TRONQUE, "direction") is False
+         and (protocol.extraire_action(TRONQUE, "direction")[2] or "").find("COUPÉ") >= 0)
+verifier("un JSON complet d'un geste que ce catalogue ne connaît pas garde lui aussi le chemin du forceur",
+         protocol.demande_une_action(COUPE, "direction") is False)
+
 print(f"\n═══ {len(echecs)} échec(s)" + (f" : {', '.join(echecs)}" if echecs else " — tout passe"))
 sys.exit(1 if echecs else 0)

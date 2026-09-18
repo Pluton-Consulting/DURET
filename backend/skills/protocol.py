@@ -46,6 +46,29 @@ BLOC_ACTION_RE = re.compile(r"```action\s*(.*?)```", re.S)
 # du contenu rédigé pour un humain.
 BLOC_ACTION_TRONQUE_RE = re.compile(r"```action(?![\s\S]*?```)[\s\S]*$", re.S)
 
+
+def _bloc_seulement_non_referme(texte: str, role: str | None = None) -> bool:
+    """Le bloc ```action sans clôture porte-t-il un JSON COMPLET et valide ? (18/09, banc Duret)
+
+    « Refais ce mémoire en 8 pages » : le modèle a écrit un appel `composer_document_dossier`
+    entier et juste — puis s'est arrêté SANS les trois accents graves de clôture. Pris pour une
+    sortie coupée, l'appel est parti au forceur, qui n'a rien produit, et la personne a lu « je
+    n'ai pas accès au mémoire ». Une coupure laisse un JSON INCOMPLET ; un JSON qui se lit en
+    entier (lecture stricte, jamais réparée) n'a perdu que sa clôture. Seul un geste de CE
+    catalogue est repris : le reste garde le chemin du forceur, qui marchait."""
+    trouve = BLOC_ACTION_TRONQUE_RE.search(texte or "")
+    if not trouve:
+        return False
+    contenu = trouve.group(0)[len("```action"):].strip()
+    try:
+        data = json.loads(contenu)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    nom = data.get("skill") or data.get("action") or data.get("name")
+    return isinstance(nom, str) and nom in catalogue(role)
+
 # Syntaxes d'appel d'outil NATIVES des modèles de la cascade. Observé en
 # production : LongCat émet parfois son propre balisage au lieu du bloc demandé,
 # et il partait tel quel à l'écran — l'utilisateur recevait du XML. On le
@@ -1080,6 +1103,8 @@ def extraire_action(texte: str, role: str | None = None) -> tuple[Optional[dict]
         # caractères de JSON s'afficher. On le nomme, et on dit quoi faire :
         # découper. C'est la seule correction qui puisse aboutir — réécrire le
         # même volume heurterait le même plafond.
+        if _bloc_seulement_non_referme(texte, role):
+            return extraire_action(texte.rstrip() + "\n```", role)
         coupe = BLOC_ACTION_TRONQUE_RE.search(texte or "")
         if coupe:
             reste = (texte[:coupe.start()] or "").strip()
@@ -1157,7 +1182,8 @@ def demande_une_action(texte: str, role: str | None = None) -> bool:
     """
     if not isinstance(texte, str):
         texte = "" if texte is None else str(texte)
-    if not BLOC_ACTION_RE.search(texte) and BLOC_ACTION_TRONQUE_RE.search(texte):
+    if (not BLOC_ACTION_RE.search(texte) and BLOC_ACTION_TRONQUE_RE.search(texte)
+            and not _bloc_seulement_non_referme(texte, role)):
         return False
     action, _, erreur = extraire_action(texte, role)
     return bool(action or erreur)

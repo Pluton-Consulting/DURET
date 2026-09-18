@@ -83,7 +83,7 @@ exec("\n".join(ast.get_source_segment(sk, n) for n in ast.parse(sk).body
                if (isinstance(n, (ast.Assign, ast.AnnAssign)) and getattr(getattr(n, "targets", [getattr(n, "target", None)])[0], "id", "")
                    in ("DUREE_INVENTAIRE_S", "_INVENTAIRES"))
                or (isinstance(n, ast.FunctionDef) and n.name in ("_cle_inventaire", "_inventaire_retenu", "_retenir_inventaire",
-                                                                 "_sans_accents", "_mettre_en_tete"))), esp2)
+                                                                 "_sans_accents", "_lettres", "_mettre_en_tete"))), esp2)
 lire_mails = esp2["lire_mails"]
 user = types.SimpleNamespace(id="u", role="direction")
 
@@ -189,6 +189,9 @@ asyncio.run(lire_mails({"depuis": "7j", "exhaustif": True}, autre))
 verifier("la mémoire est PAR PERSONNE : un autre compte relit la boîte", len(appels) > avant_autre)
 met = esp2["_mettre_en_tete"]
 lot = [{"objet": "RE: RELANCE FACTURES IMPAYÉES", "de": "cbp@exemple.fr"}, {"objet": "place Thiers", "de": "mairie@exemple.fr"}, {"objet": "Pub", "de": "x@y.fr"}]
+lot2 = [{"objet": "TR: 249 AREAS - visite d'année parfait achèvement (APA) - PV pour signature", "de": "p@unaa.eu"}, {"objet": "autre", "de": "x@y.fr"}]
+verifier("la ponctuation ne compte pas : « APA - PV pour signature » retrouve « …(APA) - PV pour signature » (18/09)",
+         met(lot2, ["APA - PV pour signature"]) == 1 and lot2[0].get("priorite") == 1)
 verifier("un mail se désigne par un fragment d'objet (accents, casse, « RE: » indifférents), par l'expéditeur ou par son rang",
          met(lot, ["re: relance factures impayees", "MAIRIE", 3]) == 3 and [m["objet"] for m in lot][0].startswith("RE: RELANCE"))
 

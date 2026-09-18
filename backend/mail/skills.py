@@ -951,6 +951,13 @@ def _sans_accents(texte: str) -> str:
                    if not unicodedata.combining(c))
 
 
+def _lettres(texte: str) -> str:
+    """Lettres et chiffres seulement : « APA - PV pour signature » retrouve
+    « …achèvement (APA) - PV pour signature » (18/09 : la parenthèse cassait la
+    correspondance, la 3ᵉ priorité restait sans rang alors que le modèle l'annonçait)."""
+    return "".join(c for c in _sans_accents(texte) if c.isalnum())
+
+
 def _mettre_en_tete(messages: list[dict], priorites) -> int:
     """Place en tête, dans l'ordre demandé, les mails désignés — par un fragment de leur OBJET
     (ou de l'expéditeur), ou par leur RANG dans la liste (1 = premier). Rend le nombre trouvé."""
@@ -963,10 +970,10 @@ def _mettre_en_tete(messages: list[dict], priorites) -> int:
             i = int(p) - 1
             trouve = i if 0 <= i < len(messages) and i not in pris else None
         else:
-            voulu = _sans_accents(re.sub(r"^\s*((re|tr|fw|fwd)\s*:\s*)+", "", str(p), flags=re.I)).strip()
+            voulu = _lettres(re.sub(r"^\s*((re|tr|fw|fwd)\s*:\s*)+", "", str(p), flags=re.I))
             if len(voulu) >= 3:
                 trouve = next((i for i, m in enumerate(messages) if i not in pris and (
-                    voulu in _sans_accents(m.get("objet")) or voulu in _sans_accents(m.get("de")))), None)
+                    voulu in _lettres(m.get("objet")) or voulu in _lettres(m.get("de")))), None)
         if trouve is not None:
             pris.add(trouve)
             tete.append(trouve)

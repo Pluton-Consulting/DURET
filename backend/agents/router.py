@@ -8,6 +8,7 @@ reprise via runtime.resume_turn().
 import datetime
 import logging
 import asyncio
+import re
 
 from langgraph.graph import StateGraph, END
 from langgraph.types import interrupt
@@ -686,6 +687,16 @@ async def passer_la_main_node(state: AgentState) -> dict:
     """
     analyse = state.get("vision_analysis") or state.get("final_response") or ""
     nom = state.get("attachment_name") or "plan joint"
+    manquantes = pieces_citees_non_jointes(state.get("query") or "", state)
+    if manquantes:
+        # 18/09 (banc Duret, navigateur) : photo + « est-ce conforme au CCTP du lot 12 ? » →
+        # la main passait bien à l'assistant, qui répondait « ne peut pas être jugé sur la
+        # photo seule » sans chercher le CCTP, rangé sur le serveur.
+        analyse += ("\n\n[La demande cite une pièce qui n'est PAS jointe : " + ", ".join(manquantes)
+                    + ". Cherche-la sur le serveur (`nas_chercher`, dans le dossier que la conversation "
+                    "nomme s'il y en a un), lis-la, puis réponds à la demande en entier en croisant ce "
+                    "que l'image montre avec ce que dit la pièce. Si plusieurs affaires en ont une, dis "
+                    "laquelle tu as retenue — ou demande.]")
     return {
         # `target_agent` N'EST PAS TOUCHÉ, ET C'EST VOLONTAIRE. Il ne sert plus
         # au routage à ce stade (on entre dans l'assistant par un edge direct) :
@@ -702,6 +713,25 @@ async def passer_la_main_node(state: AgentState) -> dict:
         # demandera si un geste l'exige, par le chemin habituel.
         "requires_validation": False,
     }
+
+
+_PIECE_DE_MARCHE = re.compile(
+    r"\b(cctp|ccap|dpgf|dqe|bpu|dce|r[èe]glement de consultation|cahier des charges)"
+    r"(?:\s+(?:du\s+|des\s+)?lots?\s*n?°?\s*\d{1,2})?", re.I)
+
+
+def pieces_citees_non_jointes(demande: str, state) -> list:
+    """Les pièces de marché que la demande CITE et qui ne sont pas parmi les fichiers joints."""
+    joints = " ".join(str(p.get("nom") or "") for p in (state.get("attachments") or []) if isinstance(p, dict))
+    joints += " " + str(state.get("attachment_name") or "")
+    joints += " " + " ".join(re.findall(r"=== Fichier joint : (.*?) ===", str(state.get("attachment_text") or "")))
+    joints = joints.lower()
+    vues = []
+    for m in _PIECE_DE_MARCHE.finditer(demande or ""):
+        piece = " ".join(m.group(0).split())
+        if m.group(1).lower() not in joints and piece.lower() not in (v.lower() for v in vues):
+            vues.append(piece)
+    return vues
 
 
 def route_apres_agent2(state: AgentState) -> str:

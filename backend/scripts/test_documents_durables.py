@@ -3,7 +3,7 @@
 Les modèles simulés vérifient l'orchestration et les reprises, pas la qualité
 sémantique d'un fournisseur. Le rejeu du texte Langfuse est optionnel via EXPORT_LANGFUSE.
 """
-import ast,asyncio,io,json,os,pathlib,sys,tempfile,unittest
+import ast,re,asyncio,io,json,os,pathlib,sys,tempfile,unittest
 from types import SimpleNamespace
 from unittest.mock import patch,AsyncMock
 BACKEND=pathlib.Path(sys.argv[1] if len(sys.argv)>1 else 'backend').resolve();sys.path.insert(0,str(BACKEND));sys.argv=[sys.argv[0]]
@@ -349,7 +349,8 @@ class Recette(unittest.TestCase):
     documents_dossier._analyse_valide({'faits':[{'fait':'surface','citation':'42,5 m²'}],'limites':[]},'Salle : 42,5 m²')
     with self.assertRaises(ValueError):documents_dossier._analyse_valide({'faits':[{'fait':'surface','citation':'52 m²'}],'limites':[]},'Salle : 42,5 m²')
  def test_image_et_word(self):
-    fn=fonctions(BACKEND/'agents/router.py',{'passer_la_main_node'})['passer_la_main_node']
+    fn=fonctions(BACKEND/'agents/router.py',{'passer_la_main_node','pieces_citees_non_jointes'},
+                 {'re':re,'_PIECE_DE_MARCHE':re.compile(r'\b(cctp|dpgf)\b',re.I)})['passer_la_main_node']
     r=asyncio.run(fn({'attachment_text':'WORD : exigences importantes','vision_analysis':'IMAGE : trois rubriques','attachment_name':'rc.png'}))
     self.assertIn('WORD : exigences importantes',r['attachment_text']);self.assertIn('IMAGE : trois rubriques',r['attachment_text'])
  def test_tableau_apres_couverture_et_autres_feuilles(self):

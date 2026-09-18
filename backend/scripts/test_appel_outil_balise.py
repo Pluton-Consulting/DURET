@@ -153,6 +153,22 @@ a, _, e = protocol.extraire_action('<lire_mails>{"args":{"depuis":"7j"}}</lire_m
                                    "direction")
 verifier("les paramètres repliés sous « args » sont dépliés",
          a == {"skill": "lire_mails", "args": {"depuis": "7j"}}, (a, e))
+# 18/09 (Duret, plan approuvé de Benoît) : le NOM de l'outil en ATTRIBUT, le JSON = les arguments.
+# Non reconnu, l'appel a clos le tour et le plan n'a exécuté aucune étape.
+ATTR = '\n\n<action id="lire_mails">\n{"depuis": "7j"}\n</action>'
+a, reste, e = protocol.extraire_action(ATTR, "direction")
+verifier("« <action id=\"lire_mails\">{…}</action> » est un appel, nom pris dans l'attribut",
+         a == {"skill": "lire_mails", "args": {"depuis": "7j"}} and reste == "", (a, reste, e))
+verifier("…et compte comme une demande d'action pour le routeur",
+         protocol.demande_une_action(ATTR, "direction") is True)
+a, _, e = protocol.extraire_action('<action name="lire_mails">{"args": {"depuis": "7j"}}</action>', "direction")
+verifier("« name= » et des arguments repliés sous « args » aussi",
+         a == {"skill": "lire_mails", "args": {"depuis": "7j"}}, (a, e))
+verifier("la balise à attribut quitte le texte affiché",
+         protocol.retirer_appels_outil("Je lis." + ATTR, "direction").strip() == "Je lis.")
+verifier("une balise HTML à attribut qui n'est pas une enveloppe d'action reste du texte",
+         protocol.extraire_action('<span class="x">{"a": 1}</span>', "direction")[0] is None
+         and "<span" in protocol.retirer_appels_outil('<span class="x">{"a": 1}</span>', "direction"))
 # LA RÉPARATION LOCALE EXIGE `json_repair`, qui vit dans l'image et pas sur ce
 # Mac. On ne la déclare pas verte quand on ne l'a pas jouée : elle se dit « à
 # lire », comme le banc de recette le fait pour ce qu'aucune règle ne juge.

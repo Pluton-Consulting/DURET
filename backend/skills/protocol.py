@@ -197,8 +197,15 @@ def _action_json_nu(texte: str, role: str | None = None):
 # réponse. La dérive est rare — 4 appels sur 131 ce jour-là — mais chacune
 # coûte un tour entier : le modèle a fait le bon choix d'outil, seule la forme
 # diffère. On la lit donc, comme on lit déjà celle de LongCat.
+#
+# 18/09 (Duret, plan approuvé de Benoît, 13:12) : `<action id="lire_source_dossier">{"source":
+# …, "fragment": 1}</action>` — le NOM de l'outil en ATTRIBUT de la balise, le JSON ne portant
+# que les arguments. Non reconnu, l'appel a clos le tour : le plan approuvé n'a exécuté aucune
+# étape. Les attributs `id`, `name`, `skill`, `tool`, `function` nomment désormais l'outil.
 BLOC_BALISE_RE = re.compile(
-    r"<([a-z][a-z0-9_]*)\s*>[ \t\r\n]*(\{[\s\S]*?\})?[ \t\r\n]*</\1\s*>", re.S)
+    r"<([a-z][a-z0-9_]*)((?:\s+[a-z_]+\s*=\s*[\"'][^\"']*[\"'])*)\s*>[ \t\r\n]*(\{[\s\S]*?\})?[ \t\r\n]*</\1\s*>",
+    re.S | re.I)
+_ATTRIBUT_NOM_RE = re.compile(r"\b(?:id|name|skill|tool|function|nom)\s*=\s*[\"']([^\"']+)[\"']", re.I)
 
 # Les balises qui ENVELOPPENT un appel (le nom du skill est alors DANS le JSON).
 _ENVELOPPES_ACTION = ("action", "outil", "appel", "tool_call", "function_call",
@@ -235,12 +242,17 @@ def _action_balisee(texte: str, role: str | None = None):
             # un appel d'outil : on ne touche pas au texte de l'utilisateur.
             continue
         try:
-            data = _charger_json((trouve.group(2) or "{}").strip())
+            data = _charger_json((trouve.group(3) or "{}").strip())
         except json.JSONDecodeError:
             continue
         if not isinstance(data, dict):
             continue
-        if enveloppe:
+        attribut = _ATTRIBUT_NOM_RE.search(trouve.group(2) or "")
+        if enveloppe and attribut and not any(isinstance(data.get(c), str) for c in _CLES_NOM):
+            # Le nom en attribut, le JSON = les arguments (ou {"args": {...}}).
+            nom = attribut.group(1).strip()
+            args = next((data[c] for c in _CLES_ARGS if data.get(c) is not None), data)
+        elif enveloppe:
             nom = next((data[c] for c in _CLES_NOM if isinstance(data.get(c), str)), None)
             args = next((data[c] for c in _CLES_ARGS if data.get(c) is not None), {})
         else:

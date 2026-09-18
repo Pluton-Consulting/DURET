@@ -846,6 +846,11 @@ async def composer_immediat(data,user):
     if data.get('_travail',{}).get('contraintes'):
         demande+='\nCONTRAINTES EXPLICITES ACTIVES :\n'+'\n'.join(c['citation'] for c in data['_travail']['contraintes'] if c.get('active',True))
     tache=data.get('tache')
+    # Un travail FINI ne sert pas une demande nouvelle (voir documents_file.reprise_legitime).
+    if tache:
+        from ressources.documents_file import reprise_legitime
+        if not await asyncio.to_thread(reprise_legitime,uid,fil,data):
+            tache=None;data={k:v for k,v in data.items() if k!='tache'}
     if tache:
         contrat=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'contrat')
         if not contrat:raise ValueError('Tâche inconnue dans cette conversation.')

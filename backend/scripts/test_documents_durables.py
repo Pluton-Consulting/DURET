@@ -192,6 +192,28 @@ class Recette(unittest.TestCase):
     self.assertEqual(len(f.etats(self.uid,self.fil)),1)
     c=f.soumettre(self.uid,'autre-fil','document',{'demande':'Rapport','tache':'moteur-1'})
     self.assertNotEqual(c['tache_documentaire'],a['tache_documentaire'])
+ def test_tache_livree_ne_sert_pas_une_demande_nouvelle(self):
+    # 18/09, Q20b : « Refais ce mémoire en 8 pages » avec l'identifiant du travail DÉJÀ livré
+    # rendait l'ancien document, trois fois (« le fichier est prêt »).
+    from ressources import documents_file as f
+    source=dossiers.enregistrer(self.uid,self.fil,'a.txt','Pièce de référence')
+    a=f.soumettre(self.uid,self.fil,'document',{'demande':'Rédige le mémoire','_demande_utilisateur':'Rédige le mémoire','sources':[source]})
+    token=f._COURANTE.set(a['tache_documentaire'])
+    try:f.associer_tache(self.uid,self.fil,'moteur-livre')
+    finally:f._COURANTE.reset(token)
+    dossiers.etape(self.uid,self.fil,'moteur-livre','contrat',{'demande':'DEMANDE COURANTE (prioritaire) :\nRédige le mémoire','sources':[source]})
+    dossiers.etape(self.uid,self.fil,'moteur-livre','livraison',{'document_id':'x'})
+    f._maj(a['tache_documentaire'],statut='termine',resultat=json.dumps({'pret':True,'document_id':'x'}))
+    self.assertTrue(f.reprise_legitime(self.uid,self.fil,{'tache':'moteur-livre','_demande_utilisateur':'Rédige  le mémoire'}))
+    self.assertTrue(f.reprise_legitime(self.uid,self.fil,{'tache':'moteur-en-cours','demande':'autre chose'}))
+    self.assertFalse(f.reprise_legitime(self.uid,self.fil,{'tache':'moteur-livre','_demande_utilisateur':'Refais ce mémoire en 8 pages'}))
+    b=f.soumettre(self.uid,self.fil,'document',{'demande':'Condense le mémoire à 8 pages','_demande_utilisateur':'Refais ce mémoire en 8 pages','tache':'moteur-livre'})
+    self.assertTrue(b.get('en_cours'),b)
+    self.assertNotEqual(b['tache_documentaire'],a['tache_documentaire'])
+    with dossiers.base() as c:donnees=json.loads(c.execute('SELECT donnees FROM file_documentaire WHERE id=?',(b['tache_documentaire'],)).fetchone()[0])
+    self.assertNotIn('tache',donnees)
+    src=(BACKEND/'skills/documents_dossier.py').read_text(encoding='utf-8')
+    self.assertIn('reprise_legitime',src)
  def test_recherche_nas_noms_et_confirmation_superflue(self):
     if (BACKEND/'nas/acces.py').exists():
      ns=fonctions(BACKEND/'nas/acces.py',{'_nom_correspond','_sans_accent_nas','_mot_proche'})

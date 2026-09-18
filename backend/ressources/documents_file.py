@@ -16,9 +16,28 @@ def _table(c):
 def _norme_demande(texte):
     return ' '.join(str(texte or '').casefold().split())
 
+def reprise_legitime(uid,fil,data):
+    """Une tâche NOMMÉE se reprend ; une tâche FINIE ne répond pas à une demande nouvelle.
+
+    18/09, banc Duret (Q20b) : « Refais ce mémoire en 8 pages : dis-moi ce que tu
+    retires » — le modèle a rappelé la rédaction avec l'identifiant du travail
+    précédent, déjà LIVRÉ. La reprise par identifiant rendait ce livrable tel quel,
+    trois fois : « le fichier est prêt », et c'était l'ancien document de 22 pages.
+    `tache` sert à reprendre un travail suspendu, bloqué ou interrompu ; une
+    demande que le contrat du travail fini ne porte pas est un NOUVEAU travail.
+    La même demande redite retrouve toujours son livrable."""
+    tache=data.get('tache')
+    if not tache or not dossiers.etape(uid,fil,tache,'livraison'):return True
+    voulue=_norme_demande(data.get('_demande_utilisateur') or data.get('demande'))
+    contrat=dossiers.etape(uid,fil,tache,'contrat') or {}
+    return not voulue or voulue in _norme_demande(contrat.get('demande'))
+
 def soumettre(uid,fil,genre,data):
     uid,fil=dossiers.identite(uid,fil)
     data=dossiers.normaliser_selection(uid,fil,data);data['_fil']=fil
+    if data.get('tache') and not reprise_legitime(uid,fil,data):
+        logger.info('Tâche %s déjà livrée, demande nouvelle : nouveau travail',str(data['tache'])[:12])
+        data=dict(data);data.pop('tache',None)
     # Figer les sources au dépôt : une pièce ajoutée plus tard ne change pas une commande en cours.
     # …sauf quand le travail va CHARGER un dossier du serveur : ses pièces n'existent pas encore.
     from skills.documents_dossier import dossier_cite

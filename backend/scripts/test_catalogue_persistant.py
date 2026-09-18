@@ -134,6 +134,22 @@ async def _tout_en_panne(client, base, sid, chemin):
 onas._enfants_dossiers = _tout_en_panne
 verifier("une racine qui ne répond pas reste la racine quand le catalogue prouve qu'elle existe",
          asyncio.run(onas._resoudre(None, "", "", "Drive")) == "/home/Drive")
+# 18/09 : le chemin EXACT de l'appel d'offres en cours, relais en 502 → recherche de « home » par nom
+# → « plusieurs dossiers correspondent à « home » ». Un chemin du périmètre qui ne répond pas le DIT.
+import httpx
+async def _relais_502(client, base, sid, chemin):
+    raise httpx.ConnectError("502 Bad Gateway")
+onas._enfants_dossiers = _relais_502
+_verif = acces.verifier
+acces.verifier = lambda c: "/" + c.strip("/") if ("/" + c.strip("/")).startswith("/home/Drive") else (_ for _ in ()).throw(acces.NasRefuse("hors"))
+try:
+    asyncio.run(onas._resoudre(None, "", "", "/home/Drive/03-Appel d'offres etudes/ETUDES EN COURS/construction 29 lgts"))
+    r_502 = "résolu"
+except Exception as e:
+    r_502 = f"{type(e).__name__}: {e}"
+verifier("un chemin exact du périmètre qui ne répond pas (502) → « serveur indisponible », pas une recherche de « home »",
+         r_502.startswith("NasIndisponible") and "home »" not in r_502, r_502[:160])
+acces.verifier = _verif
 onas._enfants_dossiers = _pas_de_chemin
 try:
     r_mot = asyncio.run(onas._resoudre(None, "", "", "eiffage"))

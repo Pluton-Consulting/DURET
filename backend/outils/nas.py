@@ -89,8 +89,27 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
         # revérifie le chemin rendu. Ce qui est vraiment hors périmètre reste
         # introuvable et se refuse plus bas, avec la liste de ce qui existe.
         pass
-    except Exception:  # noqa: BLE001 - inexistant : on cherche par nom
-        pass
+    except Exception as e:  # noqa: BLE001 - inexistant : on cherche par nom
+        # UN SERVEUR QUI NE RÉPOND PAS N'EST PAS UN CHEMIN INEXISTANT (18/09, test réel) : le
+        # chemin EXACT de l'appel d'offres en cours, relais QuickConnect en 502, partait en
+        # recherche par nom sur « home » → « plusieurs dossiers correspondent à « home » ».
+        # Le modèle a conclu à une erreur de chemin et répondu sur une autre affaire. Un chemin
+        # absent, DSM le dit par une réponse ; une erreur HTTP, un délai ou une connexion coupée
+        # sont un aléa du réseau, et se DISENT.
+        import httpx
+        reseau = isinstance(e, (httpx.HTTPError, TimeoutError, ConnectionError))
+        try:
+            from nas.acces import verifier as _dans_perimetre
+            _dans_perimetre(vise)
+            perimetre = True
+        except Exception:  # noqa: BLE001 — hors des racines : c'est un NOM, on le cherche
+            perimetre = False
+        if perimetre and reseau:
+            from nas.acces import NasIndisponible
+            raise NasIndisponible(
+                f"Le serveur de fichiers n'a pas répondu pour « {vise} » ({type(e).__name__}) : "
+                "incident passager du réseau, PAS un chemin faux ni un refus. Dis-le tel quel ; "
+                "réessaie plus tard ou passe par une autre source (documents indexés, mails).") from e
 
     segments = [s for s in vise.split("/") if s]
     if not segments:

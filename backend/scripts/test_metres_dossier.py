@@ -309,6 +309,23 @@ outils_nas._resoudre = _res_ok
 fige = asyncio.run(dd.figer_le_dossier({"dossier": "la test de buch", "demande": "métrés"}, user))
 verifier("un dossier trouvé est FIGÉ par son chemin exact (le fond n'ouvrira pas un homonyme)", fige["dossier"].endswith("2026-71 la test de buch"), str(fige))
 verifier("sans dossier nommé, rien ne change", asyncio.run(dd.figer_le_dossier({"demande": "métrés des pièces jointes"}, user)) == {"demande": "métrés des pièces jointes"})
+# 18/09 (navigateur) : le dossier cité « 2026-71 la test de buch » introuvable sous ce nom, et le modèle a lancé
+# le métré sur « AFF 012-26 … Le Haillan ». Un dossier qui ne porte aucun mot du dossier cité est refusé.
+DEMANDE_CITEE = "C'est le dossier « 2026-71 la test de buch » (le DCE Domofrance). Lance les métrés des lots 11 et 12."
+async def _res_haillan(client, base, sid, chemin):
+    return "/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2026/AFF 012-26 Construction 25 Logements locatifs sociaux Le Haillan Domofrance"
+outils_nas._resoudre = _res_haillan
+try:
+    asyncio.run(dd.figer_le_dossier({"dossier": "AFF 012-26 Construction 25 Logements Le Haillan", "_demande_utilisateur": DEMANDE_CITEE}, user))
+    verifier("un travail long ne part pas sur un dossier sans AUCUN mot du dossier cité", False)
+except SkillError as e:
+    verifier("un travail long ne part pas sur un dossier sans AUCUN mot du dossier cité",
+             "2026-71 la test de buch" in str(e) and "Ne lance PAS" in str(e), str(e)[:200])
+async def _res_079(client, base, sid, chemin):
+    return "/home/Drive/03-Appel d'offres etudes/ETUDES TERMINEE/- AFF 2026/AFF 079-26 construction 29 lgts sociaux la test de buch 18-09-2026 emarches publics"
+outils_nas._resoudre = _res_079
+fige2 = asyncio.run(dd.figer_le_dossier({"dossier": "AFF 079-26 construction 29 lgts sociaux la test de buch", "_demande_utilisateur": DEMANDE_CITEE}, user))
+verifier("…et part sur le dossier qui porte ses mots, même renommé et numéroté (AFF 079-26)", fige2["dossier"].endswith("emarches publics"), str(fige2)[:160])
 async def _res_panne(client, base, sid, chemin): raise RuntimeError("NAS injoignable")
 outils_nas._resoudre = _res_panne
 verifier("un serveur muet ne bloque pas : la file retentera", asyncio.run(dd.figer_le_dossier({"dossier": "x", "demande": "m"}, user)) == {"dossier": "x", "demande": "m"})

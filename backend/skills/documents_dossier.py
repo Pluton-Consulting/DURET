@@ -577,10 +577,35 @@ async def figer_le_dossier(data,user):
                          +' — Ne lance PAS le travail : demande à la personne lequel de ces dossiers est visé (cite-les), puis relance avec ce chemin dans `dossier`.')
     except Exception as e:  # noqa: BLE001 — serveur muet : le fond retentera, comme avant
         logger.info('Dossier « %s » non figé avant la file (%s) : %s',nom[:60],type(e).__name__,str(e)[:120]);return data
+    # LE DOSSIER CHOISI DOIT ÊTRE CELUI QUE LA PERSONNE A CITÉ (18/09, banc Duret dans le navigateur) :
+    # « C'est le dossier « 2026-71 la test de buch » … lance les métrés » → introuvable sous ce nom, et le
+    # modèle a lancé le travail sur « AFF 012-26 … Le Haillan », en écrivant lui-même « ce choix n'est pas
+    # prouvé ». Un dossier qui ne porte AUCUN des mots du dossier cité n'est pas lui : pas de travail long
+    # dessus, on montre les dossiers qui portent ces mots.
+    cite=dossier_cite(data.get('_demande_utilisateur') or data.get('demande'))
+    if cite and str(data.get('dossier') or '').strip() and not _porte_les_mots(reel or nom,cite):
+        try:
+            from outils.nas import _deplace_ailleurs
+            pistes=_deplace_ailleurs(cite)
+        except Exception:  # noqa: BLE001
+            pistes=[]
+        raise SkillError('La personne a cité le dossier « '+cite+' » ; « '+str(reel or nom)[-120:]+' » n’en porte aucun mot. '
+                         'Ne lance PAS le travail sur un autre dossier. '
+                         +('Dossiers qui portent ses mots, les plus récents d’abord : '+' ; '.join(pistes)+'. ' if pistes else '')
+                         +'Reprends le chemin EXACT du bon dossier, ou demande à la personne lequel est visé.')
     if reel and reel!=nom:
         logger.info('Dossier « %s » figé avant la file : %s',nom[:60],reel[-100:])
         return {**data,'dossier':reel}
     return data
+
+
+def _porte_les_mots(chemin,cite):
+    """Le dossier (son dernier segment) porte-t-il au moins la moitié des MOTS du nom cité ?
+    Les chiffres ne comptent pas : un numéro de consultation n'est pas toujours dans le nom."""
+    mots=[m for m in re.findall(r'[a-z]+',_plat(cite)) if len(m)>=4]
+    if not mots:return True
+    nom=set(re.findall(r'[a-z]+',_plat(str(chemin or '').rstrip('/').rsplit('/',1)[-1])))
+    return sum(1 for m in mots if m in nom)*2>=len(mots)
 
 async def dossier_du_travail(uid,fil,data,user,demande,usage='document'):
     """Charge le dossier nommé par le geste (`dossier`) ou cité entre guillemets

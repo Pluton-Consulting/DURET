@@ -264,13 +264,21 @@ async def _resoudre(client, base, sid, chemin: str) -> str:
                         "récents d'abord : " + " ; ".join(recents[:8]) + (" ; …" if len(recents) > 8 else ""))
             courant = choisis[0]["chemin"]
     if courant is None:
+        # UN NOM PARTIELLEMENT JUSTE DONNE DES PISTES (18/09, banc Duret dans le navigateur) :
+        # « 2026-71 la test de buch » (le numéro de consultation de l'acheteur, absent du nom du
+        # dossier) ne correspondait à rien, et le refus ne proposait que le premier niveau ; le
+        # modèle a lancé un métré sur une autre affaire. Les dossiers qui portent ses MOTS
+        # (les plus récents d'abord) sont proposés.
+        pistes = _deplace_ailleurs(segments[0])
         raise NasRefuse(
             f"Aucun dossier « {segments[0]} » sous les racines ouvertes "
             f"({', '.join(racines)})"
             + ("" if complet else " (parcours interrompu : l'absence n'est pas prouvée)")
-            + f". Dossiers de premier niveau : "
-            f"{', '.join(sorted(set(d for d in disponibles if d))[:25])}. "
-            "Reprends le `chemin` EXACT d'un listage, ou cherche-le avec `nas_chercher`.")
+            + (". Dossiers qui portent ses mots, les plus récents d'abord : " + " ; ".join(pistes)
+               + ". Si l'un d'eux est le bon, reprends son chemin EXACT ; sinon demande."
+               if pistes else
+               f". Dossiers de premier niveau : {', '.join(sorted(set(d for d in disponibles if d))[:25])}. "
+               "Reprends le `chemin` EXACT d'un listage, ou cherche-le avec `nas_chercher`."))
 
     # Segments suivants : contraints à leur parent — c'est le sens d'un chemin.
     for segment in suivants:

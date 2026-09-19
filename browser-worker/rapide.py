@@ -136,7 +136,70 @@ def _titre(page_html: str) -> str | None:
     return html_.unescape(m.group(1)).strip() if m else None
 
 
+# UN PDF SE LIT, IL NE SE « DUMPE » PAS (18/09, banc Duret). Les fiches techniques des
+# fabricants — ce que cherche un métreur — sont des PDF ; `--dump-dom` n'en rend que la
+# coquille de la visionneuse, et la recherche « fiche technique Taralay Impression » revenait
+# avec la fiche… vide. Le fichier se télécharge (borné) et son texte se lit avec pypdf, déjà
+# présent dans l'image (dépendance de browser-use).
+PDF_MAX_OCTETS = 20 * 1024 * 1024
+PDF_MAX_PAGES = 30
+
+
+def _est_pdf(url: str) -> bool:
+    try:
+        return urlparse(url).path.lower().endswith(".pdf")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _texte_pdf(brut: bytes) -> tuple[str | None, str]:
+    import io
+    from pypdf import PdfReader
+    lecteur = PdfReader(io.BytesIO(brut))
+    morceaux, total = [], 0
+    for page in lecteur.pages[:PDF_MAX_PAGES]:
+        t = page.extract_text() or ""
+        morceaux.append(t)
+        total += len(t)
+        if total > 12000:
+            break
+    titre = None
+    try:
+        titre = (lecteur.metadata.title or None) if lecteur.metadata else None
+    except Exception:  # noqa: BLE001
+        pass
+    texte = re.sub(r"[ \t]{2,}", " ", "\n".join(morceaux))
+    texte = re.sub(r"\s*\n\s*", "\n", texte).strip()[:6000]
+    return titre, texte
+
+
+async def _lire_pdf(url: str, delai_ms: int) -> dict:
+    import httpx
+    async with httpx.AsyncClient(timeout=delai_ms / 1000 + 15, follow_redirects=True,
+                                 headers={"User-Agent": AGENT}) as client:
+        async with client.stream("GET", url) as r:
+            r.raise_for_status()
+            morceaux, total = [], 0
+            async for bloc in r.aiter_bytes():
+                total += len(bloc)
+                if total > PDF_MAX_OCTETS:
+                    raise ValueError("PDF trop lourd")
+                morceaux.append(bloc)
+    brut = b"".join(morceaux)
+    if not brut.lstrip()[:5].startswith(b"%PDF"):
+        raise ValueError("pas un PDF")
+    titre, texte = await asyncio.to_thread(_texte_pdf, brut)
+    nom = unquote(urlparse(url).path.rsplit("/", 1)[-1]) or None
+    return {"url": url, "titre": titre or nom, "contenu": texte or None, "format": "pdf"}
+
+
 async def _lire(url: str, delai_ms: int) -> dict:
+    if _est_pdf(url):
+        try:
+            return await _lire_pdf(url, delai_ms)
+        except Exception as e:  # noqa: BLE001 — un PDF illisible n'arrête pas la recherche
+            logger.info("PDF non lu (%s) : %s", url[:120], type(e).__name__)
+            return {"url": url, "titre": None, "contenu": None}
     page_html = await _dump(url, delai_ms)
     texte = _texte(page_html)
     if _est_page_erreur(texte):
@@ -262,6 +325,15 @@ async def chercher(requete: str, max_resultats: int = 3,
 
     resultats = list(await asyncio.gather(
         *[_une(u) for u in liens[:max_resultats]]))
+    # UNE PAGE VIDE SE RELIT UNE FOIS, SEULE (18/09) : ouverte seule, la page produit Gerflor
+    # rendait 6 000 caractères en 4 s ; lue à deux de front pendant la recherche, rien. Une
+    # seconde lecture, sans concurrence et avec le délai entier, avant de la déclarer vide.
+    for i, r in enumerate(resultats):
+        if not r.get("contenu") and not _est_pdf(r.get("url") or ""):
+            try:
+                resultats[i] = await _lire(r["url"], delai_ms)
+            except Exception as e:  # noqa: BLE001
+                logger.info("Page toujours vide (%s) : %s", (r.get("url") or "")[:120], type(e).__name__)
 
     return {
         "success": any(r.get("contenu") for r in resultats),

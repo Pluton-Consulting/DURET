@@ -38,8 +38,8 @@ logger = logging.getLogger("browser-worker.llm")
 # lisait « le site est sans doute trop long à parcourir » : faux, c'était la
 # clé.
 #
-# La vivacité se SONDE donc à la construction — un GET /models d'une seconde,
-# le même geste qui a permis le diagnostic — et un fournisseur mort cède sa
+# La vivacité se SONDE donc à la construction — un vrai appel d'un jeton (la
+# liste des modèles ne prouvait pas la clé) — et un fournisseur mort cède sa
 # place au premier VIVANT de l'ordre de repli. LongCat d'abord (le modèle de
 # la maison, sans plafond de quota), Gemini ensuite (rapide, function-calling
 # propre), puis les autres. Le repli est journalisé : une clé morte doit se
@@ -63,15 +63,26 @@ _MODELES_DEFAUT = {
 _ORDRE_REPLI = ("longcat", "google", "deepseek", "openrouter", "groq")
 
 
-def _vivant(provider: str) -> bool:
-    """Le fournisseur répond-il avec CETTE clé ? Une seconde, pas plus."""
+def _vivant(provider: str, modele: str | None = None) -> bool:
+    """Le fournisseur répond-il avec CETTE clé ? Un vrai appel d'un jeton.
+
+    LA LISTE DES MODÈLES NE PROUVE PAS LA CLÉ (18/09, banc Duret) : celle
+    d'OpenRouter est publique, et LongCat la rend en 200 avec une clé refusée —
+    la sonde déclarait LongCat vivant, la navigation autonome partait dessus et
+    chaque étape mourait en 401. On demande donc une vraie réponse, d'un jeton."""
     env, url = _SONDES.get(provider, (None, None))
     if not env or not os.environ.get(env):
         return False
+    import json as _json
+    appel = url.rsplit("/models", 1)[0] + "/chat/completions"
+    corps = _json.dumps({"model": modele or _MODELES_DEFAUT.get(provider, ""),
+                         "messages": [{"role": "user", "content": "OK"}],
+                         "max_tokens": 1}).encode()
     try:
         req = urllib.request.Request(
-            url, headers={"Authorization": "Bearer " + os.environ[env]})
-        with urllib.request.urlopen(req, timeout=6) as r:
+            appel, data=corps,
+            headers={"Authorization": "Bearer " + os.environ[env], "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
             return 200 <= r.status < 300
     except Exception as e:  # noqa: BLE001 — mort ou injoignable : même verdict
         logger.warning("Fournisseur navigateur %s écarté : %s", provider, str(e)[:120])
@@ -81,7 +92,7 @@ def _vivant(provider: str) -> bool:
 def _resoudre() -> tuple[str, str]:
     """Le couple (fournisseur, modèle) réellement utilisable."""
     configure = wconfig.LLM_PROVIDER
-    if configure == "openai" or _vivant(configure):
+    if configure == "openai" or _vivant(configure, wconfig.LLM_MODEL):
         return configure, wconfig.LLM_MODEL
     for p in _ORDRE_REPLI:
         if p != configure and _vivant(p):

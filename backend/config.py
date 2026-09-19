@@ -223,6 +223,10 @@ class Settings(BaseSettings):
     model_ollama_cloud_vision_secours: str = "qwen3.5:397b"
     # La navigation autonome passe par le relais du backend (llm/relais_navigateur.py) :
     # le conteneur navigateur n'a pas la clé. Réglage `modele_navigateur` pour changer.
+    # 19/09, MESURÉ sur la même tâche (toute la gamme Taralay sur gerflor.fr) : kimi-k3
+    # 90 s / 8 étapes / 32 produits ; deepseek-v4.1-flash 111 s / 18 étapes / 29 (il est le
+    # secours) ; deepseek-v4-pro 161 s, 5 ratés dont une sortie tronquée. OpenRouter avant :
+    # 7 à 17 min pour 4 à 8 produits.
     model_ollama_cloud_navigateur: str = "kimi-k3"
     # « mesuree » : la réflexion des modèles raisonnants est bridée d'après la
     # table de llm/router.py ; « libre » : rien n'est envoyé (comportement d'avant).

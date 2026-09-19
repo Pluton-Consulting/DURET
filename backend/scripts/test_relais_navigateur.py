@@ -78,6 +78,7 @@ verifier("les modèles de l'assistant peuvent être demandés par leur nom, pas 
 
 # ── relayer, réseau doublé ──
 envois = []
+file_reponses = []
 
 
 class _Rep:
@@ -100,6 +101,11 @@ class _Client:
 
     async def post(self, url, json=None, headers=None):
         envois.append((url, json, headers))
+        if file_reponses:
+            suivante = file_reponses.pop(0)
+            if isinstance(suivante, int):
+                return _Rep(suivante, {"error": "surcharge"})
+            return _Rep(200, suivante)
         return _Rep(200, {"choices": [{"message": {"role": "assistant",
                                                    "content": '```json\n{"action": [{"navigate": {"url": "https://www.gerflor.fr"}}]}\n```'}}],
                           "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
@@ -127,6 +133,38 @@ verifier("la réponse rend le seul objet JSON (clôtures retirées)",
          json.loads(r["choices"][0]["message"]["content"])["action"][0]["navigate"]["url"] == "https://www.gerflor.fr")
 asyncio.run(rel.relayer({"model": "deepseek-v4.1-flash", "messages": [schema_msg]}))
 verifier("un modèle de l'assistant demandé par son nom est servi", envois[-1][1]["model"] == "deepseek-v4.1-flash")
+
+vide = {"choices": [{"message": {"role": "assistant", "content": ""}}]}
+bonne = {"choices": [{"message": {"role": "assistant", "content": '{"action": [{"done": {"text": "ok"}}]}'}}]}
+file_reponses[:] = [vide, bonne]
+n0 = len(envois)
+r = asyncio.run(rel.relayer({"model": "kimi-k3", "messages": [schema_msg]}))
+verifier("une réponse VIDE (réflexion qui mange la sortie) se redemande une fois, au relais",
+         len(envois) - n0 == 2 and json.loads(r["choices"][0]["message"]["content"])["action"][0]["done"]["text"] == "ok",
+         len(envois) - n0)
+file_reponses[:] = [{"choices": [{"message": {"role": "assistant", "content": "",
+                                              "reasoning": 'Je clique. {"action": [{"click": {"index": 4}}]}'}}]}]
+n0 = len(envois)
+r = asyncio.run(rel.relayer({"model": "kimi-k3", "messages": [schema_msg]}))
+verifier("le JSON rangé dans le champ de réflexion vaut réponse (pas de second appel)",
+         len(envois) - n0 == 1 and json.loads(r["choices"][0]["message"]["content"])["action"][0]["click"]["index"] == 4)
+file_reponses[:] = [vide, vide]
+n0 = len(envois)
+asyncio.run(rel.relayer({"model": "kimi-k3", "messages": [schema_msg]}))
+verifier("deux réponses vides : on s'arrête là, l'agent décide (pas de boucle)", len(envois) - n0 == 2)
+
+file_reponses[:] = [503, bonne]
+n0 = len(envois)
+r = asyncio.run(rel.relayer({"model": "kimi-k3", "messages": [schema_msg]}))
+verifier("un modèle saturé (503) cède la place au modèle rapide de l'assistant",
+         [e[1]["model"] for e in envois[n0:]] == ["kimi-k3", "deepseek-v4.1-flash"], [e[1]["model"] for e in envois[n0:]])
+file_reponses[:] = [400]
+try:
+    asyncio.run(rel.relayer({"model": "kimi-k3", "messages": [schema_msg]}))
+    refuse = False
+except _HTTPException as e:
+    refuse = e.status_code == 400
+verifier("une requête refusée (400) ne passe pas au secours : l'erreur remonte", refuse)
 
 # ── le guichet et le conteneur ──
 src_g = (RACINE / "routers" / "navigateur_interne.py").read_text(encoding="utf-8")

@@ -46,6 +46,20 @@ def modele_du_navigateur() -> str:
     return settings.model_ollama_cloud_navigateur
 
 
+def modele_de_secours(modele: str) -> str:
+    """Le modèle rapide de l'assistant (réglage `modele_rapide`, sinon la configuration),
+    s'il diffère de celui qui vient d'échouer."""
+    from config import settings
+    try:
+        from llm.reglages import texte
+        fournisseur, _, rapide = (texte("modele_rapide") or "").partition(":")
+        rapide = rapide.strip() if fournisseur.strip().lower() == "ollama_cloud" else ""
+    except Exception:  # noqa: BLE001
+        rapide = ""
+    rapide = rapide or settings.model_ollama_cloud_rapide
+    return rapide if rapide and rapide != modele else ""
+
+
 def modeles_permis() -> set:
     """Les modèles Ollama Cloud que le navigateur peut demander par leur nom : ceux que
     l'assistant a déjà (configuration et réglages). Tout autre nom → le modèle par défaut."""
@@ -129,20 +143,10 @@ def corps_ollama(corps: dict, modele: str) -> dict:
     return envoi
 
 
-async def relayer(corps: dict) -> dict:
-    """Un appel du navigateur → Ollama Cloud → la réponse, au format OpenAI."""
+async def _appeler(envoi: dict, cle: str, modele: str) -> dict:
     import httpx
     from fastapi import HTTPException
     from config import settings
-    from llm.router import _cle
-
-    cle = _cle("ollama_cloud")
-    if not cle:
-        raise HTTPException(status_code=503, detail="Aucune clé Ollama Cloud (Paramètres → Clés API).")
-    demande = str(corps.get("model") or "").strip()
-    modele = demande if demande in modeles_permis() else modele_du_navigateur()
-    envoi = corps_ollama(corps, modele)
-    debut = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=180) as client:
             r = await client.post(settings.ollama_cloud_base_url.rstrip("/") + "/chat/completions",
@@ -154,12 +158,53 @@ async def relayer(corps: dict) -> dict:
         # Le détail du fournisseur ne porte pas la clé ; il dit la cause (quota, modèle inconnu).
         logger.warning("Relais navigateur : %s refuse (%s) %s", modele, r.status_code, r.text[:200])
         raise HTTPException(status_code=r.status_code, detail=r.text[:300])
-    donnees = r.json()
-    if "response_format" in envoi:
+    return r.json()
+
+
+async def relayer(corps: dict) -> dict:
+    """Un appel du navigateur → Ollama Cloud → la réponse, au format OpenAI."""
+    from fastapi import HTTPException
+    from llm.router import _cle
+
+    cle = _cle("ollama_cloud")
+    if not cle:
+        raise HTTPException(status_code=503, detail="Aucune clé Ollama Cloud (Paramètres → Clés API).")
+    demande = str(corps.get("model") or "").strip()
+    modele = demande if demande in modeles_permis() else modele_du_navigateur()
+    envoi = corps_ollama(corps, modele)
+    debut = time.monotonic()
+    # UNE RÉPONSE VIDE SE REDEMANDE ICI, UNE FOIS (19/09, mesuré sur la navigation Gerflor) :
+    # kimi-k3 rend parfois un contenu vide — la réflexion a mangé la sortie. browser-use en
+    # faisait un échec d'étape (« Invalid JSON: EOF »), puis une étape de plus ; redemandé
+    # au relais, c'est une seconde de plus au lieu d'un tour de boucle.
+    for essai in (1, 2):
+        try:
+            donnees = await _appeler(envoi, cle, modele)
+        except HTTPException as e:
+            # UN MODÈLE EN PANNE OU SATURÉ CÈDE LA PLACE au modèle rapide de l'assistant
+            # (même compte, même clé) : une navigation ne meurt pas sur un 503 passager.
+            secours = modele_de_secours(modele)
+            if e.status_code not in (429, 500, 502, 503, 504) or not secours:
+                raise
+            logger.warning("Relais navigateur : %s indisponible (%s), secours %s", modele, e.status_code, secours)
+            modele = secours
+            envoi = corps_ollama(corps, modele)
+            donnees = await _appeler(envoi, cle, modele)
+        if "response_format" not in envoi:
+            break
+        vides = 0
         for choix in donnees.get("choices") or []:
             message = choix.get("message") or {}
             propre = json_propre(message.get("content"))
+            if propre is None:
+                # Le JSON rangé dans le champ de réflexion vaut réponse.
+                propre = json_propre(message.get("reasoning") or message.get("reasoning_content"))
             if propre is not None:
                 message["content"] = propre
+            elif not str(message.get("content") or "").strip():
+                vides += 1
+        if not vides:
+            break
+        logger.info("Relais navigateur : réponse vide de %s (essai %d)", modele, essai)
     logger.info("Relais navigateur : %s, %.1f s", modele, time.monotonic() - debut)
     return donnees

@@ -140,10 +140,12 @@ class ClientNavigateur:
             delai_s=delai * (max_results + 1),
         )
 
-    async def run_fetch(self, url: str) -> BrowserResult:
+    async def run_fetch(self, url: str, capture: bool = True) -> BrowserResult:
         delai = settings.browser_timeout_ms / 1000
+        # Sans capture quand on lit une série de pages : l'aperçu coûte un second
+        # Chromium par page, et seule la lecture sert au modèle.
         return await self._appeler(
-            "/ouvrir", {"url": url, "delai_ms": settings.browser_timeout_ms},
+            "/ouvrir", {"url": url, "delai_ms": settings.browser_timeout_ms, "capture": capture},
             delai_s=delai,
         )
 

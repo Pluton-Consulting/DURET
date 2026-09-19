@@ -370,6 +370,10 @@ RESULTATS_GENEREUX = {"lire_source_dossier", "chercher_source_dossier", "drive_c
                       "drive_arborescence", "nas_arborescence",
                       "lire_mails", "lire_mail", "check_mails",
                       "rechercher_documents", "interroger_donnees",
+                      # 19/09 : une page lue, une recherche web, une navigation
+                      # rendaient leurs 4 000 premiers caractères — la rubrique
+                      # « Applications » d'une fiche produit tombait au-delà.
+                      "chercher_web", "ouvrir_page", "naviguer",
                       # Un compte rendu concis pese quand meme quelques milliers
                       # de caracteres : coupe a 4 000, le modele n'en verrait que
                       # le debut et enchainerait sur une reunion qu'il a lue a

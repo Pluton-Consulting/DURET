@@ -119,9 +119,10 @@ async def fetch_url(
     user_id: str,
     agent_id: str,
     reason: str = "",
+    capture: bool = True,
 ) -> dict:
     """Ouvre une adresse précise dans le conteneur navigateur."""
-    result: BrowserResult = await navigateur.run_fetch(url)
+    result: BrowserResult = await navigateur.run_fetch(url, capture=capture)
 
     await log_action(
         action="browser_fetch_url",

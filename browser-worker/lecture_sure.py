@@ -72,8 +72,11 @@ def _texte(noeud) -> str:
 
 
 def _libelle(noeud, texte: str | None = None) -> str:
+    """Ce que la PERSONNE lit sur l'élément. Ni `id` ni `name` : ce sont des noms techniques
+    (le bouton de recherche de Gerflor s'appelle `edit-submit` — le lire comme « submit »
+    l'a fait refuser le 19/09 alors qu'il ne fait que chercher)."""
     a = _attr(noeud)
-    morceaux = [a.get(k, "") for k in ("aria-label", "title", "value", "alt", "name", "id")]
+    morceaux = [a.get(k, "") for k in ("aria-label", "title", "value", "alt")]
     morceaux.append((_texte(noeud) if texte is None else texte)[:200])
     return _plat(" ".join(m for m in morceaux if m))
 
@@ -233,6 +236,9 @@ def consigne_de_navigation(domaines: list[str], lecture: bool) -> str:
         "- Une bannière de cookies : ferme-la (accepter ou refuser) pour lire la page.",
         "- Une page refusée (Access Denied, captcha) : ne la recharge pas plus de deux fois ; essaie une "
         "autre page du même site ou l'action `search`.",
+        "- Si la tâche demande le détail de NOMBREUSES pages (toute une gamme, une liste de fiches), ne les "
+        "ouvre pas une à une : relève leurs adresses (extract avec extract_links) et rends-les TOUTES dans "
+        "`done`, une par ligne — elles seront lues en parallèle ensuite, bien plus vite.",
         "- Termine par `done` avec les faits trouvés, chacun suivi de l'adresse de la page où tu l'as lu. "
         "Si tu n'as pas trouvé, dis précisément ce que tu as essayé et ce que tu as vu.",
     ]

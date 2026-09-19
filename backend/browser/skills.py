@@ -95,22 +95,141 @@ def tableau_sources(requete: str, sources: list, resultats=None) -> dict:
             "rows": [[s, lus.get(s, "")] for s in sources]}
 
 
-async def ouvrir_page(data: dict, user) -> dict:
-    """Ouvre une adresse précise et en rend le texte."""
-    from browser.tools import fetch_url
+# PLUSIEURS PAGES D'UN GESTE (19/09). « Liste les produits de la gamme Taralay avec leur
+# usage » : la navigation autonome trouvait les quinze fiches, puis le modèle la relançait
+# pour les OUVRIR une à une — trois navigations de 25 étapes, un quart d'heure, et encore
+# incomplet. Lire une page dont on a l'adresse n'a pas besoin d'un agent : le lecteur rapide
+# le fait en quelques secondes, deux de front.
+MAX_PAGES_PAR_APPEL = 12
+BUDGET_PAGES = 11000
 
+
+def _adresses(data: dict) -> list:
+    """Les adresses demandées, dans l'ordre, sans doublon, protocole complété."""
+    import re
+    brut = data.get("urls") or data.get("adresses") or data.get("liens") or data.get("pages") or []
+    if isinstance(brut, str):
+        brut = re.split(r"[\s,;]+", brut)
+    if not isinstance(brut, list):
+        brut = []
     # Les alias d'abord : le modèle écrit `url`, mais aussi `lien`, `adresse`,
     # `site` ou `page` — refuser pour un nom de champ est le piège déjà payé
     # sur la mailbox du triage. Le refus, s'il reste, dit QUOI passer.
-    url = str(data.get("url") or data.get("lien") or data.get("adresse")
-              or data.get("site") or data.get("page") or "").strip()
-    if not url:
+    seule = data.get("url") or data.get("lien") or data.get("adresse") or data.get("site")
+    if not seule and isinstance(data.get("page"), str):
+        seule = data.get("page")
+    sortie = []
+    for u in [*brut, seule or ""]:
+        u = str(u or "").strip().strip("<>\"'")
+        if not u:
+            continue
+        if not u.startswith(("http://", "https://")):
+            # Le modèle écrit souvent « duret-sols.fr » sans protocole ; on le
+            # complète plutôt que de refuser pour une raison qu'il ne comprendrait pas.
+            u = "https://" + u
+        if u not in sortie:
+            sortie.append(u)
+    return sortie
+
+
+def _passages(texte: str, cherche: str, budget: int) -> str:
+    """Ce qu'une page dit de ce qu'on cherche, dans le budget : les passages qui portent
+    les mots cherchés (les plus riches, dans l'ordre de la page), sinon son début."""
+    import re
+    from browser.tools import _plat_web
+    # L'en-tête « Source : … / Titre : … » posé par `fetch_url` n'est pas la page : l'adresse
+    # et le titre sont rendus à part, et ses « : » et « . » passaient pour de la prose.
+    lignes = [l for l in str(texte or "").splitlines() if not re.match(r"\s*(Source|Titre)\s*:", l)]
+    plein = " ".join(" ".join(lignes).split())
+    if len(plein) <= budget:
+        return plein
+    termes = [m for m in dict.fromkeys(re.findall(r"\w{4,}", _plat_web(cherche)))] if cherche else []
+    if termes:
+        # Même longueur que le texte : un caractère aplati par caractère lu.
+        plat = "".join((_plat_web(c) or " ")[0] for c in plein)
+        fenetres = []
+        for t in termes:
+            for m in re.finditer(re.escape(t), plat):
+                fenetres.append([max(0, m.start() - 250), min(len(plein), m.end() + 650)])
+        # LE MENU PORTE AUSSI LES MOTS CHERCHÉS (« Produits Applications Inspiration ») :
+        # chaque passage se juge à sa richesse — mots cherchés distincts, puis part de mots
+        # en minuscule (de la prose ; un menu n'est fait que de Majuscules), puis ponctuation ; les meilleurs, sans chevauchement, sont rendus
+        # dans l'ordre de la page. Fusionner les fenêtres voisines faisait d'un menu répété
+        # un seul bloc qui mangeait tout le budget.
+        def richesse(f):
+            bout = plat[f[0]:f[1]]
+            mots = re.findall(r"[^\W\d_]{3,}", plein[f[0]:f[1]])
+            prose = sum(1 for m in mots if m[0].islower()) / max(1, len(mots))
+            ponctuation = len(re.findall(r"[.,;:!?]", bout)) * 100 / max(1, len(bout))
+            return (sum(1 for t in termes if t in bout), round(prose, 1), ponctuation)
+        choisis, reste = [], budget
+        for debut, fin in sorted(fenetres, key=richesse, reverse=True):
+            if reste <= 80:
+                break
+            if any(debut < f and d < fin for d, f in choisis):
+                continue
+            fin = min(fin, debut + reste)
+            choisis.append((debut, fin))
+            reste -= (fin - debut) + 3
+        if choisis:
+            return " … ".join(plein[d:f] for d, f in sorted(choisis))
+    return plein[:budget].rstrip() + " …"
+
+
+async def _ouvrir_plusieurs(adresses: list, data: dict, user) -> dict:
+    import asyncio
+    from browser.tools import fetch_url
+
+    cherche = str(data.get("cherche") or data.get("motif") or data.get("requete") or "").strip()
+    lues, ecartees = adresses[:MAX_PAGES_PAR_APPEL], adresses[MAX_PAGES_PAR_APPEL:]
+    budget = max(700, BUDGET_PAGES // len(lues))
+    porte = asyncio.Semaphore(2)   # comme le lecteur rapide : deux Chromium de front, pas plus
+
+    async def une(u: str) -> dict:
+        async with porte:
+            try:
+                r = await fetch_url(url=u, user_id=str(getattr(user, "id", "")), agent_id="agent1",
+                                    reason=cherche[:100], capture=False)
+            except Exception as e:  # noqa: BLE001 — une page qui tombe n'emporte pas les autres
+                logger.info("Page non lue (%s) : %s", u[:120], type(e).__name__)
+                r = {"success": False}
+        ok = bool(r.get("success"))
+        return {"url": u, "titre": str(r.get("title") or "").strip()[:160], "lue": ok,
+                "contenu": _passages(r.get("content") or "", cherche, budget) if ok else ""}
+
+    pages = list(await asyncio.gather(*[une(u) for u in lues]))
+    nb_lues = sum(1 for p in pages if p["lue"])
+    return {
+        "cherche": cherche or None,
+        "pages": pages,
+        "lues": nb_lues,
+        "non_lues": [p["url"] for p in pages if not p["lue"]],
+        "non_ouvertes": ecartees,
+        "bloc_ui": {"type": "table", "titre": f"Pages lues — {cherche}" if cherche else "Pages lues",
+                    "columns": ["Adresse", "Titre", "Lue"],
+                    "rows": [[p["url"], p["titre"], "oui" if p["lue"] else "non"] for p in pages]},
+        "bloc_garanti": True,
+        "a_savoir": ("Information EXTERNE, lue sur le web. Cite l'adresse de chaque fait et ne la "
+                     "présente jamais comme une donnée interne."),
+        "a_faire": ("Le tableau des pages lues est DÉJÀ affiché : ne le recopie pas. Réponds à partir "
+                    "du `contenu` de chaque page, en citant son adresse. Une page non lue ou une "
+                    "information absente d'une page se dit telle quelle, sans la deviner"
+                    + (f" ; {len(ecartees)} adresse(s) au-delà de {MAX_PAGES_PAR_APPEL} n'ont pas été "
+                       "ouvertes : rappelle `ouvrir_page` avec elles." if ecartees else ".")),
+    }
+
+
+async def ouvrir_page(data: dict, user) -> dict:
+    """Ouvre une adresse précise et en rend le texte — ou plusieurs, en parallèle."""
+    from browser.tools import fetch_url
+
+    adresses = _adresses(data)
+    if not adresses:
         return {"erreur": "Donne l'adresse à ouvrir, dans le paramètre `url` "
-                          "(ex. duret-sols.fr)."}
-    if not url.startswith(("http://", "https://")):
-        # Le modèle écrit souvent « duret-sols.fr » sans protocole ; on le
-        # complète plutôt que de refuser pour une raison qu'il ne comprendrait pas.
-        url = "https://" + url
+                          "(ex. duret-sols.fr), ou plusieurs dans `urls`."}
+    if len(adresses) > 1:
+        return await _ouvrir_plusieurs(adresses, data, user)
+    url = adresses[0]
 
     r = await fetch_url(url=url, user_id=str(getattr(user, "id", "")),
                         agent_id="agent1", reason=str(data.get("motif") or ""))
@@ -256,12 +375,27 @@ async def naviguer(data: dict, user) -> dict:
             deja.add(u)
             vues.append(u)
 
+    # LES ADRESSES QUE LE RÉSUMÉ NOMME, en plus de celles visitées : une gamme relevée
+    # sur une page de catégorie porte l'adresse de chaque fiche, jamais ouverte.
+    import re
+    trouvees = []
+    for u in re.findall(r"https?://[^\s)\]>\"'`,;]+", str(brut.get("summary") or "")):
+        u = u.rstrip(".:")
+        if u not in trouvees:
+            trouvees.append(u)
+
     return {
         "tache": tache,
         "trouve": bool(brut.get("summary")),
         "contenu": brut.get("summary"),
         "pages_vues": vues[:15],
+        "adresses_trouvees": trouvees[:40],
         "etapes": etat["steps"],
         "a_savoir": ("Information EXTERNE, vue sur le web. Cite les adresses et ne "
                      "la présente jamais comme une donnée interne."),
+        "a_faire": ("Si la demande exige le détail de pages dont tu as maintenant l'adresse "
+                    "(`adresses_trouvees`, ou nommées dans le contenu), lis-les d'UN seul geste avec "
+                    "`ouvrir_page` et le paramètre `urls` (jusqu'à 12 par appel, `cherche` = ce que tu "
+                    "veux y lire) — c'est quelques secondes. Ne relance `naviguer` que pour une "
+                    "exploration vraiment différente : il met plusieurs minutes."),
     }

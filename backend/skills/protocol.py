@@ -796,9 +796,12 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "OUVRE UNE ADRESSE PRECISE et en rend le texte. A employer quand on te "
         "donne un lien, ou quand tu connais deja la page a consulter (le site "
         "d'une entreprise, une fiche produit). Passe l'adresse dans `url` "
-        "(« duret-sols.fr » suffit, le protocole est ajoute). Meme "
+        "(« duret-sols.fr » suffit, le protocole est ajoute). PLUSIEURS pages "
+        "d'un coup : `urls` (liste, jusqu'a 12, lues en parallele en quelques "
+        "secondes) et `cherche` (ce que tu veux y lire) — c'est LE geste pour "
+        "lire toutes les fiches d'une gamme dont tu as les adresses. Meme "
         "regle : information EXTERNE, cite l'adresse",
-        [], ["url", "motif"]),
+        [], ["url", "urls", "cherche", "motif"]),
     "naviguer": (
         "NAVIGATEUR LIBRE : il parcourt un site comme une personne — menus, liens, "
         "onglets, moteur de recherche du site, bannieres — sans jamais rien y "

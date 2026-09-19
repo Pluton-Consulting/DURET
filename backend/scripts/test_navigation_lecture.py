@@ -71,6 +71,10 @@ verifier("un bouton d'onglet / « voir plus » se clique",
          permis("click", Noeud("div", {"role": "button"}, "Voir plus de produits", page)))
 verifier("le bouton d'un formulaire de recherche en GET se clique",
          permis("click", Noeud("button", {"type": "submit"}, "Rechercher", form_get)))
+gerflor = Noeud("form", {"action": "/search/collections", "method": "GET", "id": "gerflor-search-form"}, parent=page)
+verifier("le bouton de recherche de Gerflor (id « edit-submit », valeur « Rechercher ») se clique — refusé le 19/09",
+         permis("click", Noeud("input", {"type": "submit", "id": "edit-submit", "value": "Rechercher",
+                                         "class": "btn-search js-form-submit form-submit"}, "", gerflor)))
 verifier("un lien de tri « ?orderby=prix » n'est pas une commande",
          permis("click", Noeud("a", {"href": "/produits?orderby=prix"}, "Prix croissant", nav)))
 verifier("un choix dans une liste de filtres se fait",
@@ -159,6 +163,59 @@ verifier("le crédit épuisé se dit en toutes lettres au lieu d'un faux résum�
          "faute de crédit chez son" in src and "NAVIGATION INACHEVÉE" in src)
 verifier("le lecteur rapide sait lire une page à la fois",
          "concurrence: int = 2" in (TRAVAILLEUR / "rapide.py").read_text(encoding="utf-8"))
+
+# ── Plusieurs pages d'un geste : `ouvrir_page` avec `urls` (19/09) ──
+import asyncio as _aio
+import types as _types
+src_sk = (RACINE / "backend" / "browser" / "skills.py").read_text(encoding="utf-8")
+src_to = (RACINE / "backend" / "browser" / "tools.py").read_text(encoding="utf-8")
+arbre_sk, arbre_to = ast.parse(src_sk), ast.parse(src_to)
+lus = []
+
+
+async def faux_fetch(url, user_id, agent_id, reason="", capture=True):
+    lus.append((url, capture))
+    if "absente" in url:
+        return {"success": False, "content": "Échec"}
+    corps = ("Menu Produits Applications Inspiration " * 40
+             + "Applications sur le marché : santé, éducation, tertiaire, fort trafic. "
+             + "Données techniques " * 60)
+    return {"success": True, "title": url.rsplit("/", 1)[-1], "content": f"Source : {url}\nTitre : t\n\n{corps}"}
+
+
+outils_mod = _types.ModuleType("browser.tools")
+exec(compile(ast.Module(body=[n for n in arbre_to.body if isinstance(n, ast.FunctionDef) and n.name == "_plat_web"],
+                        type_ignores=[]), "tools", "exec"), outils_mod.__dict__)
+outils_mod.fetch_url = faux_fetch
+sys.modules.setdefault("browser", _types.ModuleType("browser"))
+sys.modules["browser.tools"] = outils_mod
+esp = {"logger": _types.SimpleNamespace(info=lambda *a, **k: None)}
+garde = [n for n in arbre_sk.body
+         if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ("_adresses", "_passages", "_ouvrir_plusieurs"))
+         or (isinstance(n, ast.Assign) and any(isinstance(c, ast.Name) and c.id in ("MAX_PAGES_PAR_APPEL", "BUDGET_PAGES") for c in n.targets))]
+exec(compile(ast.Module(body=garde, type_ignores=[]), "skills", "exec"), esp)
+verifier("une seule adresse reste le geste d'avant (une page, avec son aperçu)",
+         esp["_adresses"]({"url": "gerflor.fr"}) == ["https://gerflor.fr"])
+adr = esp["_adresses"]({"urls": "www.gerflor.fr/produits/a, https://www.gerflor.fr/produits/b\nwww.gerflor.fr/produits/a"})
+verifier("`urls` en texte : séparées, protocole complété, sans doublon",
+         adr == ["https://www.gerflor.fr/produits/a", "https://www.gerflor.fr/produits/b"], adr)
+urls = [f"https://www.gerflor.fr/produits/taralay-{i}" for i in range(14)] + ["https://www.gerflor.fr/absente"]
+res = _aio.run(esp["_ouvrir_plusieurs"](urls, {"cherche": "applications usage"}, None))
+verifier("douze pages lues au plus par appel, le reste DIT (non ouvertes)",
+         len(res["pages"]) == 12 and len(res["non_ouvertes"]) == 3 and "rappelle `ouvrir_page`" in res["a_faire"], res.get("non_ouvertes"))
+verifier("lues SANS capture (un Chromium de moins par page)", lus and all(c is False for _, c in lus), lus[:2])
+verifier("chaque page rend le passage qui porte ce qu'on cherche, dans le budget",
+         all("santé, éducation" in p["contenu"] and len(p["contenu"]) <= 1200 for p in res["pages"]),
+         [(len(p["contenu"]), "santé, éducation" in p["contenu"]) for p in res["pages"]])
+verifier("le tableau des pages lues est garanti à l'écran", res["bloc_garanti"] and len(res["bloc_ui"]["rows"]) == 12)
+res2 = _aio.run(esp["_ouvrir_plusieurs"](["https://a.fr/1", "https://www.gerflor.fr/absente"], {}, None))
+verifier("une page qui ne s'ouvre pas est dite non lue, les autres passent",
+         res2["lues"] == 1 and res2["non_lues"] == ["https://www.gerflor.fr/absente"], res2.get("non_lues"))
+verifier("après une navigation, la suite rapide est dite : `ouvrir_page` avec `urls`, pas un autre `naviguer`",
+         '"adresses_trouvees": trouvees[:40]' in src_sk and "`ouvrir_page` et le paramètre `urls`" in src_sk)
+src_a1 = (RACINE / "backend" / "agents" / "agent1.py").read_text(encoding="utf-8")
+verifier("les résultats web ne se coupent plus à 4 000 caractères",
+         '"chercher_web", "ouvrir_page", "naviguer",' in src_a1)
 
 print("\n" + ("✓ 0 échec" if not echecs else f"✗ {len(echecs)} échec(s)"))
 sys.exit(1 if echecs else 0)

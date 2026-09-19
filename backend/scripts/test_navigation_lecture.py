@@ -194,7 +194,7 @@ sys.modules.setdefault("browser", _types.ModuleType("browser"))
 sys.modules["browser.tools"] = outils_mod
 esp = {"logger": _types.SimpleNamespace(info=lambda *a, **k: None)}
 garde = [n for n in arbre_sk.body
-         if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ("_adresses", "_passages", "_ouvrir_plusieurs"))
+         if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in ("_adresses", "_passages", "_ouvrir_plusieurs", "_page_introuvable"))
          or (isinstance(n, ast.Assign) and any(isinstance(c, ast.Name) and c.id in ("MAX_PAGES_PAR_APPEL", "BUDGET_PAGES") for c in n.targets))]
 exec(compile(ast.Module(body=garde, type_ignores=[]), "skills", "exec"), esp)
 verifier("une seule adresse reste le geste d'avant (une page, avec son aperçu)",

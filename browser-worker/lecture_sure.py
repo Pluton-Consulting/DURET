@@ -236,6 +236,11 @@ def consigne_de_navigation(domaines: list[str], lecture: bool) -> str:
         "- Une bannière de cookies : ferme-la (accepter ou refuser) pour lire la page.",
         "- Une page refusée (Access Denied, captcha) : ne la recharge pas plus de deux fois ; essaie une "
         "autre page du même site ou l'action `search`.",
+        "- Quand on te demande TOUTE une gamme, une liste ou un catalogue : trouve la page qui les liste TOUS "
+        "(le moteur de recherche du site avec le nom, une catégorie filtrée) — une page de « collection » ou "
+        "de présentation n'en montre souvent qu'une partie. Parcours toutes ses pages si elle est paginée, "
+        "relève le nombre de résultats que le site annonce, et dis dans `done` combien tu en as relevés sur "
+        "combien. Ne conclus jamais « c'est tout » sans ce décompte.",
         "- Si la tâche demande le détail de NOMBREUSES pages (toute une gamme, une liste de fiches), ne les "
         "ouvre pas une à une : relève leurs adresses (extract avec extract_links) et rends-les TOUTES dans "
         "`done`, une par ligne — elles seront lues en parallèle ensuite, bien plus vite.",

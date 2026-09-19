@@ -397,5 +397,7 @@ async def naviguer(data: dict, user) -> dict:
                     "(`adresses_trouvees`, ou nommées dans le contenu), lis-les d'UN seul geste avec "
                     "`ouvrir_page` et le paramètre `urls` (jusqu'à 12 par appel, `cherche` = ce que tu "
                     "veux y lire) — c'est quelques secondes. Ne relance `naviguer` que pour une "
-                    "exploration vraiment différente : il met plusieurs minutes."),
+                    "exploration vraiment différente : il met plusieurs minutes. Si le contenu dit "
+                    "n'avoir relevé qu'une partie (N sur M), dis-le dans ta réponse : une liste partielle "
+                    "ne se présente jamais comme complète."),
     }

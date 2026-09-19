@@ -134,6 +134,9 @@ verifier("l'identité est celle d'un Chrome ordinaire, à la version du binaire"
          "Chrome/152.0.0.0" in ua and "Headless" not in ua, ua)
 verifier("sans version lisible, une identité plausible quand même", "Chrome/" in ls.agent_utilisateur(""))
 cons = ls.consigne_de_navigation(dom, True)
+verifier("une gamme entière se relève sur la page qui liste TOUT, avec le décompte « N sur M » (19/09 : "
+         "l'agent avait conclu « c'est tout » sur une page de collection, 4 produits sur 44)",
+         "liste TOUS" in cons and "combien tu en as relevés sur" in cons)
 verifier("la consigne dit d'explorer au lieu de deviner, nomme les sites et ce que la lecture permet",
          "N'invente pas" in cons and "gerflor.fr" in cons and "*.gerflor" not in cons and "LECTURE" in cons, cons)
 

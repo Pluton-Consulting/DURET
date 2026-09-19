@@ -221,6 +221,9 @@ class Settings(BaseSettings):
     # image » — la mesure du 17/09 lisait le texte de la planche, pas l'image).
     model_ollama_cloud_vision: str = "kimi-k3"
     model_ollama_cloud_vision_secours: str = "qwen3.5:397b"
+    # La navigation autonome passe par le relais du backend (llm/relais_navigateur.py) :
+    # le conteneur navigateur n'a pas la clé. Réglage `modele_navigateur` pour changer.
+    model_ollama_cloud_navigateur: str = "kimi-k3"
     # « mesuree » : la réflexion des modèles raisonnants est bridée d'après la
     # table de llm/router.py ; « libre » : rien n'est envoyé (comportement d'avant).
     ollama_cloud_reflexion: str = "mesuree"

@@ -45,7 +45,13 @@ logger = logging.getLogger("browser-worker.llm")
 # propre), puis les autres. Le repli est journalisé : une clé morte doit se
 # lire dans les logs, pas se déduire d'une navigation qui rampe.
 
+# OLLAMA CLOUD PAR LE BACKEND (19/09, décision de Noa : « les modèles Ollama Cloud au
+# maximum »). Le conteneur n'a pas la clé : il parle au relais du guichet interne
+# (backend/llm/relais_navigateur.py) avec son secret, au format OpenAI.
+_RELAIS = getattr(wconfig, "BACKEND_URL", "http://backend:8000").rstrip("/") + "/api/interne/navigateur/llm/v1"
+
 _SONDES = {
+    "ollama_cloud": ("BROWSER_WORKER_SECRET", _RELAIS + "/models"),
     "deepseek":   ("DEEPSEEK_API_KEY",   "https://api.deepseek.com/models"),
     "groq":       ("GROQ_API_KEY",       "https://api.groq.com/openai/v1/models"),
     "openrouter": ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1/models"),
@@ -54,13 +60,14 @@ _SONDES = {
                    "https://generativelanguage.googleapis.com/v1beta/openai/models"),
 }
 _MODELES_DEFAUT = {
+    "ollama_cloud": "navigateur",   # le relais choisit (réglage `modele_navigateur`)
     "deepseek": "deepseek-chat",
     "groq": "llama-3.3-70b-versatile",
     "openrouter": "deepseek/deepseek-v4-flash",
     "longcat": "LongCat-2.0",
     "google": "gemini-flash-latest",
 }
-_ORDRE_REPLI = ("longcat", "google", "deepseek", "openrouter", "groq")
+_ORDRE_REPLI = ("ollama_cloud", "longcat", "google", "deepseek", "openrouter", "groq")
 
 
 def _vivant(provider: str, modele: str | None = None) -> bool:
@@ -105,6 +112,23 @@ def _resoudre() -> tuple[str, str]:
 
 def build_llm():
     provider, model = _resoudre()
+
+    if provider == "ollama_cloud":
+        # Ollama Cloud n'impose pas le schéma JSON : le schéma va dans la consigne système,
+        # et le relais rend le seul objet JSON de la réponse.
+        from browser_use import ChatOpenAI
+        secret = _require("BROWSER_WORKER_SECRET")
+        return ChatOpenAI(
+            model=model or "navigateur",
+            api_key=secret,
+            base_url=_RELAIS,
+            default_headers={"X-Navigateur-Secret": secret},
+            dont_force_structured_output=True,
+            add_schema_to_system_prompt=True,
+            timeout=200,
+            max_retries=2,
+            max_completion_tokens=8192,
+        )
 
     if provider == "google":
         # Point d'entrée OpenAI-compatible de Google : function-calling propre,

@@ -86,8 +86,8 @@ services:
     # Liste explicite : jamais DATABASE_URL, JWT_SECRET_KEY, clés du coffre,
     # secrets des sessions ou mot de passe PostgreSQL dans le navigateur.
     environment:
-      BROWSER_LLM_PROVIDER: ${BROWSER_LLM_PROVIDER:-deepseek}
-      BROWSER_LLM_MODEL: ${BROWSER_LLM_MODEL:-deepseek-chat}
+      BROWSER_LLM_PROVIDER: ${BROWSER_LLM_PROVIDER:-ollama_cloud}
+      BROWSER_LLM_MODEL: ${BROWSER_LLM_MODEL:-navigateur}
       BROWSER_AGENT_MAX_STEPS: ${BROWSER_AGENT_MAX_STEPS:-40}
       BROWSER_APPROVAL_TIMEOUT_S: ${BROWSER_APPROVAL_TIMEOUT_S:-1800}
       BROWSER_USE_VISION: ${BROWSER_USE_VISION:-false}

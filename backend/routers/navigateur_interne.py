@@ -257,6 +257,19 @@ class Reclamation(BaseModel):
     job_id: str
     user_id: str
 
+@router.post("/llm/v1/chat/completions")
+async def relais_modele(corps: dict, x_navigateur_secret: str = Header(default=""),
+                        authorization: str = Header(default="")):
+    """LE MODÈLE DU NAVIGATEUR, par Ollama Cloud (19/09) — voir llm/relais_navigateur.py.
+
+    Le client OpenAI du conteneur envoie son secret en `Authorization: Bearer` ; les
+    autres verbes du guichet l'envoient en `X-Navigateur-Secret`. Les deux valent."""
+    jeton = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    _verifier(x_navigateur_secret or jeton)
+    from llm.relais_navigateur import relayer
+    return await relayer(corps)
+
+
 @router.post("/reclamer")
 async def reclamer(c: Reclamation,x_navigateur_secret: str = Header(default="")):
     _verifier(x_navigateur_secret)

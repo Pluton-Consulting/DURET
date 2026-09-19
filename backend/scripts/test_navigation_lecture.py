@@ -220,5 +220,15 @@ src_a1 = (RACINE / "backend" / "agents" / "agent1.py").read_text(encoding="utf-8
 verifier("les résultats web ne se coupent plus à 4 000 caractères",
          '"chercher_web", "ouvrir_page", "naviguer",' in src_a1)
 
+garde2 = [n for n in arbre_sk.body if isinstance(n, ast.FunctionDef) and n.name == "_page_introuvable"]
+esp2 = {}
+exec(compile(ast.Module(body=garde2, type_ignores=[]), "skills", "exec"), esp2)
+verifier("une page « Page not found » servie en 200 n'est pas une source (19/09 : son aperçu s'affichait)",
+         esp2["_page_introuvable"]("Page not found | Gerflor Professionnels", "Menu Produits " * 50))
+verifier("…une fiche produit normale l'est", not esp2["_page_introuvable"](
+    "TARALAY PREMIUM COMPACT 43 : Hétérogènes U3U4 | Gerflor", "Applications : santé, éducation. " * 40))
+verifier("…une page courte qui ne dit que « introuvable » aussi",
+         esp2["_page_introuvable"]("Gerflor", "Désolé, cette page est introuvable."))
+
 print("\n" + ("✓ 0 échec" if not echecs else f"✗ {len(echecs)} échec(s)"))
 sys.exit(1 if echecs else 0)

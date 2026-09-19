@@ -152,6 +152,8 @@ file_reponses[:] = [vide, vide]
 n0 = len(envois)
 asyncio.run(rel.relayer({"model": "kimi-k3", "messages": [schema_msg]}))
 verifier("deux réponses vides : on s'arrête là, l'agent décide (pas de boucle)", len(envois) - n0 == 2)
+verifier("…et le second essai part sur le modèle de secours, pas le même",
+         [e[1]["model"] for e in envois[n0:]] == ["kimi-k3", "deepseek-v4.1-flash"], [e[1]["model"] for e in envois[n0:]])
 
 file_reponses[:] = [503, bonne]
 n0 = len(envois)

@@ -193,7 +193,7 @@ async def _ouvrir_plusieurs(adresses: list, data: dict, user) -> dict:
             except Exception as e:  # noqa: BLE001 — une page qui tombe n'emporte pas les autres
                 logger.info("Page non lue (%s) : %s", u[:120], type(e).__name__)
                 r = {"success": False}
-        ok = bool(r.get("success"))
+        ok = bool(r.get("success")) and not _page_introuvable(r.get("title"), r.get("content"))
         return {"url": u, "titre": str(r.get("title") or "").strip()[:160], "lue": ok,
                 "contenu": _passages(r.get("content") or "", cherche, budget) if ok else ""}
 
@@ -219,6 +219,18 @@ async def _ouvrir_plusieurs(adresses: list, data: dict, user) -> dict:
     }
 
 
+def _page_introuvable(titre, contenu) -> bool:
+    """Une page d'erreur servie en 200 : titre « 404 / not found / introuvable », ou page
+    très courte qui ne dit que ça."""
+    import re
+    motif = re.compile(r"\b(404|page not found|not found|page introuvable|introuvable|n'existe pas|"
+                       r"page non trouv\w*|erreur 404)\b", re.I)
+    if motif.search(str(titre or "")):
+        return True
+    corps = " ".join(str(contenu or "").split())
+    return len(corps) < 600 and bool(motif.search(corps))
+
+
 async def ouvrir_page(data: dict, user) -> dict:
     """Ouvre une adresse précise et en rend le texte — ou plusieurs, en parallèle."""
     from browser.tools import fetch_url
@@ -233,6 +245,14 @@ async def ouvrir_page(data: dict, user) -> dict:
 
     r = await fetch_url(url=url, user_id=str(getattr(user, "id", "")),
                         agent_id="agent1", reason=str(data.get("motif") or ""))
+    # UNE PAGE D'ERREUR N'EST PAS UNE SOURCE (19/09) : une adresse devinée
+    # (« gerflor.fr/produits/taralay ») rend « Page not found » avec un code 200 ; sa capture
+    # s'affichait sous la réponse comme une source consultée. Elle se dit, sans aperçu.
+    if r.get("success") and _page_introuvable(r.get("title"), r.get("content")):
+        return {"url": url, "trouve": False, "introuvable": True,
+                "a_faire": ("Cette adresse n'existe pas sur le site (page « introuvable ») : ne la "
+                            "cite pas comme source. Trouve la bonne page par `chercher_web` ou "
+                            "`naviguer`, ou dis que l'adresse n'existe pas.")}
     sortie = {
         "url": url,
         "trouve": bool(r.get("success")),

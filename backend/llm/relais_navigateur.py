@@ -206,5 +206,11 @@ async def relayer(corps: dict) -> dict:
         if not vides:
             break
         logger.info("Relais navigateur : réponse vide de %s (essai %d)", modele, essai)
+        # Le second essai part sur le modèle de secours : redemander au même modèle rendait
+        # parfois un second vide (mesuré en production le 19/09).
+        secours = modele_de_secours(modele)
+        if secours:
+            modele = secours
+            envoi = corps_ollama(corps, modele)
     logger.info("Relais navigateur : %s, %.1f s", modele, time.monotonic() - debut)
     return donnees

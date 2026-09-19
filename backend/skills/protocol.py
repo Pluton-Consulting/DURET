@@ -800,13 +800,15 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "regle : information EXTERNE, cite l'adresse",
         [], ["url", "motif"]),
     "naviguer": (
-        "NAVIGATEUR LIBRE : il VOIT la page, CLIQUE, suit les liens, franchit "
-        "les bannieres. A employer quand `ouvrir_page` ne suffit pas — un site "
-        "qui n'affiche rien sans JavaScript, une information a plusieurs clics, "
-        "un catalogue a parcourir. `tache` : ce qu'il doit aller faire, en une "
-        "phrase. `domaines` : liste facultative pour le borner. LENT (une a "
-        "trois minutes) : prefere `chercher_web` ou `ouvrir_page` quand ils "
-        "peuvent repondre",
+        "NAVIGATEUR LIBRE : il parcourt un site comme une personne — menus, liens, "
+        "onglets, moteur de recherche du site, bannieres — sans jamais rien y "
+        "envoyer ni commander. A employer quand `ouvrir_page` ne suffit pas : une "
+        "information a plusieurs clics, une gamme ou un catalogue a parcourir, un "
+        "site qui n'affiche rien sans JavaScript. `tache` : ce qu'il doit aller "
+        "faire, en une phrase. `domaines` : le ou les sites ou rester "
+        "(« gerflor.fr ») quand la demande en nomme un. LENT (deux a cinq "
+        "minutes) : prefere `chercher_web` ou `ouvrir_page` quand ils peuvent "
+        "repondre",
         ["tache"], ["domaines"]),
     "lancer_ingestion_documents": (
         "ADMINISTRATION UNIQUEMENT. LA seule action qui fait ENTRER les documents "

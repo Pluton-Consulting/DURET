@@ -112,5 +112,22 @@ verifier("la sonde fait un VRAI appel (POST chat/completions), pas un GET /model
          fabrique._vivant("longcat", "LongCat-2.0") is False
          and vus and vus[-1][0].endswith("/v1/chat/completions") and vus[-1][1] == "POST" and vus[-1][2], vus)
 
+# ── « Ce qu'on y a lu » : le passage qui répond, pas le décor de la page (19/09) ──
+import ast
+src_outils = (RACINE / "backend" / "browser" / "tools.py").read_text(encoding="utf-8")
+arbre = ast.parse(src_outils)
+code = "\n\n".join(ast.get_source_segment(src_outils, n) for n in arbre.body
+                    if isinstance(n, ast.FunctionDef) and n.name in ("_plat_web", "_extrait"))
+espace = {}
+exec("import re\n" + code, espace)
+page = ("DTU 53.2 : Guide essentiel | Mon site --> --> Aller au contenu Accueil Blog Contact. "
+        "Le support doit présenter un taux d'humidité inférieur à 3 % mesuré à la bombe au carbure. "
+        "Nos autres articles sur la décoration.")
+ext = espace["_extrait"](page, requete="DTU 53.2 taux humidité support", titre="DTU 53.2 : Guide essentiel | Mon site")
+verifier("l'extrait est le passage qui porte les mots de la recherche", "humidité inférieur à 3 %" in ext and "Aller au contenu" not in ext, ext)
+sans = espace["_extrait"]("DTU 53.2 : Guide | Mon site Aller au contenu Texte de la page ici, assez long pour un extrait.",
+                          titre="DTU 53.2 : Guide | Mon site")
+verifier("sans recherche : le début de la page, titre et « Aller au contenu » retirés", sans.startswith("Texte de la page"), sans)
+
 print("\n" + ("✓ 0 échec" if not echecs else f"✗ {len(echecs)} échec(s)"))
 sys.exit(1 if echecs else 0)

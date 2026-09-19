@@ -289,7 +289,7 @@ def _liens(page_html: str) -> list[str]:
 
 
 async def chercher(requete: str, max_resultats: int = 3,
-                   delai_ms: int = 15000) -> dict:
+                   delai_ms: int = 15000, concurrence: int = 2) -> dict:
     """Cherche sur le web, puis lit les premiers résultats."""
     debut = time.monotonic()
     liens: list[str] = []
@@ -313,7 +313,8 @@ async def chercher(requete: str, max_resultats: int = 3,
     # DEUX PAGES DE FRONT, PAS PLUS. Chaque lecture est un Chromium entier ;
     # sous la limite mémoire du conteneur (1500 Mo), trois processus complets
     # risquent le tueur du noyau — et l'échec ressemblerait à une panne.
-    porte = asyncio.Semaphore(2)
+    # La navigation autonome demande UNE page à la fois : son propre Chromium tourne déjà.
+    porte = asyncio.Semaphore(max(1, min(2, int(concurrence or 1))))
 
     async def _une(u: str) -> dict:
         async with porte:

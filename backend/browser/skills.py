@@ -203,8 +203,8 @@ async def naviguer(data: dict, user) -> dict:
     # L'attente SUIT la borne d'étapes (01/09) : trois minutes coupaient une
     # navigation de quarante étapes en plein travail — chaque étape est un
     # aller-retour de modèle, on compte large (25 s chacune, plancher 5 min).
-    fin = asyncio.get_event_loop().time() + max(
-        300, int(getattr(_settings, "browser_agent_max_steps", 40)) * 25)
+    delai = max(300, int(getattr(_settings, "browser_agent_max_steps", 40)) * 25)
+    fin = asyncio.get_event_loop().time() + delai
     etat = None
     while asyncio.get_event_loop().time() < fin:
         await asyncio.sleep(3)
@@ -225,13 +225,13 @@ async def naviguer(data: dict, user) -> dict:
         # démarré — Chromium étranglé, ou modèle à quota épuisé.
         etapes = int(etat["steps"] or 0) if etat else 0
         return {"tache": tache, "trouve": False,
-                "erreur": (("la navigation a dépassé trois minutes et a été "
+                "erreur": (("la navigation a dépassé son temps (%d min) et a été "
                             "arrêtée après %d étape(s) ; le site est sans doute "
-                            "long à parcourir" % etapes) if etapes
-                           else ("la navigation a été arrêtée après trois minutes "
+                            "long à parcourir" % (delai // 60, etapes)) if etapes
+                           else ("la navigation a été arrêtée après %d min "
                                  "sans avoir pu franchir la moindre étape : le "
                                  "navigateur ou son modèle n'a pas démarré, ce "
-                                 "n'est pas la faute du site"))}
+                                 "n'est pas la faute du site" % (delai // 60)))}
 
     if not etat or etat["status"] != "completed":
         return {"tache": tache, "trouve": False,

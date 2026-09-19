@@ -270,7 +270,7 @@ w2 = asyncio.run(bsk.chercher_web({"requete": "gazon King Park"}, U))
 verifier("un conteneur qui ne détaille pas les pages : la seconde colonne reste VIDE, rien d'inventé",
          w2["bloc_ui"]["rows"] == [["https://c.fr", ""]], w2["bloc_ui"]["rows"])
 
-outils = extraire(BACKEND / "browser" / "tools.py", {"_extrait"}, {})
+outils = extraire(BACKEND / "browser" / "tools.py", {"_extrait", "_plat_web", "re"}, {})
 verifier("`web_search` rend `resultats` (url, titre, extrait) par page consultée",
          '"resultats": [{"url": r["url"], "titre":' in (BACKEND / "browser" / "tools.py").read_text(encoding="utf-8"))
 verifier("l'extrait d'une page : les premiers mots sur une ligne, coupe dite",

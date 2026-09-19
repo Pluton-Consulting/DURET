@@ -16,6 +16,7 @@ import base64
 import io
 import json
 import os
+import re
 import time
 
 import httpx
@@ -23,6 +24,7 @@ import httpx
 import wconfig
 import db
 import credentials
+import lecture_sure
 import llm_factory
 import site_login
 
@@ -78,25 +80,87 @@ async def _wait_for_decision(validation_id: str) -> str:
 
 
 # ── Jeu d'outils : action d'approbation humaine ───────────────────────────
-def build_tools(job_id: str, user_id: str, readonly: bool = True):
-    from browser_use import Tools, ActionResult
+def _extrait_de_recherche(contenu: str, requete: str, longueur: int = 600) -> str:
+    """Le passage d'une page qui porte les mots cherchés, pas son menu."""
+    texte = re.sub(r"\s+", " ", str(contenu or "")).strip()
+    bas = texte.lower()
+    mots = [m for m in re.findall(r"\w{4,}", str(requete or "").lower()) if not m.startswith("site")]
+    positions = [bas.find(m) for m in mots if bas.find(m) >= 0]
+    debut = max(0, min(positions) - 120) if positions else 0
+    return texte[debut:debut + longueur]
 
-    # LECTURE SEULE (défaut) = VERROU RÉEL : on retire TOUTES les actions d'interaction /
-    # mutation du registre (clic, saisie, sélection, upload, glisser-déposer). L'agent ne
-    # peut donc PAS cliquer/soumettre/écrire — uniquement naviguer par URL, scroller, lire,
-    # extraire. Le bypass HITL n'existe pas dans ce mode (aucune action modifiante à contourner).
-    # ⚠ MODE ÉCRITURE (readonly=False) : ces actions redeviennent disponibles et le gate
-    # d'approbation redevient best-effort. À réserver à un usage supervisé — le verrou réel
-    # (redesign plan→approuver→exécuter) n'est pas encore implémenté (voir README §Sécurité).
-    _MUTATING = [
-        "click_element_by_index", "input_text", "send_keys",
-        "select_dropdown_option", "upload_file", "drag_drop", "clear_text",
-    ]
-    exclude = _MUTATING if readonly else []
+
+async def _rechercher(requete: str, domaines: list[str]):
+    """L'action `search` de l'agent, servie par le lecteur rapide du conteneur.
+
+    Celle de browser-use OUVRE Google, Bing ou DuckDuckGo dans l'onglet de l'agent :
+    hors des domaines autorisés, c'est bloqué (« blocked by security policy », 19/09) ;
+    sans domaines, c'est un captcha une fois sur deux. Le lecteur rapide passe par ses
+    moteurs à lui, lit les premières pages et rend adresses + extraits. Les résultats
+    hors des sites autorisés sont écartés : la tâche reste où la personne l'a mise.
+    """
+    from browser_use import ActionResult
+    import rapide
+
+    q = str(requete or "").strip()
+    if not q:
+        return ActionResult(error="Recherche vide : dis ce que tu cherches.")
+    bases = [d for d in domaines or [] if not d.startswith("*.")]
+    if len(bases) == 1 and "site:" not in q.lower():
+        q = f"{q} site:{bases[0]}"
     try:
-        tools = Tools(exclude_actions=exclude) if exclude else Tools()
+        # UNE page à la fois : le Chromium de l'agent tourne déjà dans ce conteneur.
+        res = await rapide.chercher(q, 4, 12000, concurrence=1)
+    except Exception as e:  # noqa: BLE001 — une recherche qui échoue se dit, elle ne tue pas la tâche
+        return ActionResult(error=f"La recherche web n'a pas répondu ({type(e).__name__}). "
+                                  "Explore le site par ses menus et ses liens.")
+    lignes, adresses = [], []
+    for r in res.get("results") or []:
+        u = str(r.get("url") or "")
+        if not u or (domaines and not lecture_sure.hote_autorise(u, domaines)):
+            continue
+        adresses.append(u)
+        extrait = _extrait_de_recherche(r.get("contenu"), requete) or "(page sans texte lisible)"
+        lignes.append(f"- {r.get('titre') or u}\n  {u}\n  {extrait}")
+    if not lignes:
+        ou = f" sur {', '.join(bases)}" if bases else ""
+        return ActionResult(
+            extracted_content=(f"Aucun résultat pour « {q} »{ou}. Explore le site par ses menus, "
+                               "ses liens et son moteur de recherche interne."),
+            long_term_memory=f"Recherche « {q} » : aucun résultat")
+    return ActionResult(
+        extracted_content=f"Résultats pour « {q} » :\n" + "\n".join(lignes),
+        long_term_memory=f"Recherche « {q} » : " + ", ".join(adresses),
+        include_extracted_content_only_once=True)
+
+
+def build_tools(job_id: str, user_id: str, readonly: bool = True, domaines: list[str] | None = None):
+    from browser_use import Tools, ActionResult
+    from pydantic import BaseModel, Field
+
+    # LECTURE (défaut) : on lit un site comme une personne — liens, menus, onglets,
+    # bannières, moteur de recherche du site — mais rien de ce qui ENVOIE (formulaire
+    # posté, commande, inscription, suppression) : `lecture_sure` juge chaque
+    # interaction sur l'élément visé, au moment de l'exécuter (19/09 ; avant, la lecture
+    # retirait tout clic et l'agent ne pouvait qu'inventer des adresses).
+    # ⚠ MODE ÉCRITURE (readonly=False) : ce qui n'est pas une interaction de lecture
+    # passe par l'accord humain ; le gate d'approbation reste best-effort — le verrou
+    # réel (plan→approuver→exécuter) n'est pas encore implémenté (voir README §Sécurité).
+    try:
+        tools = Tools()
     except TypeError as e:
         raise RuntimeError("API des outils navigateur incompatible ; navigation arrêtée avant toute action.") from e
+
+    class RechercheWeb(BaseModel):
+        query: str
+        engine: str = Field(default="duckduckgo", description="sans effet : un seul moteur, celui du conteneur")
+
+    @tools.registry.action(
+        "Cherche sur le web et rend les adresses trouvées avec un extrait de chaque page "
+        "(limité aux sites autorisés quand la tâche en fixe). Ouvre ensuite l'adresse choisie avec navigate.",
+        param_model=RechercheWeb)
+    async def search(params: RechercheWeb):
+        return await _rechercher(params.query, domaines or [])
 
     async def request_human_approval(summary: str, target_url: str, browser_session=None):
         screenshot_b64 = await _capture_screenshot(browser_session)
@@ -136,15 +200,30 @@ def build_tools(job_id: str, user_id: str, readonly: bool = True):
     import copy
     lectures = {"search", "navigate", "go_back", "wait", "switch", "close", "extract",
                 "search_page", "find_elements", "scroll", "find_text", "screenshot", "dropdown_options", "done"}
+    # Jugées à l'élément visé : permises sans accord quand elles ne font que MONTRER.
+    interactions = {"click", "input", "send_keys", "select_dropdown",
+                    "click_element_by_index", "input_text", "select_dropdown_option"}
     modifications = {"click", "input", "send_keys", "select_dropdown", "upload_file",
                      "click_element_by_index", "input_text", "select_dropdown_option", "drag_drop", "clear_text"}
     original = tools.registry.execute_action
     async def execute_avec_accord(action_name, params, *args, **kwargs):
         if action_name not in lectures:
+            session = kwargs.get("browser_session")
+            if action_name in interactions:
+                noeud, index = None, (params or {}).get("index")
+                if index is not None and session is not None:
+                    try:
+                        noeud = await session.get_element_by_index(int(index))
+                    except Exception:  # noqa: BLE001 — élément disparu : refusé plus bas, avec sa raison
+                        noeud = None
+                permis, raison = lecture_sure.interaction_permise(action_name, params or {}, noeud)
+                if permis:
+                    return await original(action_name, params, *args, **kwargs)
+                if readonly:
+                    return ActionResult(error=raison)
             if readonly or action_name not in modifications:
                 raise RuntimeError("Cette action n'est pas autorisée dans cette navigation.")
             charge = copy.deepcopy(params)
-            session = kwargs.get("browser_session")
             url = await session.get_current_page_url() if session else ""
             decision = await request_human_approval(
                 action_name + " : " + json.dumps(charge, ensure_ascii=False, default=str), url, session)
@@ -156,7 +235,8 @@ def build_tools(job_id: str, user_id: str, readonly: bool = True):
     # Ne pas annoncer les actions interdites au modèle. Le verrou d'exécution
     # ci-dessus reste déterminant même si une nouvelle version les réintroduit.
     for nom in list(tools.registry.registry.actions):
-        if nom not in lectures and (readonly or nom not in modifications):tools.exclude_action(nom)
+        if nom not in lectures and nom not in interactions and (readonly or nom not in modifications):
+            tools.exclude_action(nom)
     return tools
 
 
@@ -182,6 +262,25 @@ async def _post_to_rag(job_id: str, structured: dict | None, final_text: str) ->
         logger.warning("Navigation terminée ; indexation non confirmée pour %s", job_id)
 
 
+_AGENT_UTILISATEUR: str | None = None
+_CREDIT_EPUISE = re.compile(r"\b402\b|more credits|insufficient[_ ](?:credits|quota|balance)", re.I)
+
+
+async def _agent_utilisateur() -> str:
+    """L'identité d'un Chrome ordinaire à la version du Chromium de l'image (lue une fois)."""
+    global _AGENT_UTILISATEUR
+    if _AGENT_UTILISATEUR is None:
+        import subprocess
+        import rapide
+        try:
+            sortie = (await asyncio.to_thread(subprocess.run, [rapide.CHROMIUM, "--version"],
+                                              capture_output=True, text=True, timeout=15)).stdout
+        except Exception:  # noqa: BLE001 — sans version lisible, une version récente plausible
+            sortie = ""
+        _AGENT_UTILISATEUR = lecture_sure.agent_utilisateur(sortie)
+    return _AGENT_UTILISATEUR
+
+
 # ── Point d'entrée : exécuter une tâche complète ──────────────────────────
 async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
                    user_id: str, ingest: bool = False, readonly: bool = True,
@@ -196,12 +295,13 @@ async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
     step_state = {"n": 0}   # défini avant le try : lisible même si l'échec survient au démarrage
     try:
         llm = llm_factory.build_llm()
-        tools = build_tools(job_id, user_id, readonly=readonly)
-        sensitive = credentials.build_sensitive_data(allowed_domains)
-
-        # garde-fou domaines : hôtes EXACTS uniquement (pas de wildcard *.{d} qui
-        # exposerait les identifiants sur un sous-domaine tiers / repris).
-        allow = list(allowed_domains)
+        # garde-fou domaines. En ÉCRITURE : hôtes EXACTS (pas de wildcard *.{d} qui
+        # exposerait les identifiants sur un sous-domaine tiers / repris). En LECTURE :
+        # aucun identifiant n'est injecté, le site nommé s'ouvre avec ses sous-domaines
+        # (www., cdn. — c'est là que vivent ses fiches techniques).
+        allow = lecture_sure.domaines_de_lecture(allowed_domains) if readonly else list(allowed_domains)
+        tools = build_tools(job_id, user_id, readonly=readonly, domaines=allow)
+        sensitive = {} if readonly else credentials.build_sensitive_data(allowed_domains)
 
         # session persistée sur le domaine principal
         os.makedirs(wconfig.SESSIONS_DIR, exist_ok=True)
@@ -229,6 +329,10 @@ async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
         ]
         browser_kwargs = {
             "headless": True,
+            # L'IDENTITÉ D'UN CHROME ORDINAIRE : « HeadlessChrome » suffisait à Akamai pour
+            # répondre « Access Denied » (gerflor.fr, 19/09) alors que la même page s'ouvrait
+            # avec un Chrome ordinaire. Même version majeure que le binaire.
+            "user_agent": await _agent_utilisateur(),
             "allowed_domains": allow,
             "storage_state": storage_path,
             "args": chromium_args,
@@ -288,6 +392,11 @@ async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
             # LongCat 2.0 / modèles raisonnants : simplifier le schéma d'action et fournir
             # des exemples de format aident browser-use à parser la sortie structurée.
             use_thinking=False,
+            # MODE RAPIDE, SANS JUGE (19/09, mesuré sur la même tâche Gerflor) : les champs de
+            # réflexion et le juge final doublaient les appels — 16 étapes en 9 min, coupées ;
+            # sans eux, 17 étapes en 3 min 38 et la liste complète des produits, source citée.
+            flash_mode=True,
+            use_judge=False,
             include_tool_call_examples=True,
             # Garde-fous anti-flail : stoppe après N échecs consécutifs, détecte les boucles
             # (mêmes actions/objectifs répétés), et laisse plus de temps au LLM lent (LongCat)
@@ -295,6 +404,9 @@ async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
             max_failures=4,
             loop_detection_enabled=True,
             llm_timeout=120,
+            # SA SITUATION, dite en plus des règles de browser-use : explorer au lieu de
+            # deviner des adresses, ce que la lecture permet, les sites autorisés.
+            extend_system_message=lecture_sure.consigne_de_navigation(allow, readonly),
         )
         if sensitive:
             agent_kwargs["sensitive_data"] = sensitive
@@ -347,9 +459,34 @@ async def run_task(job_id: str, task_prompt: str, allowed_domains: list[str],
             for i in range(n)
         ]
 
-        # Fallback : si l'agent n'a pas rédigé de résumé, on remonte le contenu extrait.
+        try:
+            fini = bool(history.is_done())
+        except Exception:  # noqa: BLE001 — selon la version, l'historique ne le dit pas
+            fini = bool(final_text.strip())
+
+        # LE CRÉDIT ÉPUISÉ SE DIT. Relevé le 19/09 : OpenRouter répondait 402 (« requires more
+        # credits ») ; l'agent échouait cinq fois, puis la tâche finissait « terminée » avec,
+        # en guise de résumé, le collage de ses messages d'action. Personne ne pouvait
+        # deviner qu'il suffisait de recharger un compte.
+        erreurs = [str(e) for e in _safe("errors") if e]
+        if not fini and any(_CREDIT_EPUISE.search(e) for e in erreurs):
+            await db.set_error(job_id, (
+                "Le modèle qui conduit le navigateur a refusé la demande faute de crédit chez son "
+                "fournisseur : la navigation s'est arrêtée. Recharger ce crédit (ou changer de modèle) "
+                "la rétablira ; la recherche web et l'ouverture d'une page marchent sans lui."))
+            await db.log_audit("browser_task_failed", user_id, success=False,
+                               metadata={"job_id": job_id, "error_type": "credit_epuise",
+                                         "steps_reached": step_state["n"], "readonly": readonly})
+            return
+
+        # Fallback : si l'agent n'a pas rédigé de résumé, on remonte ce qu'il a LU (les
+        # extraits longs), pas ses messages d'action ; et une navigation coupée par le
+        # plafond d'étapes le dit en tête.
         if not final_text.strip() and extracted:
-            final_text = "\n\n".join(str(e) for e in extracted if e)[:3000]
+            lus = [str(e) for e in extracted if e and len(str(e)) > 150] or [str(e) for e in extracted if e]
+            entete = "" if fini else ("NAVIGATION INACHEVÉE (plafond d'étapes atteint avant la fin) — "
+                                      "ce qui a été lu en chemin :\n\n")
+            final_text = (entete + "\n\n".join(lus))[:3000]
 
         structured = None
         if output_model is not None:

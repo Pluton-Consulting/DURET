@@ -10,6 +10,7 @@ la clé manquait en production, ce qui faisait échouer la recherche web en
 silence. Le contrat de retour n'a pas bougé d'un champ.
 """
 
+import re
 from typing import Optional
 from browser.navigateur import navigateur, BrowserResult
 from browser.sandbox_filter import SandboxFilter
@@ -68,16 +69,49 @@ async def web_search(
         # (09/09 : un tableau d'une adresse nue sous la réponse, « on ne sait
         # pas à quoi ça a servi »).
         "resultats": [{"url": r["url"], "titre": str(r.get("title") or "").strip(),
-                       "extrait": _extrait(r.get("content"))} for r in successful],
+                       "extrait": _extrait(r.get("content"), requete=query, titre=r.get("title") or "")}
+                      for r in successful],
         "results_count": len(successful),
         "source_type": "web_external",
     }
 
 
-def _extrait(texte, longueur: int = 160) -> str:
-    """Les premiers mots d'une page, sur une ligne."""
-    mots = " ".join(str(texte or "").split())
-    return (mots[:longueur].rstrip() + "…") if len(mots) > longueur else mots
+def _plat_web(t) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(t or "").casefold())
+                   if unicodedata.category(c) != "Mn")
+
+
+def _extrait(texte, longueur: int = 160, requete: str = "", titre: str = "") -> str:
+    """Le passage d'une page qui répond à la recherche, sur une ligne.
+
+    LES PREMIERS MOTS D'UNE PAGE SONT SON DÉCOR (19/09, banc Duret) : « DTU 53.2 » rendait
+    dans « Ce qu'on y a lu » le titre recopié, « Aller au contenu », « --> --> --> ». Le
+    passage retenu est celui qui porte le plus de mots de la recherche ; sans recherche ni
+    passage qui en porte, le début de la page, titre retiré."""
+    brut = re.sub(r"-->|<!--", " ", str(texte or ""))
+    termes = {m for m in re.findall(r"\w{4,}", _plat_web(requete))} if requete else set()
+    choisi = ""
+    if termes:
+        morceaux = [" ".join(m.split()) for m in re.split(r"(?<=[.!?;:])\s+|\n+", brut)]
+        notes = [(sum(1 for t in termes if t in _plat_web(m)), m) for m in morceaux if len(m) >= 25]
+        if notes:
+            meilleur = max(notes, key=lambda x: x[0])
+            if meilleur[0]:
+                choisi = meilleur[1]
+                if len(choisi) > longueur:
+                    # Fenêtre centrée sur le premier terme trouvé, pas le début de la phrase.
+                    plat = _plat_web(choisi)
+                    pos = min((plat.find(t) for t in termes if t in plat), default=0)
+                    debut = max(0, pos - longueur // 3)
+                    choisi = ("…" if debut else "") + choisi[debut:debut + longueur].strip()
+    if not choisi:
+        choisi = " ".join(brut.split())
+        t = " ".join(str(titre or "").split())
+        if t and choisi.startswith(t):
+            choisi = choisi[len(t):].lstrip(" -—|:")
+        choisi = re.sub(r"^(?:aller au contenu|passer au contenu|skip to content)\s*", "", choisi, flags=re.I)
+    return (choisi[:longueur].rstrip() + "…") if len(choisi) > longueur else choisi
 
 
 async def fetch_url(

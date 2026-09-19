@@ -140,6 +140,12 @@ services:
       - no-new-privileges:true   # interdit tout gain de droits en cours de route
     mem_limit: 1500m       # un navigateur qui fuit n'emporte plus le VPS
     pids_limit: 512        # ni ne le noie sous les processus
+    # UN INIT QUI RAMASSE LES MORTS (19/09). Chaque lecture lance un Chromium dont les
+    # sous-processus (crashpad…) finissent orphelins ; sans init, le PID 1 était uvicorn,
+    # qui ne les récupère jamais. Relevé en production : 461 zombies sur 512 processus
+    # permis, Chromium « Aborted » au démarrage — recherche web, ouverture de page et
+    # navigation toutes mortes en même temps, sans une ligne d'erreur lisible.
+    init: true
     # `read_only` N'EST PAS POSÉ : browser-use écrit son profil, ses captures et
     # ses traces sous /tmp et /app. Le poser demanderait de cartographier ces
     # chemins un par un, et une racine en lecture seule mal découpée casse

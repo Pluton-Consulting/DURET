@@ -304,8 +304,11 @@ async def execute_action_node(state: AgentState, config=None) -> dict:
             precedent = ""
     except Exception:  # noqa: BLE001 — au pire, le brouillon reste
         pass
+    from agents.blocs import eclater as _eclater_blocs_ui
+    # Un bloc ```ui par composant : ce chemin ne passe pas par `rehydrate_node`,
+    # et le compte rendu d'une action validée peut porter plusieurs cartes (20/09).
     sortie = {"pending_action": None,
-              "final_response": (precedent + f"\n\n{message}").strip()}
+              "final_response": _eclater_blocs_ui((precedent + f"\n\n{message}").strip())}
     # LA SUITE APRÈS UN ACCORD (01/09). Ce chemin ne passe PAS par
     # `rehydrate_node` : jusqu'ici, un visuel tiré ou un mail parti n'a jamais
     # porté la moindre suggestion — alors que c'est le moment où la suite est

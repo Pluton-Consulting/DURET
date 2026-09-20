@@ -188,6 +188,12 @@ espace = {"logger": _Journal(), "AgentState": dict, "HumanMessage": _HumanMessag
           "_rediger_par_le_modele": _redacteur_double,
           "_rendu_de_secours": lambda resultats: "",
           "_tracer_filet": lambda *a, **k: None}
+# La mise à plat des blocs groupés (20/09) vit dans son propre module : on
+# charge le VRAI, par chemin, comme pour `skills.resultats` — pas une doublure.
+_spec_blocs = importlib.util.spec_from_file_location("agents.blocs", BACKEND / "agents/blocs.py")
+_blocs_ui = importlib.util.module_from_spec(_spec_blocs)
+_spec_blocs.loader.exec_module(_blocs_ui)
+espace["_eclater_blocs_ui"] = _blocs_ui.eclater
 extraire(BACKEND / "agents" / "agent1.py",
          {"rehydrate_node", "_texte_visible", "_question_deja_au_fil",
           "_re_livrables", "_BLOC_UI_RE", "_TYPES_LIVRABLE", "_reference_bloc",

@@ -117,18 +117,60 @@ function nettoyer(bloc: any): any {
   return bloc
 }
 
+/** UN BLOC PEUT PORTER PLUSIEURS COMPOSANTS.
+ *
+ *  Relevé en production le 20/09, sur « affiche-les tous » : le modèle avait
+ *  écrit QUATRE cartes `email` — justes, complètes — dans un SEUL bloc ```ui,
+ *  une par ligne. C'est ce qu'un modèle écrit naturellement quand une demande
+ *  appelle plusieurs composants du même type.
+ *
+ *  `lire()` répare en RECULANT : devant quatre objets à la suite, elle a tout
+ *  jeté sauf le premier. L'utilisateur a donc vu UNE carte sous un texte qui en
+ *  annonçait quatre, trois fois de suite en reformulant sa demande. Le travail
+ *  était juste ; c'est l'écran qui mentait.
+ *
+ *  On coupe donc au niveau 0 des accolades, en respectant les chaînes et les
+ *  échappements — un « } » dans l'extrait d'un mail ne coupe rien. Chaque objet
+ *  complet fait un morceau ; ce qui reste ouvert à la fin (bloc tranché par le
+ *  plafond de sortie) en forme un dernier, que `lire()` répare comme avant. Un
+ *  bloc à un seul objet rend un seul morceau : rien ne change pour lui.
+ */
+function decouper(brut: string): string[] {
+  const morceaux: string[] = []
+  let debut = -1, profondeur = 0, chaine = false, echap = false
+  for (let i = 0; i < brut.length; i++) {
+    const c = brut[i]
+    if (echap) { echap = false; continue }
+    if (c === "\\") { echap = true; continue }
+    if (chaine) { if (c === '"') chaine = false; continue }
+    if (c === '"') { chaine = true; continue }
+    if (c === "{" || c === "[") {
+      if (profondeur === 0 && debut < 0) debut = i
+      profondeur++
+    } else if (c === "}" || c === "]") {
+      profondeur = Math.max(0, profondeur - 1)
+      if (profondeur === 0 && debut >= 0) { morceaux.push(brut.slice(debut, i + 1)); debut = -1 }
+    }
+  }
+  if (debut >= 0) morceaux.push(brut.slice(debut))
+  return morceaux.length ? morceaux : [brut]
+}
+
 function parse(content: string): Part[] {
   const parts: Part[] = []
   const re = new RegExp(RE_BLOC)
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(content)) !== null) {
-    const bloc: any = lire(m[1])
     // Un objet SANS `type` n'est pas un composant : c'est du JSON que le
-    // modèle montre volontairement. On le laisse tel quel dans le texte.
-    if (!bloc || typeof bloc.type !== "string") continue
+    // modèle montre volontairement. Si le bloc n'en porte aucun qui en soit
+    // un, on le laisse tel quel dans le texte.
+    const blocs = decouper(m[1])
+      .map((morceau) => lire(morceau))
+      .filter((b: any) => b && typeof b.type === "string")
+    if (!blocs.length) continue
     if (m.index > last) parts.push({ kind: "text", text: content.slice(last, m.index) })
-    parts.push({ kind: "ui", block: nettoyer(bloc) })
+    for (const bloc of blocs) parts.push({ kind: "ui", block: nettoyer(bloc) })
     last = re.lastIndex
   }
   if (last < content.length) parts.push({ kind: "text", text: content.slice(last) })

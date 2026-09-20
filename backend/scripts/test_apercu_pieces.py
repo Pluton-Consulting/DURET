@@ -314,6 +314,12 @@ SUITES_VUES: list = []
 _poser("agents.suggestions",
        poser=lambda texte, suites: texte + ("\n\n[suites]" if suites else ""),
        suggestions_du_tour=lambda texte, *a, **k: SUITES_VUES.append(texte) or ["Retoucher"])
+# LA MISE À PLAT DES BLOCS GROUPÉS (20/09) : le VRAI module, chargé par chemin.
+# Il n'a aucune dépendance, il n'y a donc aucune raison de le doubler.
+_poser("agents.blocs", **{
+    n: getattr(_exec_module(BACKEND / "agents" / "blocs.py", "blocs_ui_banc"), n)
+    for n in ("objets", "eclater")})
+
 
 agent2 = _exec_module(BACKEND / "agents" / "agent2.py", "agent2_double")
 # L'OFFRE VISUELLE EST SUPPOSÉE PRÉSENTE ICI (08/09) : la phrase « je peux

@@ -1320,8 +1320,11 @@ async def prechiffrage_node(state: AgentState) -> dict:
     from agents.suggestions import suggestions_du_tour
     # Les suites se choisissent sur ce que le tour a PRODUIT, bloc compris,
     # même si ce bloc ne s'affiche plus.
-    summary_ecran = _poser_suites(
-        summary, suggestions_du_tour(summary + bloc_visuel, [], expert="agent2"))
+    # Un bloc ```ui par composant, comme chez agent1 : ce graphe n'a pas de
+    # `rehydrate_node`, il doit donc appliquer lui-même la mise à plat (20/09).
+    from agents.blocs import eclater as _eclater_blocs_ui
+    summary_ecran = _eclater_blocs_ui(_poser_suites(
+        summary, suggestions_du_tour(summary + bloc_visuel, [], expert="agent2")))
 
     # LE RELEVÉ CACHÉ ENTRE DANS L'HISTORIQUE, PAS À L'ÉCRAN. Si le modèle a
     # fait son brouillon avant de répondre, c'est là que l'assistant le relira

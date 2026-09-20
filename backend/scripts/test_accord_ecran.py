@@ -115,7 +115,9 @@ verifier("`resultat` existe sur tous les chemins (plus de NameError avalé sur u
 verifier("quand le skill rend un bloc `visuel`, le brouillon (photo de départ) ne survit pas",
          'b.get("type") == "visuel" for b in _blocs_de_resultat(_sortie_skill.get("bloc_ui"))' in src_r
          and 'precedent = ""' in src_r
-         and '"final_response": (precedent + f"\\n\\n{message}").strip()' in src_r)
+         # 20/09 : la réponse passe par la mise à plat des blocs groupés avant
+         # d'être posée — l'assemblage lui-même n'a pas changé.
+         and '"final_response": _eclater_blocs_ui((precedent + f"\\n\\n{message}").strip())' in src_r)
 verifier("les autres actions gardent leur brouillon (un mail parti reste lisible)",
          'precedent = (state.get("final_response") or "").rstrip()' in src_r)
 verifier("le rédacteur ne reçoit plus le brief anglais ni les clés de dépôt",

@@ -2423,6 +2423,12 @@ import re as _re_livrables
 # Un bloc d'écran écrit par le modèle : ```ui { … }
 _BLOC_UI_RE = _re_livrables.compile(r"```ui\s*(\{.*?\})\s*```", _re_livrables.S)
 
+# CE MOTIF SUPPOSE UN BLOC, UN OBJET — et le modèle en groupe volontiers
+# plusieurs (20/09 : quatre cartes `email` d'un coup). `eclater` ramène la
+# forme qu'il écrit à celle que tous les filets ci-dessous attendent, sans rien
+# lui interdire. Voir agents/blocs.py.
+from agents.blocs import eclater as _eclater_blocs_ui
+
 # Ce qui compte comme LIVRABLE : un objet produit, qui porte sa propre
 # référence (une URL de document, les clés d'une planche d'images). Une carte
 # `doc`, une table ou un `callout` décrivent quelque chose ; ils ne le portent
@@ -3347,6 +3353,15 @@ async def rehydrate_node(state: AgentState) -> dict:
             _tracer_filet(state, "rendu_de_secours", besoin,
                           prose_modele=bool(prose), blocs=bool(blocs))
             text = (prose + ("\n\n" + blocs if blocs else "")).strip()
+    # UN BLOC ```ui PAR COMPOSANT, AVANT TOUT LE RESTE (20/09).
+    #
+    # Le modèle groupe volontiers plusieurs composants du même type dans un seul
+    # bloc — quatre cartes `email` pour « affiche-les tous », une par ligne.
+    # Aucun des filets ci-dessous ne savait relire une telle grappe (`json.loads`
+    # refuse quatre objets à la suite), et l'écran n'en montrait que le premier.
+    # On ramène donc la forme écrite par le modèle à celle que tout le monde
+    # attend, sans rien lui interdire et sans rien perdre. Voir agents/blocs.py.
+    text = _eclater_blocs_ui(text)
     # LE SECOND FILET, indépendant du premier : celui-ci ne juge pas la
     # rédaction, il vérifie que ce qui a été PRODUIT est bien à l'écran. Posé
     # AVANT la réhydratation, donc le bloc entre aussi dans l'historique du fil

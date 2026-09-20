@@ -80,7 +80,7 @@ def lisibles(texte):
 PROD = (
     "Les 4 mails reçus aujourd'hui, ouverts en entier :\n\n"
     "```ui\n"
-    '{"type":"email","subject":"Re: 24 26 Planterose - attestations de conformité",'
+    '{"type":"email","subject":"Re: 12 14 Marronniers - attestations de conformité",'
     '"from":"APP <contact@exemple-platrerie.fr>","date":"20/09/2026 20:01",'
     '"preview":"Le bureau de contrôle réclame les justificatifs manquants {étude carbone} ; '
     'il a écrit \\"bloquant pour la vente\\" dans son dernier message."}\n'
@@ -132,7 +132,7 @@ verifier("les CINQ blocs sont désormais lisibles", len(lus) == 5,
 verifier("les quatre cartes email y sont, dans l'ordre",
          [b["type"] for b in lus] == ["email"] * 4 + ["quick_replies"])
 verifier("l'objet du premier mail est intact",
-         lus[0]["subject"] == "Re: 24 26 Planterose - attestations de conformité")
+         lus[0]["subject"] == "Re: 12 14 Marronniers - attestations de conformité")
 verifier("l'extrait qui portait une accolade et des guillemets est intact",
          "{étude carbone}" in lus[0]["preview"] and '"bloquant pour la vente"' in lus[0]["preview"])
 verifier("le texte rédigé autour des blocs n'a pas bougé",

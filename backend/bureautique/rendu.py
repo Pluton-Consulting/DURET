@@ -689,6 +689,67 @@ def _champ_page(paragraphe) -> None:
     champ(" NUMPAGES ")
 
 
+def largeurs_colonnes(entetes, lignes, colonnes: int) -> list[float]:
+    """La part de la largeur utile qui revient à chaque colonne (somme = 1).
+
+    21/09 (prompt 1 du cahier Duret) : quatre colonnes égales pour « rubrique / exigence /
+    pièce / page » — l'exigence, qui porte les citations, s'étirait sur une page entière dans
+    un quart de largeur, pendant que « Page » restait à moitié vide. La part suit la longueur
+    RÉELLE du contenu, adoucie par une racine carrée (une colonne de citations ne doit pas
+    écraser les autres), sans descendre sous le mot le plus long de l'en-tête ni sous 8 %.
+    """
+    import math
+    parts = []
+    for i in range(colonnes):
+        valeurs = [str(l[i]) for l in lignes if i < len(l) and str(l[i]).strip()]
+        moyenne = (sum(len(v) for v in valeurs) / len(valeurs)) if valeurs else 0
+        titre = str(entetes[i]) if i < len(entetes) else ""
+        plus_long_mot = max((len(m) for m in titre.split()), default=0)
+        parts.append(max(math.sqrt(max(moyenne, 1.0)), math.sqrt(max(plus_long_mot, 1)) * 1.4))
+    total = sum(parts) or 1.0
+    parts = [p / total for p in parts]
+    plancher = min(0.08, 1.0 / max(colonnes, 1))
+    manque = sum(plancher - p for p in parts if p < plancher)
+    if manque > 0:
+        riches = sum(p for p in parts if p >= plancher) or 1.0
+        parts = [plancher if p < plancher else p - manque * p / riches for p in parts]
+    return parts
+
+
+def _texte_de_cellule(cellule, valeur, taille) -> None:
+    """Une cellule longue qui enchaîne des citations par « ; » se lit ligne par ligne."""
+    from docx.shared import Pt
+    texte = str(valeur)
+    morceaux = [texte]
+    if len(texte) > 160 and " ; " in texte:
+        essai = [m.strip() for m in texte.split(" ; ")]
+        if len(essai) > 1 and all(len(m) >= 12 for m in essai):
+            morceaux = [m + (" ;" if i < len(essai) - 1 else "") for i, m in enumerate(essai)]
+    cellule.text = ""
+    for i, morceau in enumerate(morceaux):
+        p = cellule.paragraphs[0] if i == 0 else cellule.add_paragraph()
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(3 if i < len(morceaux) - 1 else 0)
+        run = p.add_run(morceau)
+        run.font.size = Pt(taille)
+
+
+def _marges_de_cellules(table, haut_bas: int = 70, cotes: int = 100) -> None:
+    """De l'air dans les cellules (en vingtièmes de point) : le texte ne colle plus aux filets."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    tblpr = table._tbl.tblPr
+    marges = OxmlElement("w:tblCellMar")
+    for cote, valeur in (("top", haut_bas), ("left", cotes), ("bottom", haut_bas), ("right", cotes)):
+        m = OxmlElement(f"w:{cote}")
+        m.set(qn("w:w"), str(valeur)); m.set(qn("w:type"), "dxa")
+        marges.append(m)
+    ancienne = tblpr.find(qn("w:tblCellMar"))
+    if ancienne is not None:
+        tblpr.remove(ancienne)
+    tblpr.append(marges)
+
+
 def _tableau_docx(doc, e: dict, charte: str = "1F3864") -> None:
     """Un tableau habillé : en-tête à la couleur de la maison, répété à chaque page."""
     from docx.oxml import OxmlElement
@@ -724,9 +785,7 @@ def _tableau_docx(doc, e: dict, charte: str = "1F3864") -> None:
     for n, valeurs in enumerate(lignes):
         cellules = table.add_row().cells
         for i, valeur in enumerate(valeurs[:colonnes]):
-            cellules[i].text = ""
-            run = cellules[i].paragraphs[0].add_run(str(valeur))
-            run.font.size = Pt(9.5)
+            _texte_de_cellule(cellules[i], valeur, 9.5)
             if n % 2 == 1:
                 fond = OxmlElement("w:shd")
                 for k, v in (("w:val", "clear"), ("w:color", "auto"), ("w:fill", "F2F2F2")):
@@ -737,12 +796,14 @@ def _tableau_docx(doc, e: dict, charte: str = "1F3864") -> None:
     section = doc.sections[-1]
     utile = section.page_width - section.left_margin - section.right_margin
     table.autofit = False
-    for colonne in table.columns:
-        colonne.width = int(utile / colonnes)          # la grille du tableau (tblGrid)
+    parts = largeurs_colonnes(entetes, lignes, colonnes)
+    for colonne, part in zip(table.columns, parts):
+        colonne.width = int(utile * part)              # la grille du tableau (tblGrid)
     for rangee in table.rows:
-        for cellule in rangee.cells:
-            cellule.width = int(utile / colonnes)
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+        for cellule, part in zip(rangee.cells, parts):
+            cellule.width = int(utile * part)
+    _marges_de_cellules(table)
+    doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
 
 # ── PDF ───────────────────────────────────────────────────────────────

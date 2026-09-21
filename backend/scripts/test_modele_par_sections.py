@@ -333,8 +333,8 @@ verifier("une rubrique REPRISE du modèle ne se corrige jamais et n'apporte aucu
 verifier("le rédacteur reçoit les données de l'entreprise (les preuves du modèle) pour chaque rubrique", "or (modele_id and a['source']==modele_id)" in composeur)
 
 verifier("une trame enregistrée (trame:…) n'est pas recherchée sur le serveur de fichiers", "startswith(('/api/documents/','trame:'))" in composeur)
-verifier("le modèle vierge du dossier passe AVANT une trame que le modèle de langage propose de lui-même",
-         composeur.index("if len(maison)==1:") < composeur.index("if not choisie and trame_proposee:") and "_imposer_modele(uid,fil,demande,list(ids),data.get('trame'))" in composeur)
+verifier("le modèle vierge du dossier, quand la demande le désigne, passe AVANT une trame que le modèle de langage propose de lui-même",
+         composeur.index("if len(maison)==1 and _designe(") < composeur.index("if not choisie and trame_proposee:") and "_imposer_modele(uid,fil,demande,list(ids),data.get('trame'))" in composeur)
 
 illus = (BACKEND / "bureautique" / "illustrations.py").read_text(encoding="utf-8")
 verifier("les illustrations d'un Word ne sont jamais un motif d'arrêt (original introuvable, trame en base, image illisible)",

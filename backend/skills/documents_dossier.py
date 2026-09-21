@@ -56,10 +56,23 @@ async def _octets_modele(source,user):
     return pretes[0]['octets']
 
 async def _imposer_modele(uid,fil,demande,ids,trame_proposee=None):
-    """(id du modèle imposé ou None, ids éventuellement complétés par la trame)."""
+    """(id du modèle imposé ou None, ids éventuellement complétés par la trame, présentation seule).
+
+    PRÉSENTATION SEULE (21/09, prompt 1 du cahier Duret) : « fiche de lecture du DCE Mouriscot »
+    est sortie avec la page de garde d'un AUTRE projet (« Mémoire technique — service territorial
+    ST6, Le Taillan ») parce que le dossier de consultation contenait « MEMOIRE Complet Vierge.docx » :
+    tout Word de la maison trouvé dans les pièces devenait la TRAME du document, quel qu'il soit. Il
+    n'en est la trame (garde, rubriques d'entreprise) que si la demande le désigne — ses mots forts
+    (« mémoire ») sont dans la demande, ou le modèle de langage l'a proposé. Sinon il ne prête que sa
+    présentation : en-têtes, pieds de page, styles.
+    """
     import unicodedata
     plat=lambda s:''.join(c for c in unicodedata.normalize('NFD',str(s or '').casefold()) if unicodedata.category(c)!='Mn')
     courante=_demande_courante(demande)
+    def _designe(nom):
+        base=str(nom or '').rsplit('.',1)[0]
+        if _mots_forts(base)&_mots_forts(courante):return True
+        return bool(trame_proposee and plat(trame_proposee).strip() and (plat(trame_proposee) in plat(base) or plat(base) in plat(trame_proposee)))
     try:
         from database.connection import get_db
         async with get_db() as c:
@@ -75,9 +88,9 @@ async def _imposer_modele(uid,fil,demande,ids,trame_proposee=None):
     if not choisie:
         maison=[s for s in await asyncio.to_thread(dossiers.sources,uid,fil,ids)
                 if s['nom'].lower().endswith('.docx') and s.get('reference') and not s['reference'].startswith('trame:') and _MODELE_MAISON.search(s['nom']) and not _PIECE_CONSULTATION.search(s['nom'])]
-        if len(maison)==1:
+        if len(maison)==1 and _designe(maison[0]['nom']):
             logger.info('Modèle imposé : Word de l’entreprise « %s »',maison[0]['nom'])
-            return maison[0]['id'],ids
+            return maison[0]['id'],ids,False
     if not choisie and trame_proposee:
         choisie=next((t for t in trames if plat(t['nom'])==plat(trame_proposee) or plat(trame_proposee) in plat(t['nom'])),None)
     if not choisie:
@@ -89,13 +102,14 @@ async def _imposer_modele(uid,fil,demande,ids,trame_proposee=None):
         texte=await asyncio.to_thread(lecture,nom,octets)
         source=await asyncio.to_thread(dossiers.enregistrer,uid,fil,nom,texte or nom,'trame:'+choisie['nom'],hashlib.sha256(octets).hexdigest())
         logger.info('Modèle imposé : trame « %s »',choisie['nom'])
-        return source,(ids if source in ids else ids+[source])
+        return source,(ids if source in ids else ids+[source]),False
     maison=[s for s in await asyncio.to_thread(dossiers.sources,uid,fil,ids)
             if s['nom'].lower().endswith('.docx') and s.get('reference') and _MODELE_MAISON.search(s['nom']) and not _PIECE_CONSULTATION.search(s['nom'])]
     if len(maison)==1:
-        logger.info('Modèle imposé : Word de l’entreprise « %s »',maison[0]['nom'])
-        return maison[0]['id'],ids
-    return None,ids
+        seule=not _designe(maison[0]['nom'])
+        logger.info('Modèle imposé : Word de l’entreprise « %s »%s',maison[0]['nom'],' (présentation seule)' if seule else '')
+        return maison[0]['id'],ids,seule
+    return None,ids,False
 
 def _normaliser_plan(plan,ids,modele,structure,sources_word=None):
     """Après le modèle de langage, avant la validation : une rubrique REPRISE
@@ -462,7 +476,7 @@ async def ajouter(data,user):
             'note':'Lecture intégrale conservée : utilise lire_source_dossier ou composer_document_dossier ; le source n’est pas un livrable créé.'}
 
 
-EXTENSIONS_LISIBLES=('.pdf','.docx','.xlsx','.xlsm','.xls','.csv','.txt')
+EXTENSIONS_LISIBLES=('.pdf','.docx','.doc','.rtf','.odt','.xlsx','.xlsm','.xls','.csv','.txt')
 _DOSSIER_CITE=re.compile(r'[«"“]\s*([^«»"“”]{8,160}?)\s*[»"”]')
 
 def dossier_cite(demande):
@@ -531,7 +545,7 @@ def choisir_fichiers(fichiers,lots,deja,usage='document',tout=False):
     uniques={}
     for f in fichiers:
         nom=str(f['nom'])
-        if not nom.lower().endswith(EXTENSIONS_LISIBLES):ecarte('format non lu (archive, image, DWG, .doc)');continue
+        if not nom.lower().endswith(EXTENSIONS_LISIBLES):ecarte('format non lu (archive, image, DWG)');continue
         if f.get('octets',0)>60*1024*1024:ecarte('trop lourd');continue
         if not f.get('octets'):ecarte('fichier vide');continue
         cle=_cle_nom(nom);ancien=uniques.get(cle)
@@ -910,11 +924,13 @@ async def composer_immediat(data,user):
         if (charge and not charge.get('introuvable')) or not ids:ids=[s['id'] for s in await asyncio.to_thread(dossiers.manifeste,uid,fil)]
         if not ids:raise _refus_definitif('Aucune pièce dans ce dossier'+(' : « '+charge['dossier']+' » n’a pas pu être ouvert ('+charge.get('introuvable','aucun fichier lisible')+')' if charge else '')+'. Ajoute les documents trouvés avec ajouter_source_dossier.')
         if not data.get('modele_source') and data.get('format','docx')=='docx':
-            impose,ids=await _imposer_modele(uid,fil,demande,list(ids),data.get('trame'))
+            impose,ids,presentation_seule=await _imposer_modele(uid,fil,demande,list(ids),data.get('trame'))
             if impose:data['modele_source']=impose
+            if impose and presentation_seule:data['modele_presentation']=True
         tache=hashlib.sha256(json.dumps([demande,ids,data.get('titre'),data.get('modele_source'),data.get('format','docx')],ensure_ascii=False).encode()).hexdigest()[:24]
         contrat={'demande':demande,'sources':ids,'titre':data.get('titre') or 'Document',
-                 'format':data.get('format','docx'),'modele_source':data.get('modele_source'),'images':data.get('images') or []}
+                 'format':data.get('format','docx'),'modele_source':data.get('modele_source'),'images':data.get('images') or [],
+                 **({'modele_presentation':True} if data.get('modele_presentation') else {})}
         await asyncio.to_thread(dossiers.etape,uid,fil,tache,'contrat',contrat)
     from ressources.documents_file import associer_tache
     await asyncio.to_thread(associer_tache,uid,fil,tache)
@@ -944,7 +960,7 @@ async def composer_immediat(data,user):
             plan=await asyncio.to_thread(dossiers.etape,uid,fil,tache,'plan')
             if not plan:await dire(uid,fil,tache,'établissement du plan du document à partir de '+str(sum(len(a.get('faits',[])) for a in analyses))+' faits relevés dans '+str(len(sources))+' pièces (rubriques du modèle à garder, rubriques à rédiger)')
             structure_modele=None
-            if not plan and contrat.get('modele_source'):
+            if not plan and contrat.get('modele_source') and not contrat.get('modele_presentation'):
                 try:
                     from bureautique.sections_modele import structure as _structure
                     source_modele=next((s for s in sources if s['id']==contrat['modele_source']),None)
@@ -1001,6 +1017,7 @@ async def composer_immediat(data,user):
                      **({'modele_entreprise':{'garde':structure_modele['garde'],'rubriques':structure_modele['sections']}} if structure_modele else {})},
                     _verifier_le_plan)
                 if contrat.get('modele_source'):plan['modele_source']=contrat['modele_source']
+                if contrat.get('modele_presentation'):plan['modele_presentation']=True
                 _plan_valide(plan,ids)
                 limite = limite_de_pages(demande)
                 if limite:plan['pages_max']=limite;plan['limite_personne']=limite
@@ -1079,6 +1096,12 @@ async def composer_immediat(data,user):
                         'Seule une donnée d’entreprise réellement introuvable reste [À CONFIRMER] ; ne reprends jamais le nom, les quantités ou les engagements d’un ancien chantier. '
                         'Une limite signalée dans UNE pièce ne prouve pas une absence dans tout le dossier. Consulte pieces_disponibles : ne déclare jamais absente une pièce qui y figure. Ne transforme pas une information non sélectionnée pour cette rubrique en information absente du dossier. Réserve uniquement la donnée précise non établie (date, effectif, choix), sans déclarer son document manquant. Une option ouverte par une pièce ne prouve pas que l’entreprise la retient : présente-la comme option à valider. '
                         'Ne répète pas le titre de section dans les blocs. '
+                        # 21/09 (prompt 1 du cahier Duret) : la rubrique « Tableau de lecture » avait
+                        # aussi écrit la synthèse et le contrôle, que leurs propres rubriques ont
+                        # réécrits ensuite — le document disait tout deux fois, et se contredisait.
+                        'N’écris QUE le contenu de CETTE rubrique (section.titre) : les autres titres de plan sont rédigés à part — ne reprends ni leur synthèse, ni leur contrôle, ni leur conclusion. '
+                        'Rends la rubrique facile à lire : une idée par paragraphe (quatre lignes au plus), les énumérations en bloc liste plutôt qu’en phrases enchaînées, '
+                        'et dans un tableau des cellules courtes — plusieurs citations dans une cellule se séparent par « ; ». '
                         +('LA PERSONNE A FIXÉ UNE LIMITE DE '+str(plan['limite_personne'])+' PAGES : section.mots_cibles est un PLAFOND, pas une indication — ne le dépasse pas ; va à l’essentiel, sans rubrique vide ni élément exigé omis. '
                           if plan.get('limite_personne') else 'Respecte le budget de mots indicatif sans sacrifier une rubrique obligatoire. ')+
                         'Schéma {"blocs":[{"bloc":"paragraphe","texte":"..."} ou {"bloc":"liste","items":["..."]} ou '
@@ -1562,7 +1585,7 @@ async def _rendre(uid,fil,tache,contrat,plan,sources,sections,user,analyses=None
             with open(chemin_original+'.tmp','wb') as f:f.write(original)
             _os.replace(chemin_original+'.tmp',chemin_original)
         from bureautique.sections_modele import structure as _structure
-        if (await asyncio.to_thread(_structure,original))['sections']:
+        if not plan.get('modele_presentation') and (await asyncio.to_thread(_structure,original))['sections']:
           await asyncio.to_thread(_ranger)
           entete['_modele_original']=chemin_original
           entete['_titres_plan']=[s['titre'] for s in plan['sections']]+(['Points à confirmer'] if reserves else [])

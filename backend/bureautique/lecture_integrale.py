@@ -1,8 +1,32 @@
 """Lecture analytique : pages et cellules identifiables, distincte de l’aperçu UI."""
 import io,json,re
 
+def en_docx(octets,ext):
+    """Un Word ancien (.doc), un .rtf ou un .odt converti en .docx par LibreOffice (déjà dans l'image).
+
+    21/09 (prompt 1 du cahier Duret) : le RC et le CCAP de la piscine Mouriscot sont des « .doc »
+    — le rédacteur les écartait (« format non lu ») et déclarait ABSENTES la date limite et les
+    pénalités, qu'ils portent. Le texte converti se lit comme n'importe quel Word.
+    """
+    import shutil,subprocess,tempfile
+    from pathlib import Path
+    binaire=shutil.which('libreoffice') or shutil.which('soffice')
+    if not binaire and Path('/Applications/LibreOffice.app/Contents/MacOS/soffice').exists():binaire='/Applications/LibreOffice.app/Contents/MacOS/soffice'
+    if not binaire:raise ValueError('Le moteur LibreOffice n’est pas installé : ce .'+ext+' ne peut pas être lu.')
+    with tempfile.TemporaryDirectory(prefix='lecture-'+ext+'-') as dossier:
+        dossier=Path(dossier);source=dossier/('piece.'+ext);source.write_bytes(octets)
+        profil=dossier/'profil';(profil/'user').mkdir(parents=True)
+        try:
+            r=subprocess.run([binaire,'-env:UserInstallation='+profil.as_uri(),'--headless','--nologo','--nodefault','--norestore','--convert-to','docx','--outdir',str(dossier),str(source)],capture_output=True,timeout=90)
+        except subprocess.TimeoutExpired:raise ValueError('La conversion du .'+ext+' a dépassé son délai.') from None
+        sortie=dossier/'piece.docx'
+        if r.returncode or not sortie.exists():raise ValueError('La conversion du .'+ext+' a échoué.')
+        return sortie.read_bytes()
+
 def lire(nom,octets,texte_secours=''):
     ext=nom.rsplit('.',1)[-1].lower()
+    if ext in ('doc','rtf','odt'):
+        return lire(nom.rsplit('.',1)[0]+'.docx',en_docx(octets,ext),texte_secours)
     if ext in ('xlsx','xlsm'):
         from openpyxl import load_workbook
         valeurs=load_workbook(io.BytesIO(octets),read_only=True,data_only=True)

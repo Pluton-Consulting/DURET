@@ -159,7 +159,7 @@ print("4. Le câblage")
 a1 = (racine / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("llm_node : index au système quand une famille est choisie",
          'compacte=state.get("familles_outils") is not None' in a1)
-verifier("llm_node : le détail vient avec la question", "bloc_resultats + bloc_outils + human_content" in a1)
+verifier("llm_node : le détail vient avec la question", "bloc_outils + bloc_documents" in a1 and "+ bloc_resultats + human_content" in a1)
 f = a1[a1.index("async def forcer_action_node"):]
 verifier("le forceur garde le catalogue complet (contexte neuf)", "instruction_actions(role)" in f[:3000])
 etat_src = (racine / "agents" / "state.py").read_text(encoding="utf-8")

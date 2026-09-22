@@ -1121,8 +1121,7 @@ async def llm_node(state: AgentState, config=None) -> dict:
     # s'il lui en faut, en appelant l'outil de recherche. Lui annoncer d'office
     # « aucun document » l'amenait à en parler même pour un simple bonjour.
     human_content = f"Date et heure actuelles : {_maintenant()} (Europe/Paris).\nQuestion : {query}"
-    if context_text:
-        human_content = f"Documents disponibles :\n{context_text}\n\n{human_content}"
+    bloc_documents = f"Documents disponibles :\n{context_text}\n\n" if context_text else ""
     # Résultats d'un tour précédent dont la rédaction avait échoué : on les
     # remet sous les yeux du modèle UNE fois, au tour qui suit, pour que
     # « présente le résultat » ou « continue » puissent être tenus.
@@ -1159,7 +1158,16 @@ async def llm_node(state: AgentState, config=None) -> dict:
             logger.info("Leçons non chargées : %s", str(e)[:120])
             bloc_lecons = ""
         maj_lecons = {"lecons_du_tour": bloc_lecons}
-    human_content = bloc_lecons + bloc_memoire_txt + bloc_resultats + bloc_outils + human_content
+    # CE QUI NE BOUGE PAS PASSE DEVANT CE QUI BOUGE (22/09, coût). Le fournisseur
+    # facture dix à trente fois moins cher un début de prompt qu'il a déjà vu,
+    # mais seulement jusqu'au premier caractère qui change. Le détail des
+    # outils et les documents restent les mêmes d'une passe à l'autre du tour ;
+    # les résultats, eux, grossissent à chaque geste. Placés APRÈS les
+    # résultats, outils et documents étaient refacturés au plein tarif à
+    # chaque passe. Même texte, autre ordre : les résultats restent juste
+    # avant la question, là où le modèle les lit.
+    human_content = (bloc_lecons + bloc_memoire_txt + bloc_outils + bloc_documents
+                     + bloc_resultats + human_content)
 
     # Composants visuels : l'instruction est TOUJOURS présente.
     # Elle était auparavant conditionnée à des mots-clés (« devis », « tableau »…) pour
@@ -1349,6 +1357,9 @@ Voici les messages trouvés :
     messages = [SystemMessage(content=system_prompt)] + list(history) + [
         HumanMessage(content=human_content)
     ]
+    # Un appel d'outil natif vaut une action tant que la boucle est ouverte ;
+    # à la passe de rédaction, il n'en est pas une (llm/router.py).
+    llm.actions_natives = not state.get("tools_finished")
     response = await llm.ainvoke(messages, config=config)
 
     # Ne JAMAIS mettre en cache une réponse qui demande une action : son contenu
@@ -4179,6 +4190,7 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
               "vide.")
 
     llm = get_llm(LLMTier(state.get("llm_tier", "standard")))
+    llm.actions_natives = True   # le forceur n'attend qu'une action
     try:
         reponse = await llm.ainvoke(
             [SystemMessage(content=consigne), HumanMessage(content=demande)],

@@ -380,6 +380,41 @@ def _is_hard_fail(err: Exception) -> bool:
     return any(k in msg for k in _HARD_FAIL_MARKERS)
 
 
+def _appel_natif_en_bloc(result: Any) -> Any:
+    """L'appel d'outil NATIF, réécrit dans le protocole textuel (22/09, coût).
+
+    kimi-k3 répond souvent à la boucle d'actions par un `tool_calls` natif et un
+    texte VIDE, alors qu'on ne lui a déclaré aucun outil. Le vide passait pour
+    une panne : le MÊME prompt repartait, budget doublé et réflexion coupée —
+    15 appels payés deux fois le 22/09 chez Duret, pour un choix d'action que
+    le modèle avait déjà fait, et fait avec sa réflexion. On garde ce choix :
+    le premier appel devient le bloc ```action que `extraire_action` lit (qui
+    n'en exécute qu'un, et qui sait déjà déballer des paramètres rangés sous
+    `args`). Rien n'est inventé : sans nom d'action, on ne touche à rien.
+    """
+    import json
+    appels = getattr(result, "tool_calls", None) or []
+    if not appels or not isinstance(appels[0], dict) or not appels[0].get("name"):
+        return None
+    args = appels[0].get("args") or {}
+    # Même règle que `skills/protocol.py` : des paramètres rangés sous une
+    # seule clé « args » (forme relevée le 22/09) sont déballés.
+    if (isinstance(args, dict) and len(args) == 1
+            and next(iter(args)).strip().lower() in ("args", "arguments", "parametres", "paramètres")
+            and isinstance(next(iter(args.values())), dict)):
+        args = next(iter(args.values()))
+    bloc = json.dumps({"skill": appels[0]["name"], "args": args},
+                      ensure_ascii=False, default=str)
+    try:
+        return result.model_copy(update={
+            "content": "```action\n" + bloc + "\n```",
+            "tool_calls": [], "invalid_tool_calls": [],
+            "additional_kwargs": {k: v for k, v in (getattr(result, "additional_kwargs", None) or {}).items()
+                                  if k != "tool_calls"}})
+    except Exception:  # noqa: BLE001 — sans copie possible, l'ancien chemin reprend
+        return None
+
+
 def _contenu_vide(result: Any) -> bool:
     """Le modèle a-t-il rendu un texte vide ? (liste de blocs ou chaîne.)"""
     contenu = getattr(result, "content", result)
@@ -737,6 +772,11 @@ class ResilientLLM:
         extraction_documentaire = kwargs.pop("_extraction_documentaire", False)
         secours_timeout_documentaire = kwargs.pop("_secours_timeout_documentaire", False)
         a_partir_de = int(kwargs.pop("_a_partir_de", 0) or 0)
+        # Seuls la boucle d'actions et le forceur attendent une ACTION : pour eux
+        # seuls, un appel d'outil natif est une réponse (`_appel_natif_en_bloc`).
+        # Un attribut posé par l'appelant, pas un argument : une doublure de
+        # banc (ou tout autre objet LLM) n'a rien à accepter de plus.
+        actions_natives = bool(getattr(self, "actions_natives", False))
         chain = _filtrer_quarantaine(_tier_chain(self.tier))
         if a_partir_de and len(chain) > a_partir_de:
             chain = chain[a_partir_de:]   # le relais documentaire part du SECOURS
@@ -822,6 +862,12 @@ class ResilientLLM:
                         _compter(provider, model, result)
                     except Exception:  # noqa: BLE001
                         pass
+                    if actions_natives and _contenu_vide(result):
+                        _traduit = _appel_natif_en_bloc(result)
+                        if _traduit is not None:
+                            logger.info("LLM %s : appel d'outil natif lu comme action (%s)",
+                                        label, result.tool_calls[0].get("name"))
+                            result = _traduit
                     if _contenu_vide(result):
                         if not budget_double:
                             budget_double = True

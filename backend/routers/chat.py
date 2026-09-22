@@ -711,6 +711,9 @@ class TranscriptionRequest(BaseModel):
     session: Optional[str] = None
     definitif: bool = False
     mime: Optional[str] = "audio/webm"
+    # Où ce morceau commence dans la dictée, en octets (22/09) : un envoi perdu
+    # en route est réclamé au lieu de laisser un trou dans le son.
+    debut: Optional[int] = None
 
 
 @router.post("/transcrire")
@@ -724,7 +727,8 @@ async def transcrire_voix(body: TranscriptionRequest, current_user: User = Depen
     intégré à l'app ». Le texte rendu est celui de la personne : il atterrit
     dans la barre de saisie, c'est elle qui l'envoie.
     """
-    from voix.transcription import TranscriptionIndisponible, transcrire, transcrire_flux
+    from voix.transcription import (DicteeTerminee, MorceauManquant, TranscriptionIndisponible,
+                                    transcrire, transcrire_flux)
     try:
         octets = base64.b64decode(body.chunk_b64 if body.chunk_b64 is not None else (body.audio_b64 or ""))
     except Exception:
@@ -736,12 +740,18 @@ async def transcrire_voix(body: TranscriptionRequest, current_user: User = Depen
             # porte la personne ET la dictée : deux onglets ne se mélangent pas.
             cle = f"{current_user.id}:{body.session[:40]}"
             texte = await transcrire_flux(cle, octets, body.mime or "audio/webm",
-                                          definitif=body.definitif)
+                                          definitif=body.definitif, debut=body.debut)
         else:
             # L'identifiant de la personne sert de clé au cache incrémental du
             # moteur local : un enregistrement qui grandit n'est transcrit que
             # pour sa partie neuve.
             texte = await transcrire(octets, body.mime or "audio/webm", cle_cache=str(current_user.id))
+    except MorceauManquant as e:
+        # Le navigateur renvoie le son depuis `recus` : rien n'est perdu.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail={"recus": e.recus, "message": "Une partie du son n'est pas arrivée ; elle est renvoyée."})
+    except DicteeTerminee as e:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(e))
     except TranscriptionIndisponible as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     return {"texte": texte}

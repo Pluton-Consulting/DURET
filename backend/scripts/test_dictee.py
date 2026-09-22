@@ -65,8 +65,12 @@ verifier("un envoi toutes les DEUX secondes pendant l'écoute",
 verifier("chaque envoi ne porte que le NOUVEAU son, avec l'identifiant de la dictée",
          "morceaux.slice(depuis, couvert)" in texte and "chunk_b64, session, definitif" in texte
          and "enr.start(1000)" in texte)
-verifier("le curseur d'envoi avance DÈS l'envoi : le même son ne part jamais deux fois",
-         "const depuis = dernierEnvoye\n    dernierEnvoye = couvert" in texte)
+# 22/09 (Duret) : le curseur avançait DÈS l'envoi, et un envoi perdu en route
+# (le premier, qui porte l'en-tête du son) rendait toute la dictée illisible.
+# Il n'avance plus qu'à la réponse ; `debut` évite tout doublon côté serveur
+# (exécuté par test_dictee_robuste.py).
+verifier("le curseur d'envoi n'avance qu'à la RÉPONSE, et chaque envoi dit où il commence",
+         "dernierEnvoye = couvert\n        echecsDeSuite = 0" in texte and "debut: bornes[depuis] ?? total" in texte)
 verifier("rien de neuf depuis le dernier envoi = pas d'appel (on ne paie pas pour rien)",
          "morceaux.length === dernierEnvoye" in texte)
 verifier("le texte s'écrit LETTRE À LETTRE à l'écran, la correction en arrière d'un coup",
@@ -99,8 +103,8 @@ verifier("l'adresse en http est nommée (le micro exige https)",
          "isSecureContext" in texte and "adresse sécurisée (https)" in texte)
 verifier("l'ancien message faux (« ce navigateur ne sait pas transcrire ») a disparu",
          "Chrome, Edge ou Safari le savent" not in texte)
-verifier("une session expirée arrête la dictée au lieu de tourner à vide",
-         "if (res.status === 401) arreter()" in texte)
+verifier("une session expirée (ou une dictée close par le serveur) arrête la dictée au lieu de tourner à vide",
+         "if (res.status === 401 || res.status === 410) arreter()" in texte)
 
 # ── 5. LE BOUTON ET LE CHAMP ─────────────────────────────────────────────
 verifier("le bouton existe, toujours, et c'est le clic qui explique",

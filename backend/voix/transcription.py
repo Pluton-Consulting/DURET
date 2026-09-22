@@ -491,24 +491,81 @@ async def prechauffer() -> None:
 # à la fin ou au bout de dix minutes.
 _TAMPONS: dict[str, dict] = {}
 
+# UNE DICTÉE A UNE FIN, MÊME SI LE NAVIGATEUR L'OUBLIE (22/09, Duret). Un onglet
+# a gardé le micro ouvert plus de douze minutes, sans que personne le voie, et
+# chaque envoi faisait transcrire le son de la pièce. Le navigateur s'arrête à
+# dix minutes ; le serveur, une minute plus tard, n'accepte plus rien de cette
+# dictée (et ne rappelle plus aucun moteur) — c'est ce qui arrête aussi les
+# onglets restés ouverts sur une version plus ancienne de l'écran.
+DUREE_MAX_DICTEE_S = 11 * 60
+
+
+class MorceauManquant(Exception):
+    """Le serveur n'a pas reçu tout le son d'avant : le navigateur renvoie depuis `recus`."""
+
+    def __init__(self, recus: int):
+        super().__init__(f"Il manque du son à partir de l'octet {recus}.")
+        self.recus = recus
+
+
+class DicteeTerminee(Exception):
+    """La dictée a dépassé sa borne : plus rien n'est transcrit pour elle."""
+
 
 def _tampon(cle: str) -> dict:
     maintenant = time.monotonic()
     for k in [k for k, v in _TAMPONS.items() if maintenant - v["quand"] > CACHE_TTL_S]:
         _TAMPONS.pop(k, None)
-    return _TAMPONS.setdefault(cle, {"octets": bytearray(), "quand": maintenant})
+    return _TAMPONS.setdefault(cle, {"octets": bytearray(), "quand": maintenant, "cree": maintenant})
 
 
-async def transcrire_flux(cle: str, morceau: bytes, mime: str = "audio/webm",
-                          definitif: bool = False) -> str:
-    """Ajoute un morceau au tampon de cette dictée et rend le texte ENTIER.
+def _ajouter(cle: str, t: dict, morceau: bytes, debut: int | None) -> None:
+    """Ajoute le son neuf au tampon, sans trou ni doublon.
 
-    `definitif` : le dernier morceau — le tampon et le cache sont oubliés après.
+    LE PREMIER MORCEAU PORTE L'EN-TÊTE DU FICHIER (22/09, Duret). Un envoi perdu
+    en route (deux abandonnés à 15 h 29 le 22/09) laissait au serveur une suite
+    de son sans son début : Groq, Whisper et Google l'ont tous refusée, et le
+    navigateur, qui comptait le morceau comme parti, ne le renvoyait jamais.
+    Désormais chaque envoi dit où il commence (`debut`, en octets depuis le
+    début de la dictée) : ce que le serveur a déjà est ignoré, ce qui lui manque
+    est réclamé (`MorceauManquant`) — le navigateur renvoie depuis là. Sans
+    `debut` (un écran d'avant ce correctif), on ajoute comme avant.
     """
-    t = _tampon(cle)
+    if t.get("terminee"):
+        # Tant que l'onglet envoie, la marque reste : oubliée, elle laisserait
+        # repartir une « nouvelle » dictée sur la suite du même son.
+        t["quand"] = time.monotonic()
+        raise DicteeTerminee(t["terminee"])
+    recus = len(t["octets"])
+    if debut is not None:
+        if debut > recus:
+            raise MorceauManquant(recus)
+        morceau = morceau[recus - debut:]
     if morceau:
         t["octets"].extend(morceau)
     t["quand"] = time.monotonic()
+    if len(t["octets"]) > MAX_OCTETS or t["quand"] - t.get("cree", t["quand"]) > DUREE_MAX_DICTEE_S:
+        t["terminee"] = ("Cette dictée a dépassé dix minutes : elle est arrêtée. "
+                         "Réappuyez sur le micro pour en commencer une autre.")
+        # Le son est oublié tout de suite ; la marque reste, pour refuser la suite.
+        t["octets"] = bytearray()
+        _CACHE.pop(cle, None)
+        _GROQ.pop(cle, None)
+        logger.warning("Dictée arrêtée par le serveur : plus de dix minutes ou plus de 12 Mo")
+        raise DicteeTerminee(t["terminee"])
+
+
+async def transcrire_flux(cle: str, morceau: bytes, mime: str = "audio/webm",
+                          definitif: bool = False, debut: int | None = None) -> str:
+    """Ajoute un morceau au tampon de cette dictée et rend le texte ENTIER.
+
+    `definitif` : le dernier morceau — le tampon et le cache sont oubliés après.
+    `debut` : où ce morceau commence dans la dictée, en octets (voir `_ajouter`).
+    Lève `MorceauManquant` (le tampon est GARDÉ, même au dernier morceau : le
+    navigateur renvoie ce qui manque) ou `DicteeTerminee`.
+    """
+    t = _tampon(cle)
+    _ajouter(cle, t, morceau, debut)
     octets = bytes(t["octets"])
     try:
         if moteur_choisi() == "groq":

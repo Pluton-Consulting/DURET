@@ -111,6 +111,12 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
   let flux: MediaStream | null = null
   let enregistreur: MediaRecorder | null = null
   const morceaux: Blob[] = []
+  // Où chaque morceau commence dans l'enregistrement, en octets : chaque envoi
+  // dit d'où il part, et le serveur réclame ce qui ne lui est pas arrivé (22/09).
+  const bornes: number[] = []
+  let total = 0
+  let termine = false          // le serveur a clos cette dictée : plus aucun envoi
+  let echecsDeSuite = 0
   let mime = ""
   let voulu = false
   let horloge: ReturnType<typeof setInterval> | null = null
@@ -128,9 +134,18 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
   // y ajoute chaque envoi. Deux onglets ne se mélangent pas.
   const session = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
+  // Le morceau d'où repartir quand le serveur dit en être à `recus` octets : le
+  // dernier qui commence au plus tard là. Le serveur ignore ce qu'il a déjà, rien
+  // n'est ajouté deux fois.
+  const indexDepuis = (recus: number) => {
+    let i = 0
+    while (i + 1 < bornes.length && bornes[i + 1] <= recus) i++
+    return Math.min(i, morceaux.length)
+  }
+
   const transcrire = async (definitif: boolean) => {
     // Rien de neuf depuis le dernier envoi : inutile de payer un appel.
-    if (morceaux.length === 0) return
+    if (morceaux.length === 0 || termine) return
     if (!definitif && (morceaux.length === dernierEnvoye || envoiEnCours)) return
     // L'ENVOI DÉFINITIF ATTEND L'INTERMÉDIAIRE EN VOL (15/09). Le serveur ajoute
     // les morceaux dans l'ordre d'ARRIVÉE ; parti avant la fin du précédent, le
@@ -140,32 +155,65 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
     envoiEnCours = true
     enVol += 1
     options.surTravail?.(true)
-    const couvert = morceaux.length
-    const depuis = dernierEnvoye
-    dernierEnvoye = couvert
     const mien = ++numero
     try {
-      // SEULEMENT LE NOUVEAU SON depuis le dernier envoi : le serveur l'ajoute
-      // au tampon de la dictée. Le premier morceau porte l'en-tête du
-      // conteneur, le tampon entier reste décodable.
-      const blob = new Blob(morceaux.slice(depuis, couvert), { type: mime || "audio/webm" })
-      const chunk_b64 = await enBase64(blob)
-      const res = await fetch(`${options.apiUrl}/api/chat/transcrire`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${options.token}` },
-        body: JSON.stringify({ chunk_b64, session, definitif, mime: mime || "audio/webm" }),
-      })
-      const d = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        options.surErreur(d.detail || "La transcription n'a pas abouti. Réessayez.")
-        if (res.status === 401) arreter()
+      // LE CURSEUR N'AVANCE QU'À LA RÉPONSE (22/09, Duret). Il avançait dès
+      // l'envoi : un envoi perdu en route ne repartait jamais, et s'il portait
+      // le PREMIER morceau (l'en-tête du fichier son), toute la dictée devenait
+      // illisible. Un seul envoi à la fois (`envoiEnCours`) : rien ne part en
+      // double, et chaque envoi dit où il commence (`debut`) — le serveur ignore
+      // ce qu'il a déjà et réclame ce qui lui manque (409). Le dernier envoi
+      // réessaie deux fois ; un intermédiaire, lui, repart au tour suivant.
+      for (let essai = 0; essai < (definitif ? 3 : 1); essai++) {
+        const couvert = morceaux.length
+        const depuis = dernierEnvoye
+        // SEULEMENT LE SON QUE LE SERVEUR N'A PAS ENCORE : il l'ajoute au tampon
+        // de la dictée. Le premier morceau porte l'en-tête du conteneur, le
+        // tampon entier reste décodable.
+        const blob = new Blob(morceaux.slice(depuis, couvert), { type: mime || "audio/webm" })
+        const chunk_b64 = await enBase64(blob)
+        let res: Response
+        try {
+          res = await fetch(`${options.apiUrl}/api/chat/transcrire`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${options.token}` },
+            body: JSON.stringify({ chunk_b64, session, definitif, debut: bornes[depuis] ?? total,
+                                   mime: mime || "audio/webm" }),
+          })
+        } catch {
+          echecsDeSuite += 1
+          if (definitif && essai < 2) { await new Promise((r) => setTimeout(r, 800)); continue }
+          // Un intermédiaire perdu repart tout seul au tour suivant : on ne le dit
+          // qu'au troisième échec d'affilée (le réseau est vraiment coupé).
+          if (definitif || echecsDeSuite >= 3) {
+            options.surErreur("Le serveur n'a pas répondu pendant la transcription. Réessayez.")
+          }
+          return
+        }
+        const d = await res.json().catch(() => ({}))
+        if (res.status === 409) {
+          // Une partie du son n'est pas arrivée : on repart de là où en est le serveur.
+          dernierEnvoye = indexDepuis(Number(d?.detail?.recus ?? 0))
+          if (definitif) continue
+          return
+        }
+        if (!res.ok) {
+          const detail = typeof d.detail === "string" ? d.detail : d.detail?.message
+          options.surErreur(detail || "La transcription n'a pas abouti. Réessayez.")
+          // 410 : le serveur a clos cette dictée (dix minutes) ; 401 : la session
+          // a expiré. Dans les deux cas l'écoute s'arrête pour de bon.
+          if (res.status === 410) termine = true
+          if (res.status === 401 || res.status === 410) arreter()
+          return
+        }
+        dernierEnvoye = couvert
+        echecsDeSuite = 0
+        if (mien < applique) return          // une réponse plus récente est déjà à l'écran
+        applique = mien
+        options.surTexte(String(d.texte || "").trim(), definitif)
         return
       }
-      if (mien < applique) return          // une réponse plus récente est déjà à l'écran
-      applique = mien
-      options.surTexte(String(d.texte || "").trim(), definitif)
-    } catch {
-      options.surErreur("Le serveur n'a pas répondu pendant la transcription. Réessayez.")
+      options.surErreur("Une partie du son n'a pas pu être transmise. Réessayez la dictée.")
     } finally {
       envoiEnCours = false
       enVol -= 1
@@ -212,6 +260,10 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
     if (voulu) return
     voulu = true
     morceaux.length = 0
+    bornes.length = 0
+    total = 0
+    termine = false
+    echecsDeSuite = 0
     dernierEnvoye = 0
     try {
       // Réduction du bruit, annulation d'écho et gain automatique : ce que fait
@@ -231,6 +283,18 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
       options.surFin()
       return
     }
+    // ARRÊTÉE PENDANT QUE LE MICRO S'OUVRAIT (22/09, Duret). Ouvrir le micro
+    // prend une ou deux secondes (et la première fois, Chrome demande
+    // l'autorisation) : le bouton affiche déjà « j'écoute », on rappuie, la
+    // dictée passe « arrêtée »… puis le micro finissait de s'ouvrir et
+    // l'enregistrement démarrait QUAND MÊME. Marqué arrêté, plus rien ne
+    // pouvait le couper — ni le bouton, ni l'envoi du message, ni la borne des
+    // dix minutes : un onglet a écouté la pièce plus de douze minutes.
+    if (!voulu) {
+      try { flux?.getTracks().forEach((t) => t.stop()) } catch { /* déjà coupé */ }
+      flux = null
+      return
+    }
     mime = formatEnregistrement()
     try {
       enregistreur = new (window as any).MediaRecorder(flux, mime ? { mimeType: mime } : undefined)
@@ -242,7 +306,12 @@ export function creerDictee(options: OptionsDictee): Dictee | null {
     }
     const enr = enregistreur!
     mime = enr.mimeType || mime
-    enr.ondataavailable = (ev: BlobEvent) => { if (ev.data && ev.data.size > 0) morceaux.push(ev.data) }
+    enr.ondataavailable = (ev: BlobEvent) => {
+      if (!ev.data || ev.data.size === 0) return
+      bornes.push(total)
+      total += ev.data.size
+      morceaux.push(ev.data)
+    }
     enr.onerror = () => { options.surErreur("L'enregistrement s'est interrompu. Réessayez."); arreter() }
     // Un morceau par seconde : c'est ce qui permet d'envoyer « tout depuis le
     // début » à intervalle régulier sans attendre la fin.

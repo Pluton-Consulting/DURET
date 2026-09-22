@@ -17,8 +17,10 @@ CE QUE CE BANC PROUVE (pytesseract et pypdfium2 doublés, sans réseau) :
     arrêter la suivante ;
   · les lectures tournent dans la réserve « lecture », pas dans celle du reste
     de l'application : un `to_thread` ordinaire passe pendant qu'elles tournent ;
-  · les synchronisations passent par `en_lecture`, plus par `wait_for(to_thread…)`.
-Tombe sur la version d'avant (`en_lecture` absent).
+  · les synchronisations passent par `en_lecture`, plus par `wait_for(to_thread…)` ;
+  · pdfium n'est JAMAIS appelé par deux threads à la fois (22/09 : sept plantages
+    natifs du backend en une nuit d'ingestion), l'OCR restant parallèle.
+Tombe sur la version d'avant (`en_lecture` absent ; puis, pour le 6, sans `_PDFIUM`).
 
 Usage : python backend/scripts/test_ocr_borne.py [backend]
 """
@@ -77,26 +79,62 @@ class _Image:
     def close(self):
         pass
 
+    def copy(self):
+        return _Image()
+
+
+class Pdfium:
+    """Compte les appels à pdfium qui se CHEVAUCHENT : la vraie bibliothèque plante
+    le processus (« trap int3 in libpdfium.so ») dès qu'il y en a deux."""
+    verrou = threading.Lock()
+    en_cours = 0
+    maximum = 0
+
+    @classmethod
+    def appel(cls, duree=0.0):
+        with cls.verrou:
+            cls.en_cours += 1
+            cls.maximum = max(cls.maximum, cls.en_cours)
+        try:
+            time.sleep(duree)
+        finally:
+            with cls.verrou:
+                cls.en_cours -= 1
+
+
+class _Bitmap:
+    def to_pil(self):
+        Pdfium.appel()
+        return _Image()
+
+    def close(self):
+        Pdfium.appel()
+
 
 class _Page:
     def render(self, scale=1):
-        return types.SimpleNamespace(to_pil=lambda: _Image())
+        Pdfium.appel(0.02)
+        return _Bitmap()
+
+    def close(self):
+        Pdfium.appel()
 
 
 class _Pdf:
     pages = 10
 
     def __init__(self, brut):
-        pass
+        Pdfium.appel(0.01)
 
     def __len__(self):
         return _Pdf.pages
 
     def __getitem__(self, i):
+        Pdfium.appel()
         return _Page()
 
     def close(self):
-        pass
+        Pdfium.appel()
 
 
 sys.modules["pytesseract"] = Tesseract
@@ -182,6 +220,21 @@ if P is not None:
 
     attente = asyncio.run(a_cote())
     verifier("un `to_thread` ordinaire passe pendant douze lectures", attente < 0.5, round(attente, 2))
+
+    print("6. pdfium n'est jamais appelé par deux threads à la fois (22/09)")
+    _Pdf.pages = 5
+    Tesseract.duree = 0.05
+    Pdfium.maximum = 0
+
+    async def seize():
+        return await asyncio.gather(*[P.en_lecture(P.ocr_pdf, b"%PDF", delai=30) for _ in range(8)],
+                                    *[asyncio.to_thread(P.ocr_pdf, b"%PDF") for _ in range(8)])
+
+    textes = asyncio.run(seize())
+    verifier("seize lectures de front (masse + chat) rendent leur texte",
+             all("texte de la page" in t for t in textes), textes[:1])
+    verifier(f"au plus UN appel à pdfium à la fois (vu : {Pdfium.maximum})", Pdfium.maximum == 1)
+    verifier("l'OCR, lui, reste parallèle", Tesseract.maximum >= 2, Tesseract.maximum)
 
 print("5. Les synchronisations passent par `en_lecture`")
 for chemin in ("ingestion/connectors/synology.py", "ingestion/connectors/google_drive.py"):

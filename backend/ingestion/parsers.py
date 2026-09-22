@@ -69,6 +69,15 @@ LECTEURS_SIMULTANES = 4
 os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 _OCR_PORTE = threading.BoundedSemaphore(OCR_SIMULTANES)
+
+# PDFIUM NE SE PARTAGE PAS ENTRE THREADS (22/09, Duret). Sept redémarrages du backend
+# en une nuit d'ingestion, sans trace Python : le noyau disait « trap int3 in
+# libpdfium.so » — la bibliothèque interdit deux appels simultanés, et quatre
+# lectures tournent de front (sans compter le chat). Un plantage natif emporte le
+# processus ENTIER, donc toute conversation en cours. Le verrou couvre chaque
+# appel à pdfium (ouverture, rendu d'une page, fermeture), pas tesseract : l'OCR
+# d'une image déjà rendue continue en parallèle.
+_PDFIUM = threading.Lock()
 _ECHEANCE: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar("echeance_lecture", default=None)
 # L'OCR PEUT ÊTRE REMIS À PLUS TARD (15/09, Duret) : une synchronisation de jour
 # ne passe plus un PDF scanné à tesseract — elle le note, et la nuit le lit.
@@ -230,21 +239,34 @@ def ocr_pdf(brut: bytes) -> str:
         ) from e
 
     morceaux = []
-    doc = pdfium.PdfDocument(brut)
+    with _PDFIUM:
+        doc = pdfium.PdfDocument(brut)
+        nb_pages = len(doc)
     try:
-        total = min(len(doc), MAX_PAGES_OCR)
-        if len(doc) > MAX_PAGES_OCR:
-            logger.warning("OCR limité aux %d premières pages (sur %d)", MAX_PAGES_OCR, len(doc))
+        total = min(nb_pages, MAX_PAGES_OCR)
+        if nb_pages > MAX_PAGES_OCR:
+            logger.warning("OCR limité aux %d premières pages (sur %d)", MAX_PAGES_OCR, nb_pages)
         for i in range(total):
             _verifier_echeance()
-            page = doc[i]
-            image = page.render(scale=OCR_DPI / 72).to_pil()
+            with _PDFIUM:
+                page = doc[i]
+                try:
+                    rendu = page.render(scale=OCR_DPI / 72)
+                    try:
+                        # Une COPIE : l'image rendue par pdfium partage sa mémoire avec
+                        # le bitmap, que la fermeture ci-dessous libère.
+                        image = rendu.to_pil().copy()
+                    finally:
+                        rendu.close()
+                finally:
+                    page.close()
             try:
                 morceaux.append(_ocr(image))
             finally:
                 image.close()
     finally:
-        doc.close()
+        with _PDFIUM:
+            doc.close()
     return "\n\n".join(morceaux).strip()
 
 

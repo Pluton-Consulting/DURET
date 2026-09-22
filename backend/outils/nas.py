@@ -834,17 +834,47 @@ async def octets(nom_ou_chemin: str, plafond: int = MAX_OCTETS_PIECE) -> tuple:
     return brut, nom, devine or "application/octet-stream"
 
 
+# LE TEXTE D'UN LOT TIENT DANS LE RÉSULTAT (22/09, Duret, prompt 17 de la recette) : cinq
+# factures WURTH lues, puis le résultat rogné à 4 000 caractères AVANT le modèle — « lus 1
+# sur 5, le dernier raccourci ». La moitié du texte d'une facture était faite d'espaces de mise
+# en page, et la coupe tombait avant les totaux : le modèle rappelait le même lot en boucle.
+# Chaque fichier reçoit sa part de ce budget, son DÉBUT et sa FIN (là où sont les totaux).
+BUDGET_TEXTE_LOT = 10000
+
+
+def _compacter(texte: str) -> str:
+    """Le texte d'un PDF sans ses espaces de mise en page (colonnes alignées à l'espace)."""
+    import re
+    texte = re.sub(r"[ \t\u00a0]{2,}", " ", str(texte or ""))
+    texte = re.sub(r" *\n *", "\n", texte)
+    return re.sub(r"\n{3,}", "\n\n", texte).strip()
+
+
+def _tete_et_queue(texte: str, budget: int) -> tuple[str, bool]:
+    if len(texte) <= budget:
+        return texte, False
+    tete = texte[: budget * 55 // 100]
+    queue = texte[-(budget * 45 // 100):]
+    return (tete + f"\n[… {len(texte) - len(tete) - len(queue)} caractères au milieu, non montrés — "
+            "nas_lire pour le texte entier …]\n" + queue), True
+
+
 async def lire_lot(motif: str, dossier: Optional[str] = None,
-                   limite: int = MAX_LOT) -> dict:
+                   limite: int = MAX_LOT, page: int = 1) -> dict:
     """Lit plusieurs fichiers d'un coup — « tous les CCTP du chantier 2031 ».
 
-    Sans elle, lire cinq fichiers coûtait dix allers-retours. Bornée à cinq :
-    au-delà, le volume de texte dépasse ce qu'un tour de conversation peut
-    porter, et la réponse serait tronquée au milieu sans que rien ne le dise.
+    Sans elle, lire cinq fichiers coûtait dix allers-retours. Bornée à cinq par
+    page : au-delà, le volume de texte dépasse ce qu'un tour peut porter. `page`
+    lit les cinq suivants ; le texte de chaque fichier est compacté et borné à sa
+    part du budget, début ET fin gardés — une coupe ne se fait plus en silence.
     """
     from nas.acces import connexion, _lire_ouvert, _chercher_ouvert, NasRefuse
 
     limite = max(1, min(int(limite or MAX_LOT), MAX_LOT))
+    try:
+        page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        page = 1
     async with connexion() as (client, base, sid):
         dossier = await _dossier_resolu(client, base, sid, dossier)
         trouve = await _chercher_ouvert(client, base, sid, motif, dossier)
@@ -852,9 +882,11 @@ async def lire_lot(motif: str, dossier: Optional[str] = None,
         if not fichiers:
             return {"motif": motif, "nombre": 0,
                     "message": "Aucun fichier ne correspond."}
+        pages = max(1, -(-len(fichiers) // limite))
+        page = min(page, pages)
 
         lus, echecs = [], []
-        for f in fichiers[:limite]:
+        for f in fichiers[(page - 1) * limite: page * limite]:
             try:
                 lus.append(await _lire_ouvert(client, base, sid, f["chemin"]))
             except NasRefuse as e:
@@ -862,12 +894,24 @@ async def lire_lot(motif: str, dossier: Optional[str] = None,
             except Exception as e:  # noqa: BLE001 - un fichier illisible n'annule pas le lot
                 echecs.append({"chemin": f["chemin"], "raison": str(e)[:120]})
 
-    return {"motif": motif, "correspondances": len(fichiers), "lus": lus,
-            "echecs": echecs,
-            "note": (f"{len(fichiers)} fichier(s) trouvé(s), {len(lus)} lu(s)"
+    part = BUDGET_TEXTE_LOT // max(1, len(lus))
+    coupes = 0
+    for lu in lus:
+        if isinstance(lu, dict) and isinstance(lu.get("texte"), str):
+            compact = _compacter(lu["texte"])
+            lu["texte"], coupe = _tete_et_queue(compact, part)
+            if coupe:
+                coupes += 1
+                lu["longueur_totale"] = len(compact)
+    return {"motif": motif, "correspondances": len(fichiers), "page": page, "pages": pages,
+            "lus": lus, "echecs": echecs,
+            "pour_continuer": (f"Pour les {limite} fichiers SUIVANTS, rappelle nas_lire_lot avec le "
+                               f"même motif et page={page + 1}." if page < pages else None),
+            "note": (f"{len(fichiers)} fichier(s) trouvé(s) ; page {page} sur {pages}, {len(lus)} lu(s)"
                      + (f", {len(echecs)} en échec" if echecs else "")
-                     + (f". Limite de {limite} atteinte : précise le motif."
-                        if len(fichiers) > limite else "."))}
+                     + (f". {coupes} texte(s) montré(s) en début et fin (le milieu est dit) : "
+                        "nas_lire pour un texte entier." if coupes else ".")
+                     + (" Ne rappelle PAS la même page : passe à la suivante." if page < pages else ""))}
 
 
 def _nom_avec_extension(nom: Optional[str], entete: dict) -> str:

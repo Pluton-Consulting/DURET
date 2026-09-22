@@ -91,7 +91,7 @@ async def nas_lire_lot(data: dict, user) -> dict:
         _echec("Donne le `motif` des fichiers à lire (un morceau de leur nom).")
     try:
         return await lire_lot(motif, (data.get("dossier") or "").strip() or None,
-                              data.get("limite") or 5)
+                              data.get("limite") or 5, data.get("page") or 1)
     except Exception as e:  # noqa: BLE001
         _echec(str(getattr(e, "detail", None) or e))
 
@@ -210,9 +210,9 @@ SKILLS = {
         libelle="j'ouvre le fichier"),
     "nas_lire_lot": Declaration(
         fonction=nas_lire_lot,
-        description=("LIT plusieurs fichiers du serveur correspondant a un motif "
-                     "(5 maximum)"),
-        requis=["motif"], optionnels=["dossier", "limite"],
+        description=("LIT plusieurs fichiers du serveur correspondant a un motif, 5 par "
+                     "page (`page` pour les suivants) ; chaque texte garde son debut et sa fin"),
+        requis=["motif"], optionnels=["dossier", "limite", "page"],
         effet="lecture",
         libelle="je lis les fichiers"),
     "nas_deposer_document": Declaration(

@@ -369,6 +369,8 @@ RESULTATS_GENEREUX = {"lire_source_dossier", "chercher_source_dossier", "drive_c
                       "relancer_factures", "factures_suivies", "inventaire_dossier",
                       "courrier_entrant",
                       "nas_apercu", "preparer_envois", "nas_lister",
+                      # 22/09 : cinq factures lues, montrées « 1 sur 5 » au modèle.
+                      "nas_lire_lot",
                       "drive_arborescence", "nas_arborescence",
                       "lire_mails", "lire_mail", "check_mails",
                       "rechercher_documents", "interroger_donnees",

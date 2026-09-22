@@ -14,7 +14,7 @@ CE QUE CE BANC PROUVE :
     partent plus.
 Tombe sur la version d'avant (`reprendreSession` absent).
 
-Usage : python backend/scripts/test_sondage_session.py [frontend]
+Usage : python backend/scripts/test_sondage_session.py [backend|frontend]
 """
 import json
 import pathlib
@@ -23,7 +23,9 @@ import subprocess
 import sys
 import tempfile
 
-front = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "frontend").resolve()
+# La recette passe le chemin du BACKEND ; à la main, on peut donner celui du frontend.
+_arg = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "frontend").resolve()
+front = _arg if (_arg / "lib" / "session.ts").exists() else _arg.parent / "frontend"
 echecs = []
 
 

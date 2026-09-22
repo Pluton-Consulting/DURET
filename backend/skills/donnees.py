@@ -58,10 +58,6 @@ def _jsonb(valeur) -> dict:
 
 async def interroger_donnees(data: dict, user) -> dict:
     """Compte et filtre sur les colonnes importées. Aucun embedding, aucun seuil."""
-    from database.connection import get_db
-    from security.acces import niveaux_visibles
-
-    niveaux = sorted(niveaux_visibles(getattr(user, "role", "")))
     type_source = (data.get("source_type") or "").strip()
     filtres = data.get("filtres") or {}
     if isinstance(filtres, str):
@@ -72,7 +68,12 @@ async def interroger_donnees(data: dict, user) -> dict:
             filtres = {}
     if not isinstance(filtres, dict):
         filtres = {}
+    if str(data.get("fichier") or "").strip():
+        return await _interroger_fichier(data, user, filtres)
 
+    from database.connection import get_db
+    from security.acces import niveaux_visibles
+    niveaux = sorted(niveaux_visibles(getattr(user, "role", "")))
     try:
         async with get_db() as conn:
             if not type_source:
@@ -478,7 +479,7 @@ def _groupe_de(ligne: dict, par: str, colonne_date: str):
 
 async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
                    annee: str, filtres: dict, fragments: dict = None,
-                   depuis: str = "", page: int = 1) -> dict:
+                   depuis: str = "", page: int = 1, lignes_fournies=None) -> dict:
     """Compte / somme / moyenne / min / max, avec période et regroupement."""
     import datetime
     from skills.lecture import (lire_date, lire_montant, est_un_nombre,
@@ -531,7 +532,11 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
         fin = datetime.date.today()
         libelle_periode = f"du {debut.isoformat()} au {fin.isoformat()}"
 
-    lignes, tronque = await _charger(conn, niveaux, type_source, filtres, fragments)
+    # Les lignes d'un CLASSEUR (22/09) arrivent déjà lues et filtrées : même calcul.
+    if lignes_fournies is not None:
+        lignes, tronque = lignes_fournies
+    else:
+        lignes, tronque = await _charger(conn, niveaux, type_source, filtres, fragments)
 
     # ── Le tri des lignes : dans la période, hors période, date illisible ──
     retenues, hors_periode, sans_date = [], 0, 0
@@ -689,3 +694,156 @@ async def _agreger(conn, niveaux: list[str], type_source: str, agreger: dict,
           "est calculé, sur quoi, et avec quelle réserve"
         + (", en citant la période telle quelle." if libelle_periode else "."))
     return sortie
+
+
+# ── Un CLASSEUR du serveur, calculé par le code (22/09, Duret) ─────────────
+#
+# Recette du 22/09, prompts 15 et 16 : « le chiffre d'affaires HT de janvier à août
+# d'après Facturation_20260910.xlsx », puis « le classement des clients ». Le classeur
+# n'est pas un jeu importé : l'assistant l'a LU comme du texte, par pages de 8 000
+# caractères — seize fragments, une quarantaine d'appels —, a calculé un classement sur
+# six d'entre eux (le relecteur l'a refusé), puis le temps du tour s'est épuisé. Un
+# calcul sur un tableau ne se fait pas en lisant des pages : ici toutes les lignes de
+# la feuille passent par LE MÊME calcul que les données importées (période au jour,
+# regroupement classé par valeur, montants en décimal, valeurs aberrantes écartées).
+MAX_OCTETS_CLASSEUR = 40 * 1024 * 1024
+MAX_EXEMPLES_FEUILLE = 2
+
+
+async def _octets_du_classeur(ref: str, user, fil) -> tuple[bytes, str]:
+    """(octets, nom) d'un classeur : une pièce du dossier de CETTE conversation (son
+    identifiant ou son nom), sinon un chemin ou un nom du NAS — toujours avec les
+    droits de la personne (le NAS vérifie son périmètre)."""
+    uid = str(getattr(user, "id", "") or "")
+    if fil and not ref.startswith("/"):
+        try:
+            from ressources import dossiers
+            source = dossiers.sources(uid, fil, [ref])[0]
+            reference = str(source.get("reference") or "")
+            if reference.startswith("/api/documents/"):
+                from bureautique import atelier
+                chemin = atelier.chemin_fichier(reference.rsplit("/", 1)[-1], uid)
+                if chemin:
+                    with open(chemin, "rb") as f:
+                        return f.read(), str(source.get("nom") or ref)
+            elif reference.startswith("/"):
+                ref = reference
+        except (ValueError, IndexError, OSError):
+            pass            # pas une pièce du dossier : on cherche sur le serveur
+    from outils import nas
+    brut, nom, _ = await nas.octets(ref, plafond=MAX_OCTETS_CLASSEUR)
+    return brut, nom
+
+
+def _plat(v) -> str:
+    return " ".join(str(v or "").casefold().split())
+
+
+def _filtrer_lignes(lignes: list, filtres: dict, fragments: dict) -> list:
+    """`filtres` = égalité (à la casse et aux espaces près), `contient` = le mot dedans."""
+    garde = []
+    for ligne in lignes:
+        if any(_plat(_valeur_de(ligne, k)) != _plat(v) for k, v in (filtres or {}).items()):
+            continue
+        if any(_plat(bout) not in _plat(_valeur_de(ligne, k)) for k, bout in (fragments or {}).items()):
+            continue
+        garde.append(ligne)
+    return garde
+
+
+def _choisir_feuille(feuilles: list, demandee: str):
+    """La feuille nommée (à la casse près, ou contenue dans le nom), sinon la plus longue."""
+    pleines = [f for f in feuilles if f["lignes"]]
+    if demandee:
+        cible = _plat(demandee)
+        for f in pleines:
+            if _plat(f["nom"]) == cible:
+                return f, False
+        proches = [f for f in pleines if cible in _plat(f["nom"])]
+        if len(proches) == 1:
+            return proches[0], False
+        return None, False
+    if not pleines:
+        return None, False
+    return max(pleines, key=lambda f: len(f["lignes"])), len(pleines) > 1
+
+
+async def _interroger_fichier(data: dict, user, filtres: dict) -> dict:
+    import asyncio
+    from ingestion.parsers import FichierNonSupporte, lire_feuilles
+    from skills.erreurs import SkillError
+
+    ref = str(data.get("fichier") or "").strip()
+    try:
+        brut, nom = await _octets_du_classeur(ref, user, data.get("_fil"))
+        feuilles = await asyncio.to_thread(lire_feuilles, nom, brut)
+    except FichierNonSupporte as e:
+        raise SkillError(f"« {ref} » ne se lit pas comme un tableau : {e}")
+    except SkillError:
+        raise
+    except Exception as e:  # noqa: BLE001 — NasRefuse, NasIndisponible : leur phrase est lisible
+        raise SkillError(str(e) or f"Le classeur « {ref} » n'a pas pu être ouvert.")
+
+    agreger = data.get("agreger") or {}
+    if isinstance(agreger, str):
+        import json as _j
+        try:
+            agreger = _j.loads(agreger)
+        except _j.JSONDecodeError:
+            agreger = {"operation": "somme", "colonne": agreger}
+    fragments = _fragments(data)
+    annee = str(data.get("annee") or "").strip()
+    depuis = str(data.get("depuis") or data.get("periode") or "").strip()
+    try:
+        page = max(1, int(data.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    resume = [{"nom": f["nom"], "lignes": len(f["lignes"]), "colonnes": f["entetes"][:MAX_COLONNES],
+               "exemples": f["lignes"][:MAX_EXEMPLES_FEUILLE]} for f in feuilles if f["lignes"]]
+
+    demandee = str(data.get("feuille") or "").strip()
+    if not (agreger or annee or depuis or filtres or fragments):
+        return {"fichier": nom, "feuilles": resume,
+                "note": ("Ce classeur a été lu EN ENTIER. Pour calculer (total, moyenne, compte, "
+                         "par mois, par client…), rappelle interroger_donnees avec `fichier`, "
+                         "`feuille` et `agreger` — le calcul porte alors sur TOUTES les lignes. "
+                         "Ne recopie pas ces lignes pour compter toi-même.")}
+
+    feuille, auto = _choisir_feuille(feuilles, demandee)
+    if feuille is None:
+        return {"fichier": nom, "feuille_demandee": demandee or None, "feuilles": resume,
+                "message": (f"Aucune feuille « {demandee} » dans « {nom} »." if demandee
+                            else f"« {nom} » ne contient aucune ligne de données."),
+                "a_faire": "Reprends le nom exact d'une des `feuilles` rendues."}
+
+    lignes = _filtrer_lignes([{"data": l, "champs": {}} for l in feuille["lignes"]], filtres, fragments)
+    commun = {"fichier": nom, "feuille": feuille["nom"],
+              "feuilles_disponibles": [f["nom"] for f in resume],
+              "lignes_de_la_feuille": len(feuille["lignes"])}
+    if auto:
+        commun["note_feuille"] = (f"Feuille retenue d'office : « {feuille['nom']} », la plus longue. "
+                                  "Si ce n'est pas la bonne, rappelle avec `feuille`.")
+
+    if agreger or annee or depuis:
+        sortie = await _agreger(None, [], f"{nom} › {feuille['nom']}",
+                                agreger if isinstance(agreger, dict) else {},
+                                annee, {}, {}, depuis, page,
+                                lignes_fournies=(lignes, feuille["tronquee"]))
+        sortie.update(commun)
+        sortie["filtres"], sortie["contient"] = filtres or None, fragments or None
+        return sortie
+
+    total = len(lignes)
+    pages = max(1, -(-total // MAX_ENREGISTREMENTS))
+    page = min(page, pages)
+    return dict(commun, filtres=filtres or None, contient=fragments or None, nombre=total,
+                page=page, pages=pages,
+                enregistrements=[l["data"] for l in lignes[(page - 1) * MAX_ENREGISTREMENTS:
+                                                           page * MAX_ENREGISTREMENTS]],
+                pour_continuer=(f"Pour les {MAX_ENREGISTREMENTS} lignes SUIVANTES, rappelle "
+                                f"interroger_donnees avec les mêmes paramètres et page={page + 1}."
+                                if page < pages else None),
+                note=(f"{total} ligne(s) de la feuille « {feuille['nom']} » correspondent — "
+                      "nombre EXACT, sur tout le classeur."
+                      + (" ATTENTION : la feuille dépasse la borne de lecture, les dernières "
+                         "lignes manquent — dis-le." if feuille["tronquee"] else "")))

@@ -540,8 +540,14 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "suivants) — le PREMIER groupe est donc « le plus haut » — et les totaux "
         "portent sur TOUS les groupes. Les enregistrements "
         "filtres se lisent 25 par 25 : `page` pour les suivants. Verifie TOUJOURS "
-        "les valeurs reelles avant de filtrer",
-        [], ["source_type", "filtres", "contient", "agreger", "annee", "depuis", "page"]),
+        "les valeurs reelles avant de filtrer. UN CLASSEUR Excel/CSV du serveur ou du dossier "
+        "de la conversation (facturation, suivi, export) : `fichier` = son chemin, son nom ou "
+        "l'identifiant de la piece — sans calcul, rend ses feuilles et colonnes ; avec "
+        "`feuille` et `agreger`/`annee`/`depuis`/`filtres`/`contient`, le calcul porte sur "
+        "TOUTES ses lignes. Un total, un chiffre d'affaires, un classement sur un classeur "
+        "passent TOUJOURS par ici, jamais par une lecture page a page",
+        [], ["source_type", "fichier", "feuille", "filtres", "contient", "agreger", "annee",
+             "depuis", "page"]),
     "lire_mails": (
         "LIT les messages d'UNE boîte, en direct, et en donne le COMPTE EXACT. « Combien de "
         "non lus ? » : un appel sans filtre, le résultat porte `non_lus_dossier` (tout le dossier, "

@@ -460,6 +460,79 @@ def lire_excel(brut: bytes) -> tuple[list[str], list[dict]]:
     return [e for e in entetes if e], lignes
 
 
+def _feuille_en_lignes(nom: str, rangees) -> dict:
+    """Une feuille brute (suite de rangées de cellules) → en-têtes et lignes.
+
+    La ligne d'en-têtes est la PLUS REMPLIE des vingt premières rangées non vides :
+    un export de facturation porte souvent un titre, une date ou un logo au-dessus
+    du tableau, que « la première ligne non vide » prenait pour les en-têtes.
+    """
+    brutes = []
+    for rangee in rangees:
+        cellules = ["" if c is None else " ".join(str(c).split()) for c in list(rangee)[:MAX_COLONNES]]
+        brutes.append(cellules)
+        if len(brutes) > MAX_LIGNES + 25:
+            break
+    non_vides = [i for i, r in enumerate(brutes) if any(r)]
+    if not non_vides:
+        return {"nom": nom, "entetes": [], "lignes": [], "tronquee": False}
+    tete = max(non_vides[:20], key=lambda i: (sum(1 for c in brutes[i] if c), -i))
+    entetes = list(brutes[tete])
+    vues: set[str] = set()
+    for j, e in enumerate(entetes):
+        if not e or e in vues:          # sans en-tête, ou en double : la lettre de la colonne
+            entetes[j] = f"{e} ({_lettre_colonne(j)})" if e else f"Colonne {_lettre_colonne(j)}"
+        vues.add(entetes[j])
+    lignes = []
+    for rangee in brutes[tete + 1:]:
+        d = {}
+        for j, valeur in enumerate(rangee):
+            if not valeur:
+                continue
+            if j >= len(entetes):
+                entetes.append(f"Colonne {_lettre_colonne(j)}")
+            d[entetes[j]] = valeur
+        if d:
+            lignes.append(d)
+    tronquee = len(lignes) > MAX_LIGNES
+    return {"nom": nom, "entetes": [e for e in entetes if any(e in l for l in lignes)],
+            "lignes": lignes[:MAX_LIGNES], "tronquee": tronquee}
+
+
+def lire_feuilles(nom: str, brut: bytes) -> list[dict]:
+    """TOUTES les feuilles d'un classeur, pour un calcul exact (22/09, Duret).
+
+    `lire_excel` ne rend que la feuille active, pensée pour l'import d'un export à
+    une feuille. Le chiffre d'affaires d'un classeur de facturation vit souvent
+    dans la SECONDE (une synthèse croisée devant, le détail derrière). Rend
+    [{nom, entetes, lignes, tronquee}] ; une ligne = {en-tête: valeur texte}.
+    """
+    forme = format_tabulaire(brut)         # le contenu réel, pas l'extension
+    if forme == "csv":
+        entetes, lignes = lire_csv(brut)
+        return [{"nom": "CSV", "entetes": entetes, "lignes": lignes, "tronquee": len(lignes) >= MAX_LIGNES}]
+    if forme == "html":
+        entetes, lignes = lire_html(brut)
+        return [{"nom": "Tableau", "entetes": entetes, "lignes": lignes, "tronquee": len(lignes) >= MAX_LIGNES}]
+    if forme == "xls":
+        try:
+            import xlrd
+        except ImportError as e:
+            raise FichierNonSupporte("Ce fichier est un Excel ancien (.xls) que le serveur ne sait pas lire.") from e
+        classeur = xlrd.open_workbook(file_contents=brut)
+        return [_feuille_en_lignes(f.name, (f.row_values(i) for i in range(f.nrows)))
+                for f in classeur.sheets()]
+    try:
+        from openpyxl import load_workbook
+    except ImportError as e:
+        raise FichierNonSupporte("Lecture Excel indisponible (openpyxl absent)") from e
+    wb = load_workbook(io.BytesIO(brut), read_only=True, data_only=True)
+    try:
+        return [_feuille_en_lignes(ws.title, ws.iter_rows(values_only=True)) for ws in wb.worksheets]
+    finally:
+        wb.close()
+
+
 def _lettre_colonne(indice: int) -> str:
     """0 → A, 25 → Z, 26 → AA : la lettre qu'Excel montre en tête de colonne."""
     lettres = ""

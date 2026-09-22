@@ -165,6 +165,8 @@ SKILLS_SANS_PLAFOND = frozenset({"ajouter_document"})
 # Les gestes à qui le SERVEUR donne la conversation en cours (`_fil`).
 SKILLS_QUI_CONNAISSENT_LE_FIL = frozenset({
     "creer_tache_agent", "redaction_email", "deposer_brouillon", "abandonner_document",
+    # un classeur désigné par l'identifiant d'une pièce du dossier de CETTE conversation (22/09)
+    "interroger_donnees",
     # les gestes de messagerie : la conversation retient les mails qu'elle a vus (mail/vus.py)
     "lire_mails", "lire_mail", "check_mails", "courrier_entrant", "lire_piece_jointe", "modifier_indicateurs_mail",
     "resume_fil_email", "triage_email_entrant",

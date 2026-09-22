@@ -577,7 +577,7 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "toutes lignes comprises : ne recopie jamais la liste, et pour « mets-le dans un "
         "Excel » rappelle ce geste avec `fichier: true` — n'utilise PAS `produire_document` "
         "ni `creer_document`. La liste est GARDÉE 30 min : le rappel ne relit ni ne reclasse "
-        "rien (`rafraichir: true` pour relire). `priorites` : fragments d'OBJET des mails à "
+        "rien (`rafraichir: true` UNIQUEMENT si la personne demande de relire la boîte : la liste gardée EST la revue qu'elle vient de lire). `priorites` : fragments d'OBJET des mails à "
         "mettre EN TÊTE, surlignés dans l'Excel (`surlignage` : orange|jaune|vert|rouge|bleu|gris) "
         "— c'est LE geste pour « ajoute une colonne priorité / surligne les plus urgents ». "
         "« QUI M'A ÉCRIT LE PLUS » : `depuis` + `exhaustif: true` SANS `classer` — le résultat porte "

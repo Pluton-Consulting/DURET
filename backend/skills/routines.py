@@ -752,17 +752,42 @@ async def check_mails(data: dict, user) -> dict:
     # résultat est « généreux » (12 000) : on demande la longueur qui remplit
     # ce budget — 240 pour 25 messages, 520 pour 15, 800 dès 10.
     apercu = max(450, min(800, (10500 - limite * 180) // limite))
-    brut = await lire_mails({"mailbox": data.get("mailbox"),
-                             "dossier": data.get("dossier") or "recus",
-                             "limite": limite, "depuis": depuis,
-                             # LA PAGE SUIVANTE (01/09) : « TOUS mes mails des
-                             # 7 derniers jours » sur 63 messages n'était PAS
-                             # couvrable — le détail est borné à 25 et ce skill
-                             # ne transmettait même pas `avant`. Le point
-                             # s'enchaîne désormais page par page.
-                             "avant": data.get("avant") or data.get("avant_le"),
-                             "curseur": data.get("curseur"),
-                             "apercu": apercu}, user)
+    # LA REVUE QUI VIENT D'ÊTRE FAITE N'EST PAS REFAITE (22/09, Duret, prompts 5 puis 6). La
+    # revue de la semaine (141 mails, classés) venait d'être rendue ; « rédige un brouillon pour
+    # chaque mail qui appelle une réponse » a relu toute la boîte par ce geste — 140 cette
+    # fois, des minutes perdues, et le temps du tour épuisé après un seul brouillon. La liste
+    # gardée par `lire_mails` (30 min, par personne, boîte et période) est reprise telle quelle,
+    # avec ses résumés et catégories ; les droits sont revérifiés.
+    retenu = None
+    if _periode and not (data.get("rafraichir") or data.get("avant") or data.get("avant_le")
+                         or data.get("curseur") or data.get("limite")):
+        # Un raccourci, jamais un chemin obligé : s'il échoue (droits, messagerie
+        # indisponible…), la boîte se lit comme avant et `lire_mails` dit pourquoi.
+        try:
+            from mail.skills import _boite_a_lire, _cle_inventaire, _inventaire_retenu, verifier_acces
+            boite_verifiee = await verifier_acces(user, await _boite_a_lire(data, user))
+            retenu = _inventaire_retenu(_cle_inventaire(user, boite_verifiee,
+                                                        data.get("dossier") or "recus", depuis))
+        except Exception:  # noqa: BLE001
+            retenu = None
+    if retenu:
+        import copy as _copy
+        import time as _t
+        brut = _copy.deepcopy(retenu["inventaire"])
+        brut["repris"] = (f"Liste reprise de la revue faite il y a {max(0, int((_t.time() - retenu['a']) // 60))} "
+                          "min (aucune relecture de la boîte) — mêmes messages, mêmes comptes.")
+    else:
+        brut = await lire_mails({"mailbox": data.get("mailbox"),
+                                 "dossier": data.get("dossier") or "recus",
+                                 "limite": limite, "depuis": depuis,
+                                 # LA PAGE SUIVANTE (01/09) : « TOUS mes mails des
+                                 # 7 derniers jours » sur 63 messages n'était PAS
+                                 # couvrable — le détail est borné à 25 et ce skill
+                                 # ne transmettait même pas `avant`. Le point
+                                 # s'enchaîne désormais page par page.
+                                 "avant": data.get("avant") or data.get("avant_le"),
+                                 "curseur": data.get("curseur"),
+                                 "apercu": apercu}, user)
 
     messages = list(brut.get("messages") or brut.get("mails") or [])
     # La pagination IMAP est mécanique, pas une décision à redemander au LLM
@@ -771,7 +796,7 @@ async def check_mails(data: dict, user) -> dict:
     total_initial = brut.get('total_periode')
     suivant = brut.get('curseur_suivant')
     vus_curseurs = set()
-    if _periode and not data.get('limite') and not data.get('avant') and not data.get('curseur'):
+    if not retenu and _periode and not data.get('limite') and not data.get('avant') and not data.get('curseur'):
         while suivant and suivant not in vus_curseurs and len(messages)<250:
             vus_curseurs.add(suivant)
             page = await lire_mails({'mailbox':data.get('mailbox'),'dossier':data.get('dossier') or 'recus',
@@ -828,6 +853,10 @@ async def check_mails(data: dict, user) -> dict:
             # proposer poliment de répondre à un catalogue d'automne.
             "automatique": bool(m.get("expediteur_automatique")),
             "interne": bool(m.get("expediteur_interne")),
+            # La revue reprise porte son classement : le rédacteur sait déjà ce qui appelle
+            # une réponse, sans tout relire.
+            **({"resume": m["resume"]} if m.get("resume") else {}),
+            **({"categorie": m["categorie"]} if m.get("categorie") else {}),
         })
 
     fils = sum(1 for r in releve if r["reponse_dans_un_fil"])

@@ -923,9 +923,19 @@ _INVENTAIRES: dict = {}
 
 
 def _cle_inventaire(user, boite: str, dossier: str, depuis) -> tuple:
+    # LA PÉRIODE PAR SON JOUR DE DÉBUT, PAS PAR SON ÉCRITURE (22/09, Duret, prompts 5 et 6) :
+    # « 7j », « semaine », « les 7 derniers jours » désignent la même liste ; rangée sous le
+    # texte exact, elle n'était retrouvée que par qui l'écrivait à l'identique.
+    periode = " ".join(str(depuis or "").lower().split())
+    try:
+        from mail.lecture import depuis_quand
+        debut = depuis_quand(depuis)
+        if debut is not None:
+            periode = debut.date().isoformat()
+    except Exception:  # noqa: BLE001 — une période illisible garde son texte
+        pass
     return (str(getattr(user, "id", "") or ""), str(boite or "").lower(),
-            "envoyes" if str(dossier or "").lower().startswith("env") else "recus",
-            " ".join(str(depuis or "").lower().split()))
+            "envoyes" if str(dossier or "").lower().startswith("env") else "recus", periode)
 
 
 def _inventaire_retenu(cle: tuple):

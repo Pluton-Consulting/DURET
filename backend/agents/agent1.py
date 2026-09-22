@@ -1187,7 +1187,7 @@ COMPOSANTS VISUELS. Dès que tu présentes des DONNÉES concrètes (mail, devis,
 - {"type":"badge","tone":"primary|success|warning|error|neutral","text":"..."}
 - {"type":"quick_replies","options":["Proposition 1","Proposition 2"]}
 - {"type":"reponses_mail","reponses":[{"ref":"...","de":"...","objet":"...","synthese":"...","reponse":"..."}]} LES RÉPONSES PROPOSÉES à plusieurs mails, en cartes cochables avec un envoi groupé : une entrée par message qui appelle une réponse, `ref` recopiée telle que la lecture l'a rendue, `synthese` = une ou deux phrases sur ce que le mail REÇU demande (tirées du message, jamais inventées — c'est le contexte qui permet de juger la réponse), `reponse` prête à partir. C'est une PROPOSITION : rien ne part sans l'accord habituel. Ne double pas ce bloc avec des cartes `email`.
-- {"type":"plan","titre":"...","etapes":[{"titre":"...","etat":"fait|en_cours|a_faire","resultats":["ce que l’étape a donné"]}]} pour une demande à plusieurs livrables : annonce le plan dès ta PREMIÈRE réponse, puis redonne-le à jour chaque fois que tu rends compte. Sous une étape franchie, écris ce qu’elle a DONNÉ — constats, chiffres, décisions — jamais « fait », et jamais « fait » sur une étape que tu n’as pas menée.
+- {"type":"plan","titre":"...","etapes":[{"titre":"...","etat":"fait|en_cours|a_faire","resultats":["ce que l’étape a donné"]}]} pour RENDRE COMPTE d’un travail à plusieurs livrables en cours ou fini. Sous une étape franchie, écris ce qu’elle a DONNÉ — constats, chiffres, décisions — jamais « fait », et jamais « fait » sur une étape que tu n’as pas menée. Ce bloc n’ANNONCE jamais un travail : pour annoncer, c’est `proposer_plan` (la personne approuve, puis tu exécutes).
 
 DOCUMENTS. Un cahier des charges, un rapport, un compte rendu, une note, un mémoire technique, une procédure, un courrier ne s’écrivent NI en bloc ```ui NI en markdown : ils se PRODUISENT en fichier Word, format par défaut sauf demande contraire. « Montre-le-moi dans le chat » veut dire : produis-le et laisse son bloc `fichier` en afficher l’aperçu.
 - QUEL GESTE : `produire_document` finalise en une fois et plafonne vers 2-3 pages — réserve-le à une note ou un courrier. Pour un document long : `creer_document`, un `ajouter_document` par grande partie, puis `terminer_document`.
@@ -1346,6 +1346,10 @@ Voici les messages trouvés :
     # utile n'est pas la réponse mais l'action, et la resservir sauterait
     # l'exécution. Idem après une action : le résultat n'est pas rejouable.
     _sortie = str(response.content or "")
+    contenu = response.content
+    _proposition = _plan_en_proposition(_sortie, state)
+    if _proposition:
+        contenu = _sortie = _proposition
     if not en_boucle_outils and not demande_une_action(_sortie, state.get("user_role")):
         response_cache.set(tier, query, context_text, response.content, cache_scope)
 
@@ -1355,7 +1359,7 @@ Voici les messages trouvés :
         **maj_lecons,
         "entity_map": carte_dossier,
         "redaction_forcee": redaction_a_reprendre,
-        "llm_response": response.content,
+        "llm_response": contenu,
         "tokens_in": usage.get("input_tokens", 0),
         "tokens_out": usage.get("output_tokens", 0),
         "model_used": llm.last_model_used,
@@ -4279,6 +4283,55 @@ def _texte_visible(texte: str) -> str:
     return texte.strip()
 
 
+def _plan_en_proposition(texte: str, state) -> str:
+    """Un plan ÉCRIT au lieu d'être PROPOSÉ devient la proposition qu'il aurait dû être.
+
+    22/09, Duret (prompts 7, 8 et 19 de la recette) : devant une demande longue, le
+    modèle a répondu par un bloc ```ui plan aux étapes toutes « à faire », sans aucun
+    bloc d'action — il suivait l'ancienne consigne du catalogue (« annonce le plan dès
+    ta PREMIÈRE réponse »), contraire à `proposer_plan`. Le graphe l'a pris pour la
+    réponse finale : rien n'a été exécuté, aucune carte d'accord n'est apparue. Un tel
+    plan EST une proposition : on émet le `proposer_plan` correspondant — la personne
+    approuve, puis le travail s'exécute. Rend le bloc d'action, ou "" si ce n'est pas le
+    cas (plan déjà approuvé, étape déjà franchie, action déjà demandée, texte à côté).
+    """
+    import json as _j
+    from skills.protocol import demande_une_action
+    if not isinstance(texte, str) or state.get("plan_valide") or "```ui" not in texte:
+        return ""
+    if demande_une_action(texte, state.get("user_role")):
+        return ""
+    plans = []
+    for m in _BLOC_UI_RE.finditer(texte):
+        try:
+            bloc = _j.loads(m.group(1))
+        except ValueError:
+            continue
+        if isinstance(bloc, dict) and bloc.get("type") == "plan":
+            plans.append(bloc)
+    if len(plans) != 1:
+        return ""
+    plan = plans[0]
+    etapes = [e for e in (plan.get("etapes") or []) if isinstance(e, dict) and str(e.get("titre") or "").strip()]
+    if len(etapes) < 2 or any(str(e.get("etat") or "a_faire") != "a_faire" for e in etapes):
+        return ""
+    # Le reste du texte (hors blocs d'écran) est une phrase d'introduction au plus.
+    if len(_BLOC_UI_RE.sub("", texte).strip()) > 600:
+        return ""
+    try:
+        from skills.protocol import catalogue
+        if "proposer_plan" not in set(catalogue(state.get("user_role"))):
+            return ""
+    except Exception:  # noqa: BLE001
+        return ""
+    args = {"etapes": [str(e["titre"]).strip() for e in etapes]}
+    for cle in ("titre", "resume"):
+        if str(plan.get(cle) or "").strip():
+            args[cle] = str(plan[cle]).strip()
+    _tracer_filet(state, "plan_propose", "plan_ecrit_sans_proposer", etapes=len(etapes))
+    return "```action\n" + _j.dumps({"skill": "proposer_plan", "args": args}, ensure_ascii=False) + "\n```"
+
+
 def route_apres_llm(state: AgentState) -> str:
     """Le modèle a-t-il demandé une action ?"""
     from skills.resultats import resultat_probant
@@ -4579,8 +4632,13 @@ async def verifier_node(state: AgentState, config=None) -> dict:
     texte = state.get("llm_response") or ""
     visible = _texte_visible(texte)
     resultats = state.get("tool_results") or []
-    if not V.a_verifier(_BLOC_UI_RE.sub("", visible), bool(resultats), False,
-                        bool(state.get("pending_action"))):
+    # UNE RÉPONSE FAITE DE COMPOSANTS SEULS EST UNE RÉPONSE (22/09, prompt 8 de la recette) :
+    # trois lectures, puis un bloc « plan » aux étapes toutes à faire — sans les blocs, le texte
+    # était vide, et le relecteur ne relisait pas. Les composants entrent dans son jugement.
+    _prose = _BLOC_UI_RE.sub("", visible)
+    if not _prose.strip() and _BLOC_UI_RE.search(visible):
+        _prose = "[réponse faite uniquement de composants d'écran]"
+    if not V.a_verifier(_prose, bool(resultats), False, bool(state.get("pending_action"))):
         return {}
 
     blocs = []

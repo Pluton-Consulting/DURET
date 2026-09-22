@@ -421,6 +421,22 @@ QUARANTAINE_QUOTA_S = 300.0
 _QUARANTAINE: dict = {}
 
 
+def refus_de_concurrence(err: Exception) -> bool:
+    """« 429 too many concurrent requests » : TROP D'APPELS À LA FOIS, pas un quota épuisé.
+
+    22/09, Duret : ce refus portait « 429 », il était donc pris pour un quota — cinq minutes de
+    quarantaine pour chaque modèle, les deux tombés en une seconde, et le quantitatif de Maxime
+    en échec six essais de suite (« Tous les modèles LLM ont échoué »). Le remède n'est pas de
+    changer de modèle mais d'attendre qu'un appel se libère.
+    """
+    msg = str(err).lower()
+    return "too many concurrent" in msg or "concurrent requests" in msg
+
+
+# Un refus de concurrence se retente sur le MÊME modèle, après une attente croissante.
+MAX_ATTENTES_CONCURRENCE = 6
+
+
 def _motif_quarantaine(err: Exception) -> Optional[tuple]:
     """La panne justifie-t-elle d'écarter ce candidat, et pour combien de temps ?
 
@@ -429,6 +445,8 @@ def _motif_quarantaine(err: Exception) -> Optional[tuple]:
     que de le retenter.
     """
     msg = str(err).lower()
+    if refus_de_concurrence(err):
+        return None                     # une saturation passagère, pas une panne du candidat
     if "429" in msg or "rate limit" in msg or "rate_limit" in msg or "quota" in msg:
         return QUARANTAINE_QUOTA_S, "quota épuisé"
     if "401" in msg or "403" in msg or "invalid api key" in msg or "authentication" in msg \
@@ -754,6 +772,7 @@ class ResilientLLM:
             # plus), puis on passe au candidat suivant : mieux vaut un modèle
             # moins fin qui écrit qu'un modèle fin qui se tait.
             budget_double = False
+            attentes_concurrence = 0
             # La relance « budget doublé » s'AJOUTE aux tentatives ordinaires :
             # avec une seule tentative configurée, elle aurait lieu quand même.
             tentatives = settings.llm_max_retries
@@ -831,6 +850,21 @@ class ResilientLLM:
                         logger.warning("LLM %s : délai documentaire dépassé — candidat suivant", label)
                         await _preciser_activite("le modèle principal n’a pas répondu dans son délai : le modèle de secours prend le relais")
                         break
+                    if refus_de_concurrence(e) and attentes_concurrence < MAX_ATTENTES_CONCURRENCE:
+                        # Trop d'appels à la fois : le plafond commun descend, et CE modèle se
+                        # retente après une attente croissante (hors de la porte : attendre en
+                        # tenant un créneau serait absurde).
+                        import random as _hasard
+                        from llm.concurrence import signaler_saturation
+                        plafond = signaler_saturation()
+                        attentes_concurrence += 1
+                        tentatives += 1
+                        attente = min(30.0, 2.0 * (2 ** (attentes_concurrence - 1))) * (0.75 + _hasard.random() / 2)
+                        logger.warning("LLM %s : trop d'appels simultanés chez le fournisseur (plafond commun %d) "
+                                       "— nouvel essai dans %.0f s", label, plafond, attente)
+                        await _preciser_activite("le fournisseur du modèle est saturé : nouvel essai dans quelques secondes")
+                        await asyncio.sleep(attente)
+                        continue
                     if _is_hard_fail(e):
                         logger.warning("LLM %s indispo (quota/auth) : %s — candidat suivant", label, e)
                         await _preciser_activite("le fournisseur du modèle a refusé la demande : passage au modèle suivant")

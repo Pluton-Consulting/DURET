@@ -625,7 +625,9 @@ class Recette(unittest.TestCase):
           '_build_model':lambda p,m,*a: lent if m=='lent' else secours,
           '_is_hard_fail':lambda e:False,'_contenu_vide':lambda r:not r.content,
           'tier_timeout':lambda _:10,'tier_max_tokens':lambda _:100,
-          'reflexion_mesuree':lambda *a,**k:None,'_BUDGET_REFLEXION_BASSE':12000,'_preciser_activite':_activite_muette}
+          'reflexion_mesuree':lambda *a,**k:None,'_BUDGET_REFLEXION_BASSE':12000,'_preciser_activite':_activite_muette,
+          # 22/09 : le refus de concurrence (429 « too many concurrent requests ») a sa propre branche.
+          'refus_de_concurrence':lambda e:False,'MAX_ATTENTES_CONCURRENCE':6}
       tree=ast.parse((BACKEND/'llm/router.py').read_text())
       classe=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='ResilientLLM')
       exec(compile(ast.Module(body=[classe],type_ignores=[]),'routeur_test','exec'),ns)

@@ -78,8 +78,44 @@ def _boucle():
         return None
 
 
+# LE PLAFOND S'APPREND DU FOURNISSEUR (22/09, Duret). Le quantitatif de Maxime a échoué six
+# essais de suite : Ollama Cloud répondait « 429 too many concurrent requests » alors que le
+# plafond d'ici (8) le croyait capable de dix. Sa limite réelle n'est écrite nulle part et peut
+# changer : quand il refuse, on retient le nombre d'appels qu'il venait d'accepter, et le
+# plafond commun s'y tient quinze minutes — chaque nouveau refus le prolonge.
+DUREE_PLAFOND_APPRIS_S = 900
+_APPRIS: dict = {}
+_EN_VOL = [0]
+
+
+def signaler_saturation() -> int:
+    """Le fournisseur vient de refuser un appel de plus : le plafond descend à ce qu'il acceptait."""
+    actuel = plafond_global()
+    nouveau = max(2, min(actuel, _EN_VOL[0]))
+    _APPRIS["plafond"] = nouveau
+    _APPRIS["jusqu_a"] = time.monotonic() + DUREE_PLAFOND_APPRIS_S
+    if nouveau < actuel:
+        logger.warning("Le fournisseur refuse les appels simultanés : plafond commun ramené de %d à %d "
+                       "pendant %d min", actuel, nouveau, DUREE_PLAFOND_APPRIS_S // 60)
+    return nouveau
+
+
+def _plafond_appris():
+    if _APPRIS and time.monotonic() < _APPRIS.get("jusqu_a", 0):
+        return _APPRIS["plafond"]
+    _APPRIS.clear()
+    return None
+
+
 def plafond_global() -> int:
-    """Le plafond global : réglage en base d'abord, défaut du code ensuite."""
+    """Le plafond global : ce que le fournisseur a montré accepter, sinon le réglage."""
+    configure = _plafond_configure()
+    appris = _plafond_appris()
+    return min(configure, appris) if appris else configure
+
+
+def _plafond_configure() -> int:
+    """Le plafond réglé : réglage en base d'abord, défaut du code ensuite."""
     try:
         from llm.reglages import texte
         # `texte()` et pas `valeur()` : ce réglage est un ENTIER dans la
@@ -142,9 +178,11 @@ async def porte_llm():
         attente = time.monotonic() - debut
         if attente > 1:
             logger.info("Appel LLM mis en attente %.1f s (%s)", attente, identifiant or "anonyme")
+        _EN_VOL[0] += 1
         try:
             yield
         finally:
+            _EN_VOL[0] -= 1
             glob.release()
     finally:
         # Un `wait_for` annulé doit relâcher ce qui a DÉJÀ été pris : sans ce

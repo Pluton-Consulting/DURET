@@ -1,6 +1,7 @@
 "use client"
 import { useEffect, useRef, useState } from "react"
 import { apiRequest } from "@/lib/api"
+import { estSessionExpiree, reprendreSession } from "@/lib/session"
 
 type Redaction = { id: string; genre: string; statut: string; phase: string; annonce: boolean; titre?: string }
 type Props = { threadId: string | null; token: string | null; enCours: boolean; actualiser: (fil: string) => Promise<boolean> }
@@ -20,6 +21,7 @@ export default function SuiviRedactions({ threadId, token, enCours, actualiser }
   useEffect(() => {
     if (!threadId || !token) return
     let actif = true
+    let coupe = false
     let minuterie: ReturnType<typeof setTimeout> | undefined
     const lire = async () => {
       let delai = 3000  // le détail « en ce moment » bouge en continu : on le relit souvent
@@ -33,10 +35,13 @@ export default function SuiviRedactions({ threadId, token, enCours, actualiser }
         }
         if (!rows.some(r => ["attente", "en_cours"].includes(r.statut) || (r.statut === "termine" && !r.annonce))) delai = 15000
       } catch (e) {
+        // Un jeton mort ne se relit pas toutes les 3 s (22/09 : plus de 6 000 refus
+        // en 2 h 40 depuis un onglet oublié) : une reprise de session, puis silence.
+        if (estSessionExpiree(e)) { coupe = true; void reprendreSession(); return }
         // Un nouveau fil n’existe en base qu’après son premier envoi.
         if (actif && (e as Error & { status?: number }).status !== 404) setErreur("Suivi momentanément indisponible. Nouvelle vérification automatique en cours.")
       } finally {
-        if (actif) minuterie = setTimeout(lire, delai)
+        if (actif && !coupe) minuterie = setTimeout(lire, delai)
       }
     }
     void lire()

@@ -12,7 +12,7 @@ import ReasoningPath from "./ReasoningPath"
 import { ReflexionEnCours } from "./ReflexionEnCours"
 import FileAttente, { TacheFond, AccordEnAttente } from "./FileAttente"
 import { apiRequest } from "@/lib/api"
-import { jetonFrais } from "@/lib/session"
+import { jetonFrais, estSessionExpiree, reprendreSession } from "@/lib/session"
 import { openChatSocket, sendQuery, sendStop, nouvelleDemande, ChatEvent } from "@/lib/ws"
 import { detacherTour, majTourDetache, reprendreTour, terminerTourDetache, abonnerTour } from "@/lib/tourDetache"
 
@@ -438,8 +438,10 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
   // demande et on la rejoue dès que la place est libre — l'appel qui suit une
   // décision doit aboutir, pas se faire avaler.
   const rappelDemandeRef = useRef(false)
+  // Jeton mort vu par le sondage : plus aucune requête jusqu'au rechargement (22/09).
+  const sondageCoupeRef = useRef(false)
   const rafraichirEtat = async () => {
-    if (!token) return
+    if (!token || sondageCoupeRef.current) return
     if (pollEnCoursRef.current) { rappelDemandeRef.current = true; return }
     pollEnCoursRef.current = true
     const seq = ++pollSeqRef.current
@@ -554,7 +556,11 @@ export default function ChatWindow({ threadId: initialThreadId = null, token: to
           majBulle(t.id, texte)
         }
       }
-    } catch { /* un sondage rate n'affiche rien : le suivant corrigera */ }
+    } catch (e) {
+      // Un sondage raté n'affiche rien : le suivant corrigera — sauf un jeton mort,
+      // qui refusait TOUTES les 4 s pour toujours (22/09 : 900 refus en 2 h 40).
+      if (estSessionExpiree(e)) { sondageCoupeRef.current = true; void reprendreSession() }
+    }
     finally {
       // LE VERROU SE REND. Il était posé et jamais relâché : le tout premier
       // sondage le prenait, et tous les suivants repartaient aussitôt sans

@@ -2141,8 +2141,11 @@ def _sans_identifiants(texte: str) -> str:
 
     def _nettoyer(v):
         if isinstance(v, dict):
+            # Un « article_id », un « client_id » n'est pas pour la personne non plus (21/09 chez
+            # Symbiose : « un Tuyau Goutte à goutte (article_id : 9100123) » dans la prose de secours).
             return {k: _nettoyer(x) for k, x in v.items()
-                    if str(k).lower() not in _CLES_TECHNIQUES}
+                    if str(k).lower() not in _CLES_TECHNIQUES and str(k).lower() != "id"
+                    and not str(k).lower().endswith("_id")}
         if isinstance(v, list):
             return [_nettoyer(x) for x in v]
         if isinstance(v, str):
@@ -4102,6 +4105,13 @@ async def forcer_action_node(state: AgentState, config=None) -> dict:
         demande += (f"\n\nUn relecteur a constaté que la réponse affirmait un résultat que rien ne "
                     f"prouve ({'; '.join(str(p.get('raison') or '')[:160] for p in _verif.get('problemes') or [])}). "
                     f"Le geste qui manque est probablement `{_verif['action_manquante']}`.")
+    elif _verif.get("statut") == "a_corriger":
+        # Le relecteur n'a pas nommé le geste, mais il a dit ce qui manque : on le transmet
+        # (porté de Symbiose, 17/09).
+        demande += ("\n\nUn relecteur a constaté que la réponse annonçait un travail qu'aucun geste de "
+                    f"ce tour n'a fait. Ce qu'il en dit : {str(_verif.get('consigne') or '')[:400]} "
+                    "Émets le geste qui RÉALISE la demande ; réponds RIEN seulement si aucun geste du "
+                    "catalogue ne le peut.")
 
     # Quand un travail est resté OUVERT, on ne laisse pas deviner : dire quelle
     # fermeture manque évite qu'un document déjà rempli soit rouvert une fois de
@@ -4221,6 +4231,12 @@ def route_apres_forcage(state: AgentState) -> str:
     # sous une autre forme était perdue une seconde fois.
     if demande_une_action(state.get("llm_response") or "", state.get("user_role")):
         return "tools"
+    # LE RELECTEUR AVAIT DEMANDÉ UNE CORRECTION, ET AUCUN GESTE NE LA FAIT (porté de Symbiose,
+    # 17/09) : la réponse fautive ne doit pas rester telle quelle. On la fait réécrire
+    # honnêtement, une seule fois.
+    v = state.get("verification") or {}
+    if v.get("statut") == "a_corriger" and not state.get("redaction_forcee"):
+        return "rediger"
     # Rien n'a pu être produit : inutile de refaire tourner le modèle, il vient
     # de refuser deux fois. On termine le tour, et l'utilisateur l'apprend.
     return "rehydrate"
@@ -4680,7 +4696,10 @@ def route_apres_verifier(state: AgentState) -> str:
         connus = set(catalogue(state.get("user_role")))
     except Exception:  # noqa: BLE001
         connus = set()
-    return suite(v, connus, int(state.get("forcages") or 0), MAX_FORCAGES_PAR_TOUR, False)
+    resultats = [r for r in (state.get("tool_results") or []) if isinstance(r, dict)]
+    tentes = {r.get("skill") for r in resultats if r.get("skill")}
+    return suite(v, connus, int(state.get("forcages") or 0), MAX_FORCAGES_PAR_TOUR, False,
+                 aucun_geste=not resultats, gestes_tentes=tentes)
 
 
 def route_apres_tools(state: AgentState) -> str:
@@ -4740,7 +4759,7 @@ def build_agent1_graph():
                                  "forcer": "forcer"})
     graph.add_edge("rediger", "llm")
     graph.add_conditional_edges("forcer", route_apres_forcage,
-                                {"tools": "tools", "rehydrate": "rehydrate"})
+                                {"tools": "tools", "rehydrate": "rehydrate", "rediger": "rediger"})
     graph.add_conditional_edges("tools", route_apres_tools,
                                 {"llm": "llm", "rehydrate": "verifier"})
     graph.add_edge("rehydrate", "validation_check")

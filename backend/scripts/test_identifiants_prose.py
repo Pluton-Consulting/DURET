@@ -58,6 +58,12 @@ verifier("document_id retiré", "xz-U9coZQtoswQYDsniBnM9pr1BfwJMA" not in s)
 verifier("titre, format et compte de pages conservés",
          "Informations sur Symbiose Paysage" in s and '"docx"' in s and "68" in s)
 
+articles = ('{"total": 2, "enregistrements": [{"article_id": "9100123", "Description": "Tuyau Goutte à goutte", '
+            '"Fournisseur": "Garden arrosage"}, {"id": 8943843, "Description": "Irrigation pelouse"}]}')
+s = _sans_identifiants(articles)
+verifier("les champs « …_id » et « id » quittent la prose de secours (21/09, électrovanne)",
+         "9100123" not in s and "8943843" not in s and "Tuyau Goutte à goutte" in s and "Garden arrosage" in s)
+
 print("\n2. Ce qui est de l'information n'est pas touché")
 info = ('{"client": "ATHENA Piscine & Spa", "devis": "DV0001410", "montant": "12 450,00 €", '
         '"fichier": "clients.xlsx", "email": "[PER_3]", "total": 478, "siret": "[À COMPLÉTER]", '

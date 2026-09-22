@@ -142,13 +142,44 @@ def lire_verdict(brut) -> dict | None:
             "consigne": str(d.get("consigne") or "").strip()[:600] if a_corriger else ""}
 
 
+def geste_nomme(action, gestes_connus) -> str:
+    """Le NOM du geste que le relecteur réclame, lu dans sa phrase.
+
+    22/09, Duret (CCTP du lot 10) : le relecteur a écrit « lire_source_dossier
+    (poursuivre la lecture des fragments 1 à 5 aux positions indiquées) ». Comparée
+    TELLE QUELLE aux noms des gestes, la phrase ne correspondait à rien : le tour est
+    parti en rédaction et le CCTP est resté lu à moitié. Rend le premier nom de geste
+    connu qu'elle contient, ou "" s'il n'y en a aucun.
+    """
+    texte = str(action or "").strip()
+    connus = set(gestes_connus or ())
+    if texte in connus:
+        return texte
+    for mot in re.findall(r"[a-z][a-z0-9_]+", texte.lower()):
+        if mot in connus:
+            return mot
+    return ""
+
+
 def suite(verification: dict | None, gestes_connus, forcages: int, max_forcages: int,
-          redaction_deja_reprise: bool) -> str:
+          redaction_deja_reprise: bool, aucun_geste: bool = False, gestes_tentes=()) -> str:
     """rehydrate | forcer | rediger — ce que le graphe fait du verdict."""
     if not verification or verification.get("statut") != "a_corriger":
         return "rehydrate"
-    action = verification.get("action_manquante") or ""
-    if action and action in (gestes_connus or ()) and forcages < max_forcages:
+    action = geste_nomme(verification.get("action_manquante"), gestes_connus)
+    # LE GESTE NOMMÉ PAR LE RELECTEUR A SA PROPRE CHANCE (21/09 chez Symbiose, porté le 22/09).
+    # Deux annonces sans action avaient épuisé le budget du forceur ; le relecteur a nommé le
+    # geste, on est parti RÉDIGER — et c'est dans cette passe, où un bloc d'action n'est plus
+    # exécuté, que le modèle l'a écrit. Le relecteur ne passe qu'une fois par tour : son geste,
+    # s'il n'a pas encore été tenté, est forcé une fois, budget épuisé ou non.
+    if action and (forcages < max_forcages or action not in set(gestes_tentes or ())):
+        return "forcer"
+    # UN ACTE AFFIRMÉ, AUCUN GESTE DANS LE TOUR : CE QUI MANQUE EST LE GESTE, PAS UNE MEILLEURE
+    # PHRASE (17/09 chez Symbiose, porté le 22/09). Le relecteur a vu la faute sans nommer le
+    # geste : on partait réécrire, et le modèle écrivait enfin la bonne action dans une passe
+    # qui ne l'exécute plus. Sans aucun geste au compteur, on force : le forceur repart d'un
+    # contexte neuf, catalogue sous les yeux.
+    if aucun_geste and not action and forcages < max_forcages:
         return "forcer"
     if not redaction_deja_reprise:
         return "rediger"

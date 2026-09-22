@@ -801,6 +801,62 @@ async def _reparer_citations(r,texte):
 
 from ressources.activite import dire,preciser  # ce qui se fait en ce moment, dit à l'écran
 
+# LA CONSIGNE D'ANALYSE D'UN FRAGMENT, sortie telle quelle de `_analyses` (22/09) pour servir aussi
+# aux deux moitiés d'un fragment trop dense (`_analyse_du_fragment`).
+CONSIGNE_ANALYSE=('Lis TOUT le fragment. Extrais les faits, contraintes, critères, données chiffrées et informations d’entreprise utiles à la demande. '
+                'Respecte le périmètre demandé (lots, activités, période). Une clause extérieure ne concerne le livrable que si elle impose une interface ou une exigence commune : précise alors cette portée. '
+                'Désigne un court passage source par ligne_debut et ligne_fin, numéros inclusifs de texte_numerote. Ne retape pas les citations : le serveur copie ces lignes exactes. Choisis un passage précis, idéalement moins de 900 caractères. Un fait qui résume un tableau ou une liste complète peut référencer toute cette plage, toujours bornée au fragment ; ne remplace pas alors les bornes par une longue citation retapée. Regroupe les répétitions ; au plus 90 faits utiles par fragment. '
+                'Conserve les unités, références de pages/cellules et exclusions. Distingue les faits du marché actuel des exemples et anciens chantiers. '
+                'Schéma {"faits":[{"fait":"...","ligne_debut":1,"ligne_fin":2,"nature":"exigence|entreprise|ancien_projet|quantite|autre"}],"limites":["..."]}. '
+                'Un cadre vierge porte des exigences de structure : relève ses rubriques obligatoires comme exigences en désignant leurs lignes exactes. '
+                'Les limites concernent UNIQUEMENT ce fragment : une donnée absente ici peut être fournie par une autre pièce. '
+                'Un fragment administratif peut ne contenir aucun fait utile ; ne fabrique rien. Mentionne les images/tableaux qui nécessitent une lecture complémentaire.')
+
+def _deux_moities(texte):
+    """Un fragment coupé en deux à la fin de ligne la plus proche du milieu, ou None s'il est trop court.
+    La coupe suit une fin de ligne : les lignes des deux moitiés, mises bout à bout, sont celles du fragment."""
+    texte=str(texte or '')
+    if len(texte)<2000:return None
+    milieu=len(texte)//2
+    coupe=texte.rfind('\n',0,milieu)
+    if coupe<len(texte)//4:coupe=texte.find('\n',milieu)
+    if coupe<0 or coupe>=len(texte)-1:return None
+    return texte[:coupe+1],texte[coupe+1:]
+
+async def _analyse_du_fragment(demande,nom,numero,texte,uid,fil,tache,partielle,profondeur=0):
+    """L'analyse d'UN fragment, citations réparées ; rend (analyse, clés d'étapes partielles à effacer).
+
+    UN FRAGMENT TROP DENSE SE LIT EN DEUX (22/09, quantitatif de Maxime) : un CCTP de revêtements porte
+    plus de 120 faits utiles dans ses 18 000 caractères ; le modèle, sommé de regrouper sans rien perdre,
+    ne pouvait pas, et le travail a échoué huit fois d'affilée, relancé toutes les quinze minutes. Dans
+    CE cas seulement, le fragment est coupé en deux et chaque moitié analysée avec la même consigne ;
+    les numéros de lignes de la seconde sont recalés sur le fragment entier. Tout fragment qui passe
+    aujourd'hui passe exactement comme avant."""
+    r=await asyncio.to_thread(dossiers.etape,uid,fil,tache,partielle)
+    if not r:
+        try:
+            r=await _json(CONSIGNE_ANALYSE,
+                {'demande':demande,'source':nom,'fragment':numero,'texte_numerote':[{'ligne':i,'texte':l} for i,l in enumerate(texte.splitlines(),1)]},_schema_analyse,extraction=True)
+        except ValueError as e:
+            moities=_deux_moities(texte) if profondeur<2 and 'faits maximum par fragment' in str(e) else None
+            if not moities:raise
+            logger.info('Fragment %s de « %s » trop dense : analysé en deux moitiés',numero,str(nom)[:60])
+            faits,limites,cles,decalage=[],[],[partielle],0
+            for rang,moitie in enumerate(moities,1):
+                rm,cles_m=await _analyse_du_fragment(demande,nom,str(numero)+'.'+str(rang),moitie,uid,fil,tache,partielle+'.'+str(rang),profondeur+1)
+                for fait in rm.get('faits') or []:
+                    fait=dict(fait)
+                    for cle_ligne in ('ligne_debut','ligne_fin'):
+                        if type(fait.get(cle_ligne)) is int:fait[cle_ligne]+=decalage
+                    faits.append(fait)
+                limites+=list(rm.get('limites') or []);cles+=cles_m
+                decalage+=len(moitie.splitlines())
+            return {'faits':faits,'limites':limites},cles
+        await asyncio.to_thread(dossiers.etape,uid,fil,tache,partielle,r)
+    r=await _reparer_citations(r,texte)
+    return r,[partielle]
+
+
 async def _analyses(uid,fil,tache,demande,sources):
     semaphore=asyncio.Semaphore(CONCURRENCE)
     # LE MÊME TEXTE SOUS DEUX NOMS NE SE LIT QU'UNE FOIS (17/09) : « Règlement de consultation.pdf » et
@@ -822,22 +878,10 @@ async def _analyses(uid,fil,tache,demande,sources):
             debut=time.monotonic()
             await dire(uid,fil,tache,'analyse de « '+source['nom'][:70]+' » — partie '+str(f['numero'])+' sur '+str(parties.get(source['id'],'?')))
             partielle='analyse_partielle:'+source['id']+':'+str(f['numero'])
-            r=await asyncio.to_thread(dossiers.etape,uid,fil,tache,partielle)
-            if not r:
-                r=await _json('Lis TOUT le fragment. Extrais les faits, contraintes, critères, données chiffrées et informations d’entreprise utiles à la demande. '
-                'Respecte le périmètre demandé (lots, activités, période). Une clause extérieure ne concerne le livrable que si elle impose une interface ou une exigence commune : précise alors cette portée. '
-                'Désigne un court passage source par ligne_debut et ligne_fin, numéros inclusifs de texte_numerote. Ne retape pas les citations : le serveur copie ces lignes exactes. Choisis un passage précis, idéalement moins de 900 caractères. Un fait qui résume un tableau ou une liste complète peut référencer toute cette plage, toujours bornée au fragment ; ne remplace pas alors les bornes par une longue citation retapée. Regroupe les répétitions ; au plus 90 faits utiles par fragment. '
-                'Conserve les unités, références de pages/cellules et exclusions. Distingue les faits du marché actuel des exemples et anciens chantiers. '
-                'Schéma {"faits":[{"fait":"...","ligne_debut":1,"ligne_fin":2,"nature":"exigence|entreprise|ancien_projet|quantite|autre"}],"limites":["..."]}. '
-                'Un cadre vierge porte des exigences de structure : relève ses rubriques obligatoires comme exigences en désignant leurs lignes exactes. '
-                'Les limites concernent UNIQUEMENT ce fragment : une donnée absente ici peut être fournie par une autre pièce. '
-                'Un fragment administratif peut ne contenir aucun fait utile ; ne fabrique rien. Mentionne les images/tableaux qui nécessitent une lecture complémentaire.',
-                {'demande':demande,'source':source['nom'],'fragment':f['numero'],'texte_numerote':[{'ligne':i,'texte':l} for i,l in enumerate(f['texte'].splitlines(),1)]},_schema_analyse,extraction=True)
-            await asyncio.to_thread(dossiers.etape,uid,fil,tache,partielle,r)
-            r=await _reparer_citations(r,f['texte'])
+            r,partielles=await _analyse_du_fragment(demande,source['nom'],f['numero'],f['texte'],uid,fil,tache,partielle)
             r={**r,'source':source['id'],'nom':source['nom'],'fragment':f['numero'],'preuve':f"{source['id']}:{f['numero']}"}
             await asyncio.to_thread(dossiers.etape,uid,fil,tache,cle,r)
-            await asyncio.to_thread(dossiers.effacer_etapes,uid,fil,tache,[partielle])
+            await asyncio.to_thread(dossiers.effacer_etapes,uid,fil,tache,partielles)
             logger.info('Fragment documentaire %s:%s validé : %d faits en %.1f s',source['id'],f['numero'],len(r['faits']),time.monotonic()-debut)
             return r
     async def suivie(s,f):

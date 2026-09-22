@@ -3690,7 +3690,12 @@ def should_use_browser(state: AgentState) -> str:
 
 
 def should_validate(state: AgentState) -> str:
-    return "wait_for_human" if state.get("requires_validation") else END
+    # Le sous-graphe S'ARRÊTE dans les deux cas : c'est le graphe PARENT qui lit
+    # `requires_validation` et pose la carte d'accord (`human_gate`). Rendre
+    # « wait_for_human », nœud qui n'existe pas ici, revenait déjà à finir —
+    # LangGraph l'ignorait en écrivant « unknown channel » dans les journaux
+    # (24 fois le 22/09 chez Symbiose). Même effet, sans le bruit.
+    return END
 
 
 # ── Graph ─────────────────────────────────────────────────────────────

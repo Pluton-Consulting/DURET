@@ -383,6 +383,11 @@ RESULTATS_GENEREUX = {"lire_source_dossier", "chercher_source_dossier", "drive_c
                       "compte_rendu_reunion"}
 PLAFOND_RESULTAT = 4000
 PLAFOND_RESULTAT_GENEREUX = 12000
+# Les lectures d'une pièce du dossier rendent un FRAGMENT ENTIER (22/09) : coupées à 12 000,
+# elles reperdraient ce que la page de 20 000 vient de rendre en un appel (porté de Symbiose,
+# LECTURES_DE_FICHIER du 21/09).
+LECTURES_DE_FICHIER = {"lire_source_dossier", "chercher_source_dossier"}
+PLAFOND_LECTURE_FICHIER = 24000
 
 
 # ANNONCE SANS ACTE. Le modèle écrit « je crée le PDF », « je commence par
@@ -1937,6 +1942,8 @@ async def tools_node(state: AgentState, config=None) -> dict:
         plafond = (PLAFOND_RESULTAT_GENEREUX
                    if action["skill"] in RESULTATS_GENEREUX else PLAFOND_RESULTAT)
         if action['skill']=='check_mails':plafond=190000
+        if action["skill"] in LECTURES_DE_FICHIER:
+            plafond = PLAFOND_LECTURE_FICHIER
         # L'inventaire d'une période (`lire_mails … exhaustif`) : même plafond, sinon la
         # liste serait recoupée après avoir été parcourue en entier (17/09, porté 18/09).
         if action['skill']=='lire_mails' and isinstance(sortie,dict) and sortie.get('inventaire'):plafond=190000

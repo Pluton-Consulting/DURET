@@ -730,10 +730,20 @@ class Recette(unittest.TestCase):
      args={'source':source,'_fil':self.fil};lus=[]
      while args:
       r=await documents_dossier.lire(args,SimpleNamespace(id=self.uid));lus.append(r['texte'])
-      self.assertLess(len(json.dumps(r,ensure_ascii=False)),12000)
+      # Une page tient sous le plafond de ce geste (agent1.PLAFOND_LECTURE_FICHIER, 24 000 depuis le 22/09 :
+      # un fragment entier par appel) — rien n'est recoupé derrière la page.
+      self.assertLess(len(json.dumps(r,ensure_ascii=False)),24000)
       args=r['pour_continuer']['args'] if r['pour_continuer'] else None
       if args:args['_fil']=self.fil
      self.assertEqual(''.join(lus),texte)
+     # 22/09 (prompt 2) : un fragment se lit en UN appel, et ce qui reste à lire se dit.
+     premier=await documents_dossier.lire({'source':source,'_fil':self.fil},SimpleNamespace(id=self.uid))
+     self.assertGreater(premier['fragments_total'],1)
+     self.assertEqual(len(lus),premier['fragments_total'])  # un appel par fragment, plus trois
+     if premier['pour_continuer']:
+      self.assertIn('IL RESTE À LIRE',premier['note']);self.assertIsNotNone(premier['reste_a_lire'])
+     else:
+      self.assertIn('lue jusqu’au bout',premier['note'])
      r=await documents_dossier.lire({'source':source,'_fil':self.fil,'recherche':'CIBLE_AU_FOND'},SimpleNamespace(id=self.uid))
      self.assertIn('CIBLE_AU_FOND',r['texte'])
     asyncio.run(test())

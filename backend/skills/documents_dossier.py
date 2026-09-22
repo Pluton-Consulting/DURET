@@ -423,6 +423,10 @@ async def lister(data,user):
             'taches':await asyncio.to_thread(dossiers.travaux,uid,fil),
             'note':'Les références appartiennent à cette conversation. Lis les fragments ou compose le document depuis les sources choisies.'}
 
+# Une page de lecture couvre un fragment entier (ressources.dossiers.TAILLE_FRAGMENT = 18 000).
+PAGE_DE_LECTURE = 20000
+
+
 async def lire(data,user):
     uid,fil=_identite(data,user)
     try:
@@ -448,18 +452,29 @@ async def lire(data,user):
         positions=[texte.lower().find(m) for m in mots if m in texte.lower()]
         if positions:position=max(0,min(positions)-200)
     if not 0<=position<len(texte):raise ValueError('Position hors du fragment.')
-    fin=min(len(texte),position+8000)
+    # UN FRAGMENT SE LIT EN UNE FOIS (22/09, Duret, prompt 2 de la recette) : par pages de
+    # 8 000 caractères, un fragment en demandait trois ; le modèle passait au fragment
+    # suivant sans lire la suite, puis écrivait « lu intégralement (32 pages) ».
+    fin=min(len(texte),position+PAGE_DE_LECTURE)
     if fin<len(texte):
-        ligne=texte.rfind("\n",position+4000,fin)
+        ligne=texte.rfind("\n",position+PAGE_DE_LECTURE*2//3,fin)
         if ligne>position:fin=ligne+1
     suite=({'source':data['source'],'fragment':r['numero'],'position':fin} if fin<len(texte)
            else {'source':data['source'],'fragment':r['numero']+1,'position':0} if r['suivant'] else None)
+    # Ce qui reste à lire, dit en chiffres : c'est ce que le modèle oubliait.
+    restants=r['fragments_total']-r['numero']
+    reste={'fragments_suivants':restants,'caracteres_restants_dans_ce_fragment':len(texte)-fin} if suite else None
     return {'ok':True,**r,'texte':texte[position:fin],'position':position,'fin':fin,
             'complet':r['complet'] and position==0 and fin==len(texte),
+            'reste_a_lire':reste,
             'pour_continuer':{'skill':'lire_source_dossier','args':suite} if suite else None,
-            'note':'Ce passage est une page de lecture ; poursuis avec pour_continuer jusqu’à couvrir la demande. '
-                   'Si la demande porte sur le document ENTIER (comparer, résumer, lister ce qui est exigé, vérifier une absence), '
-                   'lis TOUTES les pages avant de répondre — rien ne te limite en nombre de lectures ; une absence ne se conclut jamais sur des pages non lues.'}
+            'note':(('IL RESTE À LIRE : '+(f"{len(texte)-fin} caractères de ce fragment, " if fin<len(texte) else '')
+                     +f"{restants} fragment(s) après celui-ci. Tant qu’il en reste, n’écris JAMAIS « lu intégralement » "
+                      'ni « tout le document » : dis quelles parties sont lues. ') if suite else
+                    'Fin de la pièce : elle est lue jusqu’au bout. ')
+                   +'Si la demande porte sur le document ENTIER (comparer, résumer, lister ce qui est exigé, vérifier une absence), '
+                   'lis TOUTES les pages avant de répondre (pour_continuer) — rien ne te limite en nombre de lectures ; '
+                   'une absence ne se conclut jamais sur des pages non lues.'}
 
 async def ajouter(data,user):
     uid,fil=_identite(data,user)

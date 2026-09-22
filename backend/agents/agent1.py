@@ -2276,6 +2276,16 @@ async def _rediger_par_le_modele(demande: str, resultats, cause: str = "") -> st
             "appels ni un compte rendu de ce que tu as consulté : si la demande "
             "cherchait quelque chose, dis ce qui a été trouvé, et dis franchement si "
             "rien n'y répond. 2 à 8 phrases ou une liste courte, sans salutation.")
+        if cause == "refus_de_la_personne":
+            # UN REFUS SE DIT PAR LE MODÈLE (22/09, Duret, prompts 4, 14, 18 de la recette) :
+            # le tour s'arrêtait sur le texte d'attente figé (« Action … en attente de
+            # validation »), et tout ce que le modèle avait expliqué avant était perdu.
+            consigne += (
+                " La DERNIÈRE action de la liste a été REFUSÉE par la personne : elle n'a PAS "
+                "été exécutée — dis-le en une phrase, sans t'excuser ni insister. Tout ce qui a "
+                "été lu ou produit AVANT reste valable : réponds au reste de la demande d'après "
+                "ces résultats (d'où vient chaque élément, ce que contient le document produit), "
+                "et dis que les fichiers produits restent disponibles ci-dessous.")
         corps = (f"Demande de l'utilisateur :\n{demande}\n\n"
                  "Actions exécutées à ce tour, et leurs résultats :\n"
                  + "\n".join(lignes))

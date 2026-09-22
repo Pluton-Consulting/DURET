@@ -601,11 +601,58 @@ async def _reponse_apres_echec(state: AgentState, skill: str, erreur: str) -> st
     return str(erreur)
 
 
+async def apres_refus_node(state: AgentState) -> dict:
+    """La réponse d'un tour dont l'action a été REFUSÉE — écrite par le MODÈLE.
+
+    22/09, Duret (prompts 4, 14, 18 de la recette) : après « Refuser », le tour
+    rendait tel quel le texte d'attente posé à l'armement de l'accord (« Action
+    « nas_deposer » en attente de validation. ») — faux, puisque l'action venait
+    d'être refusée — et tout ce que le modèle avait établi avant (d'où venaient
+    l'en-tête et le pied du document, son nombre de pages…) était perdu : seule la
+    dernière passe fait la réponse. Ici le modèle reçoit les résultats du tour et
+    l'action refusée ; les cartes des fichiers produits restent sous son texte.
+    Aucune phrase écrite dans le code : sans modèle, les cartes seules.
+    """
+    import json as _json
+    from security.anonymizer import anonymizer
+    from agents.agent1 import _rediger_par_le_modele, _BLOC_UI_RE
+
+    action = state.get("pending_action") or {}
+    skill = action.get("skill") or "?"
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    armee = state.get("final_response") or state.get("llm_response") or ""
+    blocs = "\n\n".join(m.group(0) for m in _BLOC_UI_RE.finditer(armee))
+    prose = ""
+    try:
+        carte = dict(state.get("entity_map") or {})
+        cible = {k: args.get(k) for k in ("dossier", "chemin", "nom", "titre", "destinataire")
+                 if args.get(k)}
+        refus, carte = anonymizer.anonymize(_json.dumps(
+            {"refus": "La personne a refusé cette action : elle n'a pas été exécutée.",
+             "cible": cible}, ensure_ascii=False)[:1500], carte)
+        resultats = [r for r in (state.get("tool_results") or []) if isinstance(r, dict)]
+        prose = await _rediger_par_le_modele(
+            state.get("anonymized_query") or "",
+            resultats + [{"skill": skill, "ok": False, "resultat_masque": refus}],
+            "refus_de_la_personne")
+        if prose:
+            prose = anonymizer.rehydrate(prose, carte)
+            for jeton in anonymizer.find_placeholders(prose):
+                prose = prose.replace(jeton, "[À COMPLÉTER]")
+    except Exception as e:  # noqa: BLE001 — un refus ne casse jamais le tour
+        logger.info("Prose après refus indisponible (%s) : %s", skill, str(e)[:120])
+    finale = "\n\n".join(x for x in (prose.strip(), blocs) if x)
+    return {"final_response": finale, "llm_response": finale, "pending_action": None}
+
+
 def route_apres_gate(state: AgentState) -> str:
-    """Après la décision humaine : exécuter l'action approuvée, ou terminer."""
-    if (state.get("validation_status") == "approved"
-            and (state.get("pending_action") or {}).get("skill")):
+    """Après la décision humaine : exécuter l'action approuvée, dire le refus, ou terminer."""
+    if not (state.get("pending_action") or {}).get("skill"):
+        return "fin"
+    if state.get("validation_status") == "approved":
         return "execute_action"
+    if state.get("validation_status") == "rejected":
+        return "apres_refus"
     return "fin"
 
 
@@ -747,6 +794,7 @@ async def build_main_graph(checkpointer):
     graph.add_node("agent3", dispatch_agent3)
     graph.add_node("human_gate", human_gate_node)
     graph.add_node("execute_action", execute_action_node)
+    graph.add_node("apres_refus", apres_refus_node)
 
     graph.set_entry_point("classify")
     graph.add_edge("classify", "check_schedule")
@@ -766,7 +814,9 @@ async def build_main_graph(checkpointer):
     graph.add_edge("agent3", "human_gate")
     # Après la décision humaine : exécuter l'action approuvée, sinon terminer.
     graph.add_conditional_edges("human_gate", route_apres_gate,
-                                {"execute_action": "execute_action", "fin": END})
+                                {"execute_action": "execute_action", "apres_refus": "apres_refus",
+                                 "fin": END})
+    graph.add_edge("apres_refus", END)
     # Un plan approuvé rouvre le travail : l'assistant exécute ce qui vient
     # d'être autorisé. Toute autre action validée termine le tour.
     graph.add_conditional_edges("execute_action", route_apres_execution,

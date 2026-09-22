@@ -32,6 +32,10 @@ import re
 
 from agents.suggestions_metier import (DEFAUT, ERREUR, PAR_BLOC, PAR_EXPERT,
                                        PAR_SKILL)
+try:
+    from agents.suggestions_metier import RIEN_TROUVE
+except ImportError:          # un vocabulaire métier plus ancien : les portes d'échec servent
+    RIEN_TROUVE = ERREUR
 
 # Trois au maximum : au-delà, la rangée déborde de la bulle et le choix cesse
 # d'en être un. 48 caractères : une pastille plus longue se coupe à l'écran (la
@@ -83,6 +87,43 @@ def _tailler(options) -> list:
     return propres[:MAX_OPTIONS] if len(propres) >= 2 else []
 
 
+def _contenu(r: dict) -> dict:
+    """Le résultat d'un geste, lu en JSON (le masqué de préférence : c'est lui qui circule)."""
+    brut = r.get("resultat_masque") if "resultat_masque" in r else r.get("resultat")
+    if isinstance(brut, dict):
+        return brut
+    texte = str(brut or "")
+    debut = texte.find("{")
+    try:
+        d = _json.loads(texte[debut:]) if debut >= 0 else {}
+    except ValueError:
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _rien_trouve(d: dict) -> bool:
+    """Le geste a réussi… à ne rien trouver : ce n'est pas lui qui dit quelle suite proposer."""
+    for cle in ("nombre", "total", "total_periode", "trouves"):
+        v = d.get(cle)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0:
+            return True
+    return any(isinstance(d.get(cle), list) and not d[cle] and not d.get("nombre")
+               for cle in ("enregistrements", "resultats", "documents", "groupes"))
+
+
+def _cle_de_suite(r: dict, d: dict) -> str:
+    """La clé de la table : le nom du geste, précisé par la FORME de ce qu'il a rendu.
+
+    21/09 (« le prix d'une électrovanne chez Garden arrosage ») : une recherche de lignes par
+    `interroger_donnees` recevait les suites d'un CLASSEMENT (« La suite du classement », « Le
+    détail mois par mois ») — le même geste sert à lister et à agréger.
+    """
+    geste = str(r.get("skill") or "")
+    if geste == "interroger_donnees" and "groupes" not in d and "operation" not in d:
+        return "interroger_donnees:liste"
+    return geste
+
+
 def suggestions_du_tour(texte: str, resultats=None, *, expert: str = "",
                         pending: bool = False) -> list:
     """Les suites à proposer, ou [] quand ça n'aurait pas de sens.
@@ -102,14 +143,27 @@ def suggestions_du_tour(texte: str, resultats=None, *, expert: str = "",
         return []            # le modèle a déjà proposé, ou le bloc porte ses boutons
 
     resultats = list(resultats or [])
-    for r in reversed(resultats):        # le dernier geste réussi fait foi
-        if isinstance(r, dict) and r.get("ok") and r.get("skill") in PAR_SKILL:
+    vides = pleins = 0
+    for r in reversed(resultats):        # le dernier geste réussi QUI A TROUVÉ fait foi
+        if not (isinstance(r, dict) and r.get("ok")):
+            continue
+        d = _contenu(r)
+        if _rien_trouve(d):
+            vides += 1
+            continue
+        pleins += 1
+        cle = _cle_de_suite(r, d)
+        if cle in PAR_SKILL:
+            return _tailler(PAR_SKILL[cle])
+        if r.get("skill") in PAR_SKILL:
             return _tailler(PAR_SKILL[r["skill"]])
     for t in _ORDRE_BLOCS:
         if t in types and t in PAR_BLOC:
             return _tailler(PAR_BLOC[t])
     if resultats and not any(isinstance(r, dict) and r.get("ok") for r in resultats):
         return _tailler(ERREUR)
+    if vides and not pleins:
+        return _tailler(RIEN_TROUVE)     # tout a réussi à ne rien trouver : chercher ailleurs
     if expert in PAR_EXPERT:
         return _tailler(PAR_EXPERT[expert])
     return _tailler(DEFAUT)

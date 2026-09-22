@@ -65,6 +65,24 @@ verifier("c'est le DERNIER geste réussi qui fait foi, pas le premier",
 verifier("un skill en ÉCHEC ne choisit pas sa ligne",
          du_tour("raté.", [{"skill": "rechercher_documents", "ok": False}])
          == metier.ERREUR[:3])
+# 21/09 (« le prix d'une électrovanne chez Garden arrosage ») : la suite suit ce que le geste a RENDU.
+_liste = {"skill": "interroger_donnees", "ok": True, "resultat_masque":
+          '{"source_type": "fournisseur", "nombre": 2, "enregistrements": [{"titre": "Tuyau"}]}'}
+_classement = {"skill": "interroger_donnees", "ok": True, "resultat_masque":
+               '{"par": "client", "groupes": [{"groupe": "A", "valeur": 12}], "groupes_total": 40}'}
+_vide = {"skill": "interroger_donnees", "ok": True, "resultat_masque":
+         '{"source_type": "article", "nombre": 0, "message": "Aucun enregistrement."}'}
+verifier("des LIGNES listées par interroger_donnees ne reçoivent pas les suites d'un classement",
+         du_tour("Voici les lignes.", [_liste]) == metier.PAR_SKILL["interroger_donnees:liste"][:3])
+verifier("un CLASSEMENT garde les siennes",
+         du_tour("Voici le classement.", [_classement]) == metier.PAR_SKILL["interroger_donnees"][:3])
+verifier("un geste qui n'a RIEN trouvé ne choisit pas la suite : le dernier qui a trouvé parle",
+         du_tour("…", [_liste, _vide]) == metier.PAR_SKILL["interroger_donnees:liste"][:3])
+verifier("tout a réussi à ne rien trouver : on propose de chercher ailleurs",
+         du_tour("Rien trouvé.", [_vide, {**_vide}]) == metier.RIEN_TROUVE[:3])
+verifier("un résultat illisible garde l'ancien comportement (le geste fait foi)",
+         du_tour("fait.", [{"skill": "rechercher_documents", "ok": True, "resultat_masque": "{coupé"}])
+         == metier.PAR_SKILL["rechercher_documents"][:3])
 verifier("un skill inconnu de la table retombe plus bas, il ne casse rien",
          len(du_tour("fait.", [{"skill": "un_skill_qui_nexiste_pas", "ok": True}])) >= 2)
 verifier("un échec, puis un succès : c'est le succès qui parle",
@@ -125,6 +143,7 @@ for table in (metier.PAR_SKILL, metier.PAR_BLOC, metier.PAR_EXPERT):
         tous.extend(options)
 tous.extend(metier.ERREUR)
 tous.extend(metier.DEFAUT)
+tous.extend(getattr(metier, "RIEN_TROUVE", []))
 
 _INTERDITS = re.compile(r"^(je |j'|nous |voulez-vous|souhaitez-vous|puis-je|dois-je"
                         r"|préférez-vous|que préférez)", re.I)

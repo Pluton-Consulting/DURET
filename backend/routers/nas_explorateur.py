@@ -4,8 +4,8 @@ L'EXPLORATEUR DU NAS DANS LE TABLEAU DE BORD (23/09, Duret).
 Demande de Noa : naviguer dans le serveur de fichiers directement depuis
 l'application, en comparant deux options — un explorateur refait ici (ces
 routes), et le site Synology officiel affiché dans un cadre (`/acces` ne fait
-qu'en donner l'adresse). RÉSERVÉ AU SUPER_ADMIN le temps de la comparaison :
-toute route répond 403 aux autres rôles, quel que soit l'écran.
+qu'en donner l'adresse). Ouvert à tous les comptes depuis le 23/09 ; les droits par
+dossier du NAS décident de ce que chacun voit.
 
 RIEN DE NEUF CÔTÉ NAS : on réutilise les gestes de l'assistant, avec leurs
 garde-fous — confinement aux dossiers ouverts (`nas.acces.verifier`), niveau
@@ -32,8 +32,12 @@ router = APIRouter()
 
 
 def _exiger(user: User) -> None:
-    if (getattr(user, "role", "") or "").strip().lower() != "super_admin":
-        raise HTTPException(status_code=403, detail="Réservé au super administrateur.")
+    """L'onglet Fichiers est ouvert à TOUS les comptes (23/09, décision de Noa). Ce que
+    chacun voit reste borné par les droits par dossier du NAS (`nas/niveaux.py`), posés
+    par `au_nom_de` sur chaque lecture et chaque écriture : un dossier réservé n'existe
+    pour personne d'autre, ni dans la liste, ni dans la recherche, ni en lecture directe."""
+    if not str(getattr(user, "id", "") or "").strip():
+        raise HTTPException(status_code=401, detail="Session invalide : reconnectez-vous.")
 
 
 def _refus(e: Exception) -> HTTPException:

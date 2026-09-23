@@ -327,7 +327,10 @@ verifier("explorateur NAS : la lecture en flux exige un billet ou une session, p
          flux is not None and "lire_billet(t, chemin)" in (BACKEND / "routers" / "nas_explorateur.py").read_text(encoding="utf-8")
          and "_exiger(personne)" in (BACKEND / "routers" / "nas_explorateur.py").read_text(encoding="utf-8"))
 src_nas = (BACKEND / "routers" / "nas_explorateur.py").read_text(encoding="utf-8")
-verifier("explorateur NAS : la garde exige super_admin EXACTEMENT", '!= "super_admin"' in src_nas)
+verifier("explorateur NAS : ouvert à tous les comptes, sans rôle imposé (23/09)",
+         '!= "super_admin"' not in src_nas and "Session invalide" in src_nas)
+verifier("explorateur NAS : chaque lecture vérifie le chemin avec les droits par dossier (verifier)",
+         src_nas.count("verifier(") >= 2)
 verifier("explorateur NAS : lectures ET écritures au nom de la personne (droits par dossier)",
          src_nas.count("au_nom_de(current_user)") == 5)
 r = {k: v for k, v in routes_gardees("routers/settings.py", "_exiger_super_admin").items() if "privee" in k}

@@ -89,11 +89,9 @@ export default function EnTete({ role, email, name }: Props) {
   // La vue active : lue dans l'URL, et tenue à jour par la scène quand elle glisse.
   const vueDeChemin = pathname?.startsWith("/chat") ? "chat" : pathname?.startsWith("/fichiers") ? "fichiers"
     : pathname === "/accueil" || pathname === "/" ? "tableau" : null
-  // L'ONGLET FICHIERS (23/09, Duret) : à gauche du tableau de bord, réservé pour
-  // l'instant au super_admin — le serveur refuse les autres, l'écran ne le propose pas.
-  const vues = role === "super_admin"
-    ? [{ key: "fichiers", label: "Fichiers", href: "/fichiers" }, ...VUES]
-    : [...VUES]
+  // L'ONGLET FICHIERS (23/09, Duret) : à gauche du tableau de bord, pour tous les
+  // comptes ; le serveur borne ce que chacun voit par les droits par dossier du NAS.
+  const vues = [{ key: "fichiers", label: "Fichiers", href: "/fichiers" }, ...VUES]
   const [vue, setVue] = useState<string | null>(vueDeChemin)
   useEffect(() => { setVue(vueDeChemin) }, [vueDeChemin])
   useEffect(() => {

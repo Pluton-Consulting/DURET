@@ -20,8 +20,7 @@ import { MessageRenderer } from "@/components/chat/MessageRenderer"
  * se font dans l'explorateur de fichiers de l'ordinateur, où existent la corbeille
  * et l'annulation ; l'écran donne le chemin exact à copier.
  *
- * Le serveur tranche l'accès (403 à tout autre rôle que super_admin pour l'instant)
- * et applique les droits par dossier : ce que la personne ne peut pas voir n'existe
+ * Ouvert à tous les comptes (23/09). Le serveur applique les droits par dossier : ce que la personne ne peut pas voir n'existe
  * pas pour elle, ni dans la liste ni dans la recherche.
  */
 interface Props { apiUrl: string; token: string }

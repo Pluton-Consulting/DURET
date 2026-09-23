@@ -53,13 +53,15 @@ verifier("Maj + flèche : Ctrl, Alt, Cmd laissés au navigateur", "e.altKey || e
 verifier("sans l'onglet, la scène garde deux vues",
          'fichiers ? ["fichiers", "tableau", "chat"] : ["tableau", "chat"]' in scene)
 entete = lire("frontend/components/nav/EnTete.tsx")
-verifier("en-tête : « Fichiers » placé AVANT « Tableau de bord », pour le super_admin seul",
-         'role === "super_admin"\n    ? [{ key: "fichiers", label: "Fichiers", href: "/fichiers" }, ...VUES]' in entete)
+verifier("en-tête : « Fichiers » placé AVANT « Tableau de bord », pour TOUS les comptes (23/09)",
+         'const vues = [{ key: "fichiers", label: "Fichiers", href: "/fichiers" }, ...VUES]' in entete)
 page = lire("frontend/app/(app)/fichiers/page.tsx")
-verifier("page /fichiers : un autre rôle retombe sur l'accueil", 'role !== "super_admin") redirect("/accueil")' in page)
+verifier("page /fichiers : ouverte à tous les comptes", "redirect(" not in page)
 for p in ("frontend/app/(app)/accueil/page.tsx", "frontend/app/(app)/chat/page.tsx"):
-    verifier(f"{p.split('/')[-2]} : la vue Fichiers n'est montée que pour le super_admin",
-             '?.user?.role === "super_admin"' in lire(p) and "fichiers={fichiers}" in lire(p))
+    verifier(f"{p.split('/')[-2]} : la vue Fichiers est montée pour tous",
+             "const fichiers = <Fichiers" in lire(p) and "fichiers={fichiers}" in lire(p))
+verifier("serveur : les droits par dossier du NAS s'appliquent à chaque lecture",
+         "au_nom_de(" in lire("backend/routers/nas_explorateur.py") and "niveaux.visible_pour" in lire("backend/nas/acces.py"))
 css = lire("frontend/app/interface-v2.css")
 verifier("trois vues : piste à 300 %, vue à un tiers",
          '[data-vues="3"] .v2-piste { width: 300%' in css and '[data-vues="3"] .v2-vue { width: 33.3333%' in css)

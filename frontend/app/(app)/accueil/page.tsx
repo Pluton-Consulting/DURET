@@ -10,9 +10,8 @@ export default async function AccueilPage() {
   const session = await auth()
   const token = (session as any)?.backendToken || ""
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-  // L'onglet Fichiers (23/09) : pour le super_admin seul, pour l'instant.
-  const fichiers = (session as any)?.user?.role === "super_admin"
-    ? <Fichiers apiUrl={apiUrl} token={token} /> : undefined
+  // L'onglet Fichiers (23/09) : pour tous les comptes, droits par dossier du NAS appliqués.
+  const fichiers = <Fichiers apiUrl={apiUrl} token={token} />
   return (
     <Scene vueInitiale="tableau"
            tableau={<TableauDeBord apiUrl={apiUrl} token={token} />}

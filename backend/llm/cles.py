@@ -32,6 +32,13 @@ CLES_CONNUES = (
     # Ils ont leur propre carte à l'écran : hors de la liste des clés de modèles.
     "mail_imap_user",
     "mail_imap_password",
+    # LES DEUX BOÎTES PRIVÉES DE LA DIRECTION (23/09, Duret, `mail/boites_privees.py`) :
+    # adresse, mot de passe d'application, libellé et hôtes de chaque emplacement.
+    # Lisibles de la direction et du super_admin seulement ; leur propre carte.
+    "mail_prive_1_user", "mail_prive_1_password", "mail_prive_1_libelle",
+    "mail_prive_1_imap_host", "mail_prive_1_smtp_host",
+    "mail_prive_2_user", "mail_prive_2_password", "mail_prive_2_libelle",
+    "mail_prive_2_imap_host", "mail_prive_2_smtp_host",
     # LE COMPTE DE SERVICE GOOGLE (11/09, Noa : « connecter Gmail via compte de
     # service, prévois ça pour que je rentre les clés ») : la clé JSON, le
     # domaine dont on emprunte les boîtes, l'administrateur qui ouvre
@@ -54,6 +61,8 @@ CLES_CONNUES = (
 )
 
 CLES_HORS_ECRAN = frozenset({"mail_imap_user", "mail_imap_password",
+                             *(f"mail_prive_{r}_{c}" for r in (1, 2)
+                               for c in ("user", "password", "libelle", "imap_host", "smtp_host")),
                              "google_sa_json", "gmail_domain", "google_admin_subject",
                              "google_oauth_client_id", "google_oauth_client_secret"})
 DUREE_CACHE_S = 30

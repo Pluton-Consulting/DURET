@@ -670,6 +670,146 @@ function ReglageBoiteMail({ apiUrl, backendToken }: { apiUrl: string; backendTok
   )
 }
 
+// LES DEUX BOÎTES PRIVÉES DE LA DIRECTION (23/09, Duret). Deux boîtes de plus
+// (perso, pro), chacune par son mot de passe d'application, lisibles de la
+// DIRECTION et du super_admin seulement — le serveur refuse tout autre rôle,
+// et ne les fait entrer ni dans la mémoire partagée ni dans le courrier entrant.
+// Saisies ici par le super_admin ; le mot de passe ne ressort jamais.
+function ReglageBoitesPrivees({ apiUrl, backendToken }: { apiUrl: string; backendToken: string }) {
+  const [etat, setEtat] = useState<any[] | null>(null)
+  const [erreur, setErreur] = useState("")
+
+  const charger = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/boites-privees`, {
+        headers: { Authorization: `Bearer ${backendToken}` }, cache: "no-store",
+      })
+      if (res.status === 404 || res.status === 403) { setEtat([]); return }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const j = await res.json()
+      setEtat(j.emplacements || []); setErreur("")
+    } catch (e: any) {
+      setErreur(e?.message || "chargement impossible")
+    }
+  }, [apiUrl, backendToken])
+
+  useEffect(() => { charger() }, [charger])
+
+  if (etat !== null && etat.length === 0 && !erreur) return null
+  return (
+    <div className="sym-card" style={{
+      background: "var(--marque-surface)", border: "1px solid var(--marque-border)",
+      borderRadius: "var(--marque-radius-card-sm)", padding: "14px 18px", marginBottom: 22,
+    }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--marque-text-primary)" }}>Boîtes privées de la direction</div>
+      <div style={{ fontSize: 12, color: "var(--marque-text-muted)", marginTop: 2, marginBottom: 6 }}>
+        Deux boîtes de plus (perso, pro), par mot de passe d'application. Seuls les comptes « direction » et le super
+        administrateur peuvent les lire ou écrire en leur nom ; pour tous les autres, elles n'existent pas. Elles
+        n'entrent jamais dans la mémoire partagée. Dans le chat : « lis mes mails de la boîte perso ».
+      </div>
+      {etat === null && <div style={{ fontSize: 12, color: "var(--marque-text-muted)" }}>…</div>}
+      {(etat || []).map((e) => (
+        <EmplacementPrive key={e.rang} e={e} apiUrl={apiUrl} backendToken={backendToken} recharger={charger} />
+      ))}
+      {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 8 }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
+function EmplacementPrive({ e, apiUrl, backendToken, recharger }:
+  { e: any; apiUrl: string; backendToken: string; recharger: () => Promise<void> }) {
+  const [adresse, setAdresse] = useState(e.adresse || "")
+  const [libelle, setLibelle] = useState(e.adresse ? e.libelle : "")
+  const [mdp, setMdp] = useState("")
+  const [hoteImap, setHoteImap] = useState(e.hote_imap || "")
+  const [hoteSmtp, setHoteSmtp] = useState(e.hote_smtp || "")
+  const [busy, setBusy] = useState("")
+  const [note, setNote] = useState("")
+  const [erreur, setErreur] = useState("")
+
+  const enregistrer = async (retirer = false) => {
+    setBusy("enregistrer"); setNote(""); setErreur("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/boites-privees/${e.rang}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${backendToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(retirer ? { adresse: "" } : {
+          adresse, mot_de_passe: mdp, libelle, hote_imap: hoteImap, hote_smtp: hoteSmtp,
+        }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j?.detail || `HTTP ${res.status}`)
+      setMdp("")
+      if (retirer) { setAdresse(""); setLibelle("") }
+      setNote(retirer ? "Boîte retirée." : "Boîte enregistrée. Prise en compte immédiate.")
+      await recharger()
+    } catch (err: any) {
+      setErreur(err?.message || "enregistrement impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const tester = async () => {
+    setBusy("tester"); setNote(""); setErreur("")
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/boites-privees/${e.rang}/tester`, {
+        method: "POST", headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(j?.detail || `HTTP ${res.status}`)
+      setNote(j.ok
+        ? `Connexion réussie : lecture (IMAP) et envoi (SMTP)${typeof j.messages === "number" ? ` · ${j.messages} message(s) en réception` : ""}.`
+        : `Échec : ${j.erreur || "raison inconnue"}.`)
+    } catch (err: any) {
+      setErreur(err?.message || "test impossible")
+    } finally {
+      setBusy("")
+    }
+  }
+
+  const champ = {
+    flex: 1, minWidth: 180, padding: "8px 12px", fontSize: 13,
+    border: "1px solid var(--marque-border)", borderRadius: "var(--marque-radius-pill)",
+    color: "var(--marque-text-body)", outline: "none",
+  }
+  const bouton = {
+    padding: "8px 14px", borderRadius: "var(--marque-radius-pill)", border: "1px solid var(--marque-border)",
+    background: "var(--marque-surface)", color: "var(--marque-text-body)", fontSize: 13, cursor: "pointer",
+  }
+  return (
+    <div style={{ borderTop: "1px solid var(--marque-border)", paddingTop: 10, marginTop: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--marque-text-primary)", marginBottom: 6 }}>
+        Emplacement {e.rang} · {e.configuree ? `${e.libelle} — ${e.adresse} · mot de passe ${e.empreinte}` : "libre"}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input placeholder="libellé (ex. Perso, Pro)" value={libelle} onChange={(x) => setLibelle(x.target.value)} style={champ} />
+        <input type="email" autoComplete="off" placeholder="adresse@exemple.fr" value={adresse}
+               onChange={(x) => setAdresse(x.target.value)} style={champ} />
+        <input type="password" autoComplete="new-password" placeholder="mot de passe d'application"
+               value={mdp} onChange={(x) => setMdp(x.target.value)} style={{ ...champ, fontFamily: "monospace" }} />
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <input placeholder="serveur IMAP (imap.gmail.com)" value={hoteImap} onChange={(x) => setHoteImap(x.target.value)} style={champ} />
+        <input placeholder="serveur SMTP (smtp.gmail.com)" value={hoteSmtp} onChange={(x) => setHoteSmtp(x.target.value)} style={champ} />
+        <button onClick={() => enregistrer(false)} disabled={busy !== "" || !adresse.trim()} className="sym-tap" style={{
+          ...bouton, border: "none", color: "var(--marque-text-on-dark)", fontWeight: 600,
+          background: "linear-gradient(180deg, var(--marque-primary), var(--marque-primary-hover))",
+          opacity: adresse.trim() ? 1 : 0.5,
+        }}>{busy === "enregistrer" ? "…" : "Enregistrer"}</button>
+        <button onClick={tester} disabled={busy !== "" || !e.configuree} className="sym-tap" style={bouton}>
+          {busy === "tester" ? "…" : "Tester"}
+        </button>
+        {e.adresse && (
+          <button onClick={() => enregistrer(true)} disabled={busy !== ""} className="sym-tap" style={bouton}>Retirer</button>
+        )}
+      </div>
+      {note && <div style={{ fontSize: 12, color: "var(--marque-text-body)", marginTop: 6 }}>{note}</div>}
+      {erreur && <div style={{ fontSize: 12, color: "var(--marque-error-text)", marginTop: 6 }}>⚠ {erreur}</div>}
+    </div>
+  )
+}
+
 // GMAIL PAR COMPTE DE SERVICE (11/09, Noa : « connecter Gmail via compte de
 // service, prévois ça pour que je rentre les clés »). Chacun lit SA boîte
 // Google Workspace sans mot de passe ni clic : le serveur emprunte l'identité
@@ -1376,6 +1516,7 @@ export default function ClesApiTab({ apiUrl, backendToken }: { apiUrl: string; b
     <div>
       <ReglageModeles apiUrl={apiUrl} backendToken={backendToken} signal={clesModifiees} />
       <ReglageBoiteMail apiUrl={apiUrl} backendToken={backendToken} />
+      <ReglageBoitesPrivees apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageCompteServiceGoogle apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageClientOAuth apiUrl={apiUrl} backendToken={backendToken} />
       <ReglageKpiDepuis apiUrl={apiUrl} backendToken={backendToken} />

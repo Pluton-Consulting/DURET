@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { EXPERTS } from "@/lib/permissions"
 import { EVENEMENT_VUE } from "@/components/nav/EnTete"
+import NasAdmin from "@/components/tableau/NasAdmin"
 
 /**
  * LE TABLEAU DE BORD — ce qu'un patron de PME veut voir en ouvrant l'outil.
@@ -544,6 +545,9 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
           ))}
         </div>
       </div>
+
+      {/* ── NAS : explorateur ou site Synology (23/09, super_admin seul, le serveur tranche) ── */}
+      <NasAdmin apiUrl={apiUrl} token={token} />
     </div>
   )
 }

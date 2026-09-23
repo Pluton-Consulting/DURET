@@ -262,6 +262,14 @@ except ImportError:
     pass
 
 
+# L'explorateur du NAS du tableau de bord (23/09, super_admin seul) : même import optionnel.
+try:
+    from routers import nas_explorateur as nas_explorateur_router
+    app.include_router(nas_explorateur_router.router, prefix="/api/nas-explorateur", tags=["nas"])
+except ImportError:
+    pass
+
+
 # ── VIVANT N'EST PAS PRÊT (16/09, audit D-26) ──────────────────────────────
 # `/api/health` disait « ok » dès que le processus répondait : il disait donc
 # « ok » avec un schéma incomplet, une base injoignable ou la mémoire des

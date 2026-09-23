@@ -195,9 +195,16 @@ async def execute_skill(name: str, data: dict, user_id: str | None = None,
         from security.lecteur import au_nom_de
         from security.conversation import fil_courant
         contexte_fil = fil_courant.set((data or {}).get("_fil") or fil_courant.get())
+        # LA BOÎTE PRIVÉE D'UN GESTE NE PASSE PAS AU SUIVANT (23/09) : chaque
+        # geste repart sans, `verifier_acces` la pose s'il l'autorise.
+        try:
+            from mail.imap import geste_neutre
+        except Exception:  # noqa: BLE001 — sans module mail (bancs), rien à neutraliser
+            from contextlib import nullcontext as geste_neutre
         try:
             with au_nom_de(user):
-                sortie = await executable(data or {}, user)
+                with geste_neutre():
+                    sortie = await executable(data or {}, user)
         finally:
             fil_courant.reset(contexte_fil)
         duree = int((time.monotonic() - start) * 1000)

@@ -102,6 +102,38 @@ def boite_unique() -> Optional[str]:
         return None
 
 
+def _est_privee(adresse: Optional[str]) -> bool:
+    """Boîte privée de la direction ? (23/09) Faux si le module manque."""
+    try:
+        from mail import boites_privees
+        return boites_privees.est_privee(adresse)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _poser_boite_du_geste(boite: Optional[str]) -> None:
+    """Dit à `mail.imap` quelle boîte privée CE geste vient d'autoriser (ou
+    aucune) : les appels qui ne connaissent pas l'adresse l'y retrouvent."""
+    try:
+        from mail.imap import poser_boite_du_geste
+        poser_boite_du_geste(boite)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _boites_privees_pour(user) -> list[dict]:
+    """Les boîtes privées à MONTRER à cette personne — aucune hors direction."""
+    try:
+        from mail import boites_privees
+        if not boites_privees.peut_acceder(getattr(user, "role", None)):
+            return []
+        return [{"mailbox": b["adresse"], "can_send": True, "propre": False,
+                 "privee": True, "libelle": f"Boîte privée de la direction : {b['libelle']}"}
+                for b in boites_privees.boites()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def a_acces_au_mail(role: Optional[str]) -> bool:
     """La colonne « Accès au mail » de la matrice (08/09). Fail-closed : un rôle
     inconnu n'a rien ; le super_admin a toujours tout (`has_permission`)."""
@@ -117,7 +149,7 @@ async def boites_autorisees(user) -> list[dict]:
         if not a_acces_au_mail(getattr(user, "role", None)):
             return []
         return [{"mailbox": unique, "can_send": True, "propre": True,
-                 "libelle": "La boîte de l'entreprise (unique)"}]
+                 "libelle": "La boîte de l'entreprise (unique)"}] + _boites_privees_pour(user)
     # PAS DE JETON « TOUTES LES BOÎTES » ICI (01/09). Ce jeton est lu ailleurs
     # comme un blanc-seing (filtrage RAG), alors que le DÉFAUT de ces rôles est
     # désormais leur propre boîte. On rend donc les boîtes RÉELLES, et on dit à
@@ -133,6 +165,9 @@ async def boites_autorisees(user) -> list[dict]:
     for d in await delegations(str(user.id)):
         if d["mailbox"] != propre:                 # la sienne prime, jamais dupliquée
             boites.append({**d, "propre": False})
+    for b in _boites_privees_pour(user):
+        if b["mailbox"] not in {x["mailbox"] for x in boites}:
+            boites.append(b)
     if elargi:
         # La capacité se DIT, elle ne s'exerce qu'en nommant une boîte.
         for x in boites:
@@ -330,6 +365,7 @@ async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> s
     pas de préparer un message signé de quelqu'un d'autre.
     """
     cible = normaliser(mailbox)
+    _poser_boite_du_geste(None)
     if not cible:
         raise AccesBoiteRefuse("Aucune boîte mail précisée.")
 
@@ -340,6 +376,39 @@ async def verifier_acces(user, mailbox: Optional[str], envoi: bool = False) -> s
         raise AccesBoiteRefuse(
             "Votre rôle n'a pas l'accès au mail : la direction peut l'accorder dans "
             "Paramètres → Permissions, colonne « Accès au mail ».")
+
+    # LES BOÎTES PRIVÉES DE LA DIRECTION (23/09, `mail/boites_privees.py`) :
+    # direction et super_admin seulement. Pour tout autre rôle, on tombe dans
+    # le refus ordinaire ci-dessous — même texte qu'une boîte inconnue, pour
+    # ne pas révéler qu'elle existe.
+    if _est_privee(cible):
+        from mail import boites_privees
+        if boites_privees.peut_acceder(getattr(user, "role", None)):
+            logger.info("Accès à la boîte privée %s par %s (envoi=%s)", cible, user.id, envoi)
+            try:
+                import asyncio
+                from security.audit import log_action
+                asyncio.create_task(log_action(
+                    action="mailbox_private_access", user_id=str(user.id), success=True,
+                    metadata={"mailbox": cible, "envoi": bool(envoi),
+                              "role": getattr(user, "role", None)}))
+            except Exception:  # noqa: BLE001 - une trace absente ne bloque pas l'accès
+                pass
+            _poser_boite_du_geste(cible)
+            return cible
+        logger.warning("Boîte privée %s refusée à %s (rôle %s)", cible, user.id,
+                       getattr(user, "role", None))
+        # REFUS DÉFINITIF, même si une délégation l'accordait par erreur, et
+        # avec le texte exact d'une boîte inconnue (rien ne trahit qu'elle existe).
+        unique_refus = boite_unique()
+        if unique_refus:
+            raise AccesBoiteRefuse(
+                f"La messagerie de l'entreprise est une boîte unique ({unique_refus}) : "
+                f"« {cible} » n'est pas une boîte accessible ici.")
+        raise AccesBoiteRefuse(
+            f"Vous n'avez pas accès à la boîte {cible}. "
+            "Demandez à votre direction de vous la déléguer."
+        )
 
     unique = boite_unique()
     if unique:
@@ -401,6 +470,10 @@ async def accorder(admin, user_id: str, mailbox: str, can_send: bool = True) -> 
     if "@" not in cible:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="Adresse mail invalide.")
+    if _est_privee(cible):
+        # Une boîte privée de la direction ne se délègue pas (23/09).
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Cette boîte est réservée à la direction : elle ne se délègue pas.")
     async with get_db() as conn:
         beneficiaire = await conn.fetchrow(
             "SELECT id, email FROM users WHERE id = $1::uuid", str(user_id))

@@ -773,10 +773,18 @@ async def boites_visibles(user) -> list[str]:
     # et la règle « s'ils la demandent, ils y ont accès » devenait inapplicable.
     # On teste donc le rôle : qui peut demander une boîte doit pouvoir la nommer.
     from mail.authorization import acces_total
+    # LES BOÎTES PRIVÉES DE LA DIRECTION (23/09) : nommées à la direction et au
+    # super_admin seulement ; pour tout autre rôle, elles n'existent pas.
+    try:
+        from mail import boites_privees
+        privees = boites_privees.adresses_pour(getattr(user, "role", None))
+        cachees = {b["adresse"] for b in boites_privees.boites()} - set(privees)
+    except Exception:  # noqa: BLE001
+        privees, cachees = [], set()
     if autorisees == ["*"] or acces_total(getattr(user, "role", None)):
-        return connues
+        return sorted(set(connues) - cachees | set(privees))
     permis = {normaliser(b) for b in autorisees}
-    return [b for b in connues if b in permis]
+    return [b for b in connues if b in permis and b not in cachees]
 
 
 def resoudre_boite(demandee: str, visibles: list[str]) -> Optional[str]:
@@ -836,6 +844,16 @@ async def _boite_a_lire(data: dict, user) -> str:
     demandee = normaliser(data.get("mailbox"))
 
     if demandee and not _ADRESSE_RE.match(demandee):
+        # « ma boîte perso », « pro » : le LIBELLÉ d'une boîte privée de la
+        # direction (23/09). Résolu pour la direction et le super_admin
+        # seulement — pour les autres, la suite refuse comme d'habitude.
+        try:
+            from mail import boites_privees
+            privee = boites_privees.resoudre_libelle(demandee, getattr(user, "role", None))
+        except Exception:  # noqa: BLE001
+            privee = None
+        if privee:
+            return privee
         # Un nom partiel se résout avant de refuser : « contact » désigne sans
         # ambiguïté contact@<domaine> quand c'est la seule qui commence ainsi.
         visibles = await boites_visibles(user)

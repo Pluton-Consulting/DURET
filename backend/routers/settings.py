@@ -436,6 +436,98 @@ async def tester_boite_mail(current_user: User = Depends(get_current_user)):
     return await asyncio.to_thread(imap.tester)
 
 
+# LES DEUX BOÎTES PRIVÉES DE LA DIRECTION (23/09, Duret, `mail/boites_privees.py`).
+# Saisies par le super_admin seul ; lisibles ensuite de la direction et du
+# super_admin seulement (`mail.authorization.verifier_acces`). Jamais le mot
+# de passe en retour : son empreinte.
+
+class BoitePriveeBody(BaseModel):
+    adresse: Optional[str] = None
+    mot_de_passe: Optional[str] = None     # vide = inchangé
+    libelle: Optional[str] = None
+    hote_imap: Optional[str] = None
+    hote_smtp: Optional[str] = None
+
+
+def _exiger_super_admin(user: User) -> None:
+    if (getattr(user, "role", "") or "").strip().lower() != "super_admin":
+        raise HTTPException(status_code=403, detail="Réservé au super administrateur")
+
+
+def _rang_prive(rang: int) -> int:
+    from mail import boites_privees
+    if rang not in boites_privees.EMPLACEMENTS:
+        raise HTTPException(status_code=404, detail="Emplacement inconnu")
+    return rang
+
+
+@router.get("/boites-privees")
+async def lire_boites_privees(current_user: User = Depends(get_current_user)):
+    _exiger_super_admin(current_user)
+    from llm.cles import rafraichir, _CACHE, masquer
+    from mail import boites_privees
+    await rafraichir(force=True)
+    emplacements = []
+    for rang in boites_privees.EMPLACEMENTS:
+        e = boites_privees.emplacement(rang)
+        e["empreinte"] = masquer(_CACHE.get(boites_privees.cles(rang)["mot_de_passe"]) or "")
+        emplacements.append(e)
+    return {"emplacements": emplacements, "roles": sorted(boites_privees.ROLES)}
+
+
+@router.put("/boites-privees/{rang}")
+async def ecrire_boite_privee(rang: int, body: BoitePriveeBody,
+                              current_user: User = Depends(get_current_user)):
+    """Une adresse vide RETIRE l'emplacement (adresse, mot de passe, libellé, hôtes)."""
+    _exiger_super_admin(current_user)
+    from llm.cles import enregistrer
+    from mail import boites_privees
+    rang = _rang_prive(rang)
+    c = boites_privees.cles(rang)
+    adresse = (body.adresse or "").strip().lower()
+    if adresse and not boites_privees.adresse_valide(adresse):
+        raise HTTPException(status_code=422, detail="L'adresse n'est pas une adresse mail.")
+    if adresse:
+        from mail.imap import boite_unique
+        if adresse == (boite_unique() or ""):
+            raise HTTPException(status_code=409, detail=(
+                "C'est la boîte de l'entreprise, lisible de toute l'équipe : "
+                "elle ne peut pas devenir une boîte privée."))
+        autre = [b for b in boites_privees.EMPLACEMENTS if b != rang
+                 and boites_privees.emplacement(b)["adresse"] == adresse]
+        if autre:
+            raise HTTPException(status_code=409, detail="Cette adresse occupe déjà l'autre emplacement.")
+    uid = str(current_user.id)
+    if not adresse:
+        for nom in c.values():
+            await enregistrer(nom, "", uid)
+    else:
+        await enregistrer(c["adresse"], adresse, uid)
+        mdp = (body.mot_de_passe or "").replace(" ", "").strip()
+        if mdp:
+            await enregistrer(c["mot_de_passe"], mdp, uid)
+        await enregistrer(c["libelle"], (body.libelle or "").strip()[:60], uid)
+        await enregistrer(c["hote_imap"], (body.hote_imap or "").strip()[:120], uid)
+        await enregistrer(c["hote_smtp"], (body.hote_smtp or "").strip()[:120], uid)
+    await log_action(action="boite_privee_modifiee", user_id=uid,
+                     metadata={"rang": rang, "adresse_posee": bool(adresse),
+                               "mot_de_passe_pose": bool((body.mot_de_passe or "").strip())})
+    return {"rang": rang, "adresse": adresse, "note": "Prise en compte immédiate, sans redéploiement."}
+
+
+@router.post("/boites-privees/{rang}/tester")
+async def tester_boite_privee(rang: int, current_user: User = Depends(get_current_user)):
+    _exiger_super_admin(current_user)
+    import asyncio
+    from llm.cles import rafraichir
+    from mail import boites_privees, imap
+    await rafraichir(force=True)
+    e = boites_privees.emplacement(_rang_prive(rang))
+    if not e["configuree"]:
+        return {"ok": False, "boite": e["adresse"], "erreur": "adresse ou mot de passe d'application absent"}
+    return await asyncio.to_thread(imap.tester, e["adresse"])
+
+
 # GMAIL PAR COMPTE DE SERVICE (11/09, Noa : « connecter Gmail via compte de
 # service, prévois ça pour que je rentre les clés »). La clé JSON, le domaine
 # et l'administrateur vivent dans `cles_api`, comme la boîte unique : priorité

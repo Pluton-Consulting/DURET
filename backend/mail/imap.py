@@ -35,6 +35,8 @@ import logging
 import re
 import smtplib
 import ssl
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from email import policy
 from email.header import decode_header, make_header
@@ -77,6 +79,63 @@ def boite_unique() -> Optional[str]:
 
 def _mot_de_passe() -> str:
     return _identifiant("mail_imap_password")
+
+
+# ── LES BOÎTES PRIVÉES DE LA DIRECTION (23/09, `mail/boites_privees.py`) ──
+# Tout ce module se connectait à LA boîte unique. Une connexion choisit
+# désormais ses identifiants selon la boîte visée : l'adresse passée en
+# paramètre quand l'appel la connaît (lister, ouvrir, envoyer), sinon celle
+# que `mail.authorization.verifier_acces` vient d'autoriser pour CE geste
+# (pièce jointe, dépôt d'un brouillon, indicateurs, recherche hors réception).
+# Sans boîte privée en jeu, rien ne change : les identifiants de la boîte
+# unique, comme avant. `asyncio.to_thread` copie le contexte : le thread voit
+# la boîte du geste qui l'a lancé.
+_BOITE_DU_GESTE: ContextVar[Optional[str]] = ContextVar("boite_imap_du_geste", default=None)
+
+
+def boite_du_geste() -> Optional[str]:
+    return _BOITE_DU_GESTE.get()
+
+
+def poser_boite_du_geste(boite: Optional[str]) -> None:
+    """Posée par `verifier_acces` : la boîte privée autorisée, ou None."""
+    _BOITE_DU_GESTE.set((boite or "").strip().lower() or None)
+
+
+@contextmanager
+def geste_neutre():
+    """Le temps d'un geste, aucune boîte privée héritée d'un geste précédent
+    (`skills/executor.execute_skill`)."""
+    jeton = _BOITE_DU_GESTE.set(None)
+    try:
+        yield
+    finally:
+        _BOITE_DU_GESTE.reset(jeton)
+
+
+def _compte(boite: Optional[str] = None) -> dict:
+    """Les identifiants à utiliser : ceux d'une boîte privée si c'est elle qu'on
+    vise, sinon ceux de la boîte unique. Une boîte privée RETIRÉE entre-temps
+    ne retombe PAS sur la boîte unique (on lirait la mauvaise boîte en croyant
+    lire la bonne) : l'appel échoue en le disant."""
+    cible = (boite or _BOITE_DU_GESTE.get() or "").strip().lower()
+    unique = boite_unique() or ""
+    if cible and cible != unique:
+        try:
+            from mail import boites_privees
+            prive = boites_privees.identifiants(cible)
+        except Exception:  # noqa: BLE001
+            prive = None
+        if prive:
+            return {"login": prive["adresse"], "mot_de_passe": prive["mot_de_passe"],
+                    "hote_imap": prive["hote_imap"], "hote_smtp": prive["hote_smtp"],
+                    "port_smtp": PORT_SMTP_DEFAUT}
+        if _BOITE_DU_GESTE.get() == cible:
+            raise RuntimeError(f"la boîte {cible} n'est plus configurée")
+    return {"login": unique, "mot_de_passe": _mot_de_passe(),
+            "hote_imap": (getattr(settings, "mail_imap_host", None) or HOTE_IMAP_DEFAUT).strip(),
+            "hote_smtp": (getattr(settings, "mail_smtp_host", None) or HOTE_SMTP_DEFAUT).strip(),
+            "port_smtp": int(getattr(settings, "mail_smtp_port", None) or PORT_SMTP_DEFAUT)}
 
 
 # ── LES DOSSIERS DE LA BOÎTE (11/09) ─────────────────────────────────────
@@ -295,10 +354,11 @@ def dossiers_proposables(dossiers: Optional[list[tuple[set, str]]] = None) -> li
     return envoyes + sorted(autres, key=lambda d: d["libelle"].lower())
 
 
-def _connexion() -> imaplib.IMAP4_SSL:
-    hote = (getattr(settings, "mail_imap_host", None) or HOTE_IMAP_DEFAUT).strip()
-    client = imaplib.IMAP4_SSL(hote, 993, ssl_context=ssl.create_default_context(), timeout=DELAI_S)
-    client.login(boite_unique() or "", _mot_de_passe())
+def _connexion(boite: Optional[str] = None) -> imaplib.IMAP4_SSL:
+    compte = _compte(boite)
+    client = imaplib.IMAP4_SSL(compte["hote_imap"], 993, ssl_context=ssl.create_default_context(),
+                               timeout=DELAI_S)
+    client.login(compte["login"] or "", compte["mot_de_passe"])
     return client
 
 
@@ -475,7 +535,7 @@ def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = N
     dossier entier (SEARCH UNSEEN, côté serveur). 18/09 : « combien de mails non lus
     j'ai, exactement ? » répondait « 13 parmi les 15 plus récents » — le compte était
     tiré des fiches, le serveur le sait en une commande."""
-    client = _connexion()
+    client = _connexion(boite)
     try:
         _selectionner(client, dossier)
         if extra is not None:
@@ -520,7 +580,7 @@ def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = N
 def ouvrir(boite: str, uid: str, dossier: str = "INBOX") -> dict:
     """UN message en entier : corps texte, HTML, pièces avec leur rang."""
     from mail.lecture import MAX_APERCU, _texte_lisible
-    client = _connexion()
+    client = _connexion(boite)
     try:
         _selectionner(client, dossier)
         m, flags = _charger(client, uid.encode())
@@ -559,15 +619,20 @@ def parcourir(dossier: str, maximum: int) -> list[tuple[str, object]]:
             pass
 
 
-def tester() -> dict:
+def tester(boite: Optional[str] = None) -> dict:
     """Une connexion IMAP puis SMTP, pour le bouton « Tester » de l'écran.
-    Rend {ok, imap, smtp, boite, erreur} — jamais le mot de passe."""
-    boite = boite_unique()
-    if not boite or not _mot_de_passe():
+    Rend {ok, imap, smtp, boite, erreur} — jamais le mot de passe. Sans `boite` :
+    la boîte unique ; avec : cette boîte privée (23/09)."""
+    compte = _compte(boite) if boite else None
+    if boite and (not compte or compte["login"] != boite.strip().lower()):
+        return {"ok": False, "boite": boite, "erreur": "boîte privée non configurée"}
+    boite = compte["login"] if compte else boite_unique()
+    mdp = compte["mot_de_passe"] if compte else _mot_de_passe()
+    if not boite or not mdp:
         return {"ok": False, "boite": boite, "erreur": "adresse ou mot de passe d'application absent"}
     resultat = {"ok": False, "boite": boite, "imap": False, "smtp": False, "erreur": ""}
     try:
-        client = _connexion()
+        client = _connexion(boite)
         try:
             statut, donnees = client.select('"INBOX"', readonly=True)
             resultat["imap"] = statut == "OK"
@@ -581,12 +646,11 @@ def tester() -> dict:
         resultat["erreur"] = f"IMAP : {str(e)[:160]}"
         return resultat
     try:
-        hote = (getattr(settings, "mail_smtp_host", None) or HOTE_SMTP_DEFAUT).strip()
-        port = int(getattr(settings, "mail_smtp_port", None) or PORT_SMTP_DEFAUT)
-        with smtplib.SMTP(hote, port, timeout=DELAI_S) as s:
+        compte_smtp = _compte(boite)
+        with smtplib.SMTP(compte_smtp["hote_smtp"], compte_smtp["port_smtp"], timeout=DELAI_S) as s:
             s.ehlo()
             s.starttls(context=ssl.create_default_context())
-            s.login(boite, _mot_de_passe())
+            s.login(boite, mdp)
         resultat["smtp"] = True
     except Exception as e:  # noqa: BLE001
         resultat["erreur"] = f"SMTP : {str(e)[:160]}"
@@ -642,13 +706,13 @@ def deposer(brut: bytes, avec_recu: bool = False):
 
 
 def envoyer(brut: bytes, expediteur: str, destinataires: list[str]) -> None:
-    """Envoie un message MIME déjà construit, par SMTP + STARTTLS."""
-    hote = (getattr(settings, "mail_smtp_host", None) or HOTE_SMTP_DEFAUT).strip()
-    port = int(getattr(settings, "mail_smtp_port", None) or PORT_SMTP_DEFAUT)
-    with smtplib.SMTP(hote, port, timeout=DELAI_S) as s:
+    """Envoie un message MIME déjà construit, par SMTP + STARTTLS — avec les
+    identifiants de l'expéditeur s'il est une boîte privée (23/09)."""
+    compte = _compte(expediteur)
+    with smtplib.SMTP(compte["hote_smtp"], compte["port_smtp"], timeout=DELAI_S) as s:
         s.ehlo()
         s.starttls(context=ssl.create_default_context())
-        s.login(boite_unique() or expediteur, _mot_de_passe())
+        s.login(compte["login"] or expediteur, compte["mot_de_passe"])
         s.sendmail(expediteur, [d for d in destinataires if d], brut)
 
 

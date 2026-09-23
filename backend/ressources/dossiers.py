@@ -110,7 +110,11 @@ def sources(uid,fil,ids=None):
             # une lecture dérivée refaite (« — lecture visuelle ») se remplace par nom.
             memes_octets=len({r['empreinte'] for r in candidats})==1 and all(_televerse(r['reference']) for r in candidats)
             relecture=len({r['nom'] for r in candidats})==1 and ' — lecture visuelle' in candidats[0]['nom']
-            if len(candidats)>1 and (memes_octets or relecture):
+            # LE MÊME FICHIER, AJOUTÉ DEUX FOIS À DEUX MOMENTS (23/09, Damien) : le
+            # classeur du NAS a changé entre deux ajouts, les octets diffèrent mais
+            # c'est la même pièce, à la même adresse. La plus récente fait foi.
+            meme_adresse=len({r['reference'] for r in candidats})==1 and bool(candidats[0]['reference'])
+            if len(candidats)>1 and (memes_octets or relecture or meme_adresse):
                 # Des exemplaires de la MÊME pièce (rejointe, ou relue) : le plus récent.
                 candidats=[max(candidats,key=lambda r:r['cree'])]
             if len(candidats)!=1:

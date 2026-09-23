@@ -132,7 +132,7 @@ renderer = (FRONTEND / "components" / "chat" / "MessageRenderer.tsx").read_text(
 verifier("la planche accepte une image PRINCIPALE", "principale?: string" in planche
          and "const grande = principale ? liste.find((i) => i.cle === principale) : undefined" in planche)
 verifier("elle se montre en grand, AVANT la paire", 'data-testid="visuel-principal"' in planche
-         and planche.index('data-testid="visuel-principal"') < planche.index("gridTemplateColumns: liste.length > 1"))
+         and planche.index('data-testid="visuel-principal"') < planche.index("gridTemplateColumns: dessous.length > 1"))
 verifier("la paire garde ses légendes (Avant / Après) sous chaque image",
          "{grande && img.legende && (" in planche)
 verifier("« Tout télécharger » ne sort pas le rendu deux fois",

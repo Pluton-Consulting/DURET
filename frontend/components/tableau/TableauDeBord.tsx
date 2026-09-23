@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { EXPERTS } from "@/lib/permissions"
 import { EVENEMENT_VUE } from "@/components/nav/EnTete"
-import NasAdmin from "@/components/tableau/NasAdmin"
 
 /**
  * LE TABLEAU DE BORD — ce qu'un patron de PME veut voir en ouvrant l'outil.
@@ -30,7 +29,7 @@ type Donnees = {
          hypotheses: Record<string, number>; detail: Record<string, number>
          serie: { jour: string; euros: number }[]; variation_pct: number | null } | null
   experts: Expert[]
-  a_valider: { accords: any[]; competences: any[] }
+  a_valider: { accords: any[]; competences: any[]; qualification_possible?: boolean }
   synthese: { terminees: number; en_attente: number; echouees: number; total: number; par_jour: { jour: string; conversations: number; actions: number }[] }
   planifiees: any[]
   executions?: any[]
@@ -352,8 +351,23 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
                   Sans code : elle ne peut pas être validée telle quelle (Savoir-faire pour la compléter), seulement écartée.
                 </div>
               )}
+              {/* 23/09 : une compétence générée ne se valide qu'après avoir réussi ses tests dans
+                  l'exécuteur isolé. Sans lui sur ce serveur, « Valider » échouait à chaque fois. */}
+              {c.a_du_code !== false && d.a_valider.qualification_possible === false && (
+                <div style={{ color: "var(--marque-text-muted)", fontSize: 12 }} data-testid="competence-non-qualifiable">
+                  Impossible à valider sur ce serveur : son code n'a jamais pu être testé, faute d'exécuteur isolé
+                  pour le code généré. Écartez-la, ou demandez l'activation de cet exécuteur.
+                </div>
+              )}
+              {c.a_du_code !== false && d.a_valider.qualification_possible !== false && c.qualifiee === false && (
+                <div style={{ color: "var(--marque-text-muted)", fontSize: 12 }}>
+                  À tester d'abord : page Compétences → « Qualification et versions ».
+                </div>
+              )}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <button type="button" className="v2-bouton-plein" disabled={competenceEnCours === c.name || c.a_du_code === false}
+                <button type="button" className="v2-bouton-plein"
+                        disabled={competenceEnCours === c.name || c.a_du_code === false
+                                  || d.a_valider.qualification_possible === false || c.qualifiee === false}
                         data-testid="valider-competence" onClick={() => trancherCompetence(c.name, true)}>
                   {competenceEnCours === c.name ? "…" : "Valider"}
                 </button>
@@ -545,9 +559,6 @@ export default function TableauDeBord({ apiUrl, token }: Props) {
           ))}
         </div>
       </div>
-
-      {/* ── NAS : explorateur ou site Synology (23/09, super_admin seul, le serveur tranche) ── */}
-      <NasAdmin apiUrl={apiUrl} token={token} />
     </div>
   )
 }

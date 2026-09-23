@@ -180,11 +180,13 @@ async def tableau(current_user: User = Depends(get_current_user)):
         # Écarter) : le lien « ouvrir Connaissances » arrivait sur les accords,
         # la compétence n'y était pas, et la ligne ne partait jamais (14/09).
         competences_a_valider = await _sur(conn, """
-            SELECT name, description, status, created_at, (COALESCE(code, '') <> '') AS a_du_code
-            FROM skills
-            WHERE status IN ('draft','testing') AND created_by <> 'system'
-              AND COALESCE(code,'') NOT LIKE '%Squelette g_n_rique%'
-            ORDER BY created_at DESC LIMIT 8
+            SELECT s.name, s.description, s.status, s.created_at, (COALESCE(s.code, '') <> '') AS a_du_code,
+                   EXISTS (SELECT 1 FROM skill_evaluations e
+                           WHERE e.name = s.name AND e.passed AND e.sandbox = 'daytona') AS qualifiee
+            FROM skills s
+            WHERE s.status IN ('draft','testing') AND s.created_by <> 'system'
+              AND COALESCE(s.code,'') NOT LIKE '%Squelette g_n_rique%'
+            ORDER BY s.created_at DESC LIMIT 8
         """) if has_permission(current_user.role, "validate_skills") else []
 
         # ── Tâches (arrière-plan) ──
@@ -396,6 +398,13 @@ async def tableau(current_user: User = Depends(get_current_user)):
             "variation_pct": variation_pct,
         }
 
+    def _qualification_possible() -> bool:
+        try:
+            from sandbox.daytona_client import sandbox_client
+            return sandbox_client.isolement() == "daytona"
+        except Exception:  # noqa: BLE001 — dans le doute, on ne promet rien
+            return False
+
     return {
         "perimetre": "global" if global_ else "personnel",
         "roi": bloc_roi,
@@ -403,6 +412,10 @@ async def tableau(current_user: User = Depends(get_current_user)):
         "a_valider": {
             "accords": [_ligne(a) for a in accords],
             "competences": [_ligne(c) for c in competences_a_valider],
+            # 23/09 : sans exécuteur isolé (Daytona), le code d'une compétence générée
+            # n'est jamais exécuté — donc jamais qualifié, donc jamais validable. L'écran
+            # le DIT au lieu d'offrir un « Valider » qui échoue à chaque fois.
+            "qualification_possible": _qualification_possible(),
         },
         "synthese": {
             "terminees": int(_val(synthese, "terminees")),

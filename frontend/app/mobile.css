@@ -64,9 +64,12 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
      restent — c'est par eux qu'on change de vue, pas en cliquant sur un
      bord qu'on ne voit plus. ─────────────────────────────────────────── */
   .v2-vue { padding: calc(var(--v2-entete-h) + 16px + env(safe-area-inset-top)) 6px calc(6px + env(safe-area-inset-bottom)); }
-  .v2-vue-tableau, .v2-vue-chat { padding-left: 6px; padding-right: 6px; }
+  .v2-vue-tableau, .v2-vue-chat, .v2-vue-fichiers,
+  .v2-scene[data-vues="3"] .v2-vue-tableau { padding-left: 6px; padding-right: 6px; }
   .v2-scene[data-vue="tableau"] .v2-vue-chat,
-  .v2-scene[data-vue="chat"] .v2-vue-tableau { transform: none; opacity: 1; }
+  .v2-scene[data-vue="chat"] .v2-vue-tableau,
+  .v2-scene[data-vue="tableau"] .v2-vue-fichiers,
+  .v2-scene[data-vue="fichiers"] .v2-vue-tableau { transform: none; opacity: 1; }
   .v2-vue-cadre { border-radius: 18px; }
 
   /* ── Le tableau de bord : une colonne, des cartes moins espacées ────── */

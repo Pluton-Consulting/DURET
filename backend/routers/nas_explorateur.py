@@ -21,7 +21,7 @@ import logging
 import posixpath
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from auth.dependencies import get_current_user
@@ -153,3 +153,55 @@ async def ouvrir(body: OuvrirBody, current_user: User = Depends(get_current_user
     except Exception:  # noqa: BLE001
         pass
     return {"chemin": vise, "octets": len(brut), "bloc_ui": depot["bloc_ui"]}
+
+
+# ── ÉCRIRE DEPUIS L'ONGLET FICHIERS (23/09) ─────────────────────────────────
+# Deux gestes d'écriture, ceux que le NAS sait faire SANS RIEN PERDRE : créer un
+# dossier (jamais en cascade, jamais par-dessus un fichier) et déposer un fichier
+# (jamais d'écrasement). Renommer, déplacer, supprimer ne sont PAS proposés ici :
+# l'écran donne le chemin à copier pour le faire dans l'explorateur de fichiers
+# de l'ordinateur, là où la corbeille et l'annulation existent. Chaque écriture
+# est tracée, avec le chemin, dans le journal.
+TAILLE_MAX_DEPOT = 95 * 1024 * 1024
+
+
+class CreerDossierBody(BaseModel):
+    parent: str
+    nom: str
+
+
+@router.post("/creer-dossier")
+async def creer_dossier(body: CreerDossierBody, current_user: User = Depends(get_current_user)):
+    _exiger(current_user)
+    from nas.acces import creer_dossier as creer
+    from security.lecteur import au_nom_de
+    try:
+        with au_nom_de(current_user):
+            r = await creer(body.parent, body.nom)
+    except Exception as e:  # noqa: BLE001
+        raise _refus(e)
+    await log_action(action="nas_explorateur_dossier", user_id=str(current_user.id),
+                     success=bool(r.get("cree") or r.get("existait")),
+                     metadata={"parent": body.parent[:300], "nom": body.nom[:120], "cree": bool(r.get("cree"))})
+    return r
+
+
+@router.post("/deposer")
+async def deposer(dossier: str = Form(...), fichier: UploadFile = File(...),
+                  current_user: User = Depends(get_current_user)):
+    _exiger(current_user)
+    from nas.acces import deposer as deposer_nas
+    from security.lecteur import au_nom_de
+    contenu = await fichier.read(TAILLE_MAX_DEPOT + 1)
+    if len(contenu) > TAILLE_MAX_DEPOT:
+        raise HTTPException(status_code=413, detail=(
+            f"« {fichier.filename} » dépasse {TAILLE_MAX_DEPOT // (1024 * 1024)} Mo : déposez-le depuis "
+            f"l'explorateur de fichiers de l'ordinateur, dans {dossier}."))
+    try:
+        with au_nom_de(current_user):
+            r = await deposer_nas(dossier, fichier.filename or "fichier", contenu)
+    except Exception as e:  # noqa: BLE001
+        raise _refus(e)
+    await log_action(action="nas_explorateur_depot", user_id=str(current_user.id), success=bool(r.get("depose")),
+                     metadata={"dossier": dossier[:300], "nom": (fichier.filename or "")[:160], "octets": len(contenu)})
+    return r

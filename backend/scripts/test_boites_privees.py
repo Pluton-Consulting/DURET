@@ -321,18 +321,18 @@ def routes_gardees(fichier, garde):
 
 
 r = routes_gardees("routers/nas_explorateur.py", "_exiger")
-verifier("explorateur NAS : 4 routes, toutes gardées dès la première ligne", len(r) == 4 and all(r.values()), r)
+verifier("explorateur NAS : 6 routes (dont 2 écritures), toutes gardées dès la première ligne", len(r) == 6 and all(r.values()), r)
 src_nas = (BACKEND / "routers" / "nas_explorateur.py").read_text(encoding="utf-8")
 verifier("explorateur NAS : la garde exige super_admin EXACTEMENT", '!= "super_admin"' in src_nas)
-verifier("explorateur NAS : lectures au nom de la personne (droits par dossier)",
-         src_nas.count("au_nom_de(current_user)") == 3)
+verifier("explorateur NAS : lectures ET écritures au nom de la personne (droits par dossier)",
+         src_nas.count("au_nom_de(current_user)") == 5)
 r = {k: v for k, v in routes_gardees("routers/settings.py", "_exiger_super_admin").items() if "privee" in k}
 verifier("réglages des boîtes privées : 3 routes, super_admin seul", len(r) == 3 and all(r.values()), r)
 main = (BACKEND / "main.py").read_text(encoding="utf-8")
 verifier("route montée en import optionnel", 'prefix="/api/nas-explorateur"' in main)
-front = (BACKEND.parent / "frontend" / "components" / "tableau" / "NasAdmin.tsx").read_text(encoding="utf-8")
-verifier("écran : rien sans la réponse du serveur (403 → rien)",
-         "if (!acces) return null" in front and "r.ok ? r.json() : null" in front)
+front = (BACKEND.parent / "frontend" / "components" / "fichiers" / "Fichiers.tsx").read_text(encoding="utf-8")
+verifier("écran : l'onglet Fichiers dit un refus du serveur au lieu de l'explorateur",
+         "setAcces(false)" in front and "n'est pas ouvert à ce compte" in front)
 
 print(f"\n{'✅ tout passe' if not echecs else f'❌ {len(echecs)} échec(s)'}\n")
 sys.exit(1 if echecs else 0)

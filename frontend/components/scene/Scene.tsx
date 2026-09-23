@@ -20,18 +20,33 @@ import { EVENEMENT_VUE } from "@/components/nav/EnTete"
  * navigateur reste juste, un lien partagé ouvre la bonne vue, et le bouton
  * « précédent » refait glisser la piste au lieu de recharger.
  */
+// UNE TROISIÈME VUE, FACULTATIVE (23/09, Duret) : l'onglet « Fichiers », à GAUCHE du
+// tableau de bord. Sans elle, la scène est exactement celle d'avant (deux vues).
+type Vue = "fichiers" | "tableau" | "chat"
 interface Props {
-  vueInitiale: "tableau" | "chat"
+  vueInitiale: Vue
   tableau: ReactNode
   chat: ReactNode
+  fichiers?: ReactNode
 }
 
-const CHEMINS: Record<"tableau" | "chat", string> = { tableau: "/accueil", chat: "/chat" }
+const CHEMINS: Record<Vue, string> = { fichiers: "/fichiers", tableau: "/accueil", chat: "/chat" }
 
-export default function Scene({ vueInitiale, tableau, chat }: Props) {
-  const [vue, setVue] = useState<"tableau" | "chat">(vueInitiale)
+/** La vue voisine dans l'ordre, ou null au bord. */
+export function voisine(ordre: Vue[], vue: Vue, sens: 1 | -1): Vue | null {
+  const i = ordre.indexOf(vue)
+  const j = i + sens
+  return i < 0 || j < 0 || j >= ordre.length ? null : ordre[j]
+}
 
-  const aller = useCallback((cible: "tableau" | "chat", pousser = true) => {
+export default function Scene({ vueInitiale, tableau, chat, fichiers }: Props) {
+  const ordre: Vue[] = fichiers ? ["fichiers", "tableau", "chat"] : ["tableau", "chat"]
+  const [vue, setVue] = useState<Vue>(ordre.includes(vueInitiale) ? vueInitiale : "tableau")
+  const ordreRef = useRef(ordre)
+  ordreRef.current = ordre
+
+  const aller = useCallback((cible: Vue, pousser = true) => {
+    if (!ordreRef.current.includes(cible)) return
     setVue(cible)
     window.dispatchEvent(new CustomEvent(EVENEMENT_VUE, { detail: cible }))
     if (pousser && typeof window !== "undefined" && window.location.pathname !== CHEMINS[cible]) {
@@ -50,7 +65,7 @@ export default function Scene({ vueInitiale, tableau, chat }: Props) {
   useEffect(() => {
     const h = () => {
       const p = window.location.pathname
-      aller(p.startsWith("/chat") ? "chat" : "tableau", false)
+      aller(p.startsWith("/chat") ? "chat" : p.startsWith("/fichiers") ? "fichiers" : "tableau", false)
     }
     window.addEventListener("popstate", h)
     return () => window.removeEventListener("popstate", h)
@@ -108,11 +123,9 @@ export default function Scene({ vueInitiale, tableau, chat }: Props) {
     // deltaMode 1 = « lignes » (vieilles souris) : on ramène en pixels.
     cumulRef.current += e.deltaMode === 1 ? e.deltaX * 16 : e.deltaX
     const SEUIL = 60
-    if (cumulRef.current > SEUIL && vueRef.current === "tableau") {
-      armeRef.current = false; aller("chat")
-    } else if (cumulRef.current < -SEUIL && vueRef.current === "chat") {
-      armeRef.current = false; aller("tableau")
-    }
+    const cible = cumulRef.current > SEUIL ? voisine(ordreRef.current, vueRef.current, 1)
+      : cumulRef.current < -SEUIL ? voisine(ordreRef.current, vueRef.current, -1) : null
+    if (cible) { armeRef.current = false; aller(cible) }
   }
 
   const toucheRef = useRef<{ x: number; y: number } | null>(null)
@@ -126,16 +139,39 @@ export default function Scene({ vueInitiale, tableau, chat }: Props) {
     const dy = e.changedTouches[0].clientY - d.y
     if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return
     if (surUnDefilementHorizontal(e.target)) return
-    if (dx < 0 && vueRef.current === "tableau") aller("chat")
-    else if (dx > 0 && vueRef.current === "chat") aller("tableau")
+    const cible = voisine(ordreRef.current, vueRef.current, dx < 0 ? 1 : -1)
+    if (cible) aller(cible)
   }
 
+  // MAJ + FLÈCHE GAUCHE / DROITE : d'un onglet au voisin (23/09, demande de Noa).
+  // Jamais pendant une saisie : dans un champ, Maj + flèche SÉLECTIONNE du texte.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (!e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented) return
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+      const cible = e.target as HTMLElement | null
+      if (cible && (cible.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(cible.tagName))) return
+      const suivante = voisine(ordreRef.current, vueRef.current, e.key === "ArrowRight" ? 1 : -1)
+      if (suivante) { e.preventDefault(); aller(suivante) }
+    }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [aller])
+
   return (
-    <div className="v2-scene" data-vue={vue} onWheel={surMolette}
+    <div className="v2-scene" data-vue={vue} data-vues={ordre.length} onWheel={surMolette}
          onTouchStart={surToucheDebut} onTouchEnd={surToucheFin}>
       <div className="v2-piste">
+        {fichiers && (
+          <section className="v2-vue v2-vue-fichiers" aria-hidden={vue !== "fichiers"}
+                   onClick={vue === "tableau" ? () => aller("fichiers") : undefined}>
+            <div className="v2-vue-cadre" style={{ pointerEvents: vue === "fichiers" ? "auto" : "none" }}>
+              <div className="v2-vue-defile">{fichiers}</div>
+            </div>
+          </section>
+        )}
         <section className="v2-vue v2-vue-tableau" aria-hidden={vue !== "tableau"}
-                 onClick={vue === "chat" ? () => aller("tableau") : undefined}>
+                 onClick={vue !== "tableau" ? () => aller("tableau") : undefined}>
           <div className="v2-vue-cadre" style={{ pointerEvents: vue === "tableau" ? "auto" : "none" }}>
             <div className="v2-vue-defile">{tableau}</div>
           </div>

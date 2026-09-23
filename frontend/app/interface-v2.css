@@ -95,6 +95,73 @@
 .v2-scene[data-vue="chat"] .v2-vue-tableau .v2-vue-cadre { cursor: pointer; }
 .v2-vue-defile { flex: 1; min-height: 0; overflow: auto; }
 
+/* ── TROIS VUES : Fichiers | Tableau de bord | Chat (23/09, Duret) ───────
+   La piste passe à 300 % et chaque vue à un tiers ; le tableau de bord, au
+   milieu, laisse déborder ses DEUX voisines. Sans l'onglet Fichiers
+   (`data-vues="2"`), rien de ce bloc ne s'applique. */
+.v2-scene[data-vues="3"] .v2-piste { width: 300%; transform: translateX(-33.3333%); }
+.v2-scene[data-vues="3"][data-vue="fichiers"] .v2-piste { transform: translateX(0); }
+.v2-scene[data-vues="3"][data-vue="chat"] .v2-piste { transform: translateX(-66.6667%); }
+.v2-scene[data-vues="3"] .v2-vue { width: 33.3333%; }
+.v2-scene[data-vues="3"] .v2-vue-tableau { padding-left: 62px; }
+.v2-vue-fichiers { padding-right: 62px; }
+.v2-scene[data-vue="fichiers"] .v2-vue-fichiers { z-index: 2; }
+.v2-scene[data-vue="fichiers"] .v2-vue-tableau { transform: translateX(-86px) scale(.965); opacity: .94; }
+.v2-scene[data-vue="tableau"] .v2-vue-fichiers { transform: translateX(86px) scale(.965); opacity: .94; }
+.v2-scene[data-vue="fichiers"] .v2-vue-tableau .v2-vue-cadre,
+.v2-scene[data-vue="tableau"] .v2-vue-fichiers .v2-vue-cadre { cursor: pointer; }
+
+/* ── L'explorateur de l'onglet Fichiers ──────────────────────────────── */
+.fx { display: flex; flex-direction: column; gap: 12px; padding: 22px 24px; min-height: 100%; box-sizing: border-box; }
+.fx[data-survol="oui"] { outline: 2px dashed var(--marque-primary); outline-offset: -10px; border-radius: 20px; }
+.fx-tete { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.fx-titre { margin: 0; font-size: 22px; font-weight: 800; color: var(--marque-text-primary); letter-spacing: -.3px; }
+.fx-ariane { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 13px; margin-top: 4px; color: var(--marque-text-muted); }
+.fx-ariane button, .fx-lien-bouton { border: none; background: transparent; padding: 0; cursor: pointer; font: inherit; font-weight: 600; color: var(--marque-primary); }
+.fx-ariane span > span { margin: 0 4px; }
+.fx-lien { font-size: 13px; font-weight: 600; color: var(--marque-primary); }
+.fx-outils { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.fx-outils button, .fx-outils select, .fx-bandeau button { padding: 7px 13px; border-radius: var(--marque-radius-pill); border: 1px solid var(--marque-border);
+  background: var(--marque-surface); color: var(--marque-text-body); font: inherit; font-size: 13px; cursor: pointer; }
+.fx-outils button:disabled { opacity: .45; cursor: default; }
+.fx-outils button:focus-visible, .fx-nom:focus-visible, .fx-menu summary:focus-visible { outline: 2px solid var(--marque-primary-mid); outline-offset: 2px; }
+.fx-recherche, .fx-bandeau input { flex: 1; min-width: 200px; padding: 8px 13px; font: inherit; font-size: 13px; border: 1px solid var(--marque-border);
+  border-radius: var(--marque-radius-pill); background: var(--marque-surface); color: var(--marque-text-body); outline: none; }
+.fx-bandeau { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 12px;
+  background: var(--marque-primary-subtle); color: var(--marque-text-body); font-size: 13px; }
+.fx-bandeau code { font-size: 12.5px; background: var(--marque-surface); padding: 3px 8px; border-radius: 6px; overflow-wrap: anywhere; }
+.fx-note { font-size: 12.5px; color: var(--marque-text-muted); }
+.fx-erreur { font-size: 13px; color: var(--marque-error-text); }
+.fx-vide { padding: 14px; font-size: 13px; color: var(--marque-text-muted); }
+.fx-corps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; }
+.fx-corps:has(.fx-apercu) { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+.fx-liste { border: 1px solid var(--marque-border); border-radius: 14px; overflow: auto; max-height: calc(100vh - 290px); background: var(--marque-surface); }
+.fx-ligne { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 12px; align-items: center; padding: 0 10px 0 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--marque-border) 60%, transparent); }
+.fx-ligne[data-choisi="oui"] { background: var(--marque-primary-subtle); }
+.fx-nom { display: flex; gap: 10px; align-items: center; min-width: 0; padding: 9px 8px; border: none; background: transparent; cursor: pointer;
+  font: inherit; font-size: 13.5px; color: var(--marque-text-body); text-align: left; }
+.fx-nom-texte { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-nom-texte small { color: var(--marque-text-muted); }
+.fx-meta { font-size: 12px; color: var(--marque-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fx-date { min-width: 88px; text-align: right; }
+.fx-menu { position: relative; }
+.fx-menu summary { list-style: none; cursor: pointer; padding: 4px 8px; border-radius: 6px; color: var(--marque-text-muted); }
+.fx-menu summary::-webkit-details-marker { display: none; }
+.fx-menu > div { position: absolute; right: 0; top: 100%; z-index: 5; display: flex; flex-direction: column; min-width: 200px; padding: 6px;
+  background: var(--marque-surface); border: 1px solid var(--marque-border); border-radius: 10px; box-shadow: var(--marque-shadow-card); }
+.fx-menu > div button { border: none; background: transparent; text-align: left; padding: 7px 10px; border-radius: 6px; font: inherit; font-size: 13px;
+  color: var(--marque-text-body); cursor: pointer; }
+.fx-menu > div button:hover { background: var(--marque-primary-subtle); }
+.fx-apercu { border: 1px solid var(--marque-border); border-radius: 14px; padding: 12px 14px; overflow: auto; max-height: calc(100vh - 290px); background: var(--marque-surface); }
+.fx-apercu-tete { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-size: 13.5px; }
+@media (max-width: 900px) {
+  .fx { padding: 14px 12px; }
+  .fx-corps:has(.fx-apercu) { grid-template-columns: minmax(0, 1fr); }
+  .fx-date { display: none; }
+  .fx-ligne { grid-template-columns: minmax(0, 1fr) auto auto; }
+}
+
 /* ── Le panneau derrière l'engrenage ─────────────────────────────────── */
 .v2-voile { position: fixed; inset: 0; z-index: 130; background: color-mix(in srgb, var(--marque-primary) 18%, transparent);
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); opacity: 0; pointer-events: none; transition: opacity .45s var(--v2-courbe); }

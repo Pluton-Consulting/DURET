@@ -29,6 +29,11 @@ export const EVENEMENT_VUE = "v2:vue"
 interface Props { role: string; email: string; name: string }
 
 const ICONES = {
+  fichiers: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  ),
   tableau: (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <rect x="3" y="3" width="7" height="9" rx="2" /><rect x="14" y="3" width="7" height="5" rx="2" />
@@ -82,7 +87,13 @@ export default function EnTete({ role, email, name }: Props) {
   }, [panneau, session])
 
   // La vue active : lue dans l'URL, et tenue à jour par la scène quand elle glisse.
-  const vueDeChemin = pathname?.startsWith("/chat") ? "chat" : pathname === "/accueil" || pathname === "/" ? "tableau" : null
+  const vueDeChemin = pathname?.startsWith("/chat") ? "chat" : pathname?.startsWith("/fichiers") ? "fichiers"
+    : pathname === "/accueil" || pathname === "/" ? "tableau" : null
+  // L'ONGLET FICHIERS (23/09, Duret) : à gauche du tableau de bord, réservé pour
+  // l'instant au super_admin — le serveur refuse les autres, l'écran ne le propose pas.
+  const vues = role === "super_admin"
+    ? [{ key: "fichiers", label: "Fichiers", href: "/fichiers" }, ...VUES]
+    : [...VUES]
   const [vue, setVue] = useState<string | null>(vueDeChemin)
   useEffect(() => { setVue(vueDeChemin) }, [vueDeChemin])
   useEffect(() => {
@@ -112,7 +123,7 @@ export default function EnTete({ role, email, name }: Props) {
       // La scène écoute, glisse, et met l'URL à jour elle-même.
       window.dispatchEvent(new CustomEvent(EVENEMENT_VUE + ":demande", { detail: cle }))
     } else {
-      router.push(VUES.find((v) => v.key === cle)?.href || "/accueil")
+      router.push(vues.find((v) => v.key === cle)?.href || "/accueil")
     }
   }
 
@@ -135,11 +146,11 @@ export default function EnTete({ role, email, name }: Props) {
         <div className="v2-bulle v2-switch" ref={refSwitch} role="tablist" aria-label="Vue principale">
           <span className="v2-switch-curseur" aria-hidden
                 style={{ transform: `translateX(${curseur.x}px)`, width: curseur.w, opacity: curseur.visible ? 1 : 0 }} />
-          {VUES.map((v) => (
+          {vues.map((v) => (
             <button key={v.key} type="button" role="tab" className="v2-switch-bouton"
                     data-vue={v.key} aria-pressed={vue === v.key} aria-selected={vue === v.key}
                     onClick={() => aller(v.key)}>
-              {ICONES[v.key as "tableau" | "chat"]}<span>{v.label}</span>
+              {ICONES[v.key as "fichiers" | "tableau" | "chat"]}<span>{v.label}</span>
             </button>
           ))}
         </div>

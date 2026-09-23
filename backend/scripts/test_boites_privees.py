@@ -321,7 +321,11 @@ def routes_gardees(fichier, garde):
 
 
 r = routes_gardees("routers/nas_explorateur.py", "_exiger")
-verifier("explorateur NAS : 6 routes (dont 2 écritures), toutes gardées dès la première ligne", len(r) == 6 and all(r.values()), r)
+flux = r.pop("fichier", None)
+verifier("explorateur NAS : 6 routes gardées dès la première ligne (dont 2 écritures)", len(r) == 6 and all(r.values()), r)
+verifier("explorateur NAS : la lecture en flux exige un billet ou une session, puis la même garde",
+         flux is not None and "lire_billet(t, chemin)" in (BACKEND / "routers" / "nas_explorateur.py").read_text(encoding="utf-8")
+         and "_exiger(personne)" in (BACKEND / "routers" / "nas_explorateur.py").read_text(encoding="utf-8"))
 src_nas = (BACKEND / "routers" / "nas_explorateur.py").read_text(encoding="utf-8")
 verifier("explorateur NAS : la garde exige super_admin EXACTEMENT", '!= "super_admin"' in src_nas)
 verifier("explorateur NAS : lectures ET écritures au nom de la personne (droits par dossier)",

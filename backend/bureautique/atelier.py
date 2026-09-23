@@ -161,6 +161,45 @@ def _groupe(jeton: str) -> list:
     return fichiers
 
 
+# LES COPIES DE FICHIERS DU NAS NE S'ACCUMULENT PLUS (23/09, relevé de Noa : « il ne
+# doit pas télécharger tout le NAS sur le serveur, ça va vite saturer »). Un fichier LU
+# sur le serveur de fichiers (origine « serveur ») est une COPIE : l'original reste sur
+# le NAS. Avec la rétention par défaut (0 = tout garder), chacune restait pour toujours
+# (666 Mo le 23/09). Elles partent après JOURS_COPIES_SERVEUR jours (7 par défaut) ;
+# rien d'autre n'est touché — documents produits, brouillons, pièces, épinglés.
+def _purger_copies_du_serveur() -> int:
+    from stockage.verrous import verrou_fichier
+    import re
+    try:
+        jours = max(1, int(os.environ.get("JOURS_COPIES_SERVEUR", "7")))
+    except ValueError:
+        jours = 7
+    limite = time.time() - jours * 86400
+    retires = 0
+    try:
+        noms = os.listdir(DOSSIER)
+    except OSError:
+        return 0
+    for jeton in {n.split(".")[0] for n in noms if re.fullmatch(r"[A-Za-z0-9_-]{32}(?:\..+)?", n)}:
+        with verrou_fichier(DOSSIER, jeton, bloquant=False) as acquis:
+            if not acquis:
+                continue
+            fiche_ = _lire_fiche(jeton)
+            if not fiche_ or fiche_.get("origine") != "serveur" or fiche_.get("conserver"):
+                continue
+            if float(fiche_.get("termine") or fiche_.get("ouvert") or time.time()) > limite:
+                continue
+            for chemin in _groupe(jeton):
+                try:
+                    os.remove(chemin)
+                    retires += 1
+                except OSError:
+                    continue
+    if retires:
+        logger.info("Copies de fichiers du NAS purgées : %d fichier(s) de plus de %d jours", retires, jours)
+    return retires
+
+
 def purger() -> int:
     """Rétention explicite, par document, sans toucher aux registres voisins.
 
@@ -176,7 +215,7 @@ def purger() -> int:
         logger.error("DOCUMENTS_RETENTION_JOURS invalide : aucune suppression")
         return 0
     if not jours:
-        return 0
+        return _purger_copies_du_serveur()
     maintenant = time.time()
     duree = jours * 86400
     retires = 0

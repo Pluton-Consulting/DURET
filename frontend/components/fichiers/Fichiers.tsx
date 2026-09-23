@@ -41,6 +41,42 @@ const date = (s?: number | null) =>
     : ""
 const parent = (chemin: string) => chemin.split("/").slice(0, -1).join("/") || null
 
+const NATIF_CADRE = new Set(["pdf", "txt", "log", "md"])
+const NATIF_IMAGE = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "avif"])
+const NATIF_VIDEO = new Set(["mp4", "webm", "mov", "m4v"])
+const NATIF_SON = new Set(["mp3", "wav", "ogg", "m4a", "aac"])
+const BUREAUTIQUE = new Set(["docx", "xlsx", "pptx", "xls", "doc", "csv"])
+
+/** L'aperçu d'un fichier servi en flux : le lecteur du navigateur quand il sait faire,
+ *  la carte d'aperçu pour la bureautique, sinon le seul bouton de téléchargement. */
+function Apercu({ url, extension, nom, apiUrl, token }: { url: string; extension: string; nom: string; apiUrl: string; token: string }) {
+  const adresse = `${apiUrl}${url}`
+  const telecharger = (
+    <a className="fx-telecharger" href={`${adresse}&telecharger=1`} download={nom}>⤓ Télécharger</a>
+  )
+  if (NATIF_CADRE.has(extension)) {
+    return <div className="fx-lecteur">{telecharger}<iframe src={adresse} title={nom} className="fx-cadre" /></div>
+  }
+  if (NATIF_IMAGE.has(extension)) {
+    return <div className="fx-lecteur">{telecharger}<img src={adresse} alt={nom} className="fx-image" /></div>
+  }
+  if (NATIF_VIDEO.has(extension)) {
+    return <div className="fx-lecteur">{telecharger}<video src={adresse} controls className="fx-image" /></div>
+  }
+  if (NATIF_SON.has(extension)) {
+    return <div className="fx-lecteur">{telecharger}<audio src={adresse} controls /></div>
+  }
+  if (BUREAUTIQUE.has(extension)) {
+    const bloc = { type: "fichier", url, nom, titre: nom.replace(/\.[^.]+$/, ""), format: extension }
+    return <div className="fx-lecteur">
+      <MessageRenderer content={"```ui\n" + JSON.stringify(bloc) + "\n```"} apiUrl={apiUrl} backendToken={token} dernier />
+    </div>
+  }
+  return <div className="fx-lecteur">
+    <div className="fx-note">Pas d'aperçu pour ce type de fichier.</div>{telecharger}
+  </div>
+}
+
 export default function Fichiers({ apiUrl, token }: Props) {
   const [acces, setAcces] = useState<{ explorateur: boolean; dsm: string | null } | null | false>(null)
   const [chemin, setChemin] = useState<string | null>(null)
@@ -52,7 +88,7 @@ export default function Fichiers({ apiUrl, token }: Props) {
   const [motif, setMotif] = useState("")
   const [recherche, setRecherche] = useState<{ motif: string; partiel: boolean } | null>(null)
   const [tri, setTri] = useState<Tri>("nom")
-  const [ouvert, setOuvert] = useState<{ nom: string; chemin: string; bloc?: any; message?: string } | null>(null)
+  const [ouvert, setOuvert] = useState<{ nom: string; chemin: string; url?: string; extension?: string; message?: string } | null>(null)
   const [ailleurs, setAilleurs] = useState<{ action: string; chemin: string } | null>(null)
   const [nouveauDossier, setNouveauDossier] = useState<string | null>(null)
   const [depot, setDepot] = useState<string>("")
@@ -104,11 +140,14 @@ export default function Fichiers({ apiUrl, token }: Props) {
     }
   }
 
+  // LE FICHIER EST LU EN FLUX (23/09) : le serveur relaie le NAS sans rien écrire sur
+  // son disque, et le navigateur l'affiche avec son propre lecteur — un PDF montre
+  // toutes ses pages, se cherche, se zoome, et commence avant la fin du transfert.
   const ouvrir = async (e: Entree) => {
     setOuvert({ nom: e.nom, chemin: e.chemin })
     try {
-      const j = await appeler(`/api/nas-explorateur/ouvrir`, { method: "POST", body: JSON.stringify({ chemin: e.chemin }) })
-      setOuvert({ nom: e.nom, chemin: e.chemin, bloc: j.bloc_ui, message: j.message })
+      const j = await appeler(`/api/nas-explorateur/lien`, { method: "POST", body: JSON.stringify({ chemin: e.chemin }) })
+      setOuvert({ nom: e.nom, chemin: e.chemin, url: j.url, extension: j.extension })
     } catch (err: any) {
       setOuvert({ nom: e.nom, chemin: e.chemin, message: err?.message || "ouverture impossible" })
     }
@@ -256,11 +295,10 @@ export default function Fichiers({ apiUrl, token }: Props) {
               <strong title={ouvert.chemin}>{ouvert.nom}</strong>
               <button type="button" className="fx-lien-bouton" onClick={() => setOuvert(null)}>Fermer</button>
             </div>
-            {!ouvert.bloc && !ouvert.message && <div className="fx-vide">Téléchargement depuis le NAS…</div>}
+            {!ouvert.url && !ouvert.message && <div className="fx-vide">Ouverture…</div>}
             {ouvert.message && <div className="fx-note">{ouvert.message}</div>}
-            {ouvert.bloc && (
-              <MessageRenderer content={"```ui\n" + JSON.stringify(ouvert.bloc) + "\n```"} apiUrl={apiUrl} backendToken={token} dernier />
-            )}
+            {ouvert.url && <Apercu url={ouvert.url} extension={ouvert.extension || ""} nom={ouvert.nom}
+                                   apiUrl={apiUrl} token={token} />}
           </aside>
         )}
       </div>

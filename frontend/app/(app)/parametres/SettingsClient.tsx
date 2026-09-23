@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, Fragment } from "react"
-import { useSession } from "next-auth/react"
+import { signIn, useSession } from "next-auth/react"
 import { ROLE_LABELS, ROLE_COLORS, nomExpert } from "@/lib/permissions"
 import ImportTab from "@/components/settings/ImportTab"
 import SyncTab from "@/components/settings/SyncTab"
@@ -269,6 +269,16 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
       // reste sélectionnable, on le dit plutôt que de faire semblant.
       setLienErreur("Copie impossible ici : sélectionnez le lien et copiez-le à la main.")
     }
+  }
+
+  // « SE CONNECTER EN TANT QUE » (23/09) : super_admin seul, session courte (2 h),
+  // bandeau visible tant qu'elle dure ; le serveur trace chaque ouverture.
+  const [incarnation, setIncarnation] = useState<{ id: string; erreur: string } | null>(null)
+  const seConnecterEnTantQue = async (u: User) => {
+    setIncarnation({ id: u.id, erreur: "" })
+    const r = await signIn("credentials", { incarner: backendToken, user_id: u.id, redirect: false })
+    if (r?.error) { setIncarnation({ id: u.id, erreur: "Connexion refusée par le serveur." }); return }
+    window.location.href = "/accueil"
   }
 
   const creatableRoles = CREATABLE[currentRole] ?? []
@@ -931,6 +941,21 @@ function UsersTab({ initialUsers, backendToken, currentRole, apiUrl }: Props) {
                         }}>
                         Modifier
                       </button>
+                    )}
+                    {currentRole === "super_admin" && user.role !== "super_admin" && user.actif && (
+                      <button onClick={() => seConnecterEnTantQue(user)} className="sym-tap"
+                        title="Ouvrir sa session pour 2 h, sans son code — tracé dans le journal"
+                        disabled={incarnation?.id === user.id && !incarnation.erreur}
+                        style={{
+                          background: "none", border: "1px solid var(--marque-border)",
+                          borderRadius: "var(--marque-radius-pill)", padding: "5px 14px", fontSize: 12,
+                          cursor: "pointer", color: "var(--marque-primary)", fontWeight: 600, marginRight: 8,
+                        }}>
+                        {incarnation?.id === user.id && !incarnation.erreur ? "…" : "Se connecter en tant que"}
+                      </button>
+                    )}
+                    {incarnation?.id === user.id && incarnation.erreur && (
+                      <span style={{ fontSize: 12, color: "var(--marque-error-text)", marginRight: 8 }}>{incarnation.erreur}</span>
                     )}
                     {(currentRole === "super_admin" || currentRole === "direction" || METIER_ROLES.includes(user.role)) && (
                       <button onClick={() => toggleActive(user.id, user.actif, user.role)} className="sym-tap" style={{

@@ -616,3 +616,43 @@ async def logout(
 
     await log_action(action="logout", user_id=str(current_user.id))
     return {"ok": True}
+
+
+# ── SE CONNECTER EN TANT QUE (23/09, Duret, demande de Noa) ──────────────────
+# « En admin, dans les paramètres, pouvoir se connecter sur le profil de n'importe quel
+# autre utilisateur sans connaître son mot de passe. » Réservé au SUPER_ADMIN (le
+# développeur, pour voir exactement ce que voit une personne et reproduire un défaut).
+# Trois garde-fous : une session COURTE (2 h) et SANS jeton d'appareil — elle ne se
+# prolonge pas, elle ne survit pas au redémarrage du navigateur au-delà de sa durée ;
+# le JWT porte `incarne_par`, que l'écran affiche en bandeau tant qu'elle dure ;
+# chaque ouverture est tracée avec les deux comptes. On ne se glisse jamais dans un
+# autre compte administrateur ni dans un compte désactivé.
+DUREE_INCARNATION = timedelta(hours=2)
+
+
+class IncarnerRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/incarner")
+async def incarner(body: IncarnerRequest, current_user: User = Depends(get_current_user)):
+    if (getattr(current_user, "role", "") or "") != "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Réservé au super administrateur.")
+    if str(body.user_id) == str(current_user.id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="C'est déjà votre compte.")
+    async with get_db() as conn:
+        cible = await conn.fetchrow(
+            "SELECT id, email, name, role, actif FROM users WHERE id = $1::uuid", str(body.user_id))
+    if not cible or not cible["actif"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profil introuvable ou désactivé.")
+    if cible["role"] == "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="On ne se connecte pas sur le compte d'un autre administrateur.")
+    await log_action(action="incarnation", user_id=str(current_user.id),
+                     metadata={"profil": str(cible["id"]), "role": cible["role"]})
+    jeton = create_access_token({"sub": str(cible["id"]), "role": cible["role"],
+                                 "incarne_par": str(current_user.id)}, expires_delta=DUREE_INCARNATION)
+    return {"access_token": jeton, "token_type": "bearer", "role": cible["role"],
+            "refresh_token": None, "user_id": str(cible["id"]), "nom": cible["name"],
+            "email": cible["email"], "incarne_par": str(current_user.id)}

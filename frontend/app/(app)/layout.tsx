@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import EnTete from "@/components/nav/EnTete"
 import Corps from "@/components/nav/Corps"
 import CodeAPoser from "@/components/nav/CodeAPoser"
+import BandeauIncarnation from "@/components/nav/BandeauIncarnation"
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth()
@@ -27,6 +28,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <EnTete role={role} email={email} name={name} />
       <Corps>{children}</Corps>
       {role === "super_admin" && jeton && <CodeAPoser jeton={jeton} />}
+      {user?.incarnePar && <BandeauIncarnation nom={name} />}
     </div>
   )
 }

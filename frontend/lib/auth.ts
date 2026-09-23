@@ -79,11 +79,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // LA CARTE DU BOUTON « ADMIN » (15/09, Duret) : le lien magique est
         // coupé, l'administrateur entre par son code.
         admin: { type: "text" },
+        // « SE CONNECTER EN TANT QUE » (23/09, Duret) : le JWT du super_admin, qui
+        // ouvre une session courte sur un autre profil ; le serveur revérifie tout.
+        incarner: { type: "text" },
       },
-      async authorize({ token, email, user_id, bascule, carte, code, admin }) {
+      async authorize({ token, email, user_id, bascule, carte, code, admin, incarner }) {
         let refus = ""
         try {
-          const res = admin
+          const res = incarner
+            ? await fetch(`${API_URL}/api/auth/incarner`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${incarner}` },
+                body: JSON.stringify({ user_id }),
+              })
+            : admin
             ? await fetch(`${API_URL}/api/auth/connexion/admin`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -120,13 +129,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             // L'IDENTIFIANT DU PROFIL, pas l'adresse (11/09) : plusieurs prénoms
             // partagent l'adresse de la boîte, et l'écran range par personne.
             id: data.user_id || (user_id as string) || (email as string),
-            email: (email as string) || "",
+            email: (email as string) || data.email || "",
             name: data.nom || undefined,
             backendToken: data.access_token,
             // Le jeton d'appareil (03/09). Absent si la migration 034 n'est pas
             // appliquée : on retombe alors sur le comportement d'avant.
             refreshToken: data.refresh_token ?? null,
             role: data.role,
+            incarnePar: data.incarne_par ?? null,
           }
         } catch (e) {
           // Le refus d'un code remonte tel quel ; toute autre panne = « refusé ».
@@ -156,6 +166,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.backendToken = (user as any).backendToken
         token.refreshToken = (user as any).refreshToken
         token.role = (user as any).role
+        ;(token as any).incarnePar = (user as any).incarnePar ?? null
         ;(token as any).backendExp = echeance(token.backendToken as string)
       }
 
@@ -183,6 +194,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       // L'identifiant du profil (`sub`, posé depuis `authorize`) : c'est lui qui
       // distingue deux prénoms d'une même adresse côté écran.
       ;(session.user as any).id = token.sub
+      ;(session.user as any).incarnePar = (token as any).incarnePar ?? null
       return session
     },
   },

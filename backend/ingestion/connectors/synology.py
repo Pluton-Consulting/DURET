@@ -632,6 +632,7 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
     # Les PDF scannés attendent la nuit : l'OCR de jour a déjà mis l'application
     # à genoux.
     regles_tri, age_max, maintenant = tri.regles(), tri.age_ans(), __import__("time").time()
+    index_tri = tri.index_des_regles(regles_tri)
     differes = tri.ocr_differe()
     de_nuit = tri.fenetre_de_nuit()
     bilan = {"format_non_lu": 0, "trop_volumineux": 0, "inchangés": 0,
@@ -642,7 +643,7 @@ async def _sync(dossiers: Optional[list[str]] = None, avancer=None,
     a_lire = []
     for f in fichiers:
         nom = str(f.get("nom") or f["chemin"].rsplit("/", 1)[-1])
-        decision = tri.decision_du_chemin(f["chemin"], regles_tri)
+        decision = tri.decision_du_chemin(f["chemin"], regles_tri, index=index_tri)
         if decision == "demande":
             bilan["à_la_demande"] += 1
             continue

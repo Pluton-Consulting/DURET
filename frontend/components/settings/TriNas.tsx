@@ -21,6 +21,7 @@ interface Ecartes { total: number; sans_texte: number; a_retenter: number; prets
                     exemples: { chemin: string; raison: string; tentatives: number }[] }
 interface Etat {
   regles: Ligne[]; age_ans: number; estimation: Estimation | null; catalogue: string | null
+  estimee_le?: number | null; catalogue_pret?: boolean
   ocr_differe: number; nuit: { debut: number; fin: number }
   ecartes?: Ecartes; reprise_demandee?: { le: number; tout: boolean } | null
   continu?: { active: boolean; prochain: number | null; dernier: number | null; rien_a_lire: boolean
@@ -63,6 +64,19 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { charger(); return () => { if (minuterie.current) clearTimeout(minuterie.current) } }, [apiUrl, backendToken])
+
+  /** L'ESTIMATION SUR CLIC (23/09) : elle parcourt tout le catalogue du NAS ;
+   *  l'ouverture de l'onglet ne la lance plus, elle montre la dernière. */
+  const [estimationEnCours, setEstimationEnCours] = useState(false)
+  async function estimer() {
+    setErreur(""); setEstimationEnCours(true)
+    try {
+      const r = await fetch(`${apiUrl}/api/nas-tri/estimer`, { method: "POST", headers: entetes })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) { setErreur(d.detail || "L'estimation n'a pas pu être calculée."); return }
+      setEtat((av) => av ? { ...av, estimation: d.estimation, estimee_le: d.estimee_le } : av)
+    } catch { setErreur("Erreur réseau") } finally { setEstimationEnCours(false) }
+  }
 
   async function proposer() {
     setErreur(""); setBilan("")
@@ -196,10 +210,19 @@ export default function TriNas({ apiUrl, backendToken }: { apiUrl: string; backe
           </button>
         </div>
       )}
-      {etat && !etat.estimation && (
-        <p style={{ fontSize: 12.5, color: "var(--marque-text-muted)", margin: "0 0 12px" }}>
-          Le catalogue du NAS se construit : l'estimation apparaîtra dans quelques minutes.
-        </p>
+      {etat && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, margin: "0 0 12px" }}>
+          <button type="button" className="sym-tap" onClick={estimer} data-testid="tri-estimer"
+                  disabled={estimationEnCours || etat.catalogue_pret === false}
+                  style={bouton(false, !estimationEnCours && etat.catalogue_pret !== false)}>
+            {estimationEnCours ? "Calcul en cours…" : "Calculer l'estimation"}
+          </button>
+          <span style={{ fontSize: 12.5, color: "var(--marque-text-muted)" }}>
+            {etat.catalogue_pret === false ? "Le catalogue du NAS se construit : le calcul sera possible dans quelques minutes."
+              : etat.estimee_le ? `Dernière estimation le ${new Date(etat.estimee_le * 1000).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}.`
+              : "Aucune estimation encore : elle parcourt tout le NAS, elle ne se lance qu'à la demande."}
+          </span>
+        </div>
       )}
 
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 14 }}>

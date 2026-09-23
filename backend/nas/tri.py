@@ -41,6 +41,7 @@ Fonctions pures d'abord (le banc les exécute), puis la proposition, asynchrone.
 """
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -117,9 +118,35 @@ def lire_regles(brut) -> list[dict]:
     return sorted(regles.values(), key=lambda r: _nu(r["chemin"]))[:MAX_REGLES]
 
 
-def decision_du_chemin(chemin: str, regles: list[dict], defaut: str = DECISION_DEFAUT) -> str:
-    """La décision d'un fichier ou d'un dossier : la règle du plus long chemin."""
+def index_des_regles(regles: list[dict]) -> dict:
+    """Chemin normalisé d'une règle → sa décision (la première l'emporte, comme la
+    boucle). À construire UNE fois pour tout un catalogue (23/09 soir)."""
+    index: dict[str, str] = {}
+    for r in regles:
+        index.setdefault(_nu_regle(r["chemin"]), r["decision"])
+    return index
+
+
+def decision_du_chemin(chemin: str, regles: list[dict], defaut: str = DECISION_DEFAUT,
+                       index: Optional[dict] = None) -> str:
+    """La décision d'un fichier ou d'un dossier : la règle du plus long chemin.
+
+    AVEC `index` (23/09 soir) : on remonte le chemin du fichier niveau par niveau
+    et l'on s'arrête au premier niveau qui porte une règle — quelques recherches
+    par fichier au lieu d'une comparaison à CHAQUE règle. Même réponse que la
+    boucle ci-dessous : le plus long chemin de règle qui contient le fichier.
+    Même le cache des formes de règles laissait l'estimation de Paramètres
+    tourner des minutes sur le catalogue entier."""
     vise = _nu(chemin)
+    if index is not None:
+        courant = vise
+        while courant:
+            if courant in index:
+                return index[courant]
+            if "/" not in courant:
+                break
+            courant = courant.rsplit("/", 1)[0]
+        return defaut
     retenue, longueur = None, -1
     for r in regles:
         base = _nu_regle(r["chemin"])
@@ -279,7 +306,22 @@ def lire_decisions(brut, lot_chemins: list[str]) -> dict:
     return sortie
 
 
-def estimer(entrees: list[dict], regles: list[dict], age_ans: int, maintenant: float) -> dict:
+# LE PROCESSEUR NE DOIT PAS DÉPASSER 60 % POUR UN CALCUL DE FOND (23/09, Noa) :
+# une estimation n'est pas urgente, la synchronisation et le chat, si. Par
+# tranches, le calcul dort 2/3 du temps qu'il vient de travailler (60/40).
+PART_PROCESSEUR = 0.6
+TRANCHE_FICHIERS = 5000
+
+
+def _laisser_respirer(debut_tranche: float) -> float:
+    travail = time.monotonic() - debut_tranche
+    if travail > 0:
+        time.sleep(travail * (1 - PART_PROCESSEUR) / PART_PROCESSEUR)
+    return time.monotonic()
+
+
+def estimer(entrees: list[dict], regles: list[dict], age_ans: int, maintenant: float,
+            respirer: bool = False) -> dict:
     """Combien de fichiers seraient lus, laissés à la demande, ignorés, écartés
     sans IA — sur le catalogue, sans rien ouvrir. Sert l'écran.
     `doublon` compte, PARMI les fichiers à lire, les copies possibles : elles
@@ -289,8 +331,12 @@ def estimer(entrees: list[dict], regles: list[dict], age_ans: int, maintenant: f
     compte = {"a_lire": 0, "demande": 0, "ignorer": 0, "photo": 0, "ancien": 0,
               "doublon": 0, "format_non_lu": 0, "toujours": 0}
     lisibles = []
-    for f in fichiers:
-        decision = decision_du_chemin(f["chemin"], regles)
+    index = index_des_regles(regles)
+    tranche = time.monotonic()
+    for n, f in enumerate(fichiers, 1):
+        if respirer and n % TRANCHE_FICHIERS == 0:
+            tranche = _laisser_respirer(tranche)
+        decision = decision_du_chemin(f["chemin"], regles, index=index)
         if decision in ("demande", "ignorer"):
             compte[decision] += 1
             continue
@@ -314,6 +360,24 @@ def estimer(entrees: list[dict], regles: list[dict], age_ans: int, maintenant: f
 
 # ── La configuration en vigueur ────────────────────────────────────────────
 _MEMO: dict = {"brut": None, "regles": []}
+
+
+FICHIER_ESTIMATION = "nas_tri_estimation.json"
+
+
+def derniere_estimation() -> Optional[dict]:
+    """La dernière estimation CALCULÉE (sur demande), sans rien recalculer."""
+    d = lire_json(FICHIER_ESTIMATION, None)
+    return d if isinstance(d, dict) and isinstance(d.get("compte"), dict) else None
+
+
+def estimer_et_garder(entrees: list[dict], regles_: list[dict], age: int) -> dict:
+    """À lancer HORS de la boucle principale (asyncio.to_thread), bridé à 60 %."""
+    debut = time.time()
+    compte = estimer(entrees, regles_, age, debut, respirer=True)
+    fiche = {"compte": compte, "estimee_le": time.time(), "duree_s": round(time.time() - debut, 1)}
+    ecrire_json(FICHIER_ESTIMATION, fiche)
+    return fiche
 
 
 def regles() -> list[dict]:
@@ -464,7 +528,8 @@ async def _proposer(lance_par: str) -> dict:
     proposition = {"date": time.time(), "lance_par": lance_par, "appels": appels,
                    "catalogue_complet": bool(complet), "non_juges": len(a_juger),
                    "dossiers": propres, "erreur": None,
-                   "estimation": estimer(entrees, lire_regles(propres), age_ans(), time.time())}
+                   "estimation": await asyncio.to_thread(estimer, entrees, lire_regles(propres),
+                                                         age_ans(), time.time(), True)}
     ecrire_json(FICHIER_PROPOSITION, proposition)
     logger.info("NAS : tri proposé — %d règle(s) en %d appel(s)", len(propres), appels)
     return etat_proposition()

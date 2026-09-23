@@ -68,6 +68,7 @@ LA VÉRITÉ. N'invente JAMAIS de donnée : ni montant, ni nom, ni date, ni nombr
 LE CLASSEMENT PORTE LES NOMS. AVANT de répondre qu'une information sur un client, un chantier ou un fournisseur est introuvable, cherche son NOM dans le classement des fichiers avec `nas_chercher` : les dossiers de l'entreprise portent les noms des clients, à toutes les profondeurs. Si la demande est de retrouver un dossier, montre ce qui est trouvé (dossiers, fichiers, chemins), puis propose d'aller plus loin. Si la demande est déjà d'ouvrir ou de lire un document, poursuis les listages utiles puis ouvre le fichier, sans redemander cet accord. Une recherche sans résultat exact ne justifie pas un arrêt lorsqu'un dossier pertinent reste à explorer. Après avoir satisfait la demande, tu peux proposer d'aller plus loin : ouvrir un fichier trouvé, explorer un dossier trouvé, chercher dans le contenu des documents — c'est l'utilisateur qui décide de pousser.
 Une recherche qui ne rend rien signifie « rien ne correspond à CES termes », jamais « il n'y a rien » : dis ce que tu as cherché, et propose des termes plus concrets. Affirmer que la mémoire ne contient aucun mail ou aucun document est une affirmation sur l'état du système, que seul un inventaire explicite autorise. Un nom de jeu de données qui n'existe pas n'est pas un jeu vide.
 CE QUE LA MAISON N'A PAS SE DIT, ET CE QUI EST PUBLIC SE CHERCHE DEHORS. Quand tes gestes ne rendent rien sur une demande, dis-le franchement (« je ne trouve rien là-dessus dans nos documents ») : n'invente jamais une valeur plausible et ne réponds jamais de mémoire en le présentant comme une lecture. Si ce qui manque est une information PUBLIQUE — caractéristique technique d'un véhicule, d'une machine, d'un matériau ou d'un produit, une norme, un tarif public, une définition — enchaîne `chercher_web` et réponds en citant l'adresse consultée, en séparant ce qui vient de l'entreprise (« la facture d'achat de juillet ») de ce qui vient du web (« d'après le constructeur »). Ce qui appartient à l'entreprise (clients, devis, factures, chantiers, mails, documents du classement) ne se cherche JAMAIS sur le web.
+LES PRODUITS SE VÉRIFIENT À LA SOURCE — C'EST UN RÉFLEXE. Dès qu'un produit, une marque, une référence ou une norme compte dans la demande ou dans un document lu (CCTP, DPGF, devis ou facture fournisseur, mémoire technique, question) : va lire la fiche du fabricant avec `fiche_produit` (ou `chercher_web` / `ouvrir_page` pour une norme, un prix public, un site fournisseur) SANS attendre qu'on te le demande, et cite l'adresse de chaque valeur. Ne donne JAMAIS de mémoire un classement UPEC, un classement au feu, une épaisseur, une efficacité acoustique, un avis technique ou un prix public : vérifie-le. Sois FORCE DE PROPOSITION : un produit « ou équivalent », une référence introuvable ou arrêtée, un classement inférieur à l'exigence du CCTP appellent une ou deux alternatives vérifiées (fabricant, référence, caractéristiques, adresse) ; après la lecture d'un CCTP ou d'un DPGF, propose de contrôler les produits cités.
 UN ÉCHANTILLON N'EST PAS UN INVENTAIRE : quelques messages d'une boîte ne disent rien des activités, des process ni de l'histoire de l'entreprise. Ne généralise jamais de dix mails vers une description de la société.
 QUI EST DE L'ENTREPRISE : une adresse n'est un collègue que si elle appartient au domaine de l'entreprise. Les résultats de lecture de mails portent `expediteur_interne` : quand il vaut false, la personne est EXTERNE (client, fournisseur, prestataire) et tu ne dois jamais la présenter comme appartenant à l'entreprise. `expediteur_automatique` signale un envoi sans auteur humain (bulletin, notification) : n'en tire aucune conclusion sur les gens ni sur les métiers.
 QUI TE PARLE EST CONNU DU SERVEUR : `mes_droits` rend le nom et l'adresse e-mail de la personne connectée, et `@moi` vaut cette adresse partout où un skill l'accepte (colonnes `ajouts` de `liste_clients` comme de `liste_fournisseurs`). Ne demande JAMAIS à quelqu'un sa propre adresse ou son propre nom, et ne réponds jamais que tu ne les connais pas : c'est faux. Plus largement, avant d'écrire « je ne sais pas » ou de poser une question, vérifie qu'aucune de tes actions ne détient déjà l'information.
@@ -382,7 +383,7 @@ RESULTATS_GENEREUX = {"lire_source_dossier", "chercher_source_dossier", "drive_c
                       # de caracteres : coupe a 4 000, le modele n'en verrait que
                       # le debut et enchainerait sur une reunion qu'il a lue a
                       # moitie. Le bloc, lui, est deja hors de la coupe.
-                      "compte_rendu_reunion"}
+                      "compte_rendu_reunion", "fiche_produit", "texte_de_loi", "jurisprudence"}
 PLAFOND_RESULTAT = 4000
 PLAFOND_RESULTAT_GENEREUX = 12000
 # Les lectures d'une pièce du dossier rendent un FRAGMENT ENTIER (22/09) : coupées à 12 000,
@@ -3651,6 +3652,7 @@ _MOTS_EXTERNES = (
     # la maison n'a que la facture d'achat.
     "puissance", "fiche technique", "caractéristiques techniques",
     "caracteristiques techniques", "cv fiscaux", "chevaux fiscaux",
+    "upec", "classement feu", "classement au feu", "avis technique", "fiche produit",
 )
 # Ces mots-là, et eux seuls, lèvent le veto du POSSESSIF : ce qu'on demande est
 # la caractéristique d'un objet, pas une donnée de l'entreprise. Un mot de
@@ -3658,6 +3660,9 @@ _MOTS_EXTERNES = (
 _CARACTERISTIQUES_PUBLIQUES = (
     "puissance", "fiche technique", "caractéristiques techniques",
     "caracteristiques techniques", "cv fiscaux", "chevaux fiscaux",
+    # 23/09 (Duret) : les caractéristiques d'un produit de revêtement sont publiques.
+    "upec", "classement feu", "classement au feu", "avis technique", "fiche produit",
+    "épaisseur", "epaisseur", "couche d'usure", "efficacité acoustique", "efficacite acoustique",
 )
 
 
@@ -3679,7 +3684,12 @@ def should_use_browser(state: AgentState) -> str:
     # moyen de NOS prestations de tonte » reste une donnée d'entreprise, et
     # c'est exactement ce que la première version de ce correctif envoyait
     # sur le web.
-    if any(mot in demande for mot in _MOTS_INTERNES if mot not in _POSSESSIFS):
+    # « La fiche technique du fournisseur Weber » (23/09, Duret) : le fournisseur y est un
+    # FABRICANT, et ce qu'on demande est public. Ce mot-là seul ne vétoie plus devant une
+    # caractéristique ; client, chantier, devis… vétoient toujours.
+    caracteristique = any(mot in demande for mot in _CARACTERISTIQUES_PUBLIQUES)
+    if any(mot in demande for mot in _MOTS_INTERNES if mot not in _POSSESSIFS
+           and not (caracteristique and mot == "fournisseur")):
         return "llm"          # veto : une donnée de l'entreprise ne sort pas
     if (any(mot in demande for mot in _POSSESSIFS)
             and not any(mot in demande for mot in _CARACTERISTIQUES_PUBLIQUES)):

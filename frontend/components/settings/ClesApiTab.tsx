@@ -24,6 +24,8 @@ const LIBELLES: Record<string, { nom: string; role: string }> = {
   groq_api_key: { nom: "Groq", role: "Transcription de la voix (gratuit) et repli rapide" },
   anthropic_api_key: { nom: "Anthropic", role: "Vision et raisonnement (optionnel)" },
   google_api_key: { nom: "Google AI", role: "Embeddings de la mémoire d'entreprise" },
+  piste_client_id: { nom: "PISTE — identifiant (client ID)", role: "Textes de loi (Légifrance) et jurisprudence (Judilibre)" },
+  piste_client_secret: { nom: "PISTE — secret (client secret)", role: "Le secret de la même application PISTE" },
 }
 
 // LA DATE DE DÉPART DES INDICATEURS.

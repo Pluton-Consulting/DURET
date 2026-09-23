@@ -94,9 +94,11 @@ PAR_SKILL: dict[str, list[str]] = {
                              "Résume-moi ce document"],
     "nas_chercher":         ["Ouvre le premier fichier",
                              "Résume-moi ce document"],
-    "nas_ouvrir":           ["Résume-moi ce document",
+    # 23/09 : un CCTP, un DPGF ou un devis fournisseur cite des produits — la
+    # vérification à la source se propose d'elle-même.
+    "nas_ouvrir":           ["Vérifie les fiches techniques des produits cités",
                              "Sors les quantités de ce document"],
-    "nas_lire":             ["Résume-moi ce document",
+    "nas_lire":             ["Vérifie les fiches techniques des produits cités",
                              "Sors les quantités de ce document"],
     "nas_lire_lot":         ["Fais-en une synthèse", "Compare-les"],
     "nas_apercu":           ["Ouvre-le en entier", "Résume-moi ce document"],
@@ -109,6 +111,8 @@ PAR_SKILL: dict[str, list[str]] = {
     # ── Web ─────────────────────────────────────────────────────────────
     "chercher_web":         ["Ouvre le premier résultat",
                              "Compare avec nos prix observés"],
+    "fiche_produit":        ["Propose deux équivalents vérifiés",
+                             "Compare avec l'exigence du CCTP"],
     "ouvrir_page":          ["Compare avec nos prix observés",
                              "Retiens cette information"],
     "naviguer":             ["Compare avec nos prix observés",

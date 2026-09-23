@@ -50,6 +50,13 @@ _AFFIRME_UN_ACTE = re.compile(
     r"vous (?:le|la|les) (?:trouverez|retrouverez))\b", re.I)
 
 
+# Une caractéristique de produit ou une norme affirmée : même sans geste, cela se prouve
+# (23/09, Duret). Le motif ne JUGE pas : il dit seulement qu'il y a quelque chose à relire.
+_AFFIRME_UNE_CARACTERISTIQUE = re.compile(
+    r"\bU\s?\d\s?P\s?\d\s?E\s?\d|\b[A-E]1?fl\s?-?\s?s\s?[12]\b|\b\d{1,2}\s?dB\b|avis technique|"
+    r"classement (?:au feu|upec|d.usage)|couche d.usure|\bDTU\s?\d", re.I)
+
+
 def _sans_accent(texte: str) -> str:
     import unicodedata
     return unicodedata.normalize("NFKD", texte or "").encode("ascii", "ignore").decode()
@@ -59,7 +66,8 @@ def a_verifier(reponse_visible: str, a_agi: bool, deja_verifie: bool, en_attente
     """Faut-il relire cette réponse avant de l'afficher ?"""
     if deja_verifie or en_attente or not (reponse_visible or "").strip():
         return False
-    return a_agi or bool(_AFFIRME_UN_ACTE.search(_sans_accent(reponse_visible)))
+    return (a_agi or bool(_AFFIRME_UN_ACTE.search(_sans_accent(reponse_visible)))
+            or bool(_AFFIRME_UNE_CARACTERISTIQUE.search(reponse_visible)))
 
 
 def consigne(demande: str, journal: str, resultats: str, reponse: str,
@@ -92,6 +100,11 @@ def consigne(demande: str, journal: str, resultats: str, reponse: str,
         "bout dans ce tour — la règle de la maison est d'ESSAYER D'ABORD : nomme ce geste dans "
         "`action_manquante`. (Un geste tenté et en échec, ou une information qu'aucun geste ne "
         "donne, ne se relève pas.)\n"
+        "7. une CARACTÉRISTIQUE DE PRODUIT (classement UPEC, classement au feu, épaisseur, "
+        "efficacité acoustique, avis technique, classement d'usage), une exigence de NORME ou un "
+        "PRIX PUBLIC affirmés sans qu'aucun résultat de ce tour ni le contexte ne les donne : ils "
+        "viennent de la mémoire du modèle, et la maison exige la source — nomme `fiche_produit` "
+        "(ou `chercher_web` pour une norme ou un prix) dans `action_manquante`.\n"
         "Ne relève PAS : le style, le ton, la longueur, les suggestions, une proposition de "
         "suite qui va AU-DELÀ de ce qui était demandé, une question de clarification, ce qui concerne des tours PRÉCÉDENTS et que "
         "rien ici ne dément. Dans le doute, le verdict est « ok ». Si une source est signalée "

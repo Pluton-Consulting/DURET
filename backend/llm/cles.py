@@ -52,6 +52,12 @@ CLES_CONNUES = (
     "google_oauth_client_id",
     "google_oauth_client_secret",
     "ollama_cloud_api_key",
+    # LE PORTAIL DES API DE L'ÉTAT, PISTE (23/09, Duret) : Légifrance et Judilibre, gratuits
+    # après inscription. L'identifiant et le secret de l'application ; l'environnement
+    # (« production » par défaut, « sandbox ») ne s'affiche pas.
+    "piste_client_id",
+    "piste_client_secret",
+    "piste_environnement",
     "longcat_api_key",
     "deepseek_api_key",
     "openrouter_api_key",
@@ -64,7 +70,8 @@ CLES_HORS_ECRAN = frozenset({"mail_imap_user", "mail_imap_password",
                              *(f"mail_prive_{r}_{c}" for r in (1, 2)
                                for c in ("user", "password", "libelle", "imap_host", "smtp_host")),
                              "google_sa_json", "gmail_domain", "google_admin_subject",
-                             "google_oauth_client_id", "google_oauth_client_secret"})
+                             "google_oauth_client_id", "google_oauth_client_secret",
+                             "piste_environnement"})
 DUREE_CACHE_S = 30
 
 _CACHE: dict[str, str] = {}

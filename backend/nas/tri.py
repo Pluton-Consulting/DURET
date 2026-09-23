@@ -41,6 +41,7 @@ Fonctions pures d'abord (le banc les exécute), puis la proposition, asynchrone.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -82,6 +83,17 @@ def _nu(chemin: str) -> str:
     return "".join(ch for ch in c if not unicodedata.combining(ch)).lower().rstrip("/")
 
 
+# LA FORME NORMALISÉE D'UNE RÈGLE SE CALCULE UNE FOIS (23/09, API figée 7 min) :
+# `decision_du_chemin` la recalculait pour CHAQUE fichier — catalogue entier ×
+# centaines de règles, chacune passant par normaliser + NFKD. L'estimation de
+# Paramètres → Synchronisations, appelée dans la boucle principale, a tenu le
+# processeur à 100 % et toute l'application a répondu « NetworkError ». Les
+# chemins des règles sont peu nombreux et reviennent sans cesse : on les garde.
+@functools.lru_cache(maxsize=8192)
+def _nu_regle(chemin: str) -> str:
+    return _nu(chemin)
+
+
 def lire_regles(brut) -> list[dict]:
     """Le réglage stocké (JSON) → règles propres. Une décision inconnue est
     ÉCARTÉE (pas ramenée à « ignorer ») : ici une faute ne ferme rien de grave,
@@ -110,7 +122,7 @@ def decision_du_chemin(chemin: str, regles: list[dict], defaut: str = DECISION_D
     vise = _nu(chemin)
     retenue, longueur = None, -1
     for r in regles:
-        base = _nu(r["chemin"])
+        base = _nu_regle(r["chemin"])
         if (vise == base or vise.startswith(base + "/")) and len(base) > longueur:
             retenue, longueur = r["decision"], len(base)
     return retenue or defaut

@@ -61,7 +61,9 @@ async def lire(current_user: User = Depends(get_current_user)):
     return {
         "regles": regles, "age_ans": tri.age_ans(),
         "proposition": tri.etat_proposition(),
-        "estimation": tri.estimer(cat, regles, tri.age_ans(), time.time()) if cat else None,
+        # Hors de la boucle principale : sur un gros catalogue, ce calcul occupe
+        # le processeur des secondes durant et figeait TOUTE l'API (23/09).
+        "estimation": (await asyncio.to_thread(tri.estimer, cat, regles, tri.age_ans(), time.time())) if cat else None,
         "catalogue": _CATALOGUE.get("etat"),
         "ocr_differe": len(tri.ocr_differe()),
         # Les fichiers écartés et POURQUOI (16/09, audit D-27) : un « sans

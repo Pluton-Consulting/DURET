@@ -86,7 +86,7 @@ skills = (BACKEND / "mail" / "skills.py").read_text(encoding="utf-8")
 verifier("le skill transmet recherche et avant à lire_boite", "recherche=recherche, avant=avant" in skills)
 verifier("alias acceptés (mots, contient, mots_cles, query)",
          all(f'data.get("{a}")' in skills for a in ("mots", "contient", "mots_cles", "query")))
-verifier("limite 25 d'office dès qu'on cherche ou qu'on pagine", "25 if (_periode or recherche or avant) else 10" in skills)
+verifier("limite 25 d'office dès qu'on cherche ou qu'on pagine", "25 if (_periode or recherche or avant or non_lus) else 10" in skills)
 proto = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
 verifier("le catalogue déclare recherche, objet et avant en optionnels",
          all('"%s"' % k in proto[proto.index('"lire_mails": ('):proto.index('"lire_mails": (') + 3500] for k in ("recherche", "objet", "avant")))

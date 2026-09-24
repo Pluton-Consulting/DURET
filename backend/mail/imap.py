@@ -378,7 +378,8 @@ def _date_imap(d: Optional[datetime]) -> str:
 _DANS_L_OBJET = re.compile(r"^\s*(?:objet|sujet|subject)\s*:\s*", re.I)
 
 
-def _criteres(depuis: Optional[datetime], recherche: Optional[str], avant: Optional[datetime]):
+def _criteres(depuis: Optional[datetime], recherche: Optional[str], avant: Optional[datetime],
+              non_lus: bool = False):
     """Les critères IMAP SEARCH : (critères, texte cherché ou None).
 
     `recherche` porte sur objet ET corps (TEXT) ; préfixée « objet: », elle ne
@@ -389,6 +390,11 @@ def _criteres(depuis: Optional[datetime], recherche: Optional[str], avant: Optio
     (« 'ascii' codec can't encode character '\\xe9' » — la boîte devenait
     inconsultable). IMAP ne connaît que la journée pour les dates, comme Gmail."""
     parts = []
+    # LES NON LUS SE FILTRENT CÔTÉ SERVEUR (24/09) : « affiche mes mails non lus »
+    # relisait les 25 plus récents et n'en gardait que les non lus — 36 non lus, 4
+    # montrés. UNSEEN rend exactement ceux-là, tous, quel que soit leur nombre.
+    if non_lus:
+        parts.append("UNSEEN")
     if depuis:
         parts += ["SINCE", _date_imap(depuis)]
     if avant:
@@ -528,7 +534,7 @@ def _charger_apercus(client, uids):
 def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = None,
            recherche: Optional[str] = None, avant: Optional[datetime] = None,
            longueur_apercu: int = 160, curseur: Optional[str] = None,
-           extra: Optional[dict] = None) -> tuple[list[dict], Optional[int]]:
+           extra: Optional[dict] = None, non_lus: bool = False) -> tuple[list[dict], Optional[int]]:
     """(fiches des `limite` plus récents, nombre total de correspondances).
 
     `extra`, s'il est donné, reçoit `non_lus` : le nombre EXACT de messages non lus du
@@ -544,7 +550,7 @@ def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = N
                 extra["non_lus"] = len((brut[0] or b"").split()) if statut == "OK" else None
             except Exception as e:  # noqa: BLE001 — un compte absent n'empêche pas la lecture
                 logger.info("IMAP : compte des non lus indisponible (%s)", str(e)[:80])
-        uids = _uids(client, _criteres(depuis, recherche, avant))
+        uids = _uids(client, _criteres(depuis, recherche, avant, non_lus))
         _, validite_brute=client.response('UIDVALIDITY')
         validite=(validite_brute[0] or b'').decode() if validite_brute else ''
         if curseur:
@@ -570,6 +576,70 @@ def lister(boite: str, dossier: str, limite: int, depuis: Optional[datetime] = N
             if validite.isdigit():fiche['curseur_suivant']=f'imap:{validite}:{uid.decode()}'
             fiches.append(fiche)
         return fiches, total
+    finally:
+        try:
+            client.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _code_dossier(nom: str) -> str:
+    return '"' + utf7_encoder(nom).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def deplacer(boite: str, identifiants: list[str], dossier_cible: str, creer: bool = True) -> dict:
+    """DÉPLACE des messages (« INBOX|123 ») dans un dossier de la boîte (24/09).
+
+    Le classement que Damien demandait (« associe chaque mail à un dossier, puis
+    classe-les ») n'avait aucun geste : rien ne savait ÉCRIRE dans la boîte. Le
+    dossier cible est créé s'il manque (`creer`). Gmail et les serveurs modernes
+    savent MOVE (RFC 6851) ; sinon COPY, puis le drapeau Deleted et EXPUNGE sur l'origine.
+    Chaque message part ou échoue SÉPARÉMENT : un identifiant périmé n'arrête
+    pas les autres, et le résultat dit lesquels."""
+    client = _connexion(boite)
+    deplaces, echecs, cree = [], [], False
+    try:
+        statut, lignes = client.list()
+        existants = {nom for _, nom in analyser_list(lignes)} if statut == "OK" else set()
+        if dossier_cible not in existants:
+            if not creer:
+                raise RuntimeError(f"dossier « {dossier_cible} » introuvable")
+            statut, _ = client.create(_code_dossier(dossier_cible))
+            if statut != "OK":
+                raise RuntimeError(f"le dossier « {dossier_cible} » n'a pas pu être créé")
+            cree = True
+        cible = _code_dossier(dossier_cible)
+        peut_move = "MOVE" in {str(c).upper() for c in (client.capabilities or ())}
+        par_origine: dict[str, list[tuple[str, str]]] = {}
+        for ident in identifiants:
+            src, _, uid = str(ident).partition("|")
+            if not uid:
+                src, uid = "INBOX", src
+            par_origine.setdefault(src, []).append((ident, uid))
+        for src, lot in par_origine.items():
+            statut, _ = client.select(_code_dossier(src))     # en écriture, cette fois
+            if statut != "OK":
+                echecs += [(ident, f"dossier d'origine « {src} » introuvable") for ident, _ in lot]
+                continue
+            for ident, uid in lot:
+                try:
+                    if peut_move:
+                        statut, _ = client.uid("MOVE", uid, cible)
+                    else:
+                        statut, _ = client.uid("COPY", uid, cible)
+                        if statut == "OK":
+                            statut, _ = client.uid("STORE", uid, "+FLAGS", r"(\Deleted)")
+                    if statut != "OK":
+                        raise RuntimeError("refusé par le serveur")
+                    deplaces.append(ident)
+                except Exception as e:  # noqa: BLE001 — un message ne bloque pas les autres
+                    echecs.append((ident, str(e)[:120]))
+            if not peut_move:
+                try:
+                    client.expunge()
+                except Exception:  # noqa: BLE001
+                    pass
+        return {"deplaces": deplaces, "echecs": echecs, "dossier_cree": cree}
     finally:
         try:
             client.logout()

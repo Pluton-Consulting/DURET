@@ -940,7 +940,7 @@ DUREE_INVENTAIRE_S = 1800
 _INVENTAIRES: dict = {}
 
 
-def _cle_inventaire(user, boite: str, dossier: str, depuis) -> tuple:
+def _cle_inventaire(user, boite: str, dossier: str, depuis, non_lus: bool = False) -> tuple:
     # LA PÉRIODE PAR SON JOUR DE DÉBUT, PAS PAR SON ÉCRITURE (22/09, Duret, prompts 5 et 6) :
     # « 7j », « semaine », « les 7 derniers jours » désignent la même liste ; rangée sous le
     # texte exact, elle n'était retrouvée que par qui l'écrivait à l'identique.
@@ -953,7 +953,8 @@ def _cle_inventaire(user, boite: str, dossier: str, depuis) -> tuple:
     except Exception:  # noqa: BLE001 — une période illisible garde son texte
         pass
     return (str(getattr(user, "id", "") or ""), str(boite or "").lower(),
-            "envoyes" if str(dossier or "").lower().startswith("env") else "recus", periode)
+            "envoyes" if str(dossier or "").lower().startswith("env") else "recus", periode,
+            "non_lus" if non_lus else "")
 
 
 def _inventaire_retenu(cle: tuple):
@@ -1156,7 +1157,8 @@ async def _livrer_inventaire(inventaire: dict, user, *, classer: bool, fichier: 
         return base + [" ".join(str(m.get("apercu") or "").split())[:200]]
     lignes = [_ligne(m) for m in messages]
     periode = str(inventaire.get("periode_depuis") or "")[:10]
-    titre = f"Mails reçus depuis le {periode[8:10]}/{periode[5:7]}/{periode[:4]}" if len(periode) == 10 else "Mails de la période"
+    titre = (f"Mails reçus depuis le {periode[8:10]}/{periode[5:7]}/{periode[:4]}" if len(periode) == 10
+             else "Mails non lus" if inventaire.get("non_lus") else "Mails de la période")
     blocs = [{"type": "table", "titre": f"{titre} ({len(lignes)})", "columns": entetes, "rows": lignes}]
     par_categorie = []
     if classer:
@@ -1208,7 +1210,11 @@ async def _livrer_inventaire(inventaire: dict, user, *, classer: bool, fichier: 
 
 # L'inventaire d'une période : jusqu'à 250 messages en un geste (comme `check_mails`),
 # avec un extrait court — le compte et la liste priment, `lire_mail` ouvre le détail.
-MAX_INVENTAIRE_MAILS = 400
+# LA QUANTITÉ N'EST PAS UNE QUESTION (24/09, Noa) : un ou mille, la liste se fait.
+# Mille messages à 110 caractères d'extrait tiennent dans un résultat d'inventaire
+# (plafond 190 000) ; au-delà, la suite se lit par `curseur`, et c'est DIT.
+MAX_INVENTAIRE_MAILS = 1000
+PAGE_INVENTAIRE = 50
 # Au-delà de ce rang, l'extrait se resserre : quatre cents messages doivent tenir dans UN résultat
 # (18/09 : « mes mails des 30 derniers jours » = 294 messages, la lecture s'arrêtait à 250).
 RANG_EXTRAIT_COURT = 250
@@ -1249,20 +1255,30 @@ async def lire_mails(data: dict, user) -> dict:
     # pagination complète est réservée à une demande explicite d'inventaire.
     exhaustif = bool(data.get("exhaustif") or data.get("tous") or data.get("toutes")
                      or data.get("pour_tous"))
+    # LES NON LUS (24/09) : « affiche mes mails non lus » = TOUS les non lus, filtrés par le
+    # serveur (UNSEEN), pas les non lus parmi les 25 derniers. C'est une liste : exhaustive.
+    non_lus = bool(data.get("non_lus") or data.get("non_lu") or data.get("unread")
+                   or str(data.get("lus") or "").strip().lower() in ("false", "non", "0"))
+    exhaustif = exhaustif or non_lus
     # Un Excel ou un classement de « tous les mails » EST un inventaire complet.
     veut_fichier = bool(data.get("fichier") or data.get("excel"))
     veut_classement = bool(data.get("classer") or data.get("categories"))
     exhaustif = exhaustif or veut_fichier or veut_classement
     try:
-        limite = int(data.get("limite") or (25 if (_periode or recherche or avant) else 10))
+        limite = int(data.get("limite") or (25 if (_periode or recherche or avant or non_lus) else 10))
     except (TypeError, ValueError):
-        limite = 25 if (_periode or recherche or avant) else 10
+        limite = 25 if (_periode or recherche or avant or non_lus) else 10
+    if exhaustif:
+        limite = max(limite, PAGE_INVENTAIRE)
     depuis = data.get("depuis") or data.get("periode") or data.get("jours")
     options = {"classer": veut_classement, "fichier": veut_fichier, "categories": data.get("categories"),
                "priorites": data.get("priorites") or data.get("priorités") or data.get("en_tete"),
                "surlignage": data.get("surlignage") or data.get("couleur")}
-    cle_inv = _cle_inventaire(user, boite, data.get("dossier") or "recus", depuis)
-    retenu = (None if (data.get("rafraichir") or recherche or avant or data.get("curseur") or not depuis)
+    cle_inv = _cle_inventaire(user, boite, data.get("dossier") or "recus", depuis, non_lus=non_lus)
+    # Un inventaire se retient 30 min, avec ou sans période — « classe-les » au tour suivant
+    # ne relit pas la boîte (24/09 : la garde `not depuis` excluait les non lus).
+    retenu = (None if (data.get("rafraichir") or recherche or avant or data.get("curseur")
+                       or not (depuis or non_lus))
               else _inventaire_retenu(cle_inv))
     if retenu and exhaustif:
         import copy, time as _t
@@ -1280,40 +1296,43 @@ async def lire_mails(data: dict, user) -> dict:
                                    recherche=recherche, avant=avant,
                                    # `apercu` : la longueur d'extrait voulue par un
                                    # appelant qui connaît son budget (check_mails).
-                                   apercu=data.get("apercu") or (APERCU_INVENTAIRE if exhaustif and depuis else None),
-                                   curseur=data.get("curseur"),
+                                   apercu=data.get("apercu") or (APERCU_INVENTAIRE if exhaustif else None),
+                                   curseur=data.get("curseur"), non_lus=non_lus,
                                    # Les dossiers ouverts à CE profil (11/09).
                                    autorises=autorises)
         # UN INVENTAIRE EST UN TRAVAIL DE SKILL, PAS UNE BOUCLE DE MODÈLE (17/09, Symbiose ;
         # 18/09 chez Duret : « mets-moi dans un Excel tous les mails de la semaine » = sept
         # `check_mails` enchaînés par le modèle, puis 171 lignes recopiées DEUX fois à la main).
         # `exhaustif` sur une PÉRIODE parcourt ici toutes les pages, par curseur.
-        if not (exhaustif and depuis and not recherche and not avant and not data.get("curseur")):
+        # Un inventaire vaut pour une PÉRIODE ou pour les NON LUS (24/09) : sans l'un ni
+        # l'autre, « tous les mails » serait la boîte entière (83 620 chez Duret).
+        if not (exhaustif and (depuis or non_lus) and not recherche and not avant and not data.get("curseur")):
             return premier
         messages = list(premier.get("messages") or [])
         suivant, vus = premier.get("curseur_suivant"), set()
         while suivant and suivant not in vus and len(messages) < MAX_INVENTAIRE_MAILS:
             vus.add(suivant)
             page = await lire_boite(boite, data.get("dossier") or "recus",
-                                    min(25, MAX_INVENTAIRE_MAILS - len(messages)), depuis=depuis,
+                                    min(PAGE_INVENTAIRE, MAX_INVENTAIRE_MAILS - len(messages)), depuis=depuis,
                                     apercu=(APERCU_INVENTAIRE if len(messages) < RANG_EXTRAIT_COURT
                                             else APERCU_INVENTAIRE_COURT),
-                                    curseur=suivant, autorises=autorises)
+                                    curseur=suivant, autorises=autorises, non_lus=non_lus)
             messages.extend(page.get("messages") or [])
             suivant = page.get("curseur_suivant")
         total = premier.get("total_periode")
         complet = not suivant and (total is None or len(messages) >= int(total))
-        inventaire = {**premier, "messages": messages, "nombre": len(messages),
+        inventaire = {**premier, "messages": messages, "nombre": len(messages), "non_lus": non_lus or None,
                 "tronque": not complet, "curseur_suivant": suivant, "inventaire": True,
                 "pour_continuer": (None if complet else
                                    f"Rappelle lire_mails avec les mêmes filtres et curseur={suivant}."),
-                "compte": (f"{total if total is not None else len(messages)} message(s) sur la période ; "
+                "compte": (f"{total if total is not None else len(messages)} message(s) "
+                           + ("non lu(s)" if non_lus else "sur la période") + " ; "
                            f"{len(messages)} détaillé(s) ci-dessous"
                            + (", c'est-à-dire TOUS." if complet else " — le reste suit par `curseur`.")),
                 # Les comptes PAR EXPÉDITEUR sont calculés ici : « qui m'écrit le plus » ne demande
                 # ni classement ni relecture — et un résultat partiel (plafond) dit sur combien.
                 "par_expediteur": _comptes_par_expediteur(messages),
-                "a_faire": (("La liste porte TOUS les messages de la période : traite-les TOUS, sans "
+                "a_faire": (("La liste porte TOUS les messages demandés : traite-les TOUS, sans "
                              "« etc. » ni échantillon. " if complet else
                              f"Les {len(messages)} plus récents sur {total} sont lus (plafond) : réponds sur ceux-là en le disant, "
                              "NE relis PAS avec `rafraichir`. ")

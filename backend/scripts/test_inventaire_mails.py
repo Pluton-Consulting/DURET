@@ -41,7 +41,7 @@ appels = []
 
 
 async def lire_boite(boite, dossier="recus", limite=10, depuis=None, recherche=None, avant=None,
-                     apercu=None, curseur=None, exhaustif=False, autorises=None):
+                     apercu=None, curseur=None, exhaustif=False, autorises=None, non_lus=False):
     debut = int(str(curseur)[5:]) if str(curseur or "").startswith("saut:") else 0
     appels.append((debut, limite, apercu))
     page = [dict(m) for m in BOITE[debut:debut + limite]]
@@ -74,7 +74,7 @@ sys.modules["mail.lecture"] = types.SimpleNamespace(lire_boite=lire_boite, depui
 sys.modules["mail.authorization"] = types.SimpleNamespace(dossiers_autorises=dossiers_autorises)
 sys.modules.setdefault("mail", types.ModuleType("mail"))
 esp2 = {"_boite_a_lire": _a_lire, "verifier_acces": _acces, "boite_par_defaut": _defaut, "boites_visibles": _visibles,
-        "MailSkillError": _Erreur, "logger": logging.getLogger("banc"), "MAX_INVENTAIRE_MAILS": 400, "APERCU_INVENTAIRE": 200,
+        "MailSkillError": _Erreur, "logger": logging.getLogger("banc"), "MAX_INVENTAIRE_MAILS": 1000, "PAGE_INVENTAIRE": 50, "APERCU_INVENTAIRE": 200,
         "RANG_EXTRAIT_COURT": 250, "APERCU_INVENTAIRE_COURT": 110}
 exec(fonctions(sk, {"lire_mails"}), esp2)
 # La mémoire de l'inventaire et les priorités vivent à côté du skill.
@@ -93,8 +93,8 @@ verifier("aucun doublon, aucun trou, l'ordre est tenu", [m["ref"] for m in r["me
 verifier("le résultat dit que c'est TOUT, et de ne pas rappeler le geste",
          r["tronque"] is False and r["curseur_suivant"] is None and "TOUS" in r["compte"] and "Ne rappelle pas" in (r.get("a_faire") or ""))
 verifier("il se déclare inventaire (c'est ce qui lui ouvre le grand plafond de résultat)", r.get("inventaire") is True)
-verifier("quatre pages ont été lues côté serveur, avec l'extrait court de l'inventaire",
-         [a[0] for a in appels] == [0, 25, 50, 75] and all(a[2] == 200 for a in appels), str(appels))
+verifier("deux pages de 50 ont été lues côté serveur, avec l'extrait court de l'inventaire",
+         [a[0] for a in appels] == [0, 50] and all(a[2] == 200 for a in appels), str(appels))
 
 verifier("les comptes PAR EXPÉDITEUR sont calculés par le serveur (« qui m'a écrit le plus »)",
          r["par_expediteur"][0]["nombre"] == 97 and r["par_expediteur"][0]["expediteur"] == "client@exemple.fr" and len(r["par_expediteur"][0]["objets"]) == 3
@@ -102,12 +102,12 @@ verifier("les comptes PAR EXPÉDITEUR sont calculés par le serveur (« qui m'a 
 appels.clear()
 r2 = asyncio.run(lire_mails({"depuis": "7j"}, user))
 verifier("SANS `exhaustif`, une seule page comme avant (rapide)", len(appels) == 1 and r2["nombre"] == 25 and not r2.get("inventaire"))
-BOITE.extend({"ref": f"x{i}", "objet": "x", "de": "a@b.fr", "date": "2026-09-10"} for i in range(400))
+BOITE.extend({"ref": f"x{i}", "objet": "x", "de": "a@b.fr", "date": "2026-09-10"} for i in range(1000))
 appels.clear()
 r3 = asyncio.run(lire_mails({"depuis": "30j", "tous": True}, user))
-verifier("au plafond, la consigne dit sur combien on répond et interdit `rafraichir`", "NE relis PAS" in r3["a_faire"] and "400 plus récents" in r3["a_faire"], r3["a_faire"][:120])
-verifier("le parcours est BORNÉ (400), et au-delà la suite est DITE, jamais tue",
-         r3["nombre"] == 400 and r3["tronque"] is True and r3["curseur_suivant"] == "saut:400" and "curseur=saut:400" in (r3.get("pour_continuer") or ""))
+verifier("au plafond, la consigne dit sur combien on répond et interdit `rafraichir`", "NE relis PAS" in r3["a_faire"] and "1000 plus récents" in r3["a_faire"], r3["a_faire"][:120])
+verifier("le parcours est BORNÉ (1 000), et au-delà la suite est DITE, jamais tue",
+         r3["nombre"] == 1000 and r3["tronque"] is True and r3["curseur_suivant"] == "saut:1000" and "curseur=saut:1000" in (r3.get("pour_continuer") or ""))
 verifier("au-delà du 250ᵉ message, l'extrait se resserre pour que tout tienne dans UN résultat",
          {a[2] for a in appels if a[0] < 250} == {200} and {a[2] for a in appels if a[0] >= 250} == {110}, str(sorted({(a[0] >= 250, a[2]) for a in appels})))
 

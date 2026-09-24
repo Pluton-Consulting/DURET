@@ -30,7 +30,7 @@ FAMILLES: dict[str, tuple[str, ...]] = {
               "courrier_entrant", "triage_email_entrant", "resume_fil_email", "redaction_email",
               "deposer_brouillon", "envoyer_email", "preparer_envois", "apprendre_style_email",
               "profil_style_email", "apprendre_signature", "ma_signature", "supprimer_signature",
-              "dossiers_mail"),
+              "dossiers_mail", "classer_mails"),
     "agenda": ("mon_agenda", "creneaux_agenda", "creer_rendez_vous"),
     "documents": ("creer_document", "ajouter_document", "terminer_document", "abandonner_document",
                   "produire_document", "reproduire_document", "enregistrer_trame", "utiliser_trame",

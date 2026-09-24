@@ -418,7 +418,7 @@ PREFER_OUTLOOK_TEXTE = 'outlook.body-content-type="text"'
 
 
 def _params_outlook(limite: int, depuis: Optional[datetime], recherche: Optional[str] = None,
-                    avant: Optional[datetime] = None) -> dict:
+                    avant: Optional[datetime] = None, non_lus: bool = False) -> dict:
     """Les paramètres OData d'une lecture Outlook — fonction PURE, testée au banc.
 
     Deux régimes que Graph ne laisse pas mélanger :
@@ -439,6 +439,8 @@ def _params_outlook(limite: int, depuis: Optional[datetime], recherche: Optional
             kql.append(f"received>={depuis.strftime('%Y-%m-%d')}")
         if avant:
             kql.append(f"received<{avant.strftime('%Y-%m-%d')}")
+        if non_lus:
+            kql.append("isread:false")
         return {"$top": limite, "$select": select, "$search": '"' + " AND ".join(kql) + '"'}
     params = {"$top": limite, "$orderby": "receivedDateTime desc", "$count": "true",
               "$select": select}
@@ -447,13 +449,15 @@ def _params_outlook(limite: int, depuis: Optional[datetime], recherche: Optional
         clauses.append(f"receivedDateTime ge {depuis.strftime('%Y-%m-%dT%H:%M:%SZ')}")
     if avant:
         clauses.append(f"receivedDateTime lt {avant.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+    if non_lus:
+        clauses.append("isRead eq false")
     if clauses:
         params["$filter"] = " and ".join(clauses)
     return params
 
 
 def _requete_gmail(depuis: Optional[datetime], recherche: Optional[str] = None,
-                   avant: Optional[datetime] = None) -> Optional[str]:
+                   avant: Optional[datetime] = None, non_lus: bool = False) -> Optional[str]:
     """La requête Gmail (`q`) — fonction PURE. Gmail cherche dans objet et corps
     par défaut ; `after:`/`before:` prennent une date à la journée, cohérente
     avec le départ à minuit de `depuis_quand`."""
@@ -465,6 +469,8 @@ def _requete_gmail(depuis: Optional[datetime], recherche: Optional[str] = None,
         parts.append(f"after:{depuis.strftime('%Y/%m/%d')}")
     if avant:
         parts.append(f"before:{avant.strftime('%Y/%m/%d')}")
+    if non_lus:
+        parts.append("is:unread")
     return " ".join(parts) or None
 
 
@@ -514,7 +520,7 @@ def _longueur_apercu(nombre: int, apercu=None) -> int:
 async def _lire_outlook(boite: str, dossier: str, limite: int,
                         depuis: Optional[datetime], recherche: Optional[str] = None,
                         avant: Optional[datetime] = None,
-                        apercu=None) -> tuple[list[dict], Optional[int]]:
+                        apercu=None, non_lus: bool = False) -> tuple[list[dict], Optional[int]]:
     import httpx
     from ingestion.connectors.outlook import _jeton
 
@@ -524,7 +530,7 @@ async def _lire_outlook(boite: str, dossier: str, limite: int,
     # rapatriant que les 25 premiers. Il exige l'en-tête ConsistencyLevel.
     url = f"https://graph.microsoft.com/v1.0/users/{boite}/mailFolders/{dossier}/messages"
     async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(url, params=_params_outlook(limite, depuis, recherche, avant),
+        r = await client.get(url, params=_params_outlook(limite, depuis, recherche, avant, non_lus),
                              headers={"Authorization": f"Bearer {jeton}",
                                       "ConsistencyLevel": "eventual",
                                       "Prefer": PREFER_OUTLOOK_TEXTE})
@@ -685,7 +691,7 @@ def _fiche_gmail(m: dict, boite: str, longueur_apercu: int, _entete, _texte_du_m
 async def _lire_gmail(boite: str, dossier: str, limite: int,
                       depuis: Optional[datetime], recherche: Optional[str] = None,
                       avant: Optional[datetime] = None,
-                      apercu=None) -> tuple[list[dict], Optional[int]]:
+                      apercu=None, non_lus: bool = False) -> tuple[list[dict], Optional[int]]:
     import asyncio
 
     def _travail() -> tuple[list[dict], Optional[int]]:
@@ -693,7 +699,7 @@ async def _lire_gmail(boite: str, dossier: str, limite: int,
         service = _service(boite)
         # Gmail filtre par requête, dans sa propre syntaxe. `after:` prend une
         # date à la journée — cohérent avec le départ à minuit de depuis_quand.
-        requete = _requete_gmail(depuis, recherche, avant)
+        requete = _requete_gmail(depuis, recherche, avant, non_lus)
         commun = {"userId": "me", "labelIds": [dossier]}
         if requete:
             commun["q"] = requete
@@ -794,12 +800,12 @@ async def _ouvrir_gmail(boite: str, identifiant: str) -> dict:
 async def _lire_imap(boite: str, dossier: str, limite: int,
                      depuis: Optional[datetime], recherche: Optional[str] = None,
                      avant: Optional[datetime] = None,
-                     apercu=None, curseur=None, extra=None) -> tuple[list[dict], Optional[int]]:
+                     apercu=None, curseur=None, extra=None, non_lus: bool = False) -> tuple[list[dict], Optional[int]]:
     import asyncio
     from mail import imap
     longueur = _longueur_apercu(limite, apercu)
     return await asyncio.to_thread(
-        imap.lister, boite, imap.dossier_imap(dossier), limite, depuis, recherche, avant, longueur, curseur, extra)
+        imap.lister, boite, imap.dossier_imap(dossier), limite, depuis, recherche, avant, longueur, curseur, extra, non_lus)
 
 
 async def _ouvrir_imap(boite: str, identifiant: str) -> dict:
@@ -813,7 +819,7 @@ async def _ouvrir_imap(boite: str, identifiant: str) -> dict:
 
 async def lire_boite(boite: str, dossier: str = "recus",
                      limite: int = 10, depuis=None, recherche=None, avant=None,
-                     apercu=None, autorises=None, curseur=None) -> dict:
+                     apercu=None, autorises=None, curseur=None, non_lus: bool = False) -> dict:
     """Derniers messages d'une boîte, lus en direct — et leur nombre.
 
     `dossier` : « recus » ou « envoyes ». `depuis` : une période (« 7j »,
@@ -851,11 +857,12 @@ async def lire_boite(boite: str, dossier: str = "recus",
     non_lus_dossier = None
     if nom == "outlook":
         messages, total = await _lire_outlook(boite, DOSSIERS["outlook"][cle], limite, debut,
-                                              recherche=mots, avant=borne, apercu=apercu)
+                                              recherche=mots, avant=borne, apercu=apercu, non_lus=non_lus)
     elif nom == "imap":
         extra_imap: dict = {}
         messages, total = await _lire_imap(boite, cle, limite, debut,
-                                           recherche=mots, avant=borne, apercu=apercu, curseur=curseur, extra=extra_imap)
+                                           recherche=mots, avant=borne, apercu=apercu, curseur=curseur, extra=extra_imap,
+                                           non_lus=non_lus)
         non_lus_dossier = extra_imap.get("non_lus")
         # UNE RECHERCHE NE S'ARRÊTE PAS À LA RÉCEPTION (17/09, Duret). « Le mail dont l'objet
         # est Maxime - Mémoire Technique » : zéro résultat — un filtre Gmail le range dans
@@ -880,7 +887,7 @@ async def lire_boite(boite: str, dossier: str = "recus",
                     break
     else:
         messages, total = await _lire_gmail(boite, DOSSIERS["gmail"][cle], limite, debut,
-                                            recherche=mots, avant=borne, apercu=apercu)
+                                            recherche=mots, avant=borne, apercu=apercu, non_lus=non_lus)
 
     internes = sum(1 for m in messages if m.get("expediteur_interne"))
     automatiques = sum(1 for m in messages if m.get("expediteur_automatique"))
@@ -903,6 +910,11 @@ async def lire_boite(boite: str, dossier: str = "recus",
     elif total is None:
         compte = (f"{len(messages)} messages lus ; le total de la boîte n'a pas pu être "
                   "obtenu du fournisseur.")
+    elif non_lus:
+        compte = (f"{total}{'+' if total >= MAX_COMPTE else ''} message(s) NON LU(S) dans ce dossier"
+                  + (f" depuis le {_jour_de_paris(debut)}" if debut else "")
+                  + (f", dont voici les {len(messages)} plus récents." if total > len(messages)
+                     else ", tous détaillés ci-dessous."))
     elif debut:
         compte = (f"{total}{'+' if total >= MAX_COMPTE else ''} message(s) reçu(s) depuis le "
                   f"{_jour_de_paris(debut)}"

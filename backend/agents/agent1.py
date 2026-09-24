@@ -3938,6 +3938,13 @@ def _apercu_avant_accord(skill: str, args: dict, texte: str) -> str:
             return ((texte or "Voici le message prêt à partir.").rstrip()
                     + "\n\nCe qui sera envoyé, tel quel :\n\n"
                     + "\n".join(lignes) + "\n\n" + corps)
+        if skill == "classer_mails":
+            # UN CLASSEMENT DE MAILS (24/09) : on approuve des DÉPLACEMENTS dans la
+            # boîte, mail par mail. Le tableau « mail → dossier » vient des
+            # arguments vérifiés par empreinte : ce qui est lu est ce qui sera fait.
+            from skills.classement_mails import bloc_du_classement
+            return ((texte or "Voici le classement que je propose.").rstrip()
+                    + "\n\n```ui\n" + _json.dumps(bloc_du_classement(args), ensure_ascii=False) + "\n```")
         if skill == "modifier_visuel" and args.get("image"):
             # LES CHANGEMENTS NE S'AFFICHENT PLUS (07/09) : `changements` est
             # écrit EN ANGLAIS, pour le moteur d'images. La carte d'accord

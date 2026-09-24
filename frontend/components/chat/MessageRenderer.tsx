@@ -6,6 +6,7 @@ import { MessageActions, MessageAction, MessageResponse } from "@/components/ai-
 import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion"
 import { ApercuDocument, formatDepuisNom, type FormatApercu } from "./ApercuDocument"
 import { BlocsEnPages } from "@/components/blocks/layout/BlocsEnPages"
+import BlocRedimensionnable from "@/components/chat/BlocRedimensionnable"
 import {
   QuoteCard, InvoiceCard, EmailCard, DocCard, DocApercu, SiteApercu, VisuelPaysager, FileCard, ContactCard, ProjectCard,
   ReponsesMail, CompteRendu,
@@ -511,12 +512,17 @@ export function MessageRenderer({ content, onAction, apiUrl, backendToken, derni
           return (
             <div key={i} className="sym-in">
               <BlocsEnPages blocs={tableaux.map((t) => t.block)}
-                            rendre={(b) => renderBlock(b, onAction, { apiUrl, backendToken, dernier })} />
+                            rendre={(b) => <BlocRedimensionnable>{renderBlock(b, onAction, { apiUrl, backendToken, dernier })}</BlocRedimensionnable>} />
             </div>
           )
         }
         const node = renderBlock(part.block, onAction, { apiUrl, backendToken, dernier })
-        return node ? <div key={i} className="sym-in">{node}</div> : null
+        if (!node) return null
+        // Les pastilles de suite et les badges ne se redimensionnent pas : ce sont
+        // des boutons, pas du contenu à lire. Tout le reste (tableaux, fiches,
+        // graphiques, images, aperçus) porte la poignée.
+        const fixe = ["quick_replies", "badge", "suggestions"].includes(String((part.block as any)?.type || ""))
+        return <div key={i} className="sym-in">{fixe ? node : <BlocRedimensionnable>{node}</BlocRedimensionnable>}</div>
       })}
       <ActionsReponse texte={texteSeul} />
     </div>

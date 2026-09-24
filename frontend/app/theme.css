@@ -349,3 +349,24 @@ button, a, .sym-tap { transition: background-color .2s ease, color .2s ease, tra
   .sym-fluide { max-width: 100% !important; }
   .sym-bulle { max-width: 88% !important; }
 }
+
+/* LES BLOCS DU CHAT SE REDIMENSIONNENT À LA MAIN (24/09). Poignée native au coin
+   bas-droit ; la largeur commune (--bloc-largeur) et la hauteur qui défile tiennent
+   tant qu'on n'a pas tiré ; ensuite l'enfant suit le cadre (`data-redim="1"`). */
+.sym-bloc-redim {
+  resize: both;
+  overflow: auto;
+  display: block;
+  width: min(var(--bloc-largeur), 100%);
+  max-width: 100%;
+  min-width: 220px;
+  min-height: 48px;
+  border-radius: var(--marque-radius-card-sm);
+}
+.sym-bloc-redim > * { max-width: 100% !important; box-sizing: border-box; }
+.sym-bloc-redim[data-redim="1"] { width: auto; }
+.sym-bloc-redim[data-redim="1"] > * { width: 100%; max-height: none !important; height: 100%; }
+.sym-bloc-redim::-webkit-resizer {
+  background: linear-gradient(135deg, transparent 55%, var(--marque-border) 55%, var(--marque-border) 70%, transparent 70%, transparent 80%, var(--marque-border) 80%);
+  border-bottom-right-radius: var(--marque-radius-card-sm);
+}

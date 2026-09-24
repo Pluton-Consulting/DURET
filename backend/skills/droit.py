@@ -96,6 +96,51 @@ ALIAS_SOURCES = {
     "convention collective": "conventions", "kali": "conventions",
 }
 
+# ── Les décisions déjà montrées, par personne ─────────────────────────
+# UN NUMÉRO RG N'EST PAS UNIQUE (24/09, fil de Damien). « 24/02543 » existe dans
+# chaque cour d'appel qui a ouvert un dossier à ce rang cette année-là : le tableau
+# montrait la décision RPSO (CA, 2e ch., 29/07/2026, id 6a6ae81a…) ; « ouvre la
+# décision 24/02543 » a fait chercher le NUMÉRO sur Judilibre, et le modèle a ouvert
+# 678f3830… — une ordonnance d'incompétence d'une AUTRE cour (10/01/2025), même RG,
+# sans rapport avec les sols. Le lien du tableau porte bien l'identifiant, mais un
+# numéro est ce qu'une personne écrit. Le geste retient donc les décisions qu'il a
+# montrées à chaque personne, et un numéro se résout D'ABORD parmi elles ; sinon
+# Judilibre est interrogé sur le numéro et seules les décisions qui le PORTENT
+# exactement sont retenues — plusieurs = elles sont rendues, le choix se demande,
+# il ne se devine pas.
+_NUMERO_RE = re.compile(r"^\d{2}[/-]\d{2}[.\d]*\d$")   # RG « 24/02543 », pourvoi « 19-24.001 »
+MAX_DECISIONS_VUES = 300
+_DECISIONS_VUES: dict[str, dict[str, dict]] = {}
+
+
+def est_un_numero(v) -> bool:
+    return bool(_NUMERO_RE.match(str(v or "").strip()))
+
+
+def _numero_nu(n) -> str:
+    return re.sub(r"[^0-9a-z]", "", str(n or "").lower())
+
+
+def _cle_personne(user) -> str:
+    return str(getattr(user, "id", "") or getattr(user, "email", "") or "")
+
+
+def retenir_decisions(user, lignes: list[dict]) -> None:
+    vues = _DECISIONS_VUES.setdefault(_cle_personne(user), {})
+    for l in lignes:
+        if l.get("id"):
+            vues.pop(l["id"], None)
+            vues[l["id"]] = l
+    while len(vues) > MAX_DECISIONS_VUES:
+        del vues[next(iter(vues))]
+
+
+def decisions_vues_par_numero(user, numero: str) -> list[dict]:
+    nu = _numero_nu(numero)
+    return [l for l in _DECISIONS_VUES.get(_cle_personne(user), {}).values()
+            if nu and _numero_nu(l.get("numero")) == nu]
+
+
 JURIDICTIONS = {"cassation": ["cc"], "appel": ["ca"], "toutes": ["cc", "ca"]}
 ALIAS_JURIDICTIONS = {
     "cc": "cassation", "cour de cassation": "cassation", "ca": "appel",
@@ -687,14 +732,68 @@ async def _lire_decision(ident: str, depart: Optional[int]) -> dict:
         "Réponds en CITANT la décision : juridiction, chambre, date, numéro de pourvoi, "
         "solution, et le lien. Ne prête à la décision que ce que son texte dit ; une "
         "décision tranche UN litige : dis si elle est publiée au Bulletin (portée) ou "
-        "d'espèce si tu le sais, sinon ne l'affirme pas. Termine en rappelant que c'est "
-        "une information, pas un conseil juridique.")
+        "d'espèce si tu le sais, sinon ne l'affirme pas. Si cette décision n'est PAS celle "
+        "annoncée plus haut (autre date, autre juridiction, autre affaire), dis-le en clair "
+        "au lieu de la présenter comme la même. Termine en rappelant que c'est une "
+        "information, pas un conseil juridique.")
     res["avertissement"] = AVERTISSEMENT
     return res
 
 
+async def _ouvrir_par_numero(numero: str, user, depart: Optional[int]) -> dict:
+    """Un numéro (RG « 24/02543 », pourvoi « 19-24.001 ») → LA décision, ou les candidates.
+
+    D'abord parmi les décisions montrées à cette personne (c'est de là que vient le
+    numéro qu'elle recopie) ; sinon Judilibre, en ne gardant que les décisions qui
+    PORTENT ce numéro — la recherche plein texte rend aussi celles qui le citent."""
+    from outils import piste
+    candidats = decisions_vues_par_numero(user, numero)
+    origine = "déjà montrée(s) dans cette conversation"
+    if not candidats:
+        params = {"query": numero, "operator": "and", "jurisdiction": ["cc", "ca"],
+                  "page_size": MAX_RESULTATS, "page": 0, "resolve_references": "true",
+                  "sort": "date", "order": "desc"}
+        try:
+            corps = await piste.judilibre("/search", params)
+        except piste.PisteErreur as e:
+            raise _erreur(e) from None
+        nu = _numero_nu(numero)
+        resultats = (corps if isinstance(corps, dict) else {}).get("results") or []
+        candidats = [ligne_de_decision(d) for d in resultats
+                     if isinstance(d, dict) and (_numero_nu(d.get("number")) == nu
+                                                 or any(_numero_nu(x) == nu for x in (d.get("numbers") or [])))]
+        origine = "trouvée(s) sur Judilibre"
+    if not candidats:
+        raise SkillError(f"Aucune décision ne porte le numéro {numero} sur Judilibre : vérifie le "
+                         "numéro, ou ouvre la décision par l'`id` de sa ligne (le lien du tableau).")
+    if len(candidats) == 1:
+        return await _lire_decision(candidats[0]["id"], depart)
+    return {
+        "source": "Judilibre (Cour de cassation)", "numero": numero, "total": len(candidats),
+        "candidats": candidats,
+        "bloc_ui": {"type": "table", "titre": f"Décisions portant le numéro {numero}",
+                    "columns": ["Date", "Juridiction", "Chambre", "N°", "Sommaire", "Lien"],
+                    "rows": [[l["date"], l["juridiction"], l["chambre"], l["numero"], l["sommaire"], l["lien"]]
+                             for l in candidats]},
+        "bloc_garanti": True,
+        "message_final": (f"{len(candidats)} décisions portent le numéro {numero} ({origine}) : "
+                          "un numéro RG n'est unique que dans sa juridiction."),
+        "a_faire": ("Plusieurs décisions portent ce numéro (chaque cour numérote ses propres "
+                    "dossiers) : NE devine pas. Si l'une d'elles est celle montrée plus haut dans la "
+                    "conversation (même date, même juridiction), ouvre-la avec son `id` ; sinon "
+                    "demande laquelle par une question à choix (boutons `quick_replies` : date + "
+                    "juridiction + chambre), sans en présenter une comme « la bonne »."),
+        "avertissement": AVERTISSEMENT,
+    }
+
+
 async def jurisprudence(data: dict, user) -> dict:
     ident = str(data.get("id") or data.get("decision") or "").strip()
+    numero = str(data.get("numero") or data.get("rg") or data.get("pourvoi") or data.get("num") or "").strip()
+    # Le modèle écrit volontiers `id: "24/02543"` : un numéro n'est pas un identifiant
+    # Judilibre (24 hexadécimaux) — c'était un 404 sec, suivi d'une recherche au hasard.
+    if ident and est_un_numero(ident):
+        numero, ident = ident, ""
     recherche = str(data.get("recherche") or data.get("requete") or data.get("question")
                     or data.get("mots") or "").strip()
     brut_depart = data.get("a_partir_de")
@@ -710,8 +809,11 @@ async def jurisprudence(data: dict, user) -> dict:
 
     if ident:
         return await _lire_decision(ident, depart)
+    if numero:
+        return await _ouvrir_par_numero(numero, user, depart)
     if not recherche:
-        raise SkillError("Dis ce qu'il faut chercher (`recherche`), ou donne l'`id` d'une décision.")
+        raise SkillError("Dis ce qu'il faut chercher (`recherche`), ou donne l'`id` d'une décision "
+                         "(ou son `numero`).")
 
     juridiction = _choix(data.get("juridiction"), JURIDICTIONS, ALIAS_JURIDICTIONS, "cassation")
     params: dict = {
@@ -745,6 +847,7 @@ async def jurisprudence(data: dict, user) -> dict:
         raise _erreur(e) from None
     corps = corps if isinstance(corps, dict) else {}
     lignes = [ligne_de_decision(d) for d in (corps.get("results") or []) if isinstance(d, dict)]
+    retenir_decisions(user, lignes)
     total = int(corps.get("total") or 0)
     res: dict = {"source": "Judilibre (Cour de cassation)", "recherche": recherche,
                  "juridiction": {"cassation": "Cour de cassation", "appel": "cours d'appel",
@@ -777,9 +880,11 @@ async def jurisprudence(data: dict, user) -> dict:
                                  f"`recherche` et `page: {page + 1}`.")
     res["a_faire"] = (
         "Les décisions sont DÉJÀ affichées en tableau : ne les recopie pas. Pour t'appuyer "
-        "sur une décision, OUVRE-la avec `jurisprudence` et son `id` (un sommaire ne suffit "
-        "pas), puis cite juridiction, date, numéro et lien. Termine en rappelant que c'est "
-        "une information, pas un conseil juridique.")
+        "sur une décision, OUVRE-la avec `jurisprudence` et l'`id` de SA ligne (un sommaire "
+        "ne suffit pas) — jamais par une nouvelle recherche sur son numéro : un numéro RG "
+        "existe dans plusieurs cours, `numero` ne sert que si la personne ne donne que ça. "
+        "Puis cite juridiction, date, numéro et lien. Termine en rappelant que c'est une "
+        "information, pas un conseil juridique.")
     res["avertissement"] = AVERTISSEMENT
     return res
 
@@ -814,10 +919,13 @@ SKILLS = {
             "appel, toutes) ; `chambre` (civ3 = construction, soc = travail, comm = "
             "commercial) ; `depuis` / `jusqu_a` (année ou date) ; `publiees: true` pour les "
             "arrêts de principe ; `tri: date` pour les plus récentes ; `id` pour LIRE une "
-            "décision (commence aux motifs, `a_partir_de` pour la suite). Toujours citer "
-            "juridiction, date, numéro de pourvoi et lien, et rappeler que ce n'est pas un "
-            "conseil juridique."),
-        optionnels=["recherche", "id", "juridiction", "chambre", "depuis", "jusqu_a",
+            "décision (l'identifiant de SA ligne dans le tableau — commence aux motifs, "
+            "`a_partir_de` pour la suite) ; `numero` (RG « 24/02543 », pourvoi « 19-24.001 ») "
+            "seulement quand la personne ne donne que le numéro : il est résolu parmi les "
+            "décisions déjà montrées, et un numéro porté par plusieurs cours rend les "
+            "candidates à faire choisir. Toujours citer juridiction, date, numéro et lien, et "
+            "rappeler que ce n'est pas un conseil juridique."),
+        optionnels=["recherche", "id", "numero", "juridiction", "chambre", "depuis", "jusqu_a",
                     "publiees", "tri", "a_partir_de", "page", "limite"],
         effet="lecture", libelle="je cherche la jurisprudence sur Judilibre"),
 }

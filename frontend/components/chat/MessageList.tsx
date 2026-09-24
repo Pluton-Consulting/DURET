@@ -27,16 +27,27 @@ import { PiecesJointes, type PieceAffichee } from "./PiecesJointes"
  *  rien ; sur un message qui arrive, il est doux, parce que là le mouvement
  *  raconte quelque chose.
  */
-function CollerEnBas({ nombre }: { nombre: number }) {
-  const { scrollToBottom } = useStickToBottomContext()
+function CollerEnBas({ nombre, dernierRole }: { nombre: number; dernierRole?: string }) {
+  const { scrollToBottom, isAtBottom, escapedFromLock } = useStickToBottomContext()
   const precedent = useRef(0)
 
   useEffect(() => {
     if (nombre === 0) return
     const restauration = precedent.current === 0
+    const grandit = nombre > precedent.current
     precedent.current = nombre
-    scrollToBottom({ animation: restauration ? "instant" : "smooth" })
-  }, [nombre, scrollToBottom])
+    // ON NE RAMÈNE PAS EN BAS QUELQU'UN QUI EST REMONTÉ (24/09, Noa : « une tâche en
+    // attente de validation, on ne pouvait pas remonter le chat pour voir ce qu'il
+    // avait fait »). Pendant un accord en attente, les relectures du fil font
+    // varier le nombre de messages ; chaque variation recalait le bas. Désormais :
+    // le premier chargement recale, instantanément ; ensuite seule une nouvelle
+    // bulle recale, et seulement si la personne est déjà en bas — ou si c'est
+    // SON message qui vient de partir. Remontée, elle garde sa place ; le bouton
+    // « aller en bas » reste là pour revenir.
+    if (restauration) { scrollToBottom({ animation: "instant" }); return }
+    if (!grandit) return
+    if (dernierRole === "user" || (isAtBottom && !escapedFromLock)) scrollToBottom({ animation: "smooth" })
+  }, [nombre, dernierRole, scrollToBottom, isAtBottom, escapedFromLock])
 
   return null
 }
@@ -116,7 +127,7 @@ export default function MessageList({ messages, onAction, apiUrl, backendToken }
 
   return (
     <Conversation initial="instant" resize="instant" data-testid="liste-messages">
-      <CollerEnBas nombre={messages.length} />
+      <CollerEnBas nombre={messages.length} dernierRole={messages[messages.length - 1]?.role} />
       {/* PLUS D'AIR ENTRE LES MESSAGES QU'AVANT.
           Seize pixels suffisaient tant que chaque réponse était une carte : le
           cadre faisait la séparation. Le texte de l'IA coulant désormais à

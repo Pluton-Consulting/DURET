@@ -89,7 +89,7 @@ verifier("alias acceptés (mots, contient, mots_cles, query)",
 verifier("limite 25 d'office dès qu'on cherche ou qu'on pagine", "25 if (_periode or recherche or avant or non_lus) else 10" in skills)
 proto = (BACKEND / "skills" / "protocol.py").read_text(encoding="utf-8")
 verifier("le catalogue déclare recherche, objet et avant en optionnels",
-         all('"%s"' % k in proto[proto.index('"lire_mails": ('):proto.index('"lire_mails": (') + 3500] for k in ("recherche", "objet", "avant")))
+         all('"%s"' % k in proto[proto.index('"lire_mails": ('):proto.index('"lire_mails": (') + 5000] for k in ("recherche", "objet", "avant")))
 verifier("le catalogue explique la page suivante (plus_ancien → avant)",
          "plus_ancien" in proto and "`avant`" in proto)
 verifier("lire_boite calcule plus_ancien depuis date_iso", 'plus_ancien = min((m.get("date_iso")' in src)

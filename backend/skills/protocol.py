@@ -563,8 +563,12 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "AAAA-MM-JJ pour REMONTER LE TEMPS page par page — le résultat donne "
         "`plus_ancien` et `pour_continuer` : redonne cette date en `avant` pour les 25 "
         "précédents. Si un curseur_suivant est fourni, utilise plutôt `curseur` : il évite de sauter les messages du même jour. Le DÉTAIL est borné à 25 par appel ; le TOTAL ne l'est pas, "
-        "c'est lui qu'on cite pour « combien ». Sans `depuis` ni `recherche` : les "
-        "plus récents et le total du dossier. N'en tire jamais de conclusion sur "
+        "c'est lui qu'on cite pour « combien ». SANS RIEN (ni `depuis`, ni `recherche`, ni `limite`) : "
+        "TOUS les mails NON LUS de la réception, quel que soit leur nombre — c'est le périmètre par "
+        "défaut de « liste-moi / trie-moi mes mails ». `non_lus: true` le demande explicitement, avec "
+        "ou sans période. Un nombre demandé (« les 10 derniers ») → `limite`. Si le périmètre est "
+        "vraiment ambigu, demande-le avec des boutons (non lus / aujourd'hui / la semaine), sinon "
+        "prends les non lus. N'en tire jamais de conclusion sur "
         "l'entreprise entière (pour cela, `lancer_enrichissement`). dossier : recus "
         "(défaut), envoyes, ou le NOM d'un dossier de la boîte tel que `dossiers_mail` "
         "le rend ; limite : 1 à 25. Sans mailbox, la boîte de la personne "
@@ -582,7 +586,7 @@ CATALOGUE_AGENT1: dict[str, tuple[str, list[str], list[str]]] = {
         "— c'est LE geste pour « ajoute une colonne priorité / surligne les plus urgents ». "
         "« QUI M'A ÉCRIT LE PLUS » : `depuis` + `exhaustif: true` SANS `classer` — le résultat porte "
         "`par_expediteur` (comptes calculés par le serveur, objets récents) : réponds dessus",
-        [], ["mailbox", "dossier", "limite", "depuis", "recherche", "objet", "avant", "curseur", "exhaustif",
+        [], ["mailbox", "dossier", "limite", "depuis", "non_lus", "recherche", "objet", "avant", "curseur", "exhaustif",
              "classer", "categories", "fichier", "priorites", "surlignage", "rafraichir"]),
     "lire_mail": (
         "OUVRE UN message EN ENTIER : le corps complet (jusqu'à 10 000 caractères) et "

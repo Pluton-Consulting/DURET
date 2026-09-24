@@ -1259,6 +1259,16 @@ async def lire_mails(data: dict, user) -> dict:
     # serveur (UNSEEN), pas les non lus parmi les 25 derniers. C'est une liste : exhaustive.
     non_lus = bool(data.get("non_lus") or data.get("non_lu") or data.get("unread")
                    or str(data.get("lus") or "").strip().lower() in ("false", "non", "0"))
+    # LE DÉFAUT, C'EST LES NON LUS DE LA RÉCEPTION, TOUS (24/09, Noa : « il n'a fait que
+    # 10 mails ; par défaut il fait tous ceux qui ne sont pas lus encore »). Un appel nu —
+    # ni période, ni recherche, ni nombre, ni curseur, ni autre dossier — ne rend plus
+    # « les 10 derniers » : il rend chaque message non lu de la boîte de réception. Un
+    # nombre demandé (`limite`) ou une période gardent leur sens.
+    appel_nu = not any(data.get(k) for k in ("depuis", "periode", "jours", "limite", "avant", "avant_le",
+                                              "jusqu_a", "curseur", "recherche", "mots", "mots_cles",
+                                              "contient", "query", "objet", "sujet", "objet_contient"))
+    if appel_nu and not non_lus and str(data.get("dossier") or "recus").lower().startswith(("recus", "reçus", "inbox")):
+        non_lus = True
     exhaustif = exhaustif or non_lus
     # Un Excel ou un classement de « tous les mails » EST un inventaire complet.
     veut_fichier = bool(data.get("fichier") or data.get("excel"))

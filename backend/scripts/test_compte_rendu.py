@@ -416,12 +416,10 @@ if composant.exists():
 index = (FRONTEND / "components" / "blocks" / "index.ts").read_text(encoding="utf-8")
 verifier("il est exporté par la bibliothèque", "business/CompteRendu" in index)
 
-raccourcis = (FRONTEND / "lib" / "raccourcis.ts").read_text(encoding="utf-8")
-verifier("le bouton de questions rapides propose le compte rendu",
-         "Compte rendu de réunion" in raccourcis)
-verifier("le raccourci laisse la place à la transcription", "Transcription :" in raccourcis)
-verifier("il dit de ne rien inventer",
-         "N'invente aucun responsable" in raccourcis)
+# 24/09 : le menu éclair est devenu le cahier des 19 prompts de Duret ; le compte rendu
+# de réunion n'y a plus de bouton, il se demande en une phrase (le skill reste au catalogue).
+verifier("le skill compte_rendu_reunion reste déclaré",
+         '"compte_rendu_reunion"' in (BACKEND / "skills" / "reunion.py").read_text(encoding="utf-8"))
 
 # 18/09 (banc Duret) : deux engagements nominatifs et datés tombaient sous le plafond de la synthèse. Un
 # garde-fou MÉCANIQUE les rajoutait… en doublon des regroupements : la vérification revient au modèle.

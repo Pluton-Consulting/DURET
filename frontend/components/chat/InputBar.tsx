@@ -19,7 +19,7 @@ import { creerDictee, raisonIndisponible, type Dictee } from "@/lib/dictee"
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 // La liste des process fréquents est une donnée PAR CLIENT (lib/raccourcis.ts,
 // déclarée dans la dérive) : le menu, lui, est du socle.
-import { RACCOURCIS } from "@/lib/raccourcis"
+import { FAMILLES_RACCOURCIS, RACCOURCIS } from "@/lib/raccourcis"
 
 export interface PieceJointe {
   name: string
@@ -393,32 +393,44 @@ export default function InputBar({ onSend, disabled, modeFile, enCours, onStop, 
       )}
 
       {raccourcisOuverts && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-          {RACCOURCIS.map((r) => (
-            <button
-              key={r.libelle}
-              type="button"
-              onClick={() => {
-                setTexte(r.prompt)
-                setRaccourcisOuverts(false)
-                // Le curseur À LA FIN, et le champ déroulé jusqu'en bas : une
-                // demande préremplie se complète par le bas (on y colle sa
-                // transcription, on y précise son dossier). Sans cela, on
-                // atterrit au début d'un texte de trente lignes.
-                requestAnimationFrame(() => {
-                  const champ = champRef.current
-                  if (!champ) return
-                  champ.focus()
-                  champ.setSelectionRange(r.prompt.length, r.prompt.length)
-                  champ.scrollTop = champ.scrollHeight
-                })
-              }}
-              style={{ border: "1px solid var(--marque-border, #d8d8d8)", borderRadius: 999,
-                       padding: "5px 12px", fontSize: 13, cursor: "pointer",
-                       background: "var(--marque-surface, transparent)" }}
-            >
-              {r.libelle}
-            </button>
+        // Les prompts sont rangés sous leur FAMILLE (24/09 : dix-neuf boutons à
+        // plat ne se lisent pas) ; le menu défile s'il dépasse un tiers de l'écran.
+        <div data-testid="menu-raccourcis"
+             style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10,
+                      maxHeight: "34vh", overflowY: "auto", paddingRight: 4 }}>
+          {FAMILLES_RACCOURCIS.map((famille) => (
+            <div key={famille}>
+              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4,
+                            opacity: 0.65, margin: "2px 0 4px" }}>{famille}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {RACCOURCIS.filter((r) => r.famille === famille).map((r) => (
+                  <button
+                    key={r.libelle}
+                    type="button"
+                    onClick={() => {
+                      setTexte(r.prompt)
+                      setRaccourcisOuverts(false)
+                      // Le curseur À LA FIN, et le champ déroulé jusqu'en bas : une
+                      // demande préremplie se complète par le bas (on y colle sa
+                      // transcription, on y précise son dossier). Sans cela, on
+                      // atterrit au début d'un texte de trente lignes.
+                      requestAnimationFrame(() => {
+                        const champ = champRef.current
+                        if (!champ) return
+                        champ.focus()
+                        champ.setSelectionRange(r.prompt.length, r.prompt.length)
+                        champ.scrollTop = champ.scrollHeight
+                      })
+                    }}
+                    style={{ border: "1px solid var(--marque-border, #d8d8d8)", borderRadius: 999,
+                             padding: "5px 12px", fontSize: 13, cursor: "pointer",
+                             background: "var(--marque-surface, transparent)" }}
+                  >
+                    {r.libelle}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

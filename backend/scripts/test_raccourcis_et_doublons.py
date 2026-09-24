@@ -117,10 +117,16 @@ barre = (FRONTEND / "components" / "chat" / "InputBar.tsx").read_text(encoding="
 raccourcis = (FRONTEND / "lib" / "raccourcis.ts").read_text(encoding="utf-8")
 verifier("la liste des raccourcis est une donnée par client (lib/raccourcis.ts), importée par la barre",
          "const RACCOURCIS" not in barre and 'from "@/lib/raccourcis"' in barre
-         and "export const RACCOURCIS" in raccourcis and "7 derniers jours" in raccourcis)
-verifier("clients et chiffre d'affaires ont quitté le menu (31/08)",
-         "liste complète des clients" not in raccourcis and "chiffre d’affaires" not in raccourcis
-         and "chiffre d'affaires" not in raccourcis)
+         and "export const RACCOURCIS" in raccourcis)
+# 24/09 (Noa) : le menu éclair EST le cahier « PROMPT DURET SOLS » — un bouton par
+# prompt, titré comme le prompt, en six familles ; le clic écrit le prompt entier.
+# (L'exclusion « clients / CA » du 31/08 est levée : le cahier porte ces prompts.)
+verifier("le menu porte les 19 prompts du cahier, en 6 familles",
+         raccourcis.count(", libelle: ") == 19 and raccourcis.count(", libelle: ") == 19
+         and "FAMILLES_RACCOURCIS" in raccourcis and "FAMILLES_RACCOURCIS.map" in barre)
+verifier("chaque prompt est recopié en entier (rôle, contexte, tâche, contraintes, format, contrôle)",
+         all(m in raccourcis for m in ("Tu es chargé d'études en revêtements de sols", "Planning des équipes de pose",
+                                       "Termine en confirmant que le nombre de lignes du tableau égale le total annoncé")))
 verifier("le bouton déroule le menu au-dessus de la saisie", "setRaccourcisOuverts" in barre and "ZapIcon" in barre)
 theme = (FRONTEND / "app" / "theme.css").read_text(encoding="utf-8")
 verifier("les boutons de la barre sont centrés sur l'axe du champ (theme.css)",

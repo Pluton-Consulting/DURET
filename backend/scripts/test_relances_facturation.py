@@ -230,8 +230,10 @@ verifier("migration 037 : la table, l'unicité (utilisateur, référence), idemp
 ag1 = (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8")
 verifier("les cartes de relance ne passent pas par la coupe courte (résultats généreux)",
          '"relancer_factures"' in ag1.split("RESULTATS_GENEREUX = {")[1].split("}")[0])
-rac = (BACKEND.parent / "frontend" / "lib" / "raccourcis.ts").read_text(encoding="utf-8")
-verifier("le menu éclair propose « Relancer les factures impayées »", "Relancer les factures impayées" in rac)
+# 24/09 : le menu éclair est le cahier des 19 prompts (dont « Relancer les devis restés
+# sans réponse ») ; la relance de facturation se demande en une phrase, le skill reste déclaré.
+verifier("le skill relancer_factures reste déclaré",
+         '"relancer_factures"' in (BACKEND / "skills" / "facturation.py").read_text(encoding="utf-8"))
 
 print(f"\n{'═' * 72}")
 if echecs:

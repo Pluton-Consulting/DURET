@@ -97,56 +97,12 @@ cadratins = [m.group(0) for m in re.finditer(r".{30}[—–].{30}", prompt)]
 verifier("le préprompt n'emploie pas le tiret cadratin qu'il interdit",
          not cadratins, " | ".join(cadratins))
 
-# ── 2. LE RACCOURCI ──────────────────────────────────────────────────────
-verifier("le raccourci « Chiffrer un plan » existe",
-         'libelle: "Chiffrer un plan"' in raccourcis)
-depart = raccourcis.find('libelle: "Chiffrer un plan"')
-texte = raccourcis[depart:].split("` }")[0] if depart >= 0 else ""
-
-verifier("PRINCIPE 1 — il impose SIX étapes séparées",
-         "six étapes SÉPARÉES" in texte)
-verifier("et il dit d'ignorer, à chaque étape, ce qui relève des autres "
-         "(c'est ce qui évite de survoler)",
-         "ignore ce qui relève des autres" in texte)
-numeros = re.findall(r"\n(\d)\. [A-ZÉÈ]", texte)
-verifier("les six étapes sont numérotées sans trou ni doublon",
-         numeros == ["1", "2", "3", "4", "5", "6"], str(numeros))
-
-verifier("étape 1 : la légende, et un ÉTALON désigné avec sa valeur",
-         "ÉTALON" in texte and "donne sa valeur" in texte)
-verifier("étape 2 : le balayage secteur par secteur",
-         "nord-ouest" in texte and "sud-est" in texte)
-verifier("étape 3 : chaque élément rattaché à une zone NOMMÉE de l'étape 2",
-         "de l'étape 2, nommé" in texte)
-
-verifier("PRINCIPE 3 — l'étape 4 impose la SOURCE de chaque quantité",
-         "dis d'où elle vient" in texte)
-for niveau, marque in (("cote lue", "cote lue sur le plan"),
-                       ("déduction par proportion", "montre le calcul"),
-                       ("estimation d'après l'étalon", "rappelle l'étalon"),
-                       ("non mesurable", "n'avance aucun chiffre")):
-    verifier(f"    · {niveau}", marque in texte)
-verifier("les quatre niveaux sont donnés par ORDRE de préférence",
-         "ordre de préférence" in texte)
-
-verifier("étape 5 : ce qui coûte sans apparaître dans une surface",
-         "sans apparaître dans une surface" in texte)
-verifier("PRINCIPE 4 — l'étape 6 rend un tableau AVEC la fiabilité de chaque "
-         "mesure",
-         "fiabilité de la mesure" in texte)
-verifier("elle dit ce qui manque et si le relevé est exploitable tel quel",
-         "ce qui manque pour chiffrer" in texte and "exploitable tel quel" in texte)
-
-# CE QUE LE CHIFFRAGE NE FAIT PAS. Un prix ne se déduit pas d'un plan : il
-# vient des prix pratiqués par la maison (`prix_observes`), qui refuse déjà
-# d'avancer un chiffre en dessous de deux observations. Un métré qui sortirait
-# un prix contournerait ce garde-fou sans le dire.
-verifier("aucun PRIX n'est demandé : le métré s'arrête aux quantités",
-         "Ne donne aucun prix" in texte)
-
-verifier("un tiret simple sert de puce, jamais un cadratin (même piège)",
-         "—" not in texte and "–" not in texte)
-verifier("il demande de joindre le plan", texte.count("Je joins un plan") == 1)
+# ── 2. LE RACCOURCI — RETIRÉ DU MENU LE 24/09 ───────────────────────────
+# Le menu éclair est devenu le cahier des 19 prompts de Duret (demande de Noa) ;
+# le prompt de chiffrage en six passes n'y a plus de bouton. Il vit dans
+# l'historique git (lib/raccourcis.ts avant le 24/09) si l'on veut le remettre.
+verifier("le menu éclair ne porte plus le chiffrage en six passes (cahier des 19 prompts)",
+         'libelle: "Chiffrer un plan"' not in raccourcis and raccourcis.count(", libelle: ") == 19)
 
 # ── 3. MESURER SUR UNE PHOTO ─────────────────────────────────────────────
 # UN PLAN EST À L'ÉCHELLE PARTOUT, UNE PHOTO NE L'EST NULLE PART. Sans les
@@ -182,37 +138,10 @@ verifier("ce que l'un montre et que l'autre ignore est signalé (c'est ce "
 verifier("une contradiction entre photo et plan se dit EN CLAIR",
          "CONTRADICTION" in prompt and "se dit en clair" in prompt)
 
-verifier("le raccourci « Mesurer d'après une photo » existe",
-         "libelle: \"Mesurer d'après une photo\"" in raccourcis)
-d2 = raccourcis.find("libelle: \"Mesurer d'après une photo\"")
-photo = raccourcis[d2:].split("` }")[0] if d2 >= 0 else ""
-n2 = re.findall(r"\n(\d)\. [A-ZÉÈ]", photo)
-verifier("il impose six étapes séparées, numérotées sans trou",
-         "six étapes SÉPARÉES" in photo and n2 == ["1", "2", "3", "4", "5", "6"],
-         str(n2))
-verifier("étape 1 : recaler la photo sur le plan quand il y en a un",
-         "QUELLE zone du plan elle montre" in photo)
-verifier("étape 2 : l'étalon est nommé AVEC la valeur qu'on lui prête",
-         "avec la valeur que tu lui prêtes" in photo)
-# LE CONTRÔLE LE PLUS IMPORTANT DE CETTE SECTION. Sans étalon, une mesure
-# photographique n'existe pas. Un modèle qui « estime quand même » produit le
-# chiffre le plus dangereux du dossier : faux, et présenté comme les autres.
-verifier("SANS ÉTALON, on le dit plutôt que de produire un chiffre",
-         "sans étalon, aucune mesure n'est possible" in photo
-         and "mieux le dire que produire un chiffre" in photo)
-verifier("étape 3 : compter d'abord, l'étalon ensuite",
-         "COMPTE les unités et multiplie" in photo)
-verifier("étape 4 : chaque mesure dit ce qui la fragilise",
-         "dis ce qui la rend fragile" in photo)
-verifier("étape 5 : la règle de partage plan/photo est rappelée",
-         "le plan fait foi" in photo and "c'est la photo" in photo)
-verifier("étape 6 : la méthode de chaque mesure est portée au tableau",
-         "comptage, étalon, ordre de grandeur" in photo)
-verifier("et ce que la photo NE permet pas se renvoie au terrain",
-         "parce que la photo ne le permet pas" in photo)
-verifier("aucun prix ici non plus", "Ne donne aucun prix" in photo)
-verifier("aucun tiret cadratin dans ce raccourci",
-         "—" not in photo and "–" not in photo)
+# 24/09 : le raccourci « Mesurer d'après une photo » a quitté le menu avec les autres
+# (le menu éclair est le cahier des 19 prompts) ; ses six étapes vivent dans l'historique git.
+verifier("le menu ne porte plus « Mesurer d'après une photo »",
+         "libelle: \"Mesurer d'après une photo\"" not in raccourcis)
 
 print(f"\n{'═' * 70}\n{'✗ ' + str(len(echecs)) + ' échec(s) : ' + ', '.join(echecs) if echecs else '✓ 0 échec'}\n")
 sys.exit(1 if echecs else 0)

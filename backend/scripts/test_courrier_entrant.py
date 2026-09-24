@@ -146,9 +146,10 @@ verifier("la carte d'accord d'une tâche planifiée porte le NOM de la tâche",
          'if str(thread_id or "").startswith("task:"):' in rt and 'raison = f"Tâche « {titre} » — ' in rt)
 verifier("`check_mails` exige la raison de chaque message sans réponse",
          "Pour chaque message SANS réponse proposée, dis en quelques mots POURQUOI" in (BACKEND / "skills" / "routines.py").read_text(encoding="utf-8"))
-rac = (BACKEND.parent / "frontend" / "lib" / "raccourcis.ts").read_text(encoding="utf-8")
-verifier("le menu éclair : le courrier entrant maintenant, et en tâche toutes les 10 minutes",
-         "Courrier entrant automatique" in rac and "Courrier entrant (maintenant)" in rac)
+# 24/09 : le menu éclair est le cahier des 19 prompts ; le courrier entrant se demande
+# en une phrase, le skill reste déclaré.
+verifier("le skill courrier_entrant reste déclaré",
+         '"courrier_entrant"' in (BACKEND / "skills" / "courrier.py").read_text(encoding="utf-8"))
 verifier("résultat généreux", '"courrier_entrant"' in (BACKEND / "agents" / "agent1.py").read_text(encoding="utf-8").split("RESULTATS_GENEREUX = {")[1].split("}")[0])
 
 print(f"\n{'═' * 72}")

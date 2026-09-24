@@ -1269,7 +1269,10 @@ async def lire_mails(data: dict, user) -> dict:
                                               "contient", "query", "objet", "sujet", "objet_contient"))
     if appel_nu and not non_lus and str(data.get("dossier") or "recus").lower().startswith(("recus", "reçus", "inbox")):
         non_lus = True
-    exhaustif = exhaustif or non_lus
+    # UNE PÉRIODE SE LIT EN ENTIER (24/09, Damien : « trie les mails du jour » → 25 lus sur
+    # 36, « partiel », et un tri sur un dixième). Sans nombre demandé, `depuis` vaut inventaire
+    # complet : la quantité n'est pas une question. `limite` explicite garde une page.
+    exhaustif = exhaustif or non_lus or bool(_periode and not data.get("limite") and not recherche and not avant)
     # Un Excel ou un classement de « tous les mails » EST un inventaire complet.
     veut_fichier = bool(data.get("fichier") or data.get("excel"))
     veut_classement = bool(data.get("classer") or data.get("categories"))

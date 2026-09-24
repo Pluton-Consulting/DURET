@@ -53,6 +53,8 @@ def lire_affectations(data: dict) -> list[dict]:
                 couples.append({"ref": item.get("ref") or item.get("reference") or item.get("id") or item.get("mail"),
                                 "dossier": item.get("dossier") or item.get("libelle") or item.get("cible")
                                 or item.get("affaire") or item.get("categorie"),
+                                "a_trancher": item.get("a_trancher") or item.get("incertain"),
+                                "raison": item.get("raison") or item.get("pourquoi") or "",
                                 "objet": item.get("objet") or ""})
             elif isinstance(item, (list, tuple)) and len(item) >= 2:
                 couples.append({"ref": item[0], "dossier": item[1]})
@@ -60,8 +62,16 @@ def lire_affectations(data: dict) -> list[dict]:
     for c in couples:
         ref = " ".join(str(c.get("ref") or "").split())
         dossier = " ".join(str(c.get("dossier") or "").split())[:LONGUEUR_DOSSIER].strip("/ ")
-        if ref and dossier:
-            propres.append({"ref": ref, "dossier": dossier, "objet": str(c.get("objet") or "")[:120]})
+        raison = " ".join(str(c.get("raison") or "").split())[:160]
+        # UN MAIL QU'ON NE SAIT PAS RANGER SE DIT (24/09, Noa : « s'il n'arrive pas à les
+        # trier, qu'il dise "je n'ai pas les informations" — mais pas un dixième en silence »).
+        # `a_trancher: true` (ou un dossier vide / « ? ») garde le mail dans la liste, avec sa
+        # raison ; il n'est pas déplacé, la personne tranche.
+        a_trancher = bool(c.get("a_trancher")) or dossier.lower() in ("", "?", "a trancher", "à trancher",
+                                                                       "inconnu", "non attribue", "non attribué")
+        if ref and (dossier or a_trancher):
+            propres.append({"ref": ref, "dossier": "" if a_trancher else dossier, "a_trancher": a_trancher,
+                            "raison": raison, "objet": str(c.get("objet") or "")[:120]})
     return propres[:MAX_MAILS_PAR_GESTE]
 
 
@@ -73,11 +83,15 @@ def bloc_du_classement(data: dict) -> dict:
     for c in couples:
         # L'objet vient des arguments (le catalogue le demande) ; sans lui, la
         # référence — jamais une lecture de la boîte au moment de l'aperçu.
-        lignes.append([c.get("objet") or c["ref"], c["dossier"]])
+        lignes.append([c.get("objet") or c["ref"],
+                       ("À TRANCHER — " + (c.get("raison") or "pas assez d'informations")) if c.get("a_trancher") else c["dossier"]])
     par_dossier: dict[str, int] = {}
     for c in couples:
-        par_dossier[c["dossier"]] = par_dossier.get(c["dossier"], 0) + 1
-    return {"type": "table", "titre": f"Classement proposé ({len(lignes)} mail(s), {len(par_dossier)} dossier(s))",
+        if not c.get("a_trancher"):
+            par_dossier[c["dossier"]] = par_dossier.get(c["dossier"], 0) + 1
+    a_trancher = sum(1 for c in couples if c.get("a_trancher"))
+    return {"type": "table", "titre": f"Classement proposé ({len(lignes)} mail(s), {len(par_dossier)} dossier(s)"
+                                      + (f", {a_trancher} à trancher" if a_trancher else "") + ")",
             "columns": ["Mail", "Dossier"], "rows": lignes}
 
 
@@ -101,8 +115,10 @@ async def classer_mails(data: dict, user) -> dict:
     garder = bool(data.get("garder_en_reception") or data.get("copier") or data.get("garder"))
 
     par_dossier: dict[str, list[dict]] = {}
-    inconnues = []
+    inconnues, a_trancher = [], [c for c in couples if c.get("a_trancher")]
     for c in couples:
+        if c.get("a_trancher"):
+            continue
         ident = _resoudre(c["ref"], boite)
         if not ident:
             inconnues.append(c)
@@ -131,13 +147,16 @@ async def classer_mails(data: dict, user) -> dict:
         echecs.append({**c, "raison": "référence inconnue (relis les mails avec lire_mails)"})
 
     lignes = [[x.get("objet") or x["ref"], x["dossier"], "classé"] for x in deplaces] + \
+             [[x.get("objet") or x["ref"], "—", "À TRANCHER : " + (x.get("raison") or "pas assez d'informations")] for x in a_trancher] + \
              [[x.get("objet") or x["ref"], x["dossier"], "ÉCHEC : " + x["raison"]] for x in echecs]
     bloc = {"type": "table", "titre": f"Classement fait ({len(deplaces)} mail(s) rangé(s), {len(echecs)} en échec)",
             "columns": ["Mail", "Dossier", "Résultat"], "rows": lignes}
     phrase = (f"{len(deplaces)} mail(s) rangé(s) dans {len(par_dossier)} dossier(s)"
               + (f", {len(crees)} dossier(s) créé(s) : {', '.join(crees[:8])}" if crees else "")
+              + (f" ; {len(a_trancher)} laissé(s) à trancher" if a_trancher else "")
               + (f" ; {len(echecs)} n'ont pas pu être déplacé(s)." if echecs else "."))
     return {"ok": bool(deplaces) or not echecs, "deplaces": len(deplaces), "echecs": len(echecs),
+            "a_trancher": len(a_trancher),
             "dossiers_crees": crees, "message_final": phrase, "bloc_garanti": True, "bloc_ui": [bloc],
             "a_faire": ("Le tableau du classement S'AFFICHE AUTOMATIQUEMENT : ne le recopie pas. Dis en une "
                         "phrase ce qui a été rangé, nomme les dossiers créés, et pour chaque échec dis pourquoi. "
@@ -153,7 +172,9 @@ SKILLS = {
             "du dossier de chaque mail : lis-les d'abord (`lire_mails`, tous — non lus, période…), "
             "regarde les dossiers existants (`dossiers_mail`), puis passe `classement`: "
             "[{\"ref\": <ref du mail>, \"dossier\": <nom du dossier>, \"objet\": <objet>}] pour TOUS les mails "
-            "visés, même cent. Un dossier absent est créé (`creer_dossiers: false` pour l'interdire). "
+            "visés, même cent — CHAQUE mail de la liste y figure : ceux que tu ne sais pas ranger avec "
+            "`a_trancher: true` et `raison` (« aucun chantier ni personne nommés »), jamais passés sous silence. "
+            "Un dossier absent est créé (`creer_dossiers: false` pour l'interdire). "
             "La personne voit le tableau mail → dossier et donne son accord AVANT tout déplacement : "
             "propose donc directement ce geste, ne demande pas confirmation par une question. "
             "`garder_en_reception: true` si la personne veut que les mails restent aussi dans la "

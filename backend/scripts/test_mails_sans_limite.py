@@ -171,7 +171,7 @@ c = cm.lire_affectations({"classement": [{"ref": "ref-a", "dossier": "AFF 072-23
 verifier("liste de dictionnaires, alias compris, ligne vide écartée",
          [(x["ref"], x["dossier"]) for x in c] == [("ref-a", "AFF 072-23"), ("ref-b", "AFF 084-24 BILLI")])
 c = cm.lire_affectations({"mails": {"AFF 072-23": ["ref-a", "ref-c"], "Divers": "ref-b"}})
-verifier("dictionnaire dossier → refs", len(c) == 3 and c[2] == {"ref": "ref-b", "dossier": "Divers", "objet": ""})
+verifier("dictionnaire dossier → refs", len(c) == 3 and (c[2]["ref"], c[2]["dossier"]) == ("ref-b", "Divers"))
 c = cm.lire_affectations({"classement": [["ref-a", "AFF 072-23"]]})
 verifier("liste de paires", bool(c) and c[0]["dossier"] == "AFF 072-23")
 bloc = cm.bloc_du_classement({"classement": [{"ref": "ref-a", "dossier": "AFF 072-23", "objet": "Situation n°3"},
@@ -203,6 +203,27 @@ try:
     verifier("hors IMAP : refus dit, rien de déplacé", False)
 except Exception as e:  # noqa: BLE001
     verifier("hors IMAP : refus dit, rien de déplacé", "IMAP" in str(e))
+
+print("\n— Un mail qu'on ne sait pas ranger se dit, il n'est pas déplacé")
+c = cm.lire_affectations({"classement": [{"ref": "ref-a", "dossier": "AFF 072-23"},
+                                         {"ref": "ref-b", "a_trancher": True, "raison": "aucun chantier nommé"},
+                                         {"ref": "ref-c", "dossier": "?"}]})
+verifier("`a_trancher` ou un dossier « ? » gardent le mail dans la liste, sans dossier",
+         [(x["ref"], x["dossier"], x["a_trancher"]) for x in c] == [("ref-a", "AFF 072-23", False), ("ref-b", "", True), ("ref-c", "", True)])
+bloc = cm.bloc_du_classement({"classement": [{"ref": "ref-a", "dossier": "AFF 072-23", "objet": "Situation"},
+                                             {"ref": "ref-b", "a_trancher": True, "raison": "aucun chantier nommé", "objet": "Pub"}]})
+verifier("l'aperçu d'accord montre « À TRANCHER — raison »", bloc["rows"][1] == ["Pub", "À TRANCHER — aucun chantier nommé"]
+         and "1 à trancher" in bloc["titre"])
+lecture_doublee.fournisseur = lambda: "imap"
+client = Client()
+imap._connexion = lambda boite=None: client
+r = asyncio.run(cm.classer_mails({"classement": [{"ref": "ref-a", "dossier": "AFF 072-23", "objet": "Situation"},
+                                                 {"ref": "ref-b", "a_trancher": True, "raison": "aucun chantier nommé", "objet": "Pub"}]}, utilisateur))
+verifier("le mail à trancher n'est pas déplacé, il est dit dans le résultat",
+         r["deplaces"] == 1 and r["a_trancher"] == 1 and "1 laissé(s) à trancher" in r["message_final"]
+         and "6" in client.messages["INBOX"] and any("À TRANCHER" in l[2] for l in r["bloc_ui"][0]["rows"]))
+verifier("lire_mails : une période sans nombre demandé = inventaire complet",
+         "bool(_periode and not data.get(\"limite\") and not recherche and not avant)" in (BACKEND / "mail" / "skills.py").read_text(encoding="utf-8"))
 
 print("\n— Un « onglet » Gmail par IMAP : la catégorie se pose en copiant, le mail reste en réception")
 lecture_doublee.fournisseur = lambda: "imap"

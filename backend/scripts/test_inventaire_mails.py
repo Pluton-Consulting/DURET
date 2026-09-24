@@ -105,8 +105,12 @@ verifier("les comptes PAR EXPÉDITEUR sont calculés par le serveur (« qui m'a 
          r["par_expediteur"][0]["nombre"] == 97 and r["par_expediteur"][0]["expediteur"] == "client@exemple.fr" and len(r["par_expediteur"][0]["objets"]) == 3
          and "par_expediteur" in r["a_faire"], str(r.get("par_expediteur"))[:120])
 appels.clear()
-r2 = asyncio.run(lire_mails({"depuis": "7j"}, user))
-verifier("SANS `exhaustif`, une seule page comme avant (rapide)", len(appels) == 1 and r2["nombre"] == 25 and not r2.get("inventaire"))
+r2 = asyncio.run(lire_mails({"depuis": "7j", "rafraichir": True}, user))   # rafraichir : la liste gardée 30 min ne compte pas ici
+# UNE PÉRIODE SE LIT EN ENTIER (24/09) : sans nombre demandé, `depuis` vaut inventaire complet.
+verifier("une PÉRIODE sans nombre demandé = inventaire complet (97, deux pages)", len(appels) == 2 and r2["nombre"] == 97 and r2.get("inventaire"))
+appels.clear()
+r2 = asyncio.run(lire_mails({"depuis": "7j", "limite": 25}, user))
+verifier("avec un NOMBRE demandé, une seule page comme avant (rapide)", len(appels) == 1 and r2["nombre"] == 25 and not r2.get("inventaire"))
 BOITE.extend({"ref": f"x{i}", "objet": "x", "de": "a@b.fr", "date": "2026-09-10"} for i in range(1000))
 appels.clear()
 r3 = asyncio.run(lire_mails({"depuis": "30j", "tous": True}, user))

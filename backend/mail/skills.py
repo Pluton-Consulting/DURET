@@ -1337,10 +1337,10 @@ async def lire_mails(data: dict, user) -> dict:
                              f"Les {len(messages)} plus récents sur {total} sont lus (plafond) : réponds sur ceux-là en le disant, "
                              "NE relis PAS avec `rafraichir`. ")
                             + "`par_expediteur` porte les comptes par expéditeur, déjà calculés : ne recompte pas. Ne rappelle pas ce geste.")}
-        if veut_classement or veut_fichier or options["priorites"]:
-            return await _livrer_inventaire(inventaire, user, cle=cle_inv, **options)
-        _retenir_inventaire(cle_inv, inventaire, ())
-        return inventaire
+        # LE TABLEAU S'AFFICHE TOUJOURS (24/09, Noa : « qu'il affiche bien les mails »). Sans
+        # classement ni fichier, l'inventaire revenait NU : le modèle devait recopier 135
+        # lignes, il en montrait vingt. Le tableau complet est garanti à l'écran, mécaniquement.
+        return await _livrer_inventaire(inventaire, user, cle=cle_inv, **options)
     except DossierInterdit as e:
         raise MailSkillError(str(e))
     except NotImplementedError as e:

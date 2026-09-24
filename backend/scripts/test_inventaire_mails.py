@@ -73,7 +73,12 @@ async def dossiers_autorises(user): return None
 sys.modules["mail.lecture"] = types.SimpleNamespace(lire_boite=lire_boite, depuis_quand=depuis_quand, DossierInterdit=DossierInterdit)
 sys.modules["mail.authorization"] = types.SimpleNamespace(dossiers_autorises=dossiers_autorises)
 sys.modules.setdefault("mail", types.ModuleType("mail"))
-esp2 = {"_boite_a_lire": _a_lire, "verifier_acces": _acces, "boite_par_defaut": _defaut, "boites_visibles": _visibles,
+async def _livrer(inventaire, user, cle=None, **k):
+    # La livraison (tableau garanti) est doublée : ici on juge la LECTURE ; elle retient l'inventaire comme la vraie.
+    if cle is not None and "_retenir_inventaire" in esp2:
+        esp2["_retenir_inventaire"](cle, inventaire, ())
+    return inventaire
+esp2 = {"_boite_a_lire": _a_lire, "_livrer_inventaire": _livrer, "verifier_acces": _acces, "boite_par_defaut": _defaut, "boites_visibles": _visibles,
         "MailSkillError": _Erreur, "logger": logging.getLogger("banc"), "MAX_INVENTAIRE_MAILS": 1000, "PAGE_INVENTAIRE": 50, "APERCU_INVENTAIRE": 200,
         "RANG_EXTRAIT_COURT": 250, "APERCU_INVENTAIRE_COURT": 110}
 exec(fonctions(sk, {"lire_mails"}), esp2)

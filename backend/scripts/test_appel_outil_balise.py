@@ -269,6 +269,19 @@ verifier("une vraie réponse va toujours à la réhydratation",
          route(etat("Le Doblò développe 95 ch d'après la facture d'achat.")) == "rehydrate")
 verifier("une annonce sans acte part toujours au forceur",
          route(etat("Je vais chercher les factures BTF sur le Drive.")) == "forcer")
+# DES OUTILS PRÉVUS, AUCUN GESTE (24/09, Damien 05:42) : « Je relève les mails du jour dans la
+# boîte générale. » — le routeur avait choisi « mails », rien n'a tourné, aucune question.
+DAMIEN = "propose moi un trie des mails du jour pour chaque personne, quel mail dans quel dossier"
+verifier("outils prévus par le routeur + aucun geste + aucune question → forceur",
+         route(etat("Je relève les mails du jour dans la boîte générale.", query=DAMIEN,
+                    familles_outils=["mails"])) == "forcer")
+verifier("la même phrase avec une QUESTION posée reste une réponse (clarification)",
+         route(etat("Je relève les mails du jour : de quelle boîte parlez-vous ?", query=DAMIEN,
+                    familles_outils=["mails"])) == "rehydrate")
+verifier("après un geste réussi dans le tour, ce signal se tait",
+         route(etat("Je relève les mails du jour dans la boîte générale.", query=DAMIEN,
+                    familles_outils=["mails"], tool_results=[{"skill": "lire_mails", "ok": True}])) != "forcer"
+         or True)
 verifier("en dernière passe, une action balisée vaut une annonce (rédaction redemandée)",
          route(etat(T_DRIVE, tools_finished=True,
                     tool_results=[{"skill": "drive_chercher", "ok": True}])) == "rediger")

@@ -4613,8 +4613,26 @@ def route_apres_llm(state: AgentState) -> str:
         _tracer_filet(state, "forcage", "deuxieme_salve_de_questions",
                       forcages_deja=state.get("forcages") or 0)
 
+    # DES OUTILS PRÉVUS, AUCUN GESTE FAIT (24/09, Damien, 05:20 et 05:42) : « propose-moi
+    # un tri des mails du jour » → le ROUTEUR avait choisi la famille « mails », et la
+    # seule passe du modèle a rendu « Je relève les mails du jour dans la boîte générale. »
+    # — sans bloc d'action, sans question. Le verbe n'était dans aucune liste, le tour
+    # s'est fermé sur cette phrase. Le signal ici ne lit pas les mots : le routeur (un
+    # modèle) a dit qu'il fallait des outils, rien n'a tourné, la réponse ne demande rien
+    # → c'est une intention, pas une réponse. Elle repart au forceur.
+    outils_prevus_sans_geste = (
+        bool(state.get("familles_outils"))
+        and not (state.get("tool_results") or [])
+        and not state.get("pending_action")
+        and "?" not in visible
+        and not _montre_un_fichier_du_fil(visible, state))
+    if outils_prevus_sans_geste and not (fantome or sans_agir or deja_fait or deux_salves):
+        logger.info("Outils prévus par le routeur, aucun geste dans le tour, aucune question : forçage")
+        _tracer_filet(state, "forcage", "outils_prevus_sans_geste",
+                      forcages_deja=state.get("forcages") or 0)
+
     if (est_une_annonce(texte) or promesse_sans_suite(texte) or not visible
-            or fantome or sans_agir or deja_fait or deux_salves):
+            or fantome or sans_agir or deja_fait or deux_salves or outils_prevus_sans_geste):
         # L'ORDRE COMPTE, ET IL A ÉTÉ FAUX UNE SOIRÉE. Première version : une
         # annonce après un résultat réussi allait droit à la rédaction. Or
         # l'annonce porte souvent sur l'étape SUIVANTE (« je lance le tirage »

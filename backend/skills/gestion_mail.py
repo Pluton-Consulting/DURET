@@ -109,9 +109,21 @@ def _imap_modifier(identifiant,change,autorises):
     from mail import imap
     from mail.lecture import _controler_identifiant
     _controler_identifiant(identifiant,autorises)
-    if change.get('ajouter_categories') or change.get('retirer_categories'):raise ValueError('Ce connecteur IMAP ne gère pas les catégories ; indicateurs et lu/non lu restent disponibles.')
+    # AJOUTER UNE CATÉGORIE PAR IMAP (24/09) : Damien, « transmets les mails dans les onglets
+    # de chaque utilisateur » → « _Nathalie » refusé. Sur Gmail, un onglet est un libellé, et
+    # un libellé se pose par IMAP en COPIANT le message dans le dossier du même nom (il reste
+    # dans la réception). Le retrait, lui, n'a pas d'équivalent sûr par IMAP : refusé, dit.
+    if change.get('retirer_categories'):raise ValueError('Retirer une catégorie n’est pas possible par IMAP ; ajouter, si (le mail reste en réception). Pour retirer, passez par la messagerie.')
     dossier,sep,uid=identifiant.partition('|')
     if not sep or not uid.isdigit():raise ValueError('Référence IMAP invalide ; relire le message.')
+    if change.get('ajouter_categories'):
+        posees=[]
+        for nom in change['ajouter_categories']:
+            bilan=imap.deplacer(imap.boite_du_geste() or imap.boite_unique() or '',[identifiant],str(nom),creer=True,copier=True)
+            if bilan.get('echecs'):raise RuntimeError('La catégorie « '+str(nom)+' » n’a pas pu être posée : '+str(bilan['echecs'][0][1]))
+            posees.append(str(nom))
+        if not any(k in change for k in ('lu','suivi')):
+            return {'id':identifiant,'categories_ajoutees':posees,'note':'Le mail reste en réception ; il porte aussi ce(s) libellé(s).'}
     c=imap._connexion()
     try:
         # Réutiliser l'encodage des noms de dossiers du connecteur existant.

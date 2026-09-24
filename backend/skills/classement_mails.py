@@ -96,6 +96,9 @@ async def classer_mails(data: dict, user) -> dict:
         raise SkillError("Le classement dans les dossiers n'est disponible que sur une boîte lue par IMAP "
                          "(la boîte de l'entreprise). Cette messagerie ne le permet pas encore.")
     from mail import imap
+    # « Range-les dans les onglets mais laisse-les dans la réception » : sur Gmail, un
+    # libellé de plus ; ailleurs, une copie. Par défaut, le mail est DÉPLACÉ (classé).
+    garder = bool(data.get("garder_en_reception") or data.get("copier") or data.get("garder"))
 
     par_dossier: dict[str, list[dict]] = {}
     inconnues = []
@@ -110,7 +113,7 @@ async def classer_mails(data: dict, user) -> dict:
     for dossier, lot in par_dossier.items():
         try:
             bilan = await asyncio.to_thread(imap.deplacer, boite, [x["identifiant"] for x in lot], dossier,
-                                            bool(data.get("creer_dossiers", True)))
+                                            bool(data.get("creer_dossiers", True)), garder)
         except Exception as e:  # noqa: BLE001 — un dossier en échec n'arrête pas les autres
             logger.warning("Classement vers « %s » impossible : %s", dossier, str(e)[:160])
             echecs += [{**x, "raison": str(e)[:160]} for x in lot]
@@ -153,8 +156,10 @@ SKILLS = {
             "visés, même cent. Un dossier absent est créé (`creer_dossiers: false` pour l'interdire). "
             "La personne voit le tableau mail → dossier et donne son accord AVANT tout déplacement : "
             "propose donc directement ce geste, ne demande pas confirmation par une question. "
-            "`mailbox` pour une autre boîte. Rien n'est supprimé : un mail déplacé reste dans la boîte."),
+            "`garder_en_reception: true` si la personne veut que les mails restent aussi dans la "
+            "réception (sur Gmail : le libellé s'ajoute). `mailbox` pour une autre boîte. Rien n'est "
+            "supprimé : un mail déplacé reste dans la boîte."),
         requis=["classement"],
-        optionnels=["mailbox", "creer_dossiers"],
+        optionnels=["mailbox", "creer_dossiers", "garder_en_reception"],
         effet="externe", libelle="je range les mails dans leurs dossiers"),
 }

@@ -204,6 +204,29 @@ try:
 except Exception as e:  # noqa: BLE001
     verifier("hors IMAP : refus dit, rien de déplacé", "IMAP" in str(e))
 
+print("\n— Un « onglet » Gmail par IMAP : la catégorie se pose en copiant, le mail reste en réception")
+lecture_doublee.fournisseur = lambda: "imap"
+lecture_doublee._controler_identifiant = lambda ident, autorises: None
+client = Client()
+imap._connexion = lambda boite=None: client
+imap.boite_unique = lambda: "boite@exemple-sols.fr"
+from skills import gestion_mail as gm  # noqa: E402
+r = gm._imap_modifier("INBOX|3", {"ajouter_categories": ["_Nathalie"]}, None)
+verifier("catégorie posée = COPY dans le dossier du même nom, créé s'il manque",
+         r.get("categories_ajoutees") == ["_Nathalie"] and ("COPY", "3", "_Nathalie") in client.journal
+         and ("create", '"_Nathalie"') in client.journal and ("expunge",) not in client.journal)
+verifier("le mail reste dans la réception", "3" in client.messages["INBOX"] and "3" in client.messages["_Nathalie"])
+try:
+    gm._imap_modifier("INBOX|3", {"retirer_categories": ["_Nathalie"]}, None)
+    verifier("retirer une catégorie par IMAP : refus dit", False)
+except ValueError as e:
+    verifier("retirer une catégorie par IMAP : refus dit", "Retirer" in str(e))
+client = Client()
+imap._connexion = lambda boite=None: client
+bilan = imap.deplacer("boite@exemple-sols.fr", ["INBOX|6"], "_Eric", copier=True)
+verifier("classer_mails garder_en_reception : copie sans expunge", bilan["deplaces"] == ["INBOX|6"]
+         and "6" in client.messages["INBOX"] and ("expunge",) not in client.journal)
+
 print("\n— Le socle autour du geste")
 src_skills = (BACKEND / "mail" / "skills.py").read_text(encoding="utf-8")
 verifier("lire_mails : `non_lus` compris, inventaire sans période dès qu'on les demande",

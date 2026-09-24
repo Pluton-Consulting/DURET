@@ -587,7 +587,8 @@ def _code_dossier(nom: str) -> str:
     return '"' + utf7_encoder(nom).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def deplacer(boite: str, identifiants: list[str], dossier_cible: str, creer: bool = True) -> dict:
+def deplacer(boite: str, identifiants: list[str], dossier_cible: str, creer: bool = True,
+             copier: bool = False) -> dict:
     """DÉPLACE des messages (« INBOX|123 ») dans un dossier de la boîte (24/09).
 
     Le classement que Damien demandait (« associe chaque mail à un dossier, puis
@@ -595,7 +596,9 @@ def deplacer(boite: str, identifiants: list[str], dossier_cible: str, creer: boo
     dossier cible est créé s'il manque (`creer`). Gmail et les serveurs modernes
     savent MOVE (RFC 6851) ; sinon COPY, puis le drapeau Deleted et EXPUNGE sur l'origine.
     Chaque message part ou échoue SÉPARÉMENT : un identifiant périmé n'arrête
-    pas les autres, et le résultat dit lesquels."""
+    pas les autres, et le résultat dit lesquels. `copier` : le message est AUSSI
+    rangé dans le dossier cible mais RESTE où il est — sur Gmail, c'est ajouter
+    un libellé (un « onglet ») sans sortir le mail de la réception."""
     client = _connexion(boite)
     deplaces, echecs, cree = [], [], False
     try:
@@ -623,7 +626,9 @@ def deplacer(boite: str, identifiants: list[str], dossier_cible: str, creer: boo
                 continue
             for ident, uid in lot:
                 try:
-                    if peut_move:
+                    if copier:
+                        statut, _ = client.uid("COPY", uid, cible)
+                    elif peut_move:
                         statut, _ = client.uid("MOVE", uid, cible)
                     else:
                         statut, _ = client.uid("COPY", uid, cible)
@@ -634,7 +639,7 @@ def deplacer(boite: str, identifiants: list[str], dossier_cible: str, creer: boo
                     deplaces.append(ident)
                 except Exception as e:  # noqa: BLE001 — un message ne bloque pas les autres
                     echecs.append((ident, str(e)[:120]))
-            if not peut_move:
+            if not peut_move and not copier:
                 try:
                     client.expunge()
                 except Exception:  # noqa: BLE001

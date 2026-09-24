@@ -350,12 +350,14 @@ button, a, .sym-tap { transition: background-color .2s ease, color .2s ease, tra
   .sym-bulle { max-width: 88% !important; }
 }
 
-/* LES BLOCS DU CHAT SE REDIMENSIONNENT À LA MAIN (24/09). Poignée native au coin
-   bas-droit ; la largeur commune (--bloc-largeur) et la hauteur qui défile tiennent
-   tant qu'on n'a pas tiré ; ensuite l'enfant suit le cadre (`data-redim="1"`). */
+/* LES BLOCS DU CHAT SE REDIMENSIONNENT À LA MAIN (24/09). Poignée MAISON au coin
+   bas-droit (`.sym-redim-coin`, enfant du cadre : elle reste au coin quoi que le
+   contenu fasse défiler) — la poignée native `resize: both` ne se voyait ni ne se
+   tirait sur les tableaux, eux-mêmes défilants. La largeur commune (--bloc-largeur)
+   et la hauteur qui défile tiennent tant qu'on n'a pas tiré ; ensuite le cadre
+   porte la taille en style et l'enfant le suit (`data-redim="1"`). */
 .sym-bloc-redim {
-  resize: both;
-  overflow: auto;
+  position: relative;
   display: block;
   width: min(var(--bloc-largeur), 100%);
   max-width: 100%;
@@ -363,10 +365,21 @@ button, a, .sym-tap { transition: background-color .2s ease, color .2s ease, tra
   min-height: 48px;
   border-radius: var(--marque-radius-card-sm);
 }
-.sym-bloc-redim > * { max-width: 100% !important; box-sizing: border-box; }
-.sym-bloc-redim[data-redim="1"] { width: auto; }
-.sym-bloc-redim[data-redim="1"] > * { width: 100%; max-height: none !important; height: 100%; }
-.sym-bloc-redim::-webkit-resizer {
-  background: linear-gradient(135deg, transparent 55%, var(--marque-border) 55%, var(--marque-border) 70%, transparent 70%, transparent 80%, var(--marque-border) 80%);
+.sym-bloc-redim-contenu { width: 100%; height: 100%; }
+.sym-bloc-redim-contenu > * { max-width: 100% !important; box-sizing: border-box; }
+.sym-bloc-redim[data-redim="1"] > .sym-bloc-redim-contenu { overflow: auto; }
+.sym-bloc-redim[data-redim="1"] > .sym-bloc-redim-contenu > * { width: 100%; height: 100%; max-height: none !important; }
+.sym-redim-coin {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  z-index: 2;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: .75;
   border-bottom-right-radius: var(--marque-radius-card-sm);
+  background: linear-gradient(135deg, transparent 50%, var(--marque-border, #b8b8b8) 50%, var(--marque-border, #b8b8b8) 60%, transparent 60%, transparent 72%, var(--marque-border, #b8b8b8) 72%, var(--marque-border, #b8b8b8) 82%, transparent 82%);
 }
+.sym-bloc-redim:hover .sym-redim-coin, .sym-bloc-redim[data-redim="1"] .sym-redim-coin { opacity: 1; }

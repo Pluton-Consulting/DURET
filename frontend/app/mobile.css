@@ -45,7 +45,8 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 @media (max-width: 640px) {
   /* Pas de poignée de redimensionnement au doigt : elle prendrait la place du contenu. */
-  .sym-bloc-redim { resize: none; width: 100%; }
+  .sym-bloc-redim { width: 100%; }
+  .sym-redim-coin { display: none; }
 
   :root { --v2-entete-h: 50px; }
 
